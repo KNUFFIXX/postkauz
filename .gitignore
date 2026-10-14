@@ -1,0 +1,35 @@
+# Go
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# Daten, nie einchecken
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+blobs/
+/testdata/private/
+/testdata/corpus-large/
+
+# Geheimnisse
+.env
+.env.*
+*.pem
+*.key
+config.toml
+secrets/
+
+# Editor und Betriebssystem
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db

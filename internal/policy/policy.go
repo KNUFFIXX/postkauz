@@ -1,0 +1,134 @@
+// Package policy entscheidet, ob ein Schlüssel eine Operation ausführen darf.
+//
+// Stand Phase 0: Gerüst. Die Entscheidungslogik ist bewusst klein und
+// konservativ (MVP = draft-only, siehe docs/sicherheit.md); Richtliniendatei,
+// Limits und Freigabe-Zustandsmaschine kommen mit Schnitt 2.
+package policy
+
+import (
+	"fmt"
+	"slices"
+)
+
+// Scope ist eine einzelne Berechtigung eines API-Schlüssels.
+type Scope string
+
+// Scopes des MVP. Es gibt bewusst kein mail:send (Versand ab Schnitt 4) und
+// keine Regel-Scopes (Regeln ab Schnitt 4).
+const (
+	ScopeMailRead   Scope = "mail:read"
+	ScopeMailSearch Scope = "mail:search"
+	ScopeMailDraft  Scope = "mail:draft"
+	ScopeMailTag    Scope = "mail:tag"
+	ScopeMailMove   Scope = "mail:move"
+	ScopeMailTrash  Scope = "mail:trash"
+	ScopeMailSync   Scope = "mail:sync"
+	ScopeMailExport Scope = "mail:export"
+	ScopeAuditRead  Scope = "audit:read"
+	ScopeAdmin      Scope = "admin"
+)
+
+// Risk ist die Risikostufe einer Operation.
+type Risk int
+
+// Risikostufen. Höhere Stufen sind strikt gefährlicher.
+const (
+	R0 Risk = iota // lesen, keine Wirkung
+	R1             // lokal ändern (Datenbank, Blob-Store, Entwürfe lokal)
+	R2             // serverseitig ändern, reversibel (Flags, Verschieben)
+	R3             // extern wirksam oder schwer umkehrbar (Papierkorb, Versand ab S4)
+)
+
+func (r Risk) String() string { return fmt.Sprintf("R%d", int(r)) }
+
+// Outcome ist das Ergebnis einer Prüfung.
+type Outcome string
+
+const (
+	// Allow: Operation darf ausgeführt werden.
+	Allow Outcome = "allow"
+	// Deny: Operation ist verboten (fehlender Scope, Policy). Kein Handler-Aufruf.
+	Deny Outcome = "deny"
+	// NeedsApproval: Operation braucht eine Freigabe durch einen Menschen.
+	NeedsApproval Outcome = "needs_approval"
+)
+
+// Decision ist das Ergebnis von Check.
+type Decision struct {
+	Outcome Outcome
+	// DryRun ist true, wenn der Handler nichts verändern darf und nur
+	// beschreiben soll, was geschähe.
+	DryRun bool
+	// Reason ist ein kurzer, maschinenlesbarer Grund (z. B. "missing_scope").
+	Reason string
+}
+
+// Allowed meldet, ob der Handler laufen darf.
+func (d Decision) Allowed() bool { return d.Outcome == Allow }
+
+// Key ist der für die Prüfung relevante Teil eines API-Schlüssels.
+// Der Schlüsselwert selbst gehört nie hierher.
+type Key struct {
+	ID     string
+	Name   string
+	Scopes []Scope
+	// DryRunDefault: schreibende Operationen laufen als Trockenlauf, solange
+	// der Aufrufer nicht ausdrücklich dry_run=false verlangt.
+	DryRunDefault bool
+}
+
+// Has meldet, ob der Schlüssel den Scope besitzt. „admin" ersetzt keine
+// anderen Scopes: Er erlaubt Verwaltung, nicht Mailzugriff.
+func (k Key) Has(s Scope) bool { return slices.Contains(k.Scopes, s) }
+
+// Requirement beschreibt, was eine Operation vom Aufrufer verlangt.
+// ops.Operation liefert sie; policy kennt ops nicht (keine Importzyklen).
+type Requirement struct {
+	Name  string
+	Scope Scope
+	Risk  Risk
+}
+
+// Roles bündelt Scopes zu den Standardrollen (docs/sicherheit.md).
+var Roles = map[string][]Scope{
+	"reader":    {ScopeMailRead, ScopeMailSearch, ScopeAuditRead},
+	"assistant": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync},
+	"operator": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,
+		ScopeMailMove, ScopeMailTrash, ScopeMailExport},
+	"admin": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,
+		ScopeMailMove, ScopeMailTrash, ScopeMailExport, ScopeAdmin},
+}
+
+// EffectiveDryRun löst den Trockenlauf-Standard eines Schlüssels auf.
+// explicit ist nil, wenn der Aufrufer nichts angegeben hat.
+func EffectiveDryRun(k Key, explicit *bool) bool {
+	if explicit != nil {
+		return *explicit
+	}
+	return k.DryRunDefault
+}
+
+// Check ist der Policy-Schritt der Kette Scope → Policy → Freigabe → Audit →
+// Handler. Stub für Phase 0, Regeln:
+//
+//   - fehlender Scope: Deny.
+//   - R0 und R1: Allow (R1 nur lokale Wirkung).
+//   - R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
+//   - R2: Allow.
+//   - R3: NeedsApproval. Es gibt im MVP keinen Weg, eine R3-Operation ohne
+//     Mensch auszuführen; die Freigabe-Zustandsmaschine folgt in Schnitt 2.
+func Check(key Key, op Requirement, dryRun bool) Decision {
+	if !key.Has(op.Scope) {
+		return Decision{Outcome: Deny, Reason: "missing_scope"}
+	}
+	switch {
+	case op.Risk <= R1:
+		return Decision{Outcome: Allow, Reason: "ok"}
+	case dryRun:
+		return Decision{Outcome: Allow, DryRun: true, Reason: "dry_run"}
+	case op.Risk == R2:
+		return Decision{Outcome: Allow, Reason: "ok"}
+	default:
+		return Decision{Outcome: NeedsApproval, Reason: "risk_r3"}
+	}
+}

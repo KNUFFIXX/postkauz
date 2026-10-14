@@ -1,0 +1,52 @@
+# Testserver für die Entwicklung von Mailwerk (Arbeitstitel).
+#
+#   docker compose -f deploy/testmail/docker-compose.yml up -d
+#
+# NUR FÜR LOKALE TESTS. Die Zugangsdaten sind Standardwerte und öffentlich
+# bekannt. Alle Ports sind an 127.0.0.1 gebunden. NIE im Internet betreiben,
+# NIE mit echten Postfächern oder echten Mails befüllen.
+#
+# Ports (Host -> Container), Übersicht und Zugangsdaten: deploy/testmail/README.md
+name: mailwerk-testmail
+
+services:
+  dovecot:
+    image: dovecot/dovecot:latest
+    environment:
+      USER_PASSWORD: pass            # Demo-Modus des Images: beliebiger Nutzername, Passwort "pass"
+    volumes:
+      - ./dovecot/zz-test.conf:/etc/dovecot/conf.d/zz-test.conf:ro
+    ports:
+      - "127.0.0.1:11143:31143"      # IMAP (Klartext/STARTTLS)
+      - "127.0.0.1:11993:31993"      # IMAPS (selbstsigniert)
+
+  stalwart:
+    # Hinweis: Neuere Stalwart-Versionen (stalwartlabs/stalwart:latest, 0.16) starten im
+    # Bootstrap-Modus und brauchen für die Ersteinrichtung eine Web-Oberfläche aus dem
+    # Internet; für reproduzierbare Tests ist die klassische Reihe festgelegt.
+    # Wechsel auf stalwartlabs/stalwart erst nach Prüfung im Spike (auftraege/A01_phase0.md).
+    image: stalwartlabs/mail-server:v0.11.8
+    volumes:
+      - stalwart-data:/opt/stalwart-mail
+    ports:
+      - "127.0.0.1:12143:143"        # IMAP
+      - "127.0.0.1:12993:993"        # IMAPS
+      - "127.0.0.1:12587:587"        # Submission (nur zur Fähigkeitsprüfung; MVP sendet nie)
+      - "127.0.0.1:18080:8080"       # Verwaltung/API
+
+  greenmail:
+    # Leichtgewichtiger Server für schnelle Tests ohne Fähigkeiten wie CONDSTORE (Fallback-Pfad).
+    image: greenmail/standalone:latest
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=test:pass@example.org
+    ports:
+      - "127.0.0.1:13143:3143"       # IMAP
+      - "127.0.0.1:13993:3993"       # IMAPS
+      - "127.0.0.1:13025:3025"       # SMTP (Empfang von Testmails)
+      - "127.0.0.1:18081:8080"       # API
+
+volumes:
+  stalwart-data:
