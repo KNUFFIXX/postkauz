@@ -1,0 +1,68 @@
+{
+  "command": "sync",
+  "duration_s": 0.827648349,
+  "result": {
+    "mode": "initial",
+    "mailboxes": [
+      {
+        "name": "Archiv/2024",
+        "mode": "initial",
+        "uidvalidity": 1792008543,
+        "uidnext": 343,
+        "highestmodseq": 343,
+        "exists": 342,
+        "fetched": 342,
+        "meta_s": 0.052356201,
+        "body_s": 0.041175687,
+        "store_s": 0.191585132,
+        "bytes": 695511
+      },
+      {
+        "name": "Archiv/2025",
+        "mode": "initial",
+        "uidvalidity": 1792008544,
+        "uidnext": 371,
+        "highestmodseq": 371,
+        "exists": 370,
+        "fetched": 370,
+        "meta_s": 0.045805208,
+        "body_s": 0.040575490000000006,
+        "store_s": 0.18031514199999998,
+        "bytes": 686472
+      },
+      {
+        "name": "INBOX",
+        "mode": "initial",
+        "uidvalidity": 1792008545,
+        "uidnext": 280,
+        "highestmodseq": 289,
+        "exists": 277,
+        "fetched": 277,
+        "meta_s": 0.038351831,
+        "body_s": 0.025499471000000003,
+        "store_s": 0.163090576,
+        "bytes": 534134
+      }
+    ],
+    "total_fetched": 989,
+    "total_bytes": 1916117,
+    "seconds": 0.795252863,
+    "mails_per_second": 1243.6296001112291,
+    "peak_heap_mb": 2.914096,
+    "sys_mb": 12.016656,
+    "envelope_subjects_checked": 929,
+    "envelope_subject_mismatches": 149,
+    "envelope_mismatch_examples": [
+      "\"=?windows-1252?q?WG=3A_AW=3A_Heizungsablesung_im_Erdgescho=DF_=28Vorgang_1?= =?windows-1252?q?=29?=\" != \"WG: AW: Heizungsablesung im Erdgeschoß (Vorgang 1)\"",
+      "\"=?windows-1252?q?Re=3A_Heizungsablesung_im_Erdgescho=DF_=28Vorgang_1=29?=\" != \"Re: Heizungsablesung im Erdgeschoß (Vorgang 1)\"",
+      "\"=?windows-1252?q?AW=3A_M=FCllgeb=FChren_und_Biotonne_=96_=C4nderungen_ab_Jan?= =?windows-1252?q?uar_=28Vorgang_2=29?=\" != \"AW: Müllgebühren und Biotonne – Änderungen ab Januar (Vorgang 2)\"",
+      "\"=?windows-1252?q?WG=3A_AW=3A_M=FCllgeb=FChren_und_Biotonne_=96_=C4nderungen_?= =?windows-1252?q?ab_Januar_=28Vorgang_2=29?=\" != \"WG: AW: Müllgebühren und Biotonne – Änderungen ab Januar (Vorgang 2)\"",
+      "\"=?windows-1252?q?Mieterh=F6hung_gem=E4=DF_=A7_558_BGB_=96_Zustimmung_=28Vorg?= =?windows-1252?q?ang_3=29?=\" != \"Mieterhöhung gemäß § 558 BGB – Zustimmung (Vorgang 3)\""
+    ],
+    "bodystructure_missing": 0,
+    "db_messages": 989,
+    "db_mailbox_rows": 989
+  },
+  "server": "dovecot",
+  "started_at": "2026-10-14T22:29:36+02:00"
+}

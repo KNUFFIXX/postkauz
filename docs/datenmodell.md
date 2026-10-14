@@ -82,6 +82,7 @@ Zwei **contentless** FTS5-Tabellen (sie speichern nur den Index, nicht den Text;
 | `fts_trigram` | `trigram` | `subject, sender, body` | Teilwort-/Infixsuche (ab 3 Zeichen) |
 
 - **Warum app-seitig stemmen:** FTS5 bringt nur `unicode61` und einen englischen Porter-Stemmer mit. Der deutsche Wortstamm (Snowball-German) wird beim Indizieren berechnet und in `body_stem` geschrieben; dieselbe Funktion stemmt die Suchbegriffe. Welche Go-Bibliothek dafür dient, wird in S1 entschieden (Anforderung: reines Go, permissive Lizenz, Snowball-German-konform; andernfalls Portierung des Algorithmus). Bleve bleibt als Option, falls FTS5 die Qualitätsziele verfehlt.
+- **Normalisierer (Befund Spike S0):** `unicode61` faltet ä/ö/ü, aber **nicht ß/ss** (Erdgeschoss und Erdgeschoß sind verschiedene Wörter) und findet keine Teilwörter. Ein app-seitiger Normalisierer faltet ß zu ss, in Indexierung und Anfrage gleichermaßen; Komposita bleiben Aufgabe des Trigram-Index.
 - **Komposita:** Der Stemmer zerlegt sie nicht; dafür ist `fts_trigram` da. Die Suche kombiniert beide: Wortstamm-Treffer zuerst (Ranking), Trigram-Treffer ergänzend.
 - **Indexpflege durch die Anwendung**, nicht durch Trigger (der Stamm ist app-seitig). Ein `index`-Job schreibt bzw. ersetzt die Zeilen einer Nachricht; Löschen per `DELETE … WHERE rowid = ?`.
 - **Ranking:** `bm25()` mit Spaltengewichten (Betreff vor Absender vor Body); Cursor-Paginierung über `(rank, rowid)`.

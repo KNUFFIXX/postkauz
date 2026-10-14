@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha, phase 0.** Repository skeleton, architecture docs and a compiling Go scaffold. There is no sync, search or MCP server yet.
+**Status: pre-alpha. Phase 0: spike passed with conditions (see `spike/s0/REPORT.md`).** Repository skeleton, architecture docs, a compiling Go scaffold and the spike code. There is no sync, search or MCP server yet. The name "Mailwerk" is a working title and will still change.
 
 ## Who is it for
 
@@ -77,7 +77,7 @@ Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`.
 
 ## Contributing
 
-See `CONTRIBUTING.md`. Short version: Go 1.24, small commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), `make check` before every commit, no secrets and no personal data in the repository, never test against a real mailbox. Security issues: `SECURITY.md`.
+See `CONTRIBUTING.md`. Short version: Go (target 1.27, see ADR-008), small commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), `make check` before every commit, no secrets and no personal data in the repository, never test against a real mailbox. Security issues: `SECURITY.md`.
 
 ## License
 
@@ -91,6 +91,6 @@ Mailwerk (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Pre-Alpha, Phase 0 (Gerüst, Architektur, Entscheidungen). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: Pre-Alpha, Phase 0 (Gerüst, Architektur, Entscheidungen; Spike bestanden mit Auflagen, siehe `spike/s0/REPORT.md`). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.

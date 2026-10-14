@@ -10,7 +10,7 @@ Mailwerk (Arbeitstitel) ist pre-alpha. Beiträge sind willkommen, aber die Archi
 
 ## Arbeitsweise
 
-- Go 1.24, `CGO_ENABLED=0`. Neue Abhängigkeiten nur mit Begründung und mit Apache-2.0-kompatibler Lizenz.
+- Go (Zielversion 1.27, siehe ADR-008; bis zur Anhebung 1.24), `CGO_ENABLED=0`, `GOTOOLCHAIN=local`. Neue Abhängigkeiten nur mit Begründung und mit Apache-2.0-kompatibler Lizenz.
 - Kleine Commits und kleine Pull Requests. Je Operation ein Test; `make check` (gofmt, vet, test, Guards, PII-Gate) muss grün sein. Zusätzlich `make cross`.
 - Commit-Nachrichten **Englisch** mit Präfix: `feat:`, `fix:`, `docs:`, `test:`, `chore:`. Sign-off per `git commit -s` (Developer Certificate of Origin); keine CLA.
 - Kommentare im Code und Dokumentation unter `docs/` **Deutsch**; `README.md` Englisch. Programmausgaben und Fehlermeldungen Englisch.

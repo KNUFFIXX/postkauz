@@ -1,0 +1,204 @@
+{
+  "command": "parse",
+  "duration_s": 0.555123056,
+  "result": {
+    "differences": {
+      "broken_examples": {
+        "deep_nesting": {
+          "enmime": {
+            "date": "2025-11-10T11:30:00Z",
+            "errors": null,
+            "msgid": "s0.0342.1e079f5a@corpus.example.test",
+            "subject": "Wasserschaden im Badezimmer (dringend!)",
+            "text_len": 207
+          },
+          "file": "0342.eml",
+          "go-message": {
+            "date": "2025-11-10T11:30:00Z",
+            "errors": null,
+            "msgid": "s0.0342.1e079f5a@corpus.example.test",
+            "subject": "Wasserschaden im Badezimmer (dringend!)",
+            "text_len": 207
+          }
+        },
+        "invalid_message_id": {
+          "enmime": {
+            "date": "2026-08-13T18:37:00Z",
+            "errors": null,
+            "msgid": "kaputt-ohne-klammern-340",
+            "subject": "Rauchwarnmelder-Wartung: Terminvorschläge",
+            "text_len": 209
+          },
+          "file": "0340.eml",
+          "go-message": {
+            "date": "2026-08-13T18:37:00Z",
+            "errors": [
+              "message-id: mail: missing '\u003c' in msg-id"
+            ],
+            "msgid": "kaputt-ohne-klammern-340",
+            "subject": "Rauchwarnmelder-Wartung: Terminvorschläge",
+            "text_len": 209
+          }
+        },
+        "missing_date": {
+          "enmime": {
+            "date": "",
+            "errors": [
+              "date: mail: header not in message"
+            ],
+            "msgid": "s0.0339.4335f7ab@corpus.example.test",
+            "subject": "Schlüsselübergabe für Wohnung 3 links",
+            "text_len": 398
+          },
+          "file": "0339.eml",
+          "go-message": {
+            "date": "0001-01-01T00:00:00Z",
+            "errors": null,
+            "msgid": "s0.0339.4335f7ab@corpus.example.test",
+            "subject": "Schlüsselübergabe für Wohnung 3 links",
+            "text_len": 398
+          }
+        },
+        "overlong_line": {
+          "enmime": {
+            "date": "2025-10-07T16:32:00Z",
+            "errors": null,
+            "msgid": "s0.0343.05235684@corpus.example.test",
+            "subject": "Treppenhausreinigung – Beschwerde über Lärm",
+            "text_len": 43098
+          },
+          "file": "0343.eml",
+          "go-message": {
+            "date": "2025-10-07T16:32:00Z",
+            "errors": null,
+            "msgid": "s0.0343.05235684@corpus.example.test",
+            "subject": "Treppenhausreinigung – Beschwerde über Lärm",
+            "text_len": 43098
+          }
+        },
+        "raw_8bit_header": {
+          "enmime": {
+            "date": "2025-04-16T14:25:00Z",
+            "errors": null,
+            "msgid": "s0.0341.1111770b@corpus.example.test",
+            "subject": "Roh: Fenster schließt nicht – Reparatur nötig",
+            "text_len": 373
+          },
+          "file": "0341.eml",
+          "go-message": {
+            "date": "2025-04-16T14:25:00Z",
+            "errors": null,
+            "msgid": "s0.0341.1111770b@corpus.example.test",
+            "subject": "Roh: Fenster schließt nicht – Reparatur nötig",
+            "text_len": 373
+          }
+        },
+        "tz_without_sign": {
+          "enmime": {
+            "date": "",
+            "errors": [
+              "date: mail: header could not be parsed"
+            ],
+            "msgid": "s0.0344.4c7d7b30@corpus.example.test",
+            "subject": "Angebot für Fassadenanstrich „Südseite“",
+            "text_len": 217
+          },
+          "file": "0344.eml",
+          "go-message": {
+            "date": "",
+            "errors": [
+              "date: mail: header could not be parsed"
+            ],
+            "msgid": "s0.0344.4c7d7b30@corpus.example.test",
+            "subject": "Angebot für Fassadenanstrich „Südseite“",
+            "text_len": 217
+          }
+        }
+      },
+      "text_differs_count": 30,
+      "text_differs_examples": [
+        "0022.eml [utf-8] go-message=\"Sehr geehrte Damen und Herren, ich wende mich wegen der Heiz...\" enmime=\"Sehr geehrte Damen und Herren, ich wende mich wegen der Heiz...\"",
+        "0049.eml [utf-8] go-message=\"Sehr geehrte Damen und Herren, ich wende mich wegen der Heiz...\" enmime=\"Sehr geehrte Damen und Herren, ich wende mich wegen der Heiz...\"",
+        "0069.eml [utf-8] go-message=\"Können Sie bitte einen Handwerker schicken? Ich bin werktags...\" enmime=\"KÃ¶nnen Sie bitte einen Handwerker schicken? Ich bin werktag...\"",
+        "0074.eml [utf-8] go-message=\"Im Keller riecht es muffig; vermutlich ist die Lüftung defek...\" enmime=\"Im Keller riecht es muffig; vermutlich ist die LÃ¼ftung defe...\"",
+        "0095.eml [utf-8] go-message=\"Im Keller riecht es muffig; vermutlich ist die Lüftung defek...\" enmime=\"Im Keller riecht es muffig; vermutlich ist die LÃ¼ftung defe...\"",
+        "0120.eml [utf-8] go-message=\"Bitte bestätigen Sie den Eingang dieser Nachricht kurz per E...\" enmime=\"Bitte bestÃ¤tigen Sie den Eingang dieser Nachricht kurz per ...\""
+      ]
+    },
+    "messages": 1000,
+    "parsers": [
+      {
+        "parser": "go-message v0.18.2",
+        "seconds": 0.056179591,
+        "hard_failures": 0,
+        "messages_with_warnings": 17,
+        "warning_kinds": {
+          "date: mail: header could not be parsed": 8,
+          "message-id: mail: missing '\u003c' in msg-id": 9
+        },
+        "subject_ok": 950,
+        "subject_checked": 950,
+        "text_umlaut_ok": 942,
+        "text_with_replacement_char": 0,
+        "attachments_ok": 157,
+        "attachments_checked": 157,
+        "message_id_ok": 1000,
+        "date_unparsed": 8,
+        "broken_kind_parsed_without_hard_failure": {
+          "deep_nesting": 8,
+          "invalid_message_id": 9,
+          "missing_date": 9,
+          "overlong_line": 8,
+          "raw_8bit_header": 8,
+          "tz_without_sign": 8
+        },
+        "threads": {
+          "threads_with_2plus": 60,
+          "singletons": 707,
+          "expected_threads": 60,
+          "threads_exactly_matching_expected": 60,
+          "threads_mixing_expected_threads": 0,
+          "expected_threads_split": 0
+        }
+      },
+      {
+        "parser": "enmime v1.3.0",
+        "seconds": 0.47740411,
+        "hard_failures": 0,
+        "messages_with_warnings": 74,
+        "warning_kinds": {
+          "[W] Character Set Declaration Mismatch: declared charset \"utf-N\", dete": 40,
+          "[W] Character Set Declaration Mismatch: declared charset \"windows-N\", ": 34,
+          "date: mail: header could not be parsed": 8,
+          "date: mail: header not in message": 9
+        },
+        "subject_ok": 950,
+        "subject_checked": 950,
+        "text_umlaut_ok": 914,
+        "text_with_replacement_char": 0,
+        "attachments_ok": 157,
+        "attachments_checked": 157,
+        "message_id_ok": 1000,
+        "date_unparsed": 17,
+        "broken_kind_parsed_without_hard_failure": {
+          "deep_nesting": 8,
+          "invalid_message_id": 9,
+          "missing_date": 9,
+          "overlong_line": 8,
+          "raw_8bit_header": 8,
+          "tz_without_sign": 8
+        },
+        "threads": {
+          "threads_with_2plus": 60,
+          "singletons": 707,
+          "expected_threads": 60,
+          "threads_exactly_matching_expected": 60,
+          "threads_mixing_expected_threads": 0,
+          "expected_threads_split": 0
+        }
+      }
+    ]
+  },
+  "server": "offline",
+  "started_at": "2026-10-14T22:18:36+02:00"
+}

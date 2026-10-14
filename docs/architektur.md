@@ -110,7 +110,9 @@ Das Interface (`internal/provider/provider.go`) ist nach JMAP geschnitten, weil 
 
 ### Änderungserkennung (`Changes`)
 
-Die Strategie folgt den erkannten Fähigkeiten (`Capabilities.SyncStrategy()`):
+Die Strategie folgt den erkannten Fähigkeiten (`Capabilities.SyncStrategy()`). **Hinweis (ADR-007):** `go-imap` v2 beta.8 kennt kein QRESYNC; bis zu einem Beitrag oder Fork läuft auch auf QRESYNC-fähigen Servern die Strategie `condstore` mit UID-SEARCH-Abgleich für Löschungen. Alle IMAP-Zugriffe laufen über `internal/imapx` mit Watchdog (Deadline je Kommando, Close + Reconnect mit Backoff, IDLE-Neustart alle 5 bis 10 Minuten, TCP-Keepalive).
+
+
 
 | Strategie | Voraussetzung | Neue | Flag-Änderungen | Gelöschte |
 |---|---|---|---|---|

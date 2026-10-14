@@ -12,6 +12,7 @@ permissions:
 
 env:
   CGO_ENABLED: "0"
+  GOTOOLCHAIN: local   # ADR-008: Toolchain ausdrücklich installieren, nie still nachladen
 
 jobs:
   test:
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.27"
       - name: gofmt
         run: |
           test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
@@ -45,7 +46,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.27"
       - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}

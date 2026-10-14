@@ -1,40 +1,61 @@
-# Auftrag A01: Phase 0 abschließen, Gate entscheiden, Schnitt 1 bauen
+# Auftrag A01: Go anheben, Spike-Auflagen umsetzen, Schnitt 1 bauen
 
 Für: die erste Claude-Code-Cloud-Sitzung (oder eine Folge kurzer Sitzungen) in diesem Repository.
 Betreiber: kein Programmierer. Er führt die Abnahme-Kommandos aus (Teil D) und entscheidet.
 
 ## 0. Ausgangslage und Regeln
 
-- Das Gerüst steht: `make check` und `make cross` sind grün. Lies zuerst `CLAUDE.md`, `docs/entscheidungen.md`, `docs/roadmap.md`, dann `docs/architektur.md`, `docs/datenmodell.md`, `docs/sicherheit.md`, `docs/mcp.md`, `docs/cli.md`.
-- Ein **Spike** hat (außerhalb dieses Repositorys) geprüft, ob `github.com/emersion/go-imap/v2` für den Sync taugt. Sein Ergebnis wird unter `spike/s0/` abgelegt (Teil A).
+- Das Gerüst steht: `make check` und `make cross` sind grün. Lies zuerst `CLAUDE.md`, `docs/entscheidungen.md` (besonders ADR-007 und ADR-008), `docs/roadmap.md`, dann `docs/architektur.md`, `docs/datenmodell.md`, `docs/sicherheit.md`, `docs/mcp.md`, `docs/cli.md`.
+- Der **Spike S0 ist erledigt** (14.10.2026): Code und Bericht liegen unter `spike/s0/` (eigenes Go-Modul, nicht Teil von `./...`). **Gate Go bestanden mit Auflagen**; die Auflagen stehen in ADR-007 und ADR-008 und sind unten als Vorgaben für S1 übernommen.
 - **Nie gegen echte Postfächer.** Nur die Docker-Testserver (`make testmail-up`). **Kein SMTP-Code** (ADR-002).
-- **Stopp-Regel:** Fällt das Gate durch (Teil B) oder widerspricht ein Befund einem ADR, **hör auf**, schreibe den Befund in `docs/roadmap.md` und frage den Betreiber, bevor du Schnitt-1-Code schreibst.
+- **Stopp-Regel:** Widerspricht ein Befund einem ADR, **hör auf**, schreibe den Befund in `docs/roadmap.md` und frage den Betreiber, bevor du weiterbaust.
 - Fragen an den Betreiber: höchstens drei auf einmal, kurz, mit Standardantwort.
+- Entschieden (14.10.2026): Go-Zielversion 1.27; Tags/Move/Trash bleiben in S3; Programmausgaben Englisch, Doku Deutsch; Versanderkennung in S2 mit Rückfall-Abgleich (siehe unten).
 
-## Teil A: Spike-Ergebnis übernehmen
+## Schritt 0: Go-Anhebung und Toolchain-Check (ADR-008)
 
-1. Prüfe, ob `spike/s0/` existiert und enthält: Quellcode des Spikes, ein `README` oder `ERGEBNIS.md` mit Messwerten, die verwendeten Serverversionen. Fehlt etwas, melde es und arbeite mit dem, was da ist; **erfinde keine Messwerte**.
-2. Führe den Spike gegen die Testserver erneut aus (`make testmail-up`, Server bereitstellen: Dovecot sofort, Stalwart braucht Domain und Konto, siehe `deploy/testmail/README.md`). Ergebnis in `spike/s0/ERGEBNIS.md` (Tabelle: Kriterium, Dovecot, Stalwart, GreenMail, Bemerkung).
-3. Übernimm Erkenntnisse in die Doku: bestätigte oder widerlegte Annahmen in `docs/architektur.md` (Abschnitt 4), `deploy/testmail/README.md` (Versionen festnageln) und `docs/roadmap.md`.
-4. `spike/s0/` ist Wegwerfcode: Er wird **nicht** Teil von `./...`-Builds (eigenes `go.mod` oder Build-Tag `spike`) und fließt nur als Vorlage in `internal/provider/imap` ein.
+1. `GOTOOLCHAIN=local` setzen (Umgebung und CI). Prüfen: `go version` zeigt die Zielversion 1.27.x; fehlt sie, dem Betreiber melden, nicht still nachladen.
+2. `go.mod`: `go`-Zeile auf die Zielversion; `modernc.org/sqlite` auf die dann aktuelle Version (`go get`, nicht raten); `go mod tidy`.
+3. `make check` und `make cross` (linux/amd64, windows/amd64, darwin/arm64, `CGO_ENABLED=0`) grün; Binärgrößen notieren (Spike: rund 11 MB mit `-s -w`).
+4. CLAUDE.md, CONTRIBUTING.md, README, CI-Datei und ADR-008 (Status „umgesetzt") nachziehen; `docs/roadmap.md` und `CHANGELOG.md` ergänzen.
 
-**Abnahme A:** `docs/` und `spike/s0/ERGEBNIS.md` benennen die Ergebnisse; `make check` bleibt grün.
+**Abnahme 0:** `make check` und `make cross` grün auf der Zielversion; in `go.mod` steht keine Version, die der Spike-Bericht als unzulässig nennt; CI-Lauf grün.
 
-## Teil B: Gate
+## Spike-Befunde als Vorgaben für S1 (aus `spike/s0/REPORT.md`)
 
-Das Gate ist bestanden, wenn `go-imap/v2` gegen **Dovecot und Stalwart** alles Folgende leistet (GreenMail nur für den Fallback-Pfad):
+| Befund | Vorgabe für S1 | Schritt |
+|---|---|---|
+| go-imap v2 ist Beta, hat keinen Raw-Command-Ausgang | Alle IMAP-Zugriffe nur über die dünne Schicht `internal/imapx`; `v2.0.0-beta.8` gepinnt; Fork-Bereitschaft (nichts außerhalb von `imapx` importiert go-imap) | S1.3 |
+| Keine Kommando-Timeouts (Login und IDLE-Close hängen, Blackhole unbemerkt, IDLE-Neustart fest 28 min) | **Watchdog:** Deadline je Kommando, bei Überschreitung Close + Reconnect mit Backoff; IDLE alle 5 bis 10 min selbst neu starten; TCP-Keepalive über `net.Dialer.KeepAliveConfig`. Test mit stummem Server (Blackhole) | S1.3, S1.5 |
+| Standard-`WordDecoder` ohne Zeichensätze (16 % roher Betreff) | `Options.WordDecoder` immer mit `go-message/charset.Reader`; Regressionstest über den Korpus (windows-1252, iso-8859-1, RFC 2047 B und Q) | S1.3, S1.2 |
+| Kein QRESYNC in go-imap | Löschungen per UID-SEARCH-Abgleich; für Postfächer ab 50.000 Nachrichten messen; QRESYNC später per Upstream-Beitrag oder Fork (nicht in S1) | S1.5 |
+| Parser-Vergleich: enmime erzeugt Mojibake, ist 7-mal langsamer | Parser `go-message`; `enmime` nicht verwenden | S1.2, S1.6 |
+| Fehlendes `Date`: Nullzeit ohne Fehler | Fehlendes oder unparsbares `Date` → `INTERNALDATE` des Servers | S1.2 |
+| Zeitzone „0100" (ohne Vorzeichen) lässt das Datumsparsen scheitern | Tolerantes Datumsparsen: Zonen ohne Vorzeichen abfangen (Test mit den acht Fällen des Korpus) | S1.2 |
+| FTS5: unicode61 faltet ä/ö/ü, **nicht ß/ss**; Teilwörter nur über Trigram; Trigram erst ab 3 Zeichen | App-seitiger Normalisierer (ß zu ss in Index und Anfrage) vor `unicode61`; Komposita und Teilwörter über `fts_trigram`; Anfragen unter 3 Zeichen nur über Wortindex mit Präfix; Suchtestsatz deckt „Erdgeschoss/Erdgeschoß" und „steuer" in Komposita ab | S1.7 |
+| Stalwart: `HIGHESTMODSEQ` kontoweit | Akzeptiert (leere `CHANGEDSINCE`-Abfragen je Ordner); keine Sonderbehandlung | S1.5 |
+| Dovecot geht nach 5 s IDLE in Hibernate | Bei Latenzmessungen berücksichtigen; keine Anpassung nötig | S1.5 |
+| Stalwart 0.16 (`latest`) startet im Bootstrap-Modus | Testserver bleibt auf 0.11.8; 0.16 später nachtesten | Prüfliste |
 
-| # | Kriterium |
-|---|---|
-| G1 | Login über TLS und STARTTLS, Fähigkeitserkennung (CONDSTORE, QRESYNC, IDLE, MOVE, SPECIAL-USE, UIDPLUS) |
-| G2 | Ordnerliste mit Rollen, Umlaut-Ordner (IMAP-UTF-7) korrekt dekodiert |
-| G3 | Fenster-Erstsync von 1.000 Nachrichten, Abbruch und Wiederaufnahme ohne Doppelte |
-| G4 | Inkrementell: neue UIDs, Flag-Änderungen per `CHANGEDSINCE`, Löschungen (VANISHED oder Abgleich) |
-| G5 | `APPEND` in den Entwürfe-Ordner mit `APPENDUID` |
-| G6 | IDLE mit automatischem Reconnect nach Verbindungsabbruch |
-| G7 | Rohmail streamen (`BODY.PEEK[]`) ohne `\Seen` zu setzen |
+## Prüfliste: offene Punkte des Spikes
 
-**Entscheidung:** Alle bestanden: ADR-001 auf „akzeptiert (Gate bestanden, Datum)" setzen, `docs/roadmap.md` aktualisieren, weiter mit Teil C. Einzelne Lücken mit Umgehung: dokumentieren, Aufwand schätzen, Betreiber fragen. Grundsätzliches Scheitern: **Stopp**, Empfehlung (Python-Rückfall nach ADR-001) an den Betreiber; kein Schnitt-1-Code.
+Jeden Punkt abarbeiten oder ausdrücklich in `docs/roadmap.md` zurückstellen (mit Begründung). Gmail und andere echte Anbieter prüft **nur der Betreiber manuell**, nie die CI und nie Claude mit echten Zugangsdaten im Repository.
+
+| # | Punkt | Wann | Nachweis |
+|---|---|---|---|
+| P1 | Gmail: `X-GM-EXT-1` (Labels, Alle-Nachrichten-Dubletten), kein QRESYNC; Verhalten mit `go-imap` ohne Fork | vor S1.5-Abnahme, manuell durch den Betreiber | Ergebnis in `docs/roadmap.md` |
+| P2 | 50.000+ Nachrichten und WAN-Latenz: Erstsync-Dauer, UID-SEARCH-Abgleichskosten | S1.5 (synthetisch, lokal; WAN durch den Betreiber) | Messwerte in `spike/s0/REPORT.md`-Nachtrag oder `docs/` |
+| P3 | OAuth2 über `go-sasl` (XOAUTH2/OAUTHBEARER), Token-Refresh | S1.1 (Entwurf) | Test mit Fake-Server |
+| P4 | Schlüsselbund (`go-keyring`) auf Windows, Linux (Secret Service), macOS; Fallback ohne Schlüsselbund | S1.1 | Test und `doctor`-Ausgabe |
+| P5 | UIDVALIDITY-Wechsel gezielt (Ordner neu angelegt) | S1.5 | Test: Reset führt zum Abgleich per Message-ID |
+| P6 | COMPRESS, BINARY (optional) | später | Entscheidung notieren |
+| P7 | Race-Detector (`go test -race ./...`) und Unit-Tests für `imapx`, Sync, Parser | ab S1.3, dauerhaft in `make check` | `make check` enthält `-race` |
+| P8 | QRESYNC: Upstream-Beitrag oder Fork | nach S1 | Entscheidung als ADR |
+| P9 | Weitere Anbieter (M365, IONOS, Strato, T-Online) | manuell durch den Betreiber | Eintrag in der Roadmap |
+
+## Vorgabe für S2: Erkennung des Versands
+
+Der Mensch sendet den Entwurf im Mailclient; Mailwerk muss das erkennen (`sent_by_human`). Entschieden: **Zuerst `Message-ID`; Rückfall-Abgleich** über Empfänger, Betreff, Body-Hash und Zeitfenster, wenn der Client beim Senden eine neue `Message-ID` vergibt. **In S2 messen**, wie sich Webmail, Desktop-Client und ein zweiter Anbieter verhalten, und das Ergebnis in `docs/sicherheit.md` festhalten (siehe dort, Abschnitt 5). Kein Treffer ist kein Fehler: Der Entwurf bleibt dann im Zustand `ready`, bis der Mensch ihn manuell abschließt.
 
 ## Teil C: Schnitt 1, Schritt für Schritt
 
@@ -42,19 +63,19 @@ Gemeinsame Regeln je Schritt: kleine Commits; `make check` grün; Tests mit Dock
 
 | Schritt | Inhalt | Akzeptanz (testbar) |
 |---|---|---|
-| S1.1 | Konfiguration (TOML, `MAILWERK_CONFIG`), Datenverzeichnis, Store-Anbindung, SQLite-Audit-Writer (ersetzt `audit.Nop` im CLI), Schlüsselbund-Anbindung, `account add/test/remove`, `accounts.list` aus der Datenbank | Konto anlegen und auflisten; Passwort nur im Schlüsselbund (Test mit Kanarienwert: nicht in DB, Log, Audit); `doctor` meldet Pfade, Schlüsselbund, Datenbank, Schema-Version |
-| S1.2 | Blob-Store (atomar, SHA-256, optional zstd); MIME-Parser auf `net/mail` plus Bibliothek für Charsets; Korpus-Generator `make corpus` mit Manifest (`docs/testkorpus.md`) | Parser besteht den Korpus gegen das Manifest (Betreff, Absender, Anhänge, Threads); Zip-Bombe wird nicht entpackt |
-| S1.3 | `internal/provider/imap`: Verbinden, Capabilities, `ListMailboxes` mit Rollen | Integrationstest gegen Dovecot, Stalwart, GreenMail: erwartete Fähigkeiten und Rollen |
+| S1.1 | Konfiguration (TOML, `MAILWERK_CONFIG`), Datenverzeichnis, Store-Anbindung, SQLite-Audit-Writer (ersetzt `audit.Nop` im CLI), Schlüsselbund-Anbindung (P3, P4), `account add/test/remove`, `accounts.list` aus der Datenbank | Konto anlegen und auflisten; Passwort nur im Schlüsselbund (Test mit Kanarienwert: nicht in DB, Log, Audit); `doctor` meldet Pfade, Schlüsselbund, Datenbank, Schema-Version |
+| S1.2 | Blob-Store (atomar, SHA-256, optional zstd); MIME-Parser auf **`go-message`** (nicht `enmime`) mit `charset`-Reader; fehlendes `Date` → `INTERNALDATE`, Zeitzone „0100" tolerant; Korpus-Generator `make corpus` mit Manifest (`docs/testkorpus.md`) | Parser besteht den Korpus gegen das Manifest (Betreff, Absender, Anhänge, Threads); Zip-Bombe wird nicht entpackt |
+| S1.3 | **`internal/imapx`** (dünne Schicht, gepinnte go-imap-Version, Watchdog, `WordDecoder` mit Charset-Reader) und `internal/provider/imap` darüber: Verbinden, Capabilities, `ListMailboxes` mit Rollen | Integrationstest gegen Dovecot, Stalwart, GreenMail: erwartete Fähigkeiten und Rollen |
 | S1.4 | Sync: Erstsync in Fenstern, resume-fähig, Idempotenz über `(mailbox_id, uid)` | 1.000 Nachrichten gespiegelt; `kill -9` mittendrin, Neustart ergibt dieselbe Anzahl ohne Doppelte |
-| S1.5 | Inkrementeller Sync (QRESYNC, CONDSTORE, UID-Scan), IDLE auf INBOX, Reconnect mit Backoff, UIDVALIDITY-Wechsel | Test je Strategie; Flag-Änderung von außen nach einem Intervall sichtbar; Reset führt zu Abgleich per Message-ID |
+| S1.5 | Inkrementeller Sync (CONDSTORE, UID-Scan; Löschungen per UID-SEARCH-Abgleich, kein QRESYNC), IDLE auf INBOX mit Neustart alle 5 bis 10 min, Watchdog, Reconnect mit Backoff, UIDVALIDITY-Wechsel | Test je Strategie; Test mit stummem Server (Blackhole) erkennt den Ausfall; Flag-Änderung von außen nach einem Intervall sichtbar; Reset führt zu Abgleich per Message-ID |
 | S1.6 | Threading, Body-Bereinigung (HTML → Text mit Allowlist, Quote-Stripper, versteckter Text), Anhänge mit Magic Bytes, Textextraktion im Subprozess | Threads des Korpus stimmen mit dem Manifest; Mail mit verstecktem Text liefert `hidden_text`; Extraktor-Timeout wird gehalten |
-| S1.7 | FTS-Indexierung (`index`-Job), deutscher Stemmer (Bibliothek wählen, Entscheidung in `docs/datenmodell.md` festhalten), Abfragesprache, Ranking, Cursor | Suchtestsatz aus dem Korpus grün; 100.000-Nachrichten-Messung dokumentiert (Ziel unter 300 ms) |
+| S1.7 | FTS-Indexierung (`index`-Job), ß/ss-Normalisierer, deutscher Stemmer (Bibliothek wählen, Entscheidung in `docs/datenmodell.md` festhalten), Abfragesprache, Ranking, Cursor | Suchtestsatz aus dem Korpus grün (inkl. Erdgeschoss/Erdgeschoß und Teilwörter); 100.000-Nachrichten-Messung dokumentiert (Ziel unter 300 ms) |
 | S1.8 | CLI lesend: `sync`, `mailbox list`, `search`, `show`, `thread`, `attach list/text`, `key create/list/revoke`, `--json`/NDJSON, `--explain` | je Kommando ein Test; Vertragstest Register ↔ CLI; Exit-Codes wie `docs/cli.md` |
 | S1.9 | MCP stdio lesend (offizielles Go-SDK, Version per `go get`): Tools, Resources, Prompts aus `docs/mcp.md` (Abschnitt „S1"), Untrusted-Hülle, Scope-Filter | Tool-Liste folgt den Scopes; Vertragstest Register ↔ MCP; Ausgabe jeder Mail in der Hülle; Claude Code sieht die Tools |
 | S1.10 | Import mbox/Maildir mit Message-ID-/Hash-Abgleich und Überlappung | Import eines Bestands mit 30 % Überlappung zu einem gesyncten Konto: keine Doppelten, Zählung ausgegeben |
 | S1.11 | Audit-Export mit Prüfsumme, `audit verify`, Kanarientest über alle Ausgabekanäle, Installationsanleitung im README, Release-Binärdateien per `make cross` | `audit verify` erkennt eine geänderte Zeile; Kanarientest grün; Installation in unter 15 Minuten nach README |
 
-Reihenfolge einhalten; ein Schritt gilt erst als fertig, wenn seine Akzeptanz grün ist. Nach S1.5 und nach S1.9 jeweils **anhalten und den Betreiber abnehmen lassen** (Teil D).
+Reihenfolge einhalten; ein Schritt gilt erst als fertig, wenn seine Akzeptanz grün ist. `make check` enthält ab S1.3 den Race-Detector (P7). Nach S1.5 und nach S1.9 jeweils **anhalten und den Betreiber abnehmen lassen** (Teil D).
 
 ## Teil D: Abnahme-Checkliste für den Betreiber
 
@@ -94,7 +115,7 @@ Testserver: `make testmail-up`; Dovecot ist auf Port 11143 (Nutzer `tester`, Pas
 
 ### D3: Gesamtabnahme S1
 
-1. Alle Punkte D0–D2 erneut auf einem zweiten Server (Stalwart, Port 12143/12993) und auf GreenMail (Port 13143).
+1. Alle Punkte D0–D2 erneut auf einem zweiten Server (Stalwart 0.11.8, nur IMAPS Port 12993, Konto laut `deploy/testmail/README.md`) und auf GreenMail (Port 13143).
 2. `make check && make cross` → grün; im Ordner `dist/` liegen drei Programme (linux, windows, darwin).
 3. Installation: `dist/mailwerk-windows-amd64.exe` auf einen Windows-Rechner kopieren, `mailwerk.exe doctor` → läuft ohne Installation weiterer Software.
 4. Importprobe: `./bin/mailwerk import maildir <Ordner> --account demo --mailbox Archive` mit einem Testbestand → Ausgabe `new: N, existing: M, skipped: 0`; zweiter Lauf: `new: 0`.

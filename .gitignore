@@ -33,3 +33,9 @@ secrets/
 *~
 .DS_Store
 Thumbs.db
+
+# Spike S0: Laufdaten und erzeugter Korpus (Generator liegt unter spike/s0/testmail)
+spike/s0/data/
+spike/s0/corpus/*.eml
+spike/s0/corpus/manifest.json
+spike/s0/s0

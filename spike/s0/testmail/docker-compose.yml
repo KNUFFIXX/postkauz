@@ -1,0 +1,32 @@
+# Testserver fuer den Mailwerk-Spike S0. Nur lokal, keine echten Konten.
+services:
+  dovecot:
+    image: dovecot/dovecot:latest
+    container_name: mw-dovecot
+    environment:
+      USER_PASSWORD: pass          # jeder Nutzername, Passwort "pass"
+    volumes:
+      - ./dovecot/zz-spike.conf:/etc/dovecot/conf.d/zz-spike.conf:ro
+    ports:
+      - "31143:31143"   # IMAP (plain/STARTTLS)
+      - "31993:31993"   # IMAPS (selbstsigniert)
+  stalwart:
+    # v0.16 (stalwartlabs/stalwart:latest) startet im Bootstrap-Modus und braucht
+    # die Web-UI aus dem Internet -> fuer den Spike die klassische v0.11.8.
+    image: stalwartlabs/mail-server:v0.11.8
+    container_name: mw-stalwart
+    volumes:
+      - stalwart-data:/opt/stalwart-mail
+    ports:
+      - "32143:143"
+      - "32993:993"
+      - "38080:8080"    # Admin-Web/API
+  greenmail:
+    image: greenmail/standalone:latest
+    container_name: mw-greenmail
+    environment:
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled -Dgreenmail.verbose"
+    ports:
+      - "33143:3143"    # IMAP
+volumes:
+  stalwart-data:

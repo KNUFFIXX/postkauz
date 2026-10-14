@@ -1,0 +1,553 @@
+{
+  "command": "scenario",
+  "duration_s": 41.018725773,
+  "result": {
+    "1_caps": {
+      "result": {
+        "capabilities": [
+          "BINARY",
+          "CATENATE",
+          "CHILDREN",
+          "COMPRESS=DEFLATE",
+          "CONDSTORE",
+          "CONTEXT=SEARCH",
+          "ENABLE",
+          "ESEARCH",
+          "ESORT",
+          "FILTER=SIEVE",
+          "I18NLEVEL=1",
+          "ID",
+          "IDLE",
+          "IMAP4rev1",
+          "IMAP4rev2",
+          "INPROGRESS",
+          "LIST-EXTENDED",
+          "LIST-STATUS",
+          "LITERAL+",
+          "LOGIN-REFERRALS",
+          "MOVE",
+          "MULTIAPPEND",
+          "NAMESPACE",
+          "NOTIFY",
+          "PREVIEW",
+          "PREVIEW=FUZZY",
+          "QRESYNC",
+          "REPLACE",
+          "SASL-IR",
+          "SAVEDATE",
+          "SEARCHRES",
+          "SNIPPET=FUZZY",
+          "SORT",
+          "SORT=DISPLAY",
+          "SPECIAL-USE",
+          "STATUS=SIZE",
+          "THREAD=ORDEREDSUBJECT",
+          "THREAD=REFERENCES",
+          "THREAD=REFS",
+          "UIDPLUS",
+          "UNSELECT",
+          "URL-PARTIAL",
+          "UTF8=ACCEPT",
+          "WITHIN"
+        ],
+        "matrix": {
+          "BINARY": true,
+          "CONDSTORE": true,
+          "ENABLE": true,
+          "ESEARCH": true,
+          "IDLE": true,
+          "IMAP4rev2": true,
+          "LIST-STATUS": true,
+          "LITERAL+": true,
+          "MOVE": true,
+          "NAMESPACE": true,
+          "QRESYNC": true,
+          "SPECIAL-USE": true,
+          "UIDPLUS": true
+        },
+        "mailboxes": [
+          {
+            "name": "Archiv",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked"
+            ],
+            "messages": 0,
+            "unseen": 0,
+            "uidvalidity": 1792008542,
+            "uidnext": 1,
+            "highestmodseq": 1,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Archiv/2024",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked"
+            ],
+            "messages": 342,
+            "unseen": 0,
+            "uidvalidity": 1792008543,
+            "uidnext": 343,
+            "highestmodseq": 343,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Archiv/2025",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked"
+            ],
+            "messages": 370,
+            "unseen": 0,
+            "uidvalidity": 1792008544,
+            "uidnext": 371,
+            "highestmodseq": 371,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Drafts",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked",
+              "\\Drafts"
+            ],
+            "role": "Drafts",
+            "messages": 21,
+            "unseen": 20,
+            "uidvalidity": 1792008547,
+            "uidnext": 22,
+            "highestmodseq": 23,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "INBOX",
+            "delim": "/",
+            "attrs": null,
+            "messages": 274,
+            "unseen": 182,
+            "uidvalidity": 1792008545,
+            "uidnext": 276,
+            "highestmodseq": 281,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Junk",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked",
+              "\\Junk"
+            ],
+            "role": "Junk",
+            "messages": 0,
+            "unseen": 0,
+            "uidvalidity": 1792008549,
+            "uidnext": 1,
+            "highestmodseq": 1,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Sent",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked",
+              "\\Sent"
+            ],
+            "role": "Sent",
+            "messages": 0,
+            "unseen": 0,
+            "uidvalidity": 1792008550,
+            "uidnext": 1,
+            "highestmodseq": 1,
+            "status_via": "LIST-STATUS"
+          },
+          {
+            "name": "Trash",
+            "delim": "/",
+            "attrs": [
+              "\\Unmarked",
+              "\\Trash"
+            ],
+            "role": "Trash",
+            "messages": 0,
+            "unseen": 0,
+            "uidvalidity": 1792008551,
+            "uidnext": 1,
+            "highestmodseq": 1,
+            "status_via": "LIST-STATUS"
+          }
+        ],
+        "connect_login_ms": 13.412,
+        "list_status_ms": 2.601
+      },
+      "seconds": 0.016110194
+    },
+    "2_sync_initial": {
+      "result": {
+        "mode": "initial",
+        "mailboxes": [
+          {
+            "name": "Archiv/2024",
+            "mode": "initial",
+            "uidvalidity": 1792008543,
+            "uidnext": 343,
+            "highestmodseq": 343,
+            "exists": 342,
+            "fetched": 342,
+            "meta_s": 0.052539494,
+            "body_s": 0.040477894,
+            "store_s": 0.189221946,
+            "bytes": 695511
+          },
+          {
+            "name": "Archiv/2025",
+            "mode": "initial",
+            "uidvalidity": 1792008544,
+            "uidnext": 371,
+            "highestmodseq": 371,
+            "exists": 370,
+            "fetched": 370,
+            "meta_s": 0.065107694,
+            "body_s": 0.039494175,
+            "store_s": 0.15008323499999998,
+            "bytes": 686472
+          },
+          {
+            "name": "INBOX",
+            "mode": "initial",
+            "uidvalidity": 1792008545,
+            "uidnext": 276,
+            "highestmodseq": 281,
+            "exists": 274,
+            "fetched": 274,
+            "meta_s": 0.041382168999999996,
+            "body_s": 0.021641246,
+            "store_s": 0.17525810600000002,
+            "bytes": 532731
+          }
+        ],
+        "total_fetched": 986,
+        "total_bytes": 1914714,
+        "seconds": 0.790366017,
+        "mails_per_second": 1247.5232724992022,
+        "peak_heap_mb": 3.848424,
+        "sys_mb": 12.016656,
+        "envelope_subjects_checked": 929,
+        "envelope_subject_mismatches": 0,
+        "bodystructure_missing": 0,
+        "db_messages": 986,
+        "db_mailbox_rows": 986
+      },
+      "seconds": 0.821677952
+    },
+    "3_mutate": {
+      "result": {
+        "mailbox": "INBOX",
+        "flagged_uids": [
+          4,
+          6,
+          7
+        ],
+        "unseen_uids": [
+          13,
+          14
+        ],
+        "expunged_uid": 275,
+        "appended_uid": 276,
+        "appended_message_id": "s0.mutate.1792009580160935843@mw.example.test",
+        "expunge_method": "UID EXPUNGE"
+      },
+      "seconds": 0.028345209
+    },
+    "4_sync_incremental": {
+      "result": {
+        "mode": "incremental",
+        "mailboxes": [
+          {
+            "name": "Archiv/2024",
+            "mode": "incremental",
+            "uidvalidity": 1792008543,
+            "uidnext": 343,
+            "highestmodseq": 343,
+            "exists": 342,
+            "prev_uidnext": 343,
+            "prev_highestmodseq": 343,
+            "fetched": 0,
+            "flag_method": "HIGHESTMODSEQ unveraendert (kein FETCH)",
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "meta_s": 0,
+            "body_s": 0,
+            "store_s": 0,
+            "bytes": 0
+          },
+          {
+            "name": "Archiv/2025",
+            "mode": "incremental",
+            "uidvalidity": 1792008544,
+            "uidnext": 371,
+            "highestmodseq": 371,
+            "exists": 370,
+            "prev_uidnext": 371,
+            "prev_highestmodseq": 371,
+            "fetched": 0,
+            "flag_method": "HIGHESTMODSEQ unveraendert (kein FETCH)",
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "meta_s": 0,
+            "body_s": 0,
+            "store_s": 0,
+            "bytes": 0
+          },
+          {
+            "name": "INBOX",
+            "mode": "incremental",
+            "uidvalidity": 1792008545,
+            "uidnext": 277,
+            "highestmodseq": 286,
+            "exists": 274,
+            "prev_uidnext": 276,
+            "prev_highestmodseq": 281,
+            "fetched": 1,
+            "new_uids": [
+              276
+            ],
+            "flag_method": "FETCH (FLAGS) (CHANGEDSINCE 281)",
+            "flag_changes": [
+              {
+                "uid": 4,
+                "old": "",
+                "new": "\\Flagged"
+              },
+              {
+                "uid": 6,
+                "old": "",
+                "new": "\\Flagged"
+              },
+              {
+                "uid": 7,
+                "old": "",
+                "new": "\\Flagged"
+              },
+              {
+                "uid": 13,
+                "old": "\\Seen",
+                "new": ""
+              },
+              {
+                "uid": 14,
+                "old": "\\Seen",
+                "new": ""
+              }
+            ],
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "vanished": [
+              275
+            ],
+            "meta_s": 0.000645005,
+            "body_s": 0.000458845,
+            "store_s": 0.00100712,
+            "bytes": 472
+          }
+        ],
+        "total_fetched": 1,
+        "total_bytes": 472,
+        "seconds": 0.026238318,
+        "mails_per_second": 38.11219911276325,
+        "peak_heap_mb": 1.654624,
+        "sys_mb": 12.2788,
+        "envelope_subjects_checked": 0,
+        "envelope_subject_mismatches": 0,
+        "bodystructure_missing": 0,
+        "db_messages": 987,
+        "db_mailbox_rows": 986,
+        "verification": {
+          "expected_flags": 5,
+          "expunge_ok": true,
+          "flags_ok": true,
+          "new_ok": true,
+          "ok": true,
+          "other_mailboxes_quiet": true,
+          "seen_flag_changes": 5
+        }
+      },
+      "seconds": 0.05308099
+    },
+    "5_sync_noop": {
+      "result": {
+        "mode": "incremental",
+        "mailboxes": [
+          {
+            "name": "Archiv/2024",
+            "mode": "incremental",
+            "uidvalidity": 1792008543,
+            "uidnext": 343,
+            "highestmodseq": 343,
+            "exists": 342,
+            "prev_uidnext": 343,
+            "prev_highestmodseq": 343,
+            "fetched": 0,
+            "flag_method": "HIGHESTMODSEQ unveraendert (kein FETCH)",
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "meta_s": 0,
+            "body_s": 0,
+            "store_s": 0,
+            "bytes": 0
+          },
+          {
+            "name": "Archiv/2025",
+            "mode": "incremental",
+            "uidvalidity": 1792008544,
+            "uidnext": 371,
+            "highestmodseq": 371,
+            "exists": 370,
+            "prev_uidnext": 371,
+            "prev_highestmodseq": 371,
+            "fetched": 0,
+            "flag_method": "HIGHESTMODSEQ unveraendert (kein FETCH)",
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "meta_s": 0,
+            "body_s": 0,
+            "store_s": 0,
+            "bytes": 0
+          },
+          {
+            "name": "INBOX",
+            "mode": "incremental",
+            "uidvalidity": 1792008545,
+            "uidnext": 277,
+            "highestmodseq": 286,
+            "exists": 274,
+            "prev_uidnext": 277,
+            "prev_highestmodseq": 286,
+            "fetched": 0,
+            "flag_method": "HIGHESTMODSEQ unveraendert (kein FETCH)",
+            "delete_method": "UID SEARCH UID 1:\u003cprev_uidnext-1\u003e Abgleich",
+            "meta_s": 0,
+            "body_s": 0,
+            "store_s": 0,
+            "bytes": 0
+          }
+        ],
+        "total_fetched": 0,
+        "total_bytes": 0,
+        "seconds": 0.020317691,
+        "mails_per_second": 0,
+        "peak_heap_mb": 1.24852,
+        "sys_mb": 12.2788,
+        "envelope_subjects_checked": 0,
+        "envelope_subject_mismatches": 0,
+        "bodystructure_missing": 0,
+        "db_messages": 987,
+        "db_mailbox_rows": 986
+      },
+      "seconds": 0.033698269
+    },
+    "6_draft": {
+      "result": {
+        "drafts_mailbox": "Drafts",
+        "reply_to_message_id": "s0.0166.a23cff90@corpus.example.test",
+        "new_message_id": "mw.draft.1792009580252943868@mw.example.test",
+        "subject": "AW: Schlüsselübergabe für Wohnung 3 links (Vorgang 35)",
+        "raw_subject_header": "Subject: =?utf-8?q?AW:_Schl=C3=BCssel=C3=BCbergabe_f=C3=BCr_Wohnung_3_links_(Vorga?= =?utf-8?q?ng_35)?=",
+        "append_uid": 22,
+        "append_ms": 5.33,
+        "readback_flags": [
+          "\\Seen",
+          "\\Draft",
+          "\\Recent"
+        ],
+        "checks": {
+          "bytes_identical": true,
+          "envelope_subject": true,
+          "flag_draft": true,
+          "in_reply_to": true,
+          "message_id": true,
+          "quoted_text": true,
+          "references_chain": true,
+          "subject_enmime": true,
+          "subject_go_message": true,
+          "subject_header_ascii_encoded": true,
+          "umlaut_body": true
+        },
+        "ok": true,
+        "readback_headers": "Mime-Version: 1.0\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=utf-8; format=flowed\r\nX-Mailwerk-Draft: agent-proposal\r\nReferences: \u003cs0.0159.66c5558f@corpus.example.test\u003e\r\n \u003cs0.0160.81572c3c@corpus.example.test\u003e\r\n \u003cs0.0161.f038419a@corpus.example.test\u003e\r\n \u003cs0.0162.6a3990da@corpus.example.test\u003e\r\n \u003cs0.0163.422491e9@corpus.example.test\u003e\r\n \u003cs0.0164.5739d3a3@corpus.example.test\u003e\r\n \u003cs0.0165.0e659eba@corpus.example.test\u003e\r\n \u003cs0.0166.a23cff90@corpus.example.test\u003e\r\nIn-Reply-To: \u003cs0.0166.a23cff90@corpus.example.test\u003e\r\nMessage-Id: \u003cmw.draft.1792009580252943868@mw.example.test\u003e\r\nSubject: =?utf-8?q?AW:_Schl=C3=BCssel=C3=BCbergabe_f=C3=BCr_Wohnung_3_links_(Vorga?= =?utf-8?q?ng_35)?=\r\nTo: \"Spike Postfach\" \u003cspike@mw.example.test\u003e\r\nFrom: \"Spike Postfach\" \u003cspike@mw.example.test\u003e\r\nDate: Wed, 14 Oct 2026 22:26:20 +0200"
+      },
+      "seconds": 0.026806154
+    },
+    "7_idle_reconnect": {
+      "result": {
+        "appends": [
+          {
+            "after_s": 3,
+            "append_ms": 6.55,
+            "exists": 275,
+            "latency_ms_from_append_start": 505.483,
+            "message_id": "s0.idle.1792009583314279483@mw.example.test",
+            "notified": true,
+            "uid": 277
+          },
+          {
+            "after_s": 10,
+            "append_ms": 9.091,
+            "exists": 276,
+            "latency_ms_from_append_start": 17.741,
+            "message_id": "s0.idle.1792009590320479440@mw.example.test",
+            "notified": true,
+            "uid": 278
+          }
+        ],
+        "events_received": 2,
+        "reconnect": [
+          {
+            "case": "rst_during_idle",
+            "detect_ms": 0.249,
+            "detected": true,
+            "idle_wait_error": "write tcp 127.0.0.1:39700-\u003e127.0.0.1:45761: use of closed network connection",
+            "reconnect_ms": 16.868,
+            "reconnect_ok": true
+          },
+          {
+            "case": "server_kick",
+            "detect_ms": 109.195,
+            "detected": true,
+            "idle_wait_error": "write tcp 127.0.0.1:46680-\u003e127.0.0.1:45761: use of closed network connection",
+            "reconnect_ms": 15.323,
+            "reconnect_ok": true
+          },
+          {
+            "case": "blackhole_during_idle",
+            "detected": false,
+            "idle_close_hang": true,
+            "note": "nach 20 s nicht erkannt (kein Keepalive)",
+            "reconnect_ms": 14.357,
+            "reconnect_ok": true
+          }
+        ],
+        "resume_sync": {
+          "expected_uids": [
+            279,
+            277,
+            278
+          ],
+          "inbox_new_uids": [
+            277,
+            278,
+            279
+          ],
+          "mode": "incremental",
+          "ok": true,
+          "seconds": 0.050100429
+        }
+      },
+      "seconds": 39.833153965
+    },
+    "8_qresync_probe": {
+      "result": {
+        "enable_error": "imapclient: cannot enable \"QRESYNC\": not supported",
+        "supported_by_server": true
+      },
+      "seconds": 0.015950037
+    }
+  },
+  "server": "dovecot",
+  "started_at": "2026-10-14T22:26:19+02:00"
+}

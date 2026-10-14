@@ -17,7 +17,7 @@ Mailwerk ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go
 
 ## Sprache und Werkzeuge
 
-- **Go 1.24**, `CGO_ENABLED=0`. In `go.mod` bleibt `go 1.24.0`; nichts hinzufügen, was eine höhere Go-Version verlangt (`GOTOOLCHAIN=local` setzen, damit `go get` nicht still hochzieht). `modernc.org/sqlite` ist deshalb auf v1.45.0 festgelegt (ADR-005).
+- **Go**, `CGO_ENABLED=0`, immer `GOTOOLCHAIN=local` (sonst hebt `go get` die `go`-Zeile still an). Zielversion **1.27** (ADR-008); die Anhebung ist Schritt 0 von A01. Bis dahin bleibt `go.mod` bei `go 1.24.0` und `modernc.org/sqlite` bei v1.45.0 (v1.46.x zulässig; ADR-005). IMAP nur über `internal/imapx` (ADR-007).
 - Abhängigkeiten nur mit Begründung, Lizenz MIT/BSD/Apache. Versionen **nie raten oder erfinden**: `go get <modul>` auflösen lassen, geprüfte Version in `go.mod`, Begründung in der Commit-Nachricht.
 - Pakete: siehe `docs/architektur.md`, Paketübersicht. Fachlogik nur in Diensten und Handlern, **nie** in CLI-/MCP-Adaptern.
 

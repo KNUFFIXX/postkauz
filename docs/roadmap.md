@@ -4,7 +4,7 @@ Stand: **Phase 0, Gerüst** (Repository, Dokumentation und kompilierendes Go-Ger
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
-| Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | Gerüst fertig, Spike und Gate offen (`auftraege/A01_phase0.md`) |
+| Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. Nächstes: `auftraege/A01_phase0.md` (Schritt 0: Go-Anhebung) |
 | S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
@@ -16,11 +16,13 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Erledigt:** Repository, Lizenz, ADR-001 bis ADR-006, Architektur-/Datenmodell-/MCP-/CLI-/Sicherheitsdokumente, Go-Gerüst (Register, Executor, Policy-Stub, Audit-Typ, Migrationen mit FTS5, Provider-Interface, CLI mit `version`/`doctor`/`accounts list`), CI, Testserver-Compose.
 
-**Offen (Auftrag A01):** Spike-Ergebnis übernehmen (`spike/s0/`) und **Gate** entscheiden. Das Gate ist bestanden, wenn `github.com/emersion/go-imap/v2` gegen Dovecot und Stalwart Folgendes leistet: Login (TLS/STARTTLS), Fähigkeitserkennung (CONDSTORE, QRESYNC, IDLE, MOVE, SPECIAL-USE, UIDPLUS), Ordnerliste mit Rollen, Fenster-Erstsync mit Wiederaufnahme, `CHANGEDSINCE`-Abgleich, `APPEND` mit `APPENDUID`, IDLE mit Reconnect. Scheitert eines davon grundsätzlich (nicht nur lästig), wird ADR-001 überprüft (Rückfall Python); die Doku-Entscheidung trifft der Betreiber.
+**S0 erledigt (14.10.2026): Spike und Gate.** `go-imap/v2` v2.0.0-beta.8 besteht gegen Dovecot 2.4.5, Stalwart 0.11.8 und GreenMail: Erstsync in Fenstern (rund 1.000 bis 1.250 Nachrichten/s lokal), Inkrementalsync (CONDSTORE bzw. Vollvergleich), Löschungserkennung, Draft-APPEND mit identischen Bytes, IDLE, Reconnect. **Urteil: Gate Go bestanden mit Auflagen**, Bericht und Rohdaten in [`spike/s0/REPORT.md`](../spike/s0/REPORT.md). Auflagen und Entscheidungen: ADR-007 (go-imap-Auflagen: `internal/imapx`, Watchdog, WordDecoder, UID-SEARCH statt QRESYNC, `go-message`) und ADR-008 (Go-Version). Der Spike-Code ist Wegwerfcode in einem eigenen Go-Modul (`spike/s0`) und nicht Teil von `./...`.
+
+**Offen (Auftrag A01):** Schritt 0 (Go-Anhebung auf die Zielversion, Toolchain-Check), danach S1. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
 
-**Umfang:** Konto anlegen und testen (`account add/test`); Erstsync in Fenstern, inkrementell mit CONDSTORE/QRESYNC wo vorhanden, IDLE auf INBOX, Reconnect mit Backoff; Spiegel (Rohmail im Blob-Store, Metadaten in SQLite); MIME-Parser und Threading; Textextraktion für PDF/DOCX/TXT (abschaltbar); Volltextsuche mit deutscher Stemmung und Trigram; CLI mit `--json`; stdio-MCP **lesend** (Tools, Resources, Prompts aus [mcp.md](mcp.md)); Audit; Import aus mbox/Maildir mit Message-ID-Abgleich und Überlappung; Schlüsselverwaltung.
+**Umfang:** Konto anlegen und testen (`account add/test`); Erstsync in Fenstern, inkrementell mit CONDSTORE wo vorhanden, Löschungen per UID-SEARCH-Abgleich (QRESYNC fehlt in `go-imap`, ADR-007), IDLE auf INBOX, Reconnect mit Backoff und Watchdog; Spiegel (Rohmail im Blob-Store, Metadaten in SQLite); MIME-Parser und Threading; Textextraktion für PDF/DOCX/TXT (abschaltbar); Volltextsuche mit deutscher Stemmung und Trigram; CLI mit `--json`; stdio-MCP **lesend** (Tools, Resources, Prompts aus [mcp.md](mcp.md)); Audit; Import aus mbox/Maildir mit Message-ID-Abgleich und Überlappung; Schlüsselverwaltung.
 
 **Nicht enthalten:** Entwürfe, Tags, Verschieben, Papierkorb, HTTP, REST, Regeln, Versand.
 
@@ -78,11 +80,16 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 5. Gmail-API-/Graph-Anbindung (bring your own client), Embeddings/semantische Suche (lokal), Mehrbenutzerbetrieb mit Rollen je Mensch.
 6. **GUI** frühestens nach 1.0 und nur gegen REST (siehe Nicht-Ziele).
 
+## Entschiedene Fragen (14.10.2026)
+
+1. **Gate:** bestanden mit Auflagen (ADR-007).
+2. **Go-Version:** Zielversion 1.27, Anhebung als Schritt 0 von A01 (ADR-008).
+3. **Postfach-Aktionen:** Tags, Move und Trash bleiben in S3.
+4. **Sprache:** Programmausgaben Englisch, Doku Deutsch.
+5. **Erkennung des Versands (S2):** `Message-ID` zuerst, **Rückfall-Abgleich** über Empfänger, Betreff, Body-Hash und Zeitfenster; das Verhalten je Client wird in S2 gemessen.
+
 ## Offene Fragen
 
-1. **Gate:** Ergebnis des Spikes und Entscheidung Go vs. Python (Auftrag A01).
-2. **Go-Version:** `modernc.org/sqlite` ist wegen Go 1.24 auf v1.45.0 festgelegt (neuere Versionen verlangen Go ≥ 1.25). Anheben der Go-Version auf 1.25 oder bei 1.24 bleiben?
-3. **Aufteilung der Postfach-Aktionen:** In den Entscheidungen steht „Löschen nur bis zum Papierkorb" für Agenten; Tags/Move/Trash liegen hier in S3. Einverstanden, oder Move/Trash schon in S2?
-4. **Sprache der Programmausgaben:** Englisch (Gerüst) oder Deutsch/zweisprachig?
-5. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
-6. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
+1. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
+2. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
+3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, OAuth2 über `go-sasl`, Schlüsselbund, UIDVALIDITY-Wechsel, COMPRESS/BINARY, Race-Detector, QRESYNC per Beitrag oder Fork.

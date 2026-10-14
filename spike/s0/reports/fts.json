@@ -1,0 +1,106 @@
+{
+  "command": "fts",
+  "duration_s": 0.319689638,
+  "result": {
+    "compile_options_fts": [
+      "ENABLE_FTS5"
+    ],
+    "index_build_s_both_tables": 0.252085524,
+    "queries": [
+      {
+        "table": "f_uni",
+        "match": "\"Zählerstände\"",
+        "hits": 325,
+        "expected_substring_hits": 325,
+        "note": "ganzes Wort mit Umlaut"
+      },
+      {
+        "table": "f_uni",
+        "match": "zahlerstande",
+        "hits": 325,
+        "expected_substring_hits": 325,
+        "note": "ohne Umlaute (remove_diacritics 2)"
+      },
+      {
+        "table": "f_uni",
+        "match": "Grundsteuer",
+        "hits": 310,
+        "expected_substring_hits": 310
+      },
+      {
+        "table": "f_uni",
+        "match": "steuer",
+        "hits": 0,
+        "expected_substring_hits": 310,
+        "note": "Teilwort -\u003e unicode61 findet nur ganze Token"
+      },
+      {
+        "table": "f_uni",
+        "match": "Grund*",
+        "hits": 310,
+        "expected_substring_hits": 310,
+        "note": "Praefixsuche"
+      },
+      {
+        "table": "f_uni",
+        "match": "Erdgeschoß",
+        "hits": 80,
+        "expected_substring_hits": 80,
+        "note": "ß"
+      },
+      {
+        "table": "f_uni",
+        "match": "Erdgeschoss",
+        "hits": 0,
+        "expected_substring_hits": 0,
+        "note": "ß vs ss: keine Faltung"
+      },
+      {
+        "table": "f_tri",
+        "match": "\"steuer\"",
+        "hits": 310,
+        "expected_substring_hits": 310,
+        "note": "Teilwort per Trigram"
+      },
+      {
+        "table": "f_tri",
+        "match": "\"ählerst\"",
+        "hits": 325,
+        "expected_substring_hits": 325,
+        "note": "Teilwort mit Umlaut"
+      },
+      {
+        "table": "f_tri",
+        "match": "\"ahlerst\"",
+        "hits": 325,
+        "expected_substring_hits": 325,
+        "note": "Teilwort ohne Umlaut (remove_diacritics 1)"
+      },
+      {
+        "table": "f_tri",
+        "match": "\"gärtner\"",
+        "hits": 241,
+        "expected_substring_hits": 241
+      },
+      {
+        "table": "f_tri",
+        "match": "\"üb\"",
+        "hits": 0,
+        "expected_substring_hits": 0,
+        "note": "2 Zeichen: Trigram braucht \u003e= 3"
+      }
+    ],
+    "sqlite_version": "3.51.2",
+    "tokenizers": {
+      "ascii": "ja",
+      "icu": "nein: SQL logic error: no such tokenizer: icu (1)",
+      "porter unicode61": "ja",
+      "trigram": "ja",
+      "trigram case_sensitive 0 remove_diacritics 1": "ja",
+      "unicode61": "ja",
+      "unicode61 remove_diacritics 2": "ja"
+    }
+  },
+  "server": "offline",
+  "started_at": "2026-10-14T22:18:45+02:00"
+}
