@@ -24,7 +24,7 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 ### Stand S1.4/S1.5 (15.10.2026, erledigt; Abnahme D1 offen)
 
-**Akzeptanz S1.4 erfüllt:** Die 1.000 Korpus-Nachrichten werden in Fenstern gespiegelt (Rohmail als Blob, Metadaten und geparste Felder in SQLite, Text in `bodies`), `sync --full -a <konto>` endet mit `1000 messages mirrored` und `0 errors` (Dovecot, Stalwart, GreenMail; Integrationstest und von Hand mit der Binärdatei). Abbruch mitten im Fenster, nach einem Fenster und **echtes `kill -9` eines Kindprozesses** (`TestKill9DuringInitialSync`, unter Windows `TerminateProcess`) setzen beim nächsten Lauf fort: dieselbe Anzahl, keine Doppelten (Nachrichten, Zuordnungen, Message-IDs geprüft). Von Hand gegen Dovecot: `kill -9` und Strg+C, danach `1000 messages mirrored`.
+**Akzeptanz S1.4 erfüllt:** Die 1.000 Korpus-Nachrichten werden in Fenstern gespiegelt (Rohmail als Blob, Metadaten und geparste Felder in SQLite, Text in `bodies`), `sync --full -a <konto>` endet mit `1000 messages mirrored` und `0 errors` (Dovecot, Stalwart, GreenMail; Integrationstest und von Hand mit der Binärdatei). Abbruch mitten im Fenster, nach einem Fenster und **echtes `kill -9` eines Kindprozesses** (`TestKill9DuringInitialSync`; unter Windows wäre das `TerminateProcess`, dort aber **nicht ausgeführt, ungetestet**: nur kompiliert) setzen beim nächsten Lauf fort: dieselbe Anzahl, keine Doppelten (Nachrichten, Zuordnungen, Message-IDs geprüft). Von Hand gegen Dovecot: `kill -9` und Strg+C, danach `1000 messages mirrored`.
 
 **Akzeptanz S1.5 erfüllt:**
 
@@ -93,7 +93,7 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 **Akzeptanzkriterien:**
 
 1. **Zwei Serverfamilien bestehen die Testmatrix** (Dovecot, Stalwart; je per Docker), nachts und auf Abruf. Ein dritter Anbieter (z. B. ein gehostetes Postfach) wird vom Betreiber **manuell** gegengeprüft; er ist nie Teil der CI.
-2. **Erstsync:** Ein synthetisches Postfach mit 50.000 Nachrichten (rund 5 GB) wird auf einem normalen PC in unter 60 Minuten gespiegelt; im Leerlauf dauert ein inkrementeller Abgleich unter 5 Sekunden. Ein Abbruch mitten im Erstsync (`kill -9`) setzt ohne Doppelte fort (Test).
+2. **Erstsync:** Ein synthetisches Postfach mit 50.000 Nachrichten (Testkorpus rund 245 MB, rund 4,9 KB je Nachricht; lokal gemessen 78 s, P2) wird auf einem normalen PC in unter 60 Minuten gespiegelt; echte Postfächer mit Anhängen sind deutlich größer (Hochrechnung mit 5 GB über WAN in `spike/s0/REPORT.md`, Messung durch den Betreiber offen); im Leerlauf dauert ein inkrementeller Abgleich unter 5 Sekunden. Ein Abbruch mitten im Erstsync (`kill -9`) setzt ohne Doppelte fort (Test).
 3. **Änderungen von außen:** Eine Flag-Änderung oder Löschung auf dem Server ist nach spätestens einem Sync-Intervall lokal sichtbar; in der INBOX nach wenigen Sekunden (IDLE). Ein `UIDVALIDITY`-Wechsel führt zu einem Abgleich per Message-ID, nicht zu Verlust oder Doppelten (Test).
 4. **Suche:** Antwort unter 300 ms bei 100.000 Nachrichten; deutsche Flexionen, Umlaute und Teilwörter werden gefunden (Testsatz aus [testkorpus.md](testkorpus.md)).
 5. **Import:** Ein mbox- bzw. Maildir-Bestand mit Überlappung zu einem bereits gesyncten Konto erzeugt keine Doppelten; die Zählung (neu/vorhanden/übersprungen) wird ausgegeben.

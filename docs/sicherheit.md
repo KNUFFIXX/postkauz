@@ -1,6 +1,6 @@
 # Sicherheitsmodell
 
-Stand: S1.1 (15.10.2026). Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor, die append-only-Audit-Tabelle mit SQLite-Writer, die Ablage von Zugangsdaten (Abschnitt 4) und deren Tests. Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
+Stand: S1.5 (15.10.2026, mit den Korrekturen aus der Gegenprüfung). Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor samt **Vertragstest** über alle Operationen, Rollen und Trockenlauf-Varianten, die append-only-Audit-Tabelle mit SQLite-Writer (Fehler-Ereignis auch nach Abbruch), die Ablage von Zugangsdaten (Abschnitt 4), die lesenden Operationen `sync.run` (R1, `mail:sync`), `mailboxes.list` und `messages.get` (R0) mit Parser-Limits (Abschnitt 7), terminalsichere CLI-Ausgabe von Mailinhalt (Abschnitt 8) und deren Tests. Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
 
 ## 1. Schutzgüter und Annahmen
 
