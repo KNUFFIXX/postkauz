@@ -28,8 +28,18 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 - **S1.3:** `internal/imapx` mit `Session` (Watchdog-Abbruch → Close + Reconnect mit exponentiellem Backoff und Jitter; `ErrAuth`/`ErrRejected` ohne Wiederholung), LIST mit SPECIAL-USE und LIST-STATUS, CREATE, NOOP; IMAP-Provider `Connect`/`ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen, neue Rolle `all`) und Ordnerzustand; Integrationstests gegen Dovecot, Stalwart, GreenMail (`make integration`, nur mit `POSTKAUZ_IT`); `make testmail-setup` richtet Stalwart ein; `make race` und CI-Job `race`; `make guard` prüft den go-imap-Pin.
 
+- **S1.4/S1.5 Sync:** `internal/mailsync` (Erstsync in Fenstern, wiederaufnehmbar über den Cursor je Ordner, eine Transaktion je Fenster, Idempotenz über `(mailbox_id, uid)`; Abgleich per Message-ID und Größe bzw. `content_hash` ohne erneutes Laden; Löschungen per UID-SEARCH-Abgleich nur bei unpassenden Zahlen; Flags per CONDSTORE `CHANGEDSINCE` oder vollem Abgleich; UIDVALIDITY-Wechsel mit Neuzuordnung; `Watch` mit IDLE auf INBOX und Intervall); IMAP-Provider `Changes`, `FetchHeaders`, `FetchRaw`, `Idle`; `imapx` mit EXAMINE/SELECT, UID SEARCH (ESEARCH), FETCH, STATUS, APPEND, STORE (ohne `\Deleted`), IDLE mit eigenem Neustart (5 bis 10 min).
+- Operationen `sync.run` (Scope `mail:sync`, R1), `mailboxes.list` und `messages.get` (R0); CLI `sync [--full] [--watch]`, `mailbox list`, `show <id> [--headers]` (minimal), globales `-a/--account`; Strg+C bricht geordnet ab (`interrupted`).
+- Migration `0002_sync_state.sql`: Ordnerrolle `all`, Sync-Phase je Ordner, Flags je Ordnerkopie; vor jeder Migration eines Bestands ein Snapshot per `VACUUM INTO`.
+- Werkzeug `corpusload` (`make corpus-load`): Korpus per APPEND in einen lokalen Testserver laden; `-mark-seen` für die Abnahme D1.6.
+- Integrationstests des Syncs gegen Dovecot, Stalwart, GreenMail (Absturz und Wiederaufnahme, Änderungen von außen, UIDVALIDITY, IDLE); Unit-Test mit echtem `kill -9` eines Kindprozesses.
+- P2: Messung mit 50.000 Nachrichten als Nachtrag in `spike/s0/REPORT.md`; `docs/abnahme_D1.md` mit den Abnahme-Kommandos für Windows.
+
 ### Changed
 
+- Testserver auf geprüfte Versionen festgelegt: Dovecot 2.4.5, GreenMail 2.1.14 (Stalwart bleibt 0.11.8).
+- `imapx`-Watchdog misst Schweigen statt Gesamtdauer (lange FETCHes über langsame Leitungen brechen nicht mehr ab); unlesbare Serverantworten sind `ErrProtocol` (Verbindung verwerfen, nicht wiederholen); der Sync grenzt betroffene Nachrichten durch Halbieren ein.
+- Provider-Schnittstelle: `Changes` mit `ChangesOptions` und `Present`, `FetchHeaders`/`FetchRaw` mit UIDVALIDITY-Prüfung, `FetchRaw` für ein Fenster von UIDs.
 - CI: `actions/checkout` und `actions/setup-go` auf v7 (ersetzt Dependabot-PRs #1/#2).
 - `account test` nutzt den IMAP-Provider (eine Verbindung, ein Versuch); Serverablehnungen (NO/BAD) gelten nicht mehr als Verbindungsfehler.
 - `policy.Check`: `--dry-run` gilt auch für R1-Operationen (wurde bisher ignoriert).

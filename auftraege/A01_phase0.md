@@ -92,6 +92,8 @@ Du musst nichts programmieren. Jeder Punkt: Kommando eingeben, Ergebnis mit „E
 
 ### D1: nach S1.5 (Sync)
 
+Ausführliche Anleitung mit PowerShell-Kommandos (Windows), Korpus-Lader und erwarteten Ausgaben: [`docs/abnahme_D1.md`](../docs/abnahme_D1.md).
+
 Testserver: `make testmail-up`; Dovecot ist auf Port 11143 (Nutzer `tester`, Passwort `pass`).
 
 1. `./bin/postkauz account add demo --imap 127.0.0.1:11143 --user tester --insecure-test-server` (fragt nach dem Passwort: `pass`) → `account demo added`.

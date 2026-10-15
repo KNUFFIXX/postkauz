@@ -1,11 +1,9 @@
-Stand: **S1.3 erledigt** (15.10.2026: `internal/imapx` mit Watchdog, Reconnect und Backoff; IMAP-Provider mit Fähigkeiten und Ordnerrollen; Integrationstests gegen Dovecot, Stalwart, GreenMail; `make race`). Davor S1.2 (Blob-Store, MIME-Parser, Threading, Korpus) und S1.1 (Konten, Store, Audit, Schlüsselbund). Nächstes: S1.4 (Erstsync in Fenstern, resume-fähig). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
-
-Stand: **S1.2 erledigt** (15.10.2026: Blob-Store, MIME-Parser auf `go-message`, Threading per Message-ID, Korpus-Generator `make corpus`; davor S1.1: Konten, Store, Audit, Schlüsselbund, `doctor`). Nächstes: S1.3 (`internal/imapx` vervollständigen, IMAP-Provider mit Ordnerrollen, Integrationstests). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.4 und S1.5 erledigt** (15.10.2026: Sync mit Erstsync in Fenstern, Wiederaufnahme ohne Doppelte, inkrementell mit CONDSTORE bzw. UID-Scan, Löschabgleich per UID SEARCH, UIDVALIDITY-Wechsel mit Abgleich per Message-ID, `sync --watch` mit IDLE; `mailbox list`, minimales `show`; Migration 0002 mit Snapshot; P2-Messung mit 50.000 Nachrichten). **Abnahme D1 durch den Betreiber steht aus** (`docs/abnahme_D1.md`). Danach: S1.6 (Threading, Body-Bereinigung, Anhänge). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.3 erledigt 15.10.2026**; S1.4 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026** (Abnahme D1 offen); S1.6 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +18,34 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.2. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.6 (nach der Abnahme D1). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.4/S1.5 (15.10.2026, erledigt; Abnahme D1 offen)
+
+**Akzeptanz S1.4 erfüllt:** Die 1.000 Korpus-Nachrichten werden in Fenstern gespiegelt (Rohmail als Blob, Metadaten und geparste Felder in SQLite, Text in `bodies`), `sync --full -a <konto>` endet mit `1000 messages mirrored` und `0 errors` (Dovecot, Stalwart, GreenMail; Integrationstest und von Hand mit der Binärdatei). Abbruch mitten im Fenster, nach einem Fenster und **echtes `kill -9` eines Kindprozesses** (`TestKill9DuringInitialSync`, unter Windows `TerminateProcess`) setzen beim nächsten Lauf fort: dieselbe Anzahl, keine Doppelten (Nachrichten, Zuordnungen, Message-IDs geprüft). Von Hand gegen Dovecot: `kill -9` und Strg+C, danach `1000 messages mirrored`.
+
+**Akzeptanz S1.5 erfüllt:**
+
+- **Test je Strategie:** `condstore` gegen Dovecot und Stalwart, `uid-scan` gegen GreenMail und den In-Prozess-Server; je Server Flag-Änderung, Löschung und neue Nachricht von außen nach einem Lauf sichtbar (`TestIntegrationSync`). Leerlauf-Inkrementallauf bei 1.000 Nachrichten: 7 ms (Stalwart), 20 ms (Dovecot), 390 ms (GreenMail).
+- **Blackhole:** Verstummt der Server während IDLE, fällt das beim fälligen Neustart am unbeantworteten `DONE` auf (Test mit 200 ms Neustart, erkannt nach rund 0,5 s), schweigt er schon vorher, beim IDLE-Start; danach Reconnect mit Backoff (S1.3).
+- **IDLE:** neue Nachricht in der INBOX nach 60 bis 570 ms lokal sichtbar (Stalwart, GreenMail, Dovecot mit Hibernate); IDLE startet sich alle 5 bis 10 Minuten selbst neu (Standard 8, `--idle-restart`).
+- **Flag von außen → `show <id> --headers` zeigt `seen`** (CLI-Test `TestSyncMailboxListShow`; für D1.6 `corpusload -mark-seen`).
+- **UIDVALIDITY-Wechsel (P5):** Ordner gelöscht, neu angelegt, gleiche Nachrichten: Reset, Abgleich per Message-ID und Größe, keine Doppelten, **kein Inhalt erneut geladen** (alle drei Server); Nachrichten ohne Message-ID per `content_hash`.
+- **P2** (50.000 Nachrichten lokal, Dovecot): Erstsync 78 s (638/s), Leerlauf-Abgleich 0,15 bis 0,19 s, `UID SEARCH ALL` über 50.000 UIDs 60 ms (ESEARCH) bzw. 72 ms, voller Flag-Abgleich 198 ms. Einzelheiten und WAN-Hochrechnung: [`spike/s0/REPORT.md`](../spike/s0/REPORT.md), Nachtrag P2. WAN-Messung durch den Betreiber offen.
+- `mailbox list -a <konto> --json` mit `total` (laut Server), `mirrored` und `unread` je Ordner (D1.5, vorgezogen aus S1.8).
+
+**Umsetzung:** `internal/mailsync` (Engine, Watch, Runner), IMAP-Provider `Changes`/`FetchHeaders`/`FetchRaw`/`Idle`, Store-Spiegel mit einer Transaktion je Fenster, Operationen `sync.run`, `mailboxes.list`, `messages.get`; Ablauf in [architektur.md](architektur.md), „Änderungserkennung". Migration 0002 (Rolle `all`, Sync-Phase, Flags je Ordnerkopie) mit Snapshot per `VACUUM INTO` vor der Migration. Testserver auf Dovecot 2.4.5 und GreenMail 2.1.14 festgelegt. `make race` grün (rund 55 s, der Korpus-Test dominiert).
+
+**Befunde:**
+
+- **Stalwart 0.11.8:** Nach vielen schnellen Schreibvorgängen kann die zwischengespeicherte Ordnerliste veralten, bis zur nächsten Änderung am Konto; neue Sitzungen sehen eben angelegte Ordner nicht. Der Korpus-Lader macht deshalb nach einer Sekunde eine kleine Änderung. Im Betrieb heißt das höchstens: Ein neuer Ordner erscheint einen Sync später.
+- **GreenMail 2.1.14:** liefert für `BODY.PEEK[HEADER.FIELDS ("Message-ID")]` nichts (go-imap setzt Feldnamen in Anführungszeichen), daher holt der Sync den ganzen Kopf; sendet bei manchen rohen 8-Bit-Kopfzeilen eine falsche Literal-Länge (go-imap verliert den Takt; jetzt `ErrProtocol`, die Nachricht wird eingegrenzt und als Fehler übersprungen); einzelne `UID FETCH` dauern bei 18.000 Nachrichten im Ordner 12 bis 13 s (für Lastmessungen ungeeignet).
+- **go-imap-Testserver** (In-Prozess): liefert für Nachrichten mit einer Kopfzeile ohne Doppelpunkt einen leeren `BODY[]`; der Sync zählt das als Fehler (Server meldet Größe, liefert nichts) statt eine leere Nachricht zu speichern. Die Unit-Tests laden diese zwei Korpus-Nachrichten deshalb nicht.
+- **Kopien derselben Nachricht** (Gmail-Labels, Kopien, verschobene Nachrichten) werden eine Zeile in `messages` mit mehreren Zuordnungen; Flags stehen je Kopie, die Nachricht zeigt ein Flag, wenn eine Kopie es trägt (Frage an den Betreiber unten).
+
+**Nicht in S1.4/S1.5 (bewusst verschoben):** Tabelle `jobs` (der Dauerläufer arbeitet ohne sie; mit Index/Extraktion S1.6/S1.7); `sync --watch` für mehrere Konten in einem Prozess (je Konto ein Prozess); Threads, Anhänge, HTML-Text (S1.6); volles `show` mit Untrusted-Hülle (S1.8/S1.9); `--quiet` (S1.8); Gmail `X-GM-EXT-1` (P1, manuell; bis dahin Abgleich der „Alle Nachrichten"-Dubletten per Message-ID); Speicherbedarf beim Erstsync messen (mit der WAN-Messung).
 
 ### Stand S1.3 (15.10.2026, erledigt)
 
@@ -131,9 +154,14 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 6. **Commit-Sprache** (15.10.2026): Englisch.
 7. **Passwörter ohne Schlüsselbund** (15.10.2026): kein Dateispeicher mit Passphrase; es bleibt bei Umgebungsvariable bzw. `insecure-file` nur für Testserver.
 8. **Race-Detector** (15.10.2026): eigenes Ziel `make race` (CGO) und CI-Job ab S1.3, nicht Teil von `make check`.
+9. **Ordnerrolle `all`** (15.10.2026): kommt mit Migration 0002 in die Datenbank (umgesetzt).
+10. **Testserver-Versionen** (15.10.2026): Dovecot 2.4.5 und GreenMail 2.1.14 festgelegt (umgesetzt), Stalwart bleibt 0.11.8.
+11. **Snapshot vor Migrationen** (15.10.2026): `VACUUM INTO` mit Migration 0002 umgesetzt.
 
 ## Offene Fragen
 
 1. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
 2. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
-3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, UIDVALIDITY-Wechsel, COMPRESS/BINARY, QRESYNC per Beitrag oder Fork. Erledigt bzw. als Entwurf: P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen), P7 (Race-Detector: `make race` und CI-Job, S1.3).
+3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1` (P1, manuell), WAN-Latenz (P2, Betreiber), COMPRESS/BINARY (P6, später), QRESYNC per Beitrag oder Fork (P8, nach S1; nach P2 für 50.000 Nachrichten nicht nötig). Erledigt bzw. als Entwurf: P2 lokal (50.000 Nachrichten, S1.5), P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen), P5 (UIDVALIDITY-Wechsel, S1.5), P7 (Race-Detector: `make race` und CI-Job, S1.3).
+4. **Kopien als eine Nachricht** (S1.5): Liegt dieselbe Nachricht in mehreren Ordnern (Kopie, Gmail-Label), ist sie lokal eine Nachricht mit mehreren Ordnern; ein Flag gilt als gesetzt, wenn eine Kopie es trägt. Vorschlag: so lassen.
+5. **Dauerläufer für mehrere Konten** (S1.5): `sync --watch` beobachtet ein Konto; für mehrere Konten je ein Prozess. Vorschlag: ein gemeinsamer Dauerläufer erst mit dem Betriebskonzept (S3).
