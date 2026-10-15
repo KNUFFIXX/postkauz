@@ -667,3 +667,23 @@ func (c *Corpus) Write(dir string) error {
 	}
 	return os.WriteFile(filepath.Join(dir, "corpus.json"), append(b, '\n'), 0o644)
 }
+
+// Read liest einen mit Write geschriebenen Korpus (corpus.json und *.eml).
+func Read(dir string) (*Corpus, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "corpus.json"))
+	if err != nil {
+		return nil, err
+	}
+	c := &Corpus{}
+	if err := json.Unmarshal(b, &c.Manifest); err != nil {
+		return nil, fmt.Errorf("corpus: %s: %w", dir, err)
+	}
+	for _, e := range c.Manifest.Messages {
+		raw, err := os.ReadFile(filepath.Join(dir, filepath.Base(e.File)))
+		if err != nil {
+			return nil, err
+		}
+		c.Raw = append(c.Raw, raw)
+	}
+	return c, nil
+}

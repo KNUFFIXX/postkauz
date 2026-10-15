@@ -13,7 +13,7 @@ export CGO_ENABLED ?= 0
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vet fmt fmt-check lint guard pii-check check cross corpus corpus-load testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -81,6 +81,15 @@ CORPUS_COUNT ?= 1000
 CORPUS_SEED  ?= 42
 corpus:
 	go run ./internal/corpus/cmd/gencorpus -out $(CORPUS_DIR) -count $(CORPUS_COUNT) -seed $(CORPUS_SEED)
+
+# Korpus per IMAP APPEND in einen lokalen Testserver laden (Abnahme D1.3).
+# Standard: Dovecot, Nutzer tester. Nur localhost; verweigert volle Ordner.
+#   make corpus-load LOAD_IMAP=127.0.0.1:13143 LOAD_USER=test      (GreenMail)
+LOAD_IMAP     ?= 127.0.0.1:11143
+LOAD_USER     ?= tester
+LOAD_PASSWORD ?= pass
+corpus-load:
+	go run ./internal/corpus/cmd/corpusload -imap $(LOAD_IMAP) -user $(LOAD_USER) -password $(LOAD_PASSWORD)
 
 testmail-up:
 	$(COMPOSE) up -d
