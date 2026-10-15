@@ -25,6 +25,8 @@ blobs/
 *.key
 config.toml
 secrets/
+# internal/secrets ist das Go-Paket für den Schlüsselbund, kein Geheimnis
+!/internal/secrets/
 
 # Editor und Betriebssystem
 .idea/
