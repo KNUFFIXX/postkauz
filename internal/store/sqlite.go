@@ -3,12 +3,28 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
 	_ "modernc.org/sqlite" // reiner Go-Treiber, registriert "sqlite"; FTS5 ist enthalten
 )
+
+// ErrSchemaTooNew: Die Datenbank wurde von einer neueren Programmversion migriert.
+var ErrSchemaTooNew = errors.New("store: database schema is newer than this program")
+
+// KnownSchemaVersion ist die höchste eingebettete Migration.
+func KnownSchemaVersion() int {
+	ms, err := Migrations()
+	if err != nil {
+		return 0
+	}
+	return len(ms)
+}
+
+func unixMilliUTC(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 
 // SQLite ist die Store-Implementierung auf modernc.org/sqlite.
 type SQLite struct {
@@ -42,6 +58,13 @@ func Open(path string) (*SQLite, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: connect: %w", err)
 	}
+	if path != ":memory:" {
+		// Nur für den Nutzer lesbar (docs/sicherheit.md, Abschnitt 10);
+		// SQLite legt Dateien sonst nach umask an (meist 0644).
+		for _, f := range []string{path, path + "-wal", path + "-shm"} {
+			_ = os.Chmod(f, 0o600)
+		}
+	}
 	return &SQLite{db: db}, nil
 }
 
@@ -61,6 +84,12 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 	ms, err := Migrations()
 	if err != nil {
 		return err
+	}
+	// Schutz vor stiller Beschädigung: Eine ältere Binärdatei fasst eine
+	// Datenbank mit neuerem Schema nicht an (docs/datenmodell.md, Migrationen).
+	if have > len(ms) {
+		return fmt.Errorf("%w: database has schema version %d, this program knows up to %d; use a newer version",
+			ErrSchemaTooNew, have, len(ms))
 	}
 	for _, m := range ms {
 		if m.Version <= have {

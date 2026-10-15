@@ -2,8 +2,8 @@
 // Migrationen. Die Datenbank ist die Wahrheit für Beobachtung, Archiv,
 // Index, Freigaben und Audit (ADR-003); Rohmails liegen im Blob-Store.
 //
-// Stand Phase 0: Migrationsläufer und Öffnen sind da; die fachlichen
-// Repositories (Konten, Nachrichten, Suche, Audit-Writer) folgen in Schnitt 1.
+// Stand S1.1: Migrationsläufer mit Schema-Schutz, Konten (accounts.go) und
+// SQLite-Audit-Writer (audit.go). Nachrichten, Suche und Blobs folgen in S1.2ff.
 package store
 
 import (

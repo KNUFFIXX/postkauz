@@ -27,6 +27,7 @@ CREATE TABLE accounts (
     username       TEXT NOT NULL,
     auth_type      TEXT NOT NULL DEFAULT 'password' CHECK (auth_type IN ('password','app_password','oauth2')),
     credential_ref TEXT NOT NULL,              -- Name im Schlüsselbund, nie der Wert
+    insecure_test_server INTEGER NOT NULL DEFAULT 0 CHECK (insecure_test_server IN (0,1)),  -- Klartext/selbstsigniert erlaubt, nur localhost
     sync_policy    TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(sync_policy)),
     capabilities   TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(capabilities)),
     status         TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','ok','error','disabled')),

@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -51,7 +53,8 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 }
 
 func TestOpenOnDiskUsesWAL(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "pk.db"))
+	dbPath := filepath.Join(t.TempDir(), "pk.db")
+	s, err := Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +62,9 @@ func TestOpenOnDiskUsesWAL(t *testing.T) {
 	var mode string
 	if err := s.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
 		t.Fatalf("journal_mode = %q, %v", mode, err)
+	}
+	if st, err := os.Stat(dbPath); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
+		t.Fatalf("database file must be 0600: %v %v", st.Mode(), err)
 	}
 	var fk int
 	_ = s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk)
