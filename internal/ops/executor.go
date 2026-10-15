@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/KNUFFIXX/mailwerk/internal/audit"
-	"github.com/KNUFFIXX/mailwerk/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // Executor führt Operationen durch die feste Kette aus:

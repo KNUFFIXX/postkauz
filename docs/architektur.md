@@ -2,7 +2,7 @@
 
 Stand: Phase 0 (Gerüst). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
 
-„Mailwerk" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
+„PostKauz" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
 
 ## 1. Ziel in einem Absatz
 
@@ -13,7 +13,7 @@ Ein lokal laufender E-Mail-Client **ohne GUI**, der ein vorhandenes IMAP-Postfac
 ```mermaid
 flowchart LR
   subgraph Oberflaechen["Oberflächen (dünne Adapter)"]
-    CLI["CLI: mailwerk / mw"]
+    CLI["CLI: postkauz / pk"]
     MCP["MCP-Server: stdio (S1), HTTP (S3)"]
     REST["REST + OpenAPI (nach S3)"]
   end
@@ -60,7 +60,7 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 
 | Paket | Aufgabe | Stand im Gerüst |
 |---|---|---|
-| `cmd/mailwerk` | `main`, ruft `cli.Run` | fertig |
+| `cmd/postkauz` | `main`, ruft `cli.Run` | fertig |
 | `internal/brand` | Name, Alias, Präfixe an einer Stelle | fertig |
 | `internal/ops` | Register, Executor, Beispiel `accounts.list` | Gerüst + Tests |
 | `internal/policy` | Scope, Risiko R0–R3, `Check` | Stub + Tests |
@@ -84,10 +84,10 @@ Es gibt keine einzelne „Wahrheit". Zwei Datenbestände haben je eigene Zustän
 Konsequenzen, die als Regeln gelten:
 
 1. **Server gewinnt beim Zustand.** Der nächste `Changes()`-Lauf überschreibt lokale Flags und Ordnerzuordnungen. Lokale Schreibaktionen sind „optimistisch mit Pending-Markierung", bis der Server sie bestätigt.
-2. **Der Server löscht, das Archiv behält.** Verschwindet eine Nachricht serverseitig, setzt Mailwerk `messages.deleted_remote_at` und behält Rohmail und Index. Eine Aufbewahrungs- oder Löschfrist ist eine eigene, ausdrückliche Operation (ab S3, Löschkonzept), nie ein Nebeneffekt des Sync.
+2. **Der Server löscht, das Archiv behält.** Verschwindet eine Nachricht serverseitig, setzt PostKauz `messages.deleted_remote_at` und behält Rohmail und Index. Eine Aufbewahrungs- oder Löschfrist ist eine eigene, ausdrückliche Operation (ab S3, Löschkonzept), nie ein Nebeneffekt des Sync.
 3. **Anbieterwechsel synchronisiert das Archiv nie zurück.** Wer das Konto wechselt, legt ein neues Konto an; das alte Archiv bleibt lesbar. Es gibt keine Operation „Archiv in neues Postfach hochladen" (außer dem bewussten Export, S3).
 4. **Erstabgleich und Import über Identität, nicht über Datum.** Ein Thunderbird-Import (mbox/Maildir) und der erste IMAP-Abgleich erkennen Duplikate per `Message-ID` und `content_hash`, mit Überlappung; „alles ab Datum X" ist verboten, weil es Lücken und Doppelte erzeugt.
-5. **Entwürfe sind lokal-führend bis zum APPEND.** Ein Entwurf entsteht lokal (`drafts`), wird per IMAP APPEND in den Entwürfe-Ordner gelegt und dort vom Menschen weiterbearbeitet oder gesendet. Ab dem Zeitpunkt, an dem der Mensch ihn im Mailclient anfasst, ist die Serverkopie maßgeblich; Mailwerk überschreibt sie nicht mehr.
+5. **Entwürfe sind lokal-führend bis zum APPEND.** Ein Entwurf entsteht lokal (`drafts`), wird per IMAP APPEND in den Entwürfe-Ordner gelegt und dort vom Menschen weiterbearbeitet oder gesendet. Ab dem Zeitpunkt, an dem der Mensch ihn im Mailclient anfasst, ist die Serverkopie maßgeblich; PostKauz überschreibt sie nicht mehr.
 
 ## 4. Provider-Interface: JMAP-Semantik, IMAP-Abbildung
 
@@ -123,7 +123,7 @@ Die Strategie folgt den erkannten Fähigkeiten (`Capabilities.SyncStrategy()`). 
 - **UIDVALIDITY-Wechsel** setzt `ChangeSet.Reset`. Der Aufrufer gleicht dann den Ordner per `Message-ID`/`content_hash` neu ab (Regel 4 oben), er lädt nicht blind alles neu.
 - **Erstsync in Fenstern** (`limit`, `ChangeSet.More`): resume-fähig, der neue `SyncState` wird erst **nach** erfolgreicher lokaler Verarbeitung gespeichert. Ein Absturz mitten im Fenster wiederholt das Fenster; Idempotenz entsteht über den eindeutigen Schlüssel `(mailbox_id, uid)` und `content_hash`.
 - **Reconnect mit Backoff** (exponentiell, mit Obergrenze und Jitter). `ErrAuth` wird **nicht** wiederholt: ein Audit-Ereignis und ein Hinweis in `doctor`, sonst sperren Anbieter das Konto.
-- **Gmail-Eigenheiten** (`GmailExtensions`): Der Ordner „Alle Nachrichten" enthält jede Nachricht ein weiteres Mal. Mailwerk behandelt Labels als Ordner und dedupliziert über `Message-ID`; eine Nachricht darf in `message_mailboxes` mehrfach vorkommen, in `messages` nur einmal. Verbindungslimit (15 je Konto) beachten: ein Pool von höchstens 3–4 Verbindungen.
+- **Gmail-Eigenheiten** (`GmailExtensions`): Der Ordner „Alle Nachrichten" enthält jede Nachricht ein weiteres Mal. PostKauz behandelt Labels als Ordner und dedupliziert über `Message-ID`; eine Nachricht darf in `message_mailboxes` mehrfach vorkommen, in `messages` nur einmal. Verbindungslimit (15 je Konto) beachten: ein Pool von höchstens 3–4 Verbindungen.
 
 ### Versand (`Submission`)
 
@@ -150,9 +150,9 @@ Die Oberflächen sind **dünne, ausdrücklich geschriebene Adapter** mit je eine
 
 | Operation | CLI | MCP-Tool | REST (später) |
 |---|---|---|---|
-| `accounts.list` | `mailwerk accounts list` | `mail_list_accounts` | `POST /v1/ops/accounts.list` |
-| `messages.search` | `mailwerk search` | `mail_search` | `POST /v1/ops/messages.search` |
-| `drafts.create` | `mailwerk draft new` / `draft reply` | `mail_create_draft` | `POST /v1/ops/drafts.create` |
+| `accounts.list` | `postkauz accounts list` | `mail_list_accounts` | `POST /v1/ops/accounts.list` |
+| `messages.search` | `postkauz search` | `mail_search` | `POST /v1/ops/messages.search` |
+| `drafts.create` | `postkauz draft new` / `draft reply` | `mail_create_draft` | `POST /v1/ops/drafts.create` |
 
 Namen, Hilfetexte, Ausgabeformate und die Auswahl, was MCP überhaupt anbietet, sind Entscheidungen und stehen deshalb von Hand in den Bindungstabellen. Was der Adapter **nicht** tut: Scope prüfen, Policy auswerten, auditieren, Fachlogik. Das tut allein der Executor.
 
@@ -202,22 +202,22 @@ Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `j
 
 | Job-Typ | Auslöser | Inhalt |
 |---|---|---|
-| `sync` | Intervall, IDLE-Signal, `mailwerk sync`, `mail_sync_now` | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben |
+| `sync` | Intervall, IDLE-Signal, `postkauz sync`, `mail_sync_now` | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben |
 | `index` | nach `sync`/`import` | Body bereinigen, FTS-Zeilen und Wortstamm schreiben |
 | `extract` | nach `sync` | Anhangstext in Subprozess mit Zeit- und Speicherlimit |
-| `import` | `mailwerk import mbox/maildir` | Einlesen mit Message-ID-/Hash-Abgleich |
-| `export` | `mailwerk export`, täglich (Audit) | mbox/EML-Verzeichnis, Audit-JSONL mit Prüfsumme |
+| `import` | `postkauz import mbox/maildir` | Einlesen mit Message-ID-/Hash-Abgleich |
+| `export` | `postkauz export`, täglich (Audit) | mbox/EML-Verzeichnis, Audit-JSONL mit Prüfsumme |
 
 Regeln: Jobs sind **idempotent** und wiederholbar; Sperren über `locked_by`/`locked_at` mit Ablauf; `attempts` und `last_error` für Backoff; ein Job je (Konto, Ordner) gleichzeitig.
 
 Prozesse im MVP:
 
-- `mailwerk sync --watch` (S1): Dauerläufer im Vordergrund, führt Jobs aus, hält IDLE auf INBOX. Später als Windows-Aufgabe, systemd-Dienst oder Docker-Container.
-- `mailwerk mcp` (S1): kurzlebiger stdio-Prozess je Agent-Sitzung, **ohne** eigenen Sync; er liest die Datenbank und kann Jobs einreihen.
-- `mailwerk …` (CLI): kurzlebig.
+- `postkauz sync --watch` (S1): Dauerläufer im Vordergrund, führt Jobs aus, hält IDLE auf INBOX. Später als Windows-Aufgabe, systemd-Dienst oder Docker-Container.
+- `postkauz mcp` (S1): kurzlebiger stdio-Prozess je Agent-Sitzung, **ohne** eigenen Sync; er liest die Datenbank und kann Jobs einreihen.
+- `postkauz …` (CLI): kurzlebig.
 
 Alle Prozesse teilen **eine SQLite-Datei** im WAL-Modus mit `busy_timeout`. Es gibt genau einen schreibenden Dauerläufer je Datenbank; die kurzlebigen Prozesse schreiben nur kurze Transaktionen (Audit, Entwürfe, Job-Einreihung). Die Datenbank darf nie in einem Cloud-synchronisierten Ordner liegen (siehe [datenmodell.md](datenmodell.md)).
 
 ## 8. Namen (Arbeitstitel)
 
-Der Projektname ist ein Platzhalter. Umbenennen heißt: `internal/brand/brand.go`, Modulpfad in `go.mod` samt Importen (`go mod edit -module …` plus `sed`), `BINARY`/`ALIAS` im Makefile und Verzeichnis `cmd/mailwerk`. Doku und Meldungen leiten sich aus `brand` ab, soweit es der Aufwand rechtfertigt; die Doku nennt „Mailwerk" im Text und wird bei einer Umbenennung per Suchen/Ersetzen angepasst.
+Der Projektname ist ein Platzhalter. Umbenennen heißt: `internal/brand/brand.go`, Modulpfad in `go.mod` samt Importen (`go mod edit -module …` plus `sed`), `BINARY`/`ALIAS` im Makefile und Verzeichnis `cmd/postkauz`. Doku und Meldungen leiten sich aus `brand` ab, soweit es der Aufwand rechtfertigt; die Doku nennt „PostKauz" im Text und wird bei einer Umbenennung per Suchen/Ersetzen angepasst.

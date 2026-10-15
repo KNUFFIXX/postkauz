@@ -55,7 +55,7 @@ Jeden Punkt abarbeiten oder ausdrücklich in `docs/roadmap.md` zurückstellen (m
 
 ## Vorgabe für S2: Erkennung des Versands
 
-Der Mensch sendet den Entwurf im Mailclient; Mailwerk muss das erkennen (`sent_by_human`). Entschieden: **Zuerst `Message-ID`; Rückfall-Abgleich** über Empfänger, Betreff, Body-Hash und Zeitfenster, wenn der Client beim Senden eine neue `Message-ID` vergibt. **In S2 messen**, wie sich Webmail, Desktop-Client und ein zweiter Anbieter verhalten, und das Ergebnis in `docs/sicherheit.md` festhalten (siehe dort, Abschnitt 5). Kein Treffer ist kein Fehler: Der Entwurf bleibt dann im Zustand `ready`, bis der Mensch ihn manuell abschließt.
+Der Mensch sendet den Entwurf im Mailclient; PostKauz muss das erkennen (`sent_by_human`). Entschieden: **Zuerst `Message-ID`; Rückfall-Abgleich** über Empfänger, Betreff, Body-Hash und Zeitfenster, wenn der Client beim Senden eine neue `Message-ID` vergibt. **In S2 messen**, wie sich Webmail, Desktop-Client und ein zweiter Anbieter verhalten, und das Ergebnis in `docs/sicherheit.md` festhalten (siehe dort, Abschnitt 5). Kein Treffer ist kein Fehler: Der Entwurf bleibt dann im Zustand `ready`, bis der Mensch ihn manuell abschließt.
 
 ## Teil C: Schnitt 1, Schritt für Schritt
 
@@ -63,7 +63,7 @@ Gemeinsame Regeln je Schritt: kleine Commits; `make check` grün; Tests mit Dock
 
 | Schritt | Inhalt | Akzeptanz (testbar) |
 |---|---|---|
-| S1.1 | Konfiguration (TOML, `MAILWERK_CONFIG`), Datenverzeichnis, Store-Anbindung, SQLite-Audit-Writer (ersetzt `audit.Nop` im CLI), Schlüsselbund-Anbindung (P3, P4), `account add/test/remove`, `accounts.list` aus der Datenbank | Konto anlegen und auflisten; Passwort nur im Schlüsselbund (Test mit Kanarienwert: nicht in DB, Log, Audit); `doctor` meldet Pfade, Schlüsselbund, Datenbank, Schema-Version |
+| S1.1 | Konfiguration (TOML, `POSTKAUZ_CONFIG`), Datenverzeichnis, Store-Anbindung, SQLite-Audit-Writer (ersetzt `audit.Nop` im CLI), Schlüsselbund-Anbindung (P3, P4), `account add/test/remove`, `accounts.list` aus der Datenbank | Konto anlegen und auflisten; Passwort nur im Schlüsselbund (Test mit Kanarienwert: nicht in DB, Log, Audit); `doctor` meldet Pfade, Schlüsselbund, Datenbank, Schema-Version |
 | S1.2 | Blob-Store (atomar, SHA-256, optional zstd); MIME-Parser auf **`go-message`** (nicht `enmime`) mit `charset`-Reader; fehlendes `Date` → `INTERNALDATE`, Zeitzone „0100" tolerant; Korpus-Generator `make corpus` mit Manifest (`docs/testkorpus.md`) | Parser besteht den Korpus gegen das Manifest (Betreff, Absender, Anhänge, Threads); Zip-Bombe wird nicht entpackt |
 | S1.3 | **`internal/imapx`** (dünne Schicht, gepinnte go-imap-Version, Watchdog, `WordDecoder` mit Charset-Reader) und `internal/provider/imap` darüber: Verbinden, Capabilities, `ListMailboxes` mit Rollen | Integrationstest gegen Dovecot, Stalwart, GreenMail: erwartete Fähigkeiten und Rollen |
 | S1.4 | Sync: Erstsync in Fenstern, resume-fähig, Idempotenz über `(mailbox_id, uid)` | 1.000 Nachrichten gespiegelt; `kill -9` mittendrin, Neustart ergibt dieselbe Anzahl ohne Doppelte |
@@ -84,41 +84,41 @@ Du musst nichts programmieren. Jeder Punkt: Kommando eingeben, Ergebnis mit „E
 ### D0: Gerüst (sofort prüfbar)
 
 1. `make check` → am Ende `pii-check: ok`, kein Fehler.
-2. `make build` → danach `./bin/mailwerk version` zeigt eine Zeile mit `mailwerk`, Version und Go-Version.
-3. `./bin/mailwerk accounts list` → `No accounts configured yet.`
-4. `./bin/mailwerk accounts list --json` → `{"accounts":[]}`
-5. `./bin/mailwerk doctor` → Zeilen für version, config, keyring, database. Beim Gerüst steht bei keyring/database `not_checked`.
-6. `./bin/mailwerk bogus; echo $?` → Fehlermeldung und danach `2`.
+2. `make build` → danach `./bin/postkauz version` zeigt eine Zeile mit `postkauz`, Version und Go-Version.
+3. `./bin/postkauz accounts list` → `No accounts configured yet.`
+4. `./bin/postkauz accounts list --json` → `{"accounts":[]}`
+5. `./bin/postkauz doctor` → Zeilen für version, config, keyring, database. Beim Gerüst steht bei keyring/database `not_checked`.
+6. `./bin/postkauz bogus; echo $?` → Fehlermeldung und danach `2`.
 
 ### D1: nach S1.5 (Sync)
 
 Testserver: `make testmail-up`; Dovecot ist auf Port 11143 (Nutzer `tester`, Passwort `pass`).
 
-1. `./bin/mailwerk account add demo --imap 127.0.0.1:11143 --user tester --insecure-test-server` (fragt nach dem Passwort: `pass`) → `account demo added`.
-2. `./bin/mailwerk account test demo` → Zeile `login: ok`, eine Liste der Fähigkeiten (z. B. `IDLE`), eine Ordnerliste mit `INBOX` (Rolle `inbox`).
-3. Korpus laden (Skript nennt Claude in der Abnahmemeldung), dann `./bin/mailwerk sync --full -a demo` → am Ende `1000 messages mirrored` (genaue Zahl nennt Claude) und `0 errors`.
+1. `./bin/postkauz account add demo --imap 127.0.0.1:11143 --user tester --insecure-test-server` (fragt nach dem Passwort: `pass`) → `account demo added`.
+2. `./bin/postkauz account test demo` → Zeile `login: ok`, eine Liste der Fähigkeiten (z. B. `IDLE`), eine Ordnerliste mit `INBOX` (Rolle `inbox`).
+3. Korpus laden (Skript nennt Claude in der Abnahmemeldung), dann `./bin/postkauz sync --full -a demo` → am Ende `1000 messages mirrored` (genaue Zahl nennt Claude) und `0 errors`.
 4. Sync **abbrechen** (Strg+C nach einigen Sekunden) und erneut starten → Zahl am Ende ist **dieselbe** wie in Punkt 3, nicht größer.
-5. `./bin/mailwerk mailbox list -a demo --json` → JSON mit `total` je Ordner, `INBOX` passt zur Zahl aus Punkt 3.
-6. In einem Mailclient (oder per Skript von Claude) eine Mail in `INBOX` als gelesen markieren; nach einem Sync (`./bin/mailwerk sync -a demo`) zeigt `./bin/mailwerk show <id> --headers` das Flag `seen`.
+5. `./bin/postkauz mailbox list -a demo --json` → JSON mit `total` je Ordner, `INBOX` passt zur Zahl aus Punkt 3.
+6. In einem Mailclient (oder per Skript von Claude) eine Mail in `INBOX` als gelesen markieren; nach einem Sync (`./bin/postkauz sync -a demo`) zeigt `./bin/postkauz show <id> --headers` das Flag `seen`.
 
 ### D2: nach S1.9 (Suche, CLI, MCP)
 
-1. `./bin/mailwerk search "Rechnung" -a demo --limit 5` → bis zu fünf Zeilen mit `id`, Datum, Absender, Betreff; die Treffer enthalten auch „Rechnungen" (Flexion).
-2. `./bin/mailwerk search "prüfen"` und `./bin/mailwerk search "pruefen"` → beide liefern dieselben Treffer.
-3. `./bin/mailwerk search "Vollstreck"` → findet die Mail mit „Zwangsvollstreckung" im Betreff.
-4. `./bin/mailwerk search "has:attachment" --json | head -n 3` → drei JSON-Zeilen, je eine Nachricht.
-5. `./bin/mailwerk show <id>` einer Testmail mit verstecktem Text → Ausgabe enthält den Hinweis `hidden text removed`.
-6. Schlüssel erzeugen: `./bin/mailwerk key create --name test-agent --role reader` → Der Schlüssel wird **einmal** angezeigt; mit `./bin/mailwerk key list` erscheint er **ohne** Klartext.
-7. MCP: In Claude Code die Konfiguration aus dem README eintragen (Befehl `mailwerk mcp`, Umgebungsvariable `MAILWERK_KEY`) → Claude Code listet nur lesende Tools (`mail_search`, `mail_get_message`, …); **kein** Tool zum Senden, Löschen oder Entwerfen.
-8. Frage in Claude Code: „Suche Mails über Rechnungen und fasse sie zusammen" → Claude nutzt `mail_search`/`mail_get_message`; in `./bin/mailwerk audit --since 10m` stehen die Aufrufe mit Schlüsselname und **ohne** Mailtext.
-9. `./bin/mailwerk audit verify` → `ok`; nach einer absichtlich veränderten Exportdatei (Claude nennt die Datei) → Meldung `mismatch` und Exit-Code 1.
+1. `./bin/postkauz search "Rechnung" -a demo --limit 5` → bis zu fünf Zeilen mit `id`, Datum, Absender, Betreff; die Treffer enthalten auch „Rechnungen" (Flexion).
+2. `./bin/postkauz search "prüfen"` und `./bin/postkauz search "pruefen"` → beide liefern dieselben Treffer.
+3. `./bin/postkauz search "Vollstreck"` → findet die Mail mit „Zwangsvollstreckung" im Betreff.
+4. `./bin/postkauz search "has:attachment" --json | head -n 3` → drei JSON-Zeilen, je eine Nachricht.
+5. `./bin/postkauz show <id>` einer Testmail mit verstecktem Text → Ausgabe enthält den Hinweis `hidden text removed`.
+6. Schlüssel erzeugen: `./bin/postkauz key create --name test-agent --role reader` → Der Schlüssel wird **einmal** angezeigt; mit `./bin/postkauz key list` erscheint er **ohne** Klartext.
+7. MCP: In Claude Code die Konfiguration aus dem README eintragen (Befehl `postkauz mcp`, Umgebungsvariable `POSTKAUZ_KEY`) → Claude Code listet nur lesende Tools (`mail_search`, `mail_get_message`, …); **kein** Tool zum Senden, Löschen oder Entwerfen.
+8. Frage in Claude Code: „Suche Mails über Rechnungen und fasse sie zusammen" → Claude nutzt `mail_search`/`mail_get_message`; in `./bin/postkauz audit --since 10m` stehen die Aufrufe mit Schlüsselname und **ohne** Mailtext.
+9. `./bin/postkauz audit verify` → `ok`; nach einer absichtlich veränderten Exportdatei (Claude nennt die Datei) → Meldung `mismatch` und Exit-Code 1.
 
 ### D3: Gesamtabnahme S1
 
 1. Alle Punkte D0–D2 erneut auf einem zweiten Server (Stalwart 0.11.8, nur IMAPS Port 12993, Konto laut `deploy/testmail/README.md`) und auf GreenMail (Port 13143).
 2. `make check && make cross` → grün; im Ordner `dist/` liegen drei Programme (linux, windows, darwin).
-3. Installation: `dist/mailwerk-windows-amd64.exe` auf einen Windows-Rechner kopieren, `mailwerk.exe doctor` → läuft ohne Installation weiterer Software.
-4. Importprobe: `./bin/mailwerk import maildir <Ordner> --account demo --mailbox Archive` mit einem Testbestand → Ausgabe `new: N, existing: M, skipped: 0`; zweiter Lauf: `new: 0`.
+3. Installation: `dist/postkauz-windows-amd64.exe` auf einen Windows-Rechner kopieren, `postkauz.exe doctor` → läuft ohne Installation weiterer Software.
+4. Importprobe: `./bin/postkauz import maildir <Ordner> --account demo --mailbox Archive` mit einem Testbestand → Ausgabe `new: N, existing: M, skipped: 0`; zweiter Lauf: `new: 0`.
 5. Entscheidung des Betreibers: S1 angenommen / Nachbesserung (Liste) / S2 starten.
 
 ## Abschluss der Sitzung

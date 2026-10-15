@@ -1,4 +1,4 @@
-# Testserver fuer den Mailwerk-Spike S0. Nur lokal, keine echten Konten.
+# Testserver fuer den PostKauz-Spike S0. Nur lokal, keine echten Konten.
 services:
   dovecot:
     image: dovecot/dovecot:latest

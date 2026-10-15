@@ -1,9 +1,9 @@
-# Mailwerk – Phase-0-Spike S0
+# PostKauz – Phase-0-Spike S0
 
-Prüft, ob Go 1.24 mit `github.com/emersion/go-imap/v2` als Protokollbasis für Mailwerk taugt.
+Prüft, ob Go 1.24 mit `github.com/emersion/go-imap/v2` als Protokollbasis für PostKauz taugt.
 Ergebnis und Zahlen: siehe [REPORT.md](REPORT.md). Rohdaten der Läufe: `reports/*.json`.
 
-*English: Phase-0 spike for the Mailwerk agent-first mail client. Tests go-imap v2 against Dovecot, Stalwart and GreenMail in Docker with a synthetic 1,000-mail corpus. See REPORT.md (German).*
+*English: Phase-0 spike for the PostKauz agent-first mail client. Tests go-imap v2 against Dovecot, Stalwart and GreenMail in Docker with a synthetic 1,000-mail corpus. See REPORT.md (German).*
 
 Nur synthetische Daten (`*.example.test`), keine echten Konten, kein Mailversand.
 

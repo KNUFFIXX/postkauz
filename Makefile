@@ -1,7 +1,7 @@
-# Mailwerk (Arbeitstitel). Namen an einer Stelle: BINARY/ALIAS hier,
+# PostKauz (Arbeitstitel). Namen an einer Stelle: BINARY/ALIAS hier,
 # Konstanten in internal/brand/brand.go, Modulpfad in go.mod.
-BINARY  ?= mailwerk
-ALIAS   ?= mw
+BINARY  ?= postkauz
+ALIAS   ?= pk
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 GOFLAGS_BUILD := -trimpath -ldflags "$(LDFLAGS)"
@@ -16,7 +16,7 @@ all: check build
 
 build:
 	@mkdir -p bin
-	go build $(GOFLAGS_BUILD) -o bin/$(BINARY) ./cmd/mailwerk
+	go build $(GOFLAGS_BUILD) -o bin/$(BINARY) ./cmd/postkauz
 	cp bin/$(BINARY) bin/$(ALIAS)
 
 install: build
@@ -56,7 +56,7 @@ cross:
 	@set -e; for p in $(PLATFORMS); do \
 	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	  echo "build $$os/$$arch"; \
-	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$(BINARY)-$$os-$$arch$$ext ./cmd/mailwerk; \
+	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$(BINARY)-$$os-$$arch$$ext ./cmd/postkauz; \
 	done
 
 # Platzhalter: der Korpus-Generator entsteht in Schnitt 1 (docs/testkorpus.md).

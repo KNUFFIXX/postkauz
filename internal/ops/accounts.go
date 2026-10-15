@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/KNUFFIXX/mailwerk/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // AccountInfo ist die Ausgabe von accounts.list je Konto. Enthält nie

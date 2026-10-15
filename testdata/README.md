@@ -1,6 +1,6 @@
 # testdata
 
-Testmaterial für Mailwerk. Regeln (ausführlich: [`docs/testkorpus.md`](../docs/testkorpus.md)):
+Testmaterial für PostKauz. Regeln (ausführlich: [`docs/testkorpus.md`](../docs/testkorpus.md)):
 
 1. **Nur erfundene Daten im Repository.** Personen, Organisationen, Nummern und Texte sind synthetisch; Adressen stammen ausschließlich aus `example.com`, `example.org`, `example.net` oder `*.invalid`.
 2. **Nie echte Mails**, auch nicht „nur ein bisschen gekürzt". Echte Mails werden nur anonymisiert und nur außerhalb des Repositorys verwendet (`testdata/private/` ist per `.gitignore` ausgeschlossen und kein Ablageort für Freigegebenes).

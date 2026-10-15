@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetischer Mailkorpus fuer den Mailwerk-Spike S0.
+"""Synthetischer Mailkorpus fuer den PostKauz-Spike S0.
 
 Erzeugt N (Standard 1000) .eml-Dateien plus manifest.json mit den
 erwarteten Eigenschaften jeder Mail (Ordner, Message-ID, Thread-Schluessel,

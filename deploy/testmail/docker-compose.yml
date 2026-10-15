@@ -1,4 +1,4 @@
-# Testserver für die Entwicklung von Mailwerk (Arbeitstitel).
+# Testserver für die Entwicklung von PostKauz (Arbeitstitel).
 #
 #   docker compose -f deploy/testmail/docker-compose.yml up -d
 #
@@ -7,7 +7,7 @@
 # NIE mit echten Postfächern oder echten Mails befüllen.
 #
 # Ports (Host -> Container), Übersicht und Zugangsdaten: deploy/testmail/README.md
-name: mailwerk-testmail
+name: postkauz-testmail
 
 services:
   dovecot:

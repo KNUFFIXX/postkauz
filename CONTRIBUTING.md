@@ -1,6 +1,6 @@
 # Mitwirken
 
-Mailwerk (Arbeitstitel) ist pre-alpha. Beiträge sind willkommen, aber die Architektur ist in [`docs/entscheidungen.md`](docs/entscheidungen.md) festgelegt; Änderungen daran beginnen mit einem Vorschlag als Issue, nicht mit einem Pull Request.
+PostKauz (Arbeitstitel) ist pre-alpha. Beiträge sind willkommen, aber die Architektur ist in [`docs/entscheidungen.md`](docs/entscheidungen.md) festgelegt; Änderungen daran beginnen mit einem Vorschlag als Issue, nicht mit einem Pull Request.
 
 ## Vorab
 

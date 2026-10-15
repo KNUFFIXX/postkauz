@@ -1,4 +1,4 @@
-module mailwerk-spike
+module postkauz-spike
 
 go 1.24.0
 

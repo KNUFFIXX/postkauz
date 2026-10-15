@@ -1,4 +1,4 @@
-module github.com/KNUFFIXX/mailwerk
+module github.com/KNUFFIXX/postkauz
 
 go 1.24.0
 

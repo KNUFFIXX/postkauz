@@ -47,7 +47,7 @@ Zweck: Fälle, die ein Generator nicht erfindet (echte Absender-Eigenheiten, Cli
 
 Ein automatischer Schutz vor versehentlich eingechecktem Personenbezug. Er blockiert den Commit bzw. den CI-Lauf.
 
-- **Was geprüft wird:** alle versionierten Textdateien (Quelle, Doku, Testdaten, `.eml`). Muster: E-Mail-Adressen außerhalb der erlaubten Domains (`example.com`, `example.org`, `example.net`, `*.invalid`, `localhost`), IBAN-Muster, Telefonnummernmuster, Kartennummern (Luhn), und eine **lokale Sperrliste** mit Namen und Begriffen, die nie im Repository stehen dürfen (die Liste selbst liegt außerhalb des Repositorys und wird per Umgebungsvariable `MAILWERK_PII_DENYLIST` eingebunden).
+- **Was geprüft wird:** alle versionierten Textdateien (Quelle, Doku, Testdaten, `.eml`). Muster: E-Mail-Adressen außerhalb der erlaubten Domains (`example.com`, `example.org`, `example.net`, `*.invalid`, `localhost`), IBAN-Muster, Telefonnummernmuster, Kartennummern (Luhn), und eine **lokale Sperrliste** mit Namen und Begriffen, die nie im Repository stehen dürfen (die Liste selbst liegt außerhalb des Repositorys und wird per Umgebungsvariable `POSTKAUZ_PII_DENYLIST` eingebunden).
 - **Wo es läuft:** lokal als `make pii-check` (vor jedem Commit, siehe CLAUDE.md) und in der CI. Im Gerüst ist `scripts/pii-check.sh` eine einfache, aber funktionierende Erstfassung für E-Mail-Adressen, IBAN-Muster und die Sperrliste.
 - **Ein Treffer ist ein Fehler**, kein Hinweis. Ausnahmen gibt es nur als ausdrücklich begründeten Eintrag in `scripts/pii-allow.txt`, den ein Mensch prüft.
 - **Grenzen:** Muster finden kein Wissen („der Mieter aus Haus 3"). Deshalb bleibt die menschliche Stichprobe unverzichtbar; das Gate ist ein Netz, keine Garantie.

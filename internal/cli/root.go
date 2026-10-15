@@ -12,10 +12,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KNUFFIXX/mailwerk/internal/audit"
-	"github.com/KNUFFIXX/mailwerk/internal/brand"
-	"github.com/KNUFFIXX/mailwerk/internal/ops"
-	"github.com/KNUFFIXX/mailwerk/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // NewRoot baut den Kommandobaum. Die Kette Register → Executor wird hier
@@ -111,8 +111,8 @@ func versionCmd(version string, stdout io.Writer) *cobra.Command {
 	}
 }
 
-// ConfigPath liefert den Pfad der Konfigurationsdatei: MAILWERK_CONFIG, sonst
-// <Konfigurationsordner des Betriebssystems>/mailwerk/config.toml.
+// ConfigPath liefert den Pfad der Konfigurationsdatei: POSTKAUZ_CONFIG, sonst
+// <Konfigurationsordner des Betriebssystems>/postkauz/config.toml.
 func ConfigPath() (string, error) {
 	if p := os.Getenv(brand.EnvPrefix + "_CONFIG"); p != "" {
 		return p, nil

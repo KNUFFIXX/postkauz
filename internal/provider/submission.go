@@ -20,6 +20,6 @@ type Submission interface {
 	// Send versendet die Rohmail mit dem Umschlag.
 	Send(ctx context.Context, raw []byte, env Envelope) error
 	// SavesSentCopy meldet, ob der Anbieter die Kopie in „Gesendet" selbst
-	// anlegt (Gmail: ja, Dovecot: nein). Sonst legt Mailwerk sie per Append an.
+	// anlegt (Gmail: ja, Dovecot: nein). Sonst legt PostKauz sie per Append an.
 	SavesSentCopy() bool
 }

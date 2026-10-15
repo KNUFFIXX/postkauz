@@ -1,4 +1,4 @@
--- Mailwerk, Migration 0001: Ausgangsschema (Phase 0, noch nicht produktiv).
+-- PostKauz, Migration 0001: Ausgangsschema (Phase 0, noch nicht produktiv).
 -- Begründungen je Tabelle: docs/datenmodell.md.
 --
 -- Konventionen

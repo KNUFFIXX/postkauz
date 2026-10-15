@@ -1,10 +1,10 @@
-# Mailwerk
+# PostKauz
 
-> **Arbeitstitel.** "Mailwerk" is a working title; the name is being checked and will probably change. Names live in `internal/brand` (see `docs/architektur.md`, section 8).
+> **Arbeitstitel.** "PostKauz" is a working title; the name is being checked and will probably change. Names live in `internal/brand` (see `docs/architektur.md`, section 8).
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha. Phase 0: spike passed with conditions (see `spike/s0/REPORT.md`).** Repository skeleton, architecture docs, a compiling Go scaffold and the spike code. There is no sync, search or MCP server yet. The name "Mailwerk" is a working title and will still change.
+**Status: pre-alpha. Phase 0: spike passed with conditions (see `spike/s0/REPORT.md`).** Repository skeleton, architecture docs, a compiling Go scaffold and the spike code. There is no sync, search or MCP server yet. The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -39,19 +39,19 @@ An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mail
 Works today (scaffold only):
 
 ```sh
-make build                       # builds bin/mailwerk (and the alias bin/mw)
-./bin/mailwerk version --json
-./bin/mailwerk doctor
-./bin/mailwerk accounts list --json
+make build                       # builds bin/postkauz (and the alias bin/pk)
+./bin/postkauz version --json
+./bin/postkauz doctor
+./bin/postkauz accounts list --json
 ```
 
 Planned (placeholders, not implemented yet):
 
 ```sh
-mailwerk account add demo --imap imap.example.org:993 --user demo@example.org
-mailwerk sync --full
-mailwerk search "from:anna has:attachment" --json
-mailwerk mcp        # stdio MCP server for Claude Code and other clients
+postkauz account add demo --imap imap.example.org:993 --user demo@example.org
+postkauz sync --full
+postkauz search "from:anna has:attachment" --json
+postkauz mcp        # stdio MCP server for Claude Code and other clients
 ```
 
 Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`. Never develop against a real mailbox.
@@ -87,7 +87,7 @@ Apache-2.0, see `LICENSE` and `NOTICE`.
 
 ## Kurzfassung (Deutsch)
 
-Mailwerk (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche: Er spiegelt ein vorhandenes IMAP-Postfach lokal (SQLite plus `.eml`-Dateien), macht es durchsuchbar und bietet es per Kommandozeile und MCP an. Jeder Agent bekommt einen Schlüssel mit begrenzten Rechten; Aktionen sind nach Risiko gestuft, lassen sich im Trockenlauf prüfen und stehen in einem Audit-Log.
+PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche: Er spiegelt ein vorhandenes IMAP-Postfach lokal (SQLite plus `.eml`-Dateien), macht es durchsuchbar und bietet es per Kommandozeile und MCP an. Jeder Agent bekommt einen Schlüssel mit begrenzten Rechten; Aktionen sind nach Risiko gestuft, lassen sich im Trockenlauf prüfen und stehen in einem Audit-Log.
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 

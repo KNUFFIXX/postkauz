@@ -37,7 +37,7 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 7. **Audit:** Jede Operation erzeugt ein Ereignis ohne Mailinhalt; `UPDATE`/`DELETE` sind gesperrt; der tägliche Export mit Prüfsumme läuft; `audit verify` erkennt eine veränderte Zeile (Test).
 8. **Geheimnisse:** Mit Kanarienwerten als Passwort und Schlüssel taucht kein Wert in Logs, Audit, Fehlermeldungen, `--json` oder MCP-Ausgaben auf (Test).
 9. **Qualität:** Jede Operation hat einen Test; `go vet` und `go test ./...` grün; Cross-Compile für linux/amd64, windows/amd64, darwin/arm64 grün (CI).
-10. **Installation:** Windows 11 und Linux: Binärdatei laden, `mailwerk doctor`, Konto anlegen, erster Sync in unter 15 Minuten nach README.
+10. **Installation:** Windows 11 und Linux: Binärdatei laden, `postkauz doctor`, Konto anlegen, erster Sync in unter 15 Minuten nach README.
 
 ## S2: Entwürfe (draft-only)
 

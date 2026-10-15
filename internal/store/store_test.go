@@ -51,7 +51,7 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 }
 
 func TestOpenOnDiskUsesWAL(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "mw.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "pk.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

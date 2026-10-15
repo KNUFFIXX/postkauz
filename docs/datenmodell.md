@@ -5,7 +5,7 @@ Stand: Phase 0. Das Schema steht als ausführbares SQL in [`internal/store/migra
 ## Leitlinien
 
 - **An JMAP angelehnt, nicht vollständig.** Account, Identity, Mailbox, Message, Thread, Attachment mit JMAP-Begriffen (Rolle, Zustand, Keywords). Wo IMAP etwas braucht, das JMAP nicht kennt (UID je Ordner, UIDVALIDITY), steht es zusätzlich da.
-- **Lokale IDs.** Jede Tabelle hat einen `INTEGER PRIMARY KEY`. Die Nachrichten-ID ist das, was die CLI zeigt (`mailwerk show 18233`) und was Agenten als Ziel verwenden.
+- **Lokale IDs.** Jede Tabelle hat einen `INTEGER PRIMARY KEY`. Die Nachrichten-ID ist das, was die CLI zeigt (`postkauz show 18233`) und was Agenten als Ziel verwenden.
 - **Zeit:** Unix-Millisekunden UTC als `INTEGER`, Spalten enden auf `_at` oder heißen `ts`. Header-Daten (`date_header`) und Serverdatum (`internal_date`) bleiben getrennt.
 - **Listen und Objekte** als `TEXT` mit JSON, abgesichert durch `CHECK (json_valid(...))`.
 - **`STRICT`-Tabellen**, Fremdschlüssel eingeschaltet (`PRAGMA foreign_keys=ON` beim Öffnen).
@@ -65,9 +65,9 @@ Rohmails (`.eml`) und Anhänge liegen **als Dateien** unter `<datenverzeichnis>/
 - **Adressierung:** SHA-256 der **unkomprimierten** Bytes; Pfad `blobs/ab/cd/<sha256>` (zwei Verzeichnisebenen aus den ersten vier Hex-Zeichen). Gleiche Inhalte liegen genau einmal (Deduplizierung, auch über Konten hinweg).
 - **Schreiben atomar:** in eine Temporärdatei im selben Verzeichnis, `fsync`, dann `rename`. Erst danach die Zeile in `blobs`. Eine verwaiste Datei ist unschädlich, eine Zeile ohne Datei nicht.
 - **Komprimierung:** optional zstd, erkennbar an `blobs.compressed`; der Hash bleibt der des Klartexts.
-- **Lesen prüft nichts neu**, aber `mailwerk doctor` kann Stichproben-Hashes prüfen (`doctor --blobs`, ab S1).
+- **Lesen prüft nichts neu**, aber `postkauz doctor` kann Stichproben-Hashes prüfen (`doctor --blobs`, ab S1).
 - **Aufräumen:** Mark-and-Sweep über `messages.blob_sha256`, `attachments.sha256` und Entwurfs-Anhänge; nur über eine ausdrückliche Wartungsoperation, nie automatisch beim Sync (ADR-003, Regel 2).
-- **Speicherort:** niemals in einem Drive-/Cloud-synchronisierten Ordner (WAL + Synchronisierung = Korruption). Standard: das Datenverzeichnis des Betriebssystems unterhalb von `mailwerk/`. Auf Windows ist eine **Ausnahme im Virenscanner** für den Blob-Ordner einzuplanen, weil echte Postfächer Phishing-Anhänge enthalten.
+- **Speicherort:** niemals in einem Drive-/Cloud-synchronisierten Ordner (WAL + Synchronisierung = Korruption). Standard: das Datenverzeichnis des Betriebssystems unterhalb von `postkauz/`. Auf Windows ist eine **Ausnahme im Virenscanner** für den Blob-Ordner einzuplanen, weil echte Postfächer Phishing-Anhänge enthalten.
 - **Verschlüsselung im Ruhezustand:** nicht im MVP (Datenträgerverschlüsselung des Betriebssystems ist Voraussetzung); Backups müssen verschlüsselt werden (S3).
 
 ## Volltextsuche (FTS5-Strategie)

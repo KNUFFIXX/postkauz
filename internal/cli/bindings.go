@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/KNUFFIXX/mailwerk/internal/audit"
-	"github.com/KNUFFIXX/mailwerk/internal/ops"
-	"github.com/KNUFFIXX/mailwerk/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // binding verbindet genau eine Operation mit genau einem Kommando.

@@ -1,6 +1,6 @@
 # Testserver für die Entwicklung
 
-Drei lokale Mailserver für Integrationstests von Mailwerk (Arbeitstitel). Start und Stopp:
+Drei lokale Mailserver für Integrationstests von PostKauz (Arbeitstitel). Start und Stopp:
 
 ```sh
 make testmail-up        # docker compose -f deploy/testmail/docker-compose.yml up -d

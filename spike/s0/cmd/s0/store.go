@@ -65,7 +65,7 @@ func openStore(dir string) (*store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "blobs"), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "mailwerk.db"))
+	db, err := sql.Open("sqlite", filepath.Join(dir, "postkauz.db"))
 	if err != nil {
 		return nil, err
 	}

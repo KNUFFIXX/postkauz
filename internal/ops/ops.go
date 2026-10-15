@@ -14,7 +14,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/KNUFFIXX/mailwerk/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // Call ist, was ein Handler vom Aufruf mitbekommt.

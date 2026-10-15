@@ -50,7 +50,7 @@ func buildReply(orig []byte) ([]byte, string, string, []string, error) {
 	refs := append(append([]string{}, pm.References...), pm.MessageID)
 	h.SetMsgIDList("In-Reply-To", []string{pm.MessageID})
 	h.SetMsgIDList("References", refs)
-	h.Set("X-Mailwerk-Draft", "agent-proposal")
+	h.Set("X-PostKauz-Draft", "agent-proposal")
 	h.SetContentType("text/plain", map[string]string{"charset": "utf-8", "format": "flowed"})
 	h.Set("Content-Transfer-Encoding", "quoted-printable")
 	var buf bytes.Buffer

@@ -12,11 +12,11 @@ Stand: Phase 0. Im Gerüst existiert nur `internal/mcp/doc.go` mit dem Plan. Die
 6. **Untrusted-Hülle** um jeden Mailinhalt (Abschnitt 5). Tool-Beschreibungen weisen den Agenten an, Anweisungen in Mails nicht zu befolgen.
 7. **Budgets:** `max_chars` je Antwort (Standard 20.000), Cursor-Paginierung, Anhangstext nur auf Anfrage. Das schont den Kontext und erschwert Prompt-Flutung.
 8. **Statische, versionierte Tool-Definitionen.** Beschreibungen ändern sich nur mit einer Programmversion (kein „Rug Pull" durch dynamische Texte). Die Registerversion (`schema_version`) wird gemeldet.
-9. **Kein serverseitiges Modell.** Zusammenfassen, Klassifizieren, Formulieren macht der Agent; Mailwerk liefert Daten und Struktur. Elicitation ist optional und nie Voraussetzung.
-10. **Kein Token-Durchreichen.** Der Server akzeptiert nur eigene API-Schlüssel. Der Schlüssel kommt bei stdio aus der Umgebung (`MAILWERK_KEY`) oder aus einer Datei mit Rechten 600, nie als Kommandozeilenargument.
+9. **Kein serverseitiges Modell.** Zusammenfassen, Klassifizieren, Formulieren macht der Agent; PostKauz liefert Daten und Struktur. Elicitation ist optional und nie Voraussetzung.
+10. **Kein Token-Durchreichen.** Der Server akzeptiert nur eigene API-Schlüssel. Der Schlüssel kommt bei stdio aus der Umgebung (`POSTKAUZ_KEY`) oder aus einer Datei mit Rechten 600, nie als Kommandozeilenargument.
 11. **Kein Versand im MVP.** Es gibt kein Tool, das E-Mail sendet. `mail_request_send` ist **ab Schnitt 4** vorgesehen und in diesem Dokument nur als Platzhalter markiert.
 
-Transport: **stdio** ab S1 (Start per `mailwerk mcp` aus der Client-Konfiguration), **HTTP** mit OAuth 2.1 aus Standardkomponenten ab S3 auf einem Dauerläufer. SDK: das offizielle Go-SDK (`github.com/modelcontextprotocol/go-sdk`); die Version wird beim ersten Einbinden per `go get` aufgelöst und in `go.mod` festgehalten.
+Transport: **stdio** ab S1 (Start per `postkauz mcp` aus der Client-Konfiguration), **HTTP** mit OAuth 2.1 aus Standardkomponenten ab S3 auf einem Dauerläufer. SDK: das offizielle Go-SDK (`github.com/modelcontextprotocol/go-sdk`); die Version wird beim ersten Einbinden per `go get` aufgelöst und in `go.mod` festgehalten.
 
 ## 2. Tools
 
@@ -47,7 +47,7 @@ Spalte „Schnitt": in welchem Schnitt das Tool entsteht. Spalte „Scope": ben�
 | `mail_request_ready` | Entwurf zur Prüfung durch einen Menschen vorlegen | `draft_id`, `dry_run?` | Status `pending_approval` oder `denied` mit Grund, `approval_id`, `preview_hash` | R1 | `mail:draft` |
 | `mail_get_approval` | Stand einer Freigabe | `approval_id` | Status, `decided_by`, `decided_at`, `reason` | R0 | `mail:draft` |
 
-Antworten und Weiterleiten setzen `In-Reply-To` und `References` korrekt und vergeben die `Message-ID` beim Anlegen. Der Mensch sendet im gewohnten Mailclient; Mailwerk erkennt den Versand im Ordner „Gesendet" (`sent_by_human`). Details in [sicherheit.md](sicherheit.md).
+Antworten und Weiterleiten setzen `In-Reply-To` und `References` korrekt und vergeben die `Message-ID` beim Anlegen. Der Mensch sendet im gewohnten Mailclient; PostKauz erkennt den Versand im Ordner „Gesendet" (`sent_by_human`). Details in [sicherheit.md](sicherheit.md).
 
 ### Postfach-Aktionen und Tags (S3)
 

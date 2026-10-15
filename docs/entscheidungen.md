@@ -12,7 +12,7 @@ Format je Eintrag: Kontext · Entscheidung · Folgen · Status. Neue Entscheidun
 ## ADR-002: MVP ist draft-only
 
 - **Kontext:** Das größte Risiko eines Agenten mit Mailzugang ist, dass eine eingeschleuste Anweisung eine Mail **versendet** oder Daten löscht. Versand ist außerdem der aufwendigste und fehleranfälligste Teil (SMTP, Gesendet-Kopie, Limits, Rückruf).
-- **Entscheidung:** Der MVP enthält **keinen SMTP-Code**. Entwürfe mit korrekten `Message-ID`/`In-Reply-To`/`References` werden per IMAP `APPEND` in den Entwürfe-Ordner gelegt; der **Mensch sendet** im gewohnten Mailclient; Mailwerk erkennt den Versand im Ordner „Gesendet" (`sent_by_human`). Agenten erreichen Löschen nur bis zum Papierkorb; das Provider-Interface hat kein Expunge; Regeln werden von Agenten nur vorgeschlagen.
+- **Entscheidung:** Der MVP enthält **keinen SMTP-Code**. Entwürfe mit korrekten `Message-ID`/`In-Reply-To`/`References` werden per IMAP `APPEND` in den Entwürfe-Ordner gelegt; der **Mensch sendet** im gewohnten Mailclient; PostKauz erkennt den Versand im Ordner „Gesendet" (`sent_by_human`). Agenten erreichen Löschen nur bis zum Papierkorb; das Provider-Interface hat kein Expunge; Regeln werden von Agenten nur vorgeschlagen.
 - **Folgen:** Rule of Two ist im MVP strukturell erfüllt (ein lesender Schlüssel kann nicht nach außen wirken). Der Mensch bleibt der Engpass beim Senden, gewollt. Die Erkennung des Versands braucht einen Rückfall, weil manche Clients beim Senden die `Message-ID` ändern (S2 misst das). Versand mit Freigabe folgt frühestens in S4.
 - **Status:** akzeptiert.
 

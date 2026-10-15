@@ -1,6 +1,6 @@
 # CLAUDE.md: Regeln für Claude-Code-Sitzungen in diesem Repository
 
-Mailwerk ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go.mod`). Der Betreiber ist **kein Programmierer**: Du schreibst den Code, er testet und entscheidet.
+PostKauz ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go.mod`). Der Betreiber ist **kein Programmierer**: Du schreibst den Code, er testet und entscheidet.
 
 ## Ziel und Nicht-Ziele
 

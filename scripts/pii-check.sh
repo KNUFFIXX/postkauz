@@ -3,7 +3,7 @@
 # Prüft versionierte Textdateien auf:
 #   1. E-Mail-Adressen außerhalb reservierter Domains,
 #   2. IBAN-Muster,
-#   3. Begriffe aus einer lokalen Sperrliste (MAILWERK_PII_DENYLIST, eine Zeile je Begriff;
+#   3. Begriffe aus einer lokalen Sperrliste (POSTKAUZ_PII_DENYLIST, eine Zeile je Begriff;
 #      die Liste liegt außerhalb des Repositorys).
 # Ausnahmen: scripts/pii-allow.txt (ein Treffer-Text je Zeile, begründet im Commit).
 # Exit 0 = sauber, 1 = Treffer.
@@ -40,8 +40,8 @@ hits="$(files | xargs -r grep -InoE '\b[A-Z]{2}[0-9]{2}( ?[0-9A-Z]{4}){3,7}( ?[0
 report "IBAN-like patterns" "$hits"
 
 # 3. Sperrliste
-if [ -n "${MAILWERK_PII_DENYLIST:-}" ] && [ -f "$MAILWERK_PII_DENYLIST" ]; then
-  hits="$(files | xargs -r grep -InoiFf "$MAILWERK_PII_DENYLIST" 2>/dev/null || true)"
+if [ -n "${POSTKAUZ_PII_DENYLIST:-}" ] && [ -f "$POSTKAUZ_PII_DENYLIST" ]; then
+  hits="$(files | xargs -r grep -InoiFf "$POSTKAUZ_PII_DENYLIST" 2>/dev/null || true)"
   report "terms from the local denylist" "$hits"
 fi
 

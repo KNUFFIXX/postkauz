@@ -1,4 +1,4 @@
-# CI für Mailwerk (Arbeitstitel). Bewusst ohne Docker: Integrationstests gegen
+# CI für PostKauz (Arbeitstitel). Bewusst ohne Docker: Integrationstests gegen
 # die Testserver laufen vorerst lokal und nachts, nicht in dieser Pipeline.
 name: ci
 
@@ -51,4 +51,4 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o /dev/null ./cmd/mailwerk
+        run: go build -trimpath -o /dev/null ./cmd/postkauz

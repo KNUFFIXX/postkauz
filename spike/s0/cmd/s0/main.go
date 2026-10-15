@@ -1,4 +1,4 @@
-// Befehl s0 ist der Phase-0-Spike fuer Mailwerk: Er prueft, ob Go mit
+// Befehl s0 ist der Phase-0-Spike fuer PostKauz: Er prueft, ob Go mit
 // github.com/emersion/go-imap/v2 als Protokollbasis taugt.
 //
 // Unterbefehle (jeweils JSON-Report auf stdout und optional in -out):

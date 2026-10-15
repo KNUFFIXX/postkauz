@@ -1,11 +1,11 @@
-// Command mailwerk ist die Kommandozeile des agenten-first E-Mail-Clients.
-// „mailwerk" ist ein Arbeitstitel; Namen stehen in internal/brand.
+// Command postkauz ist die Kommandozeile des agenten-first E-Mail-Clients.
+// „postkauz" ist ein Arbeitstitel; Namen stehen in internal/brand.
 package main
 
 import (
 	"os"
 
-	"github.com/KNUFFIXX/mailwerk/internal/cli"
+	"github.com/KNUFFIXX/postkauz/internal/cli"
 )
 
 // version wird beim Bauen per -ldflags "-X main.version=..." gesetzt.

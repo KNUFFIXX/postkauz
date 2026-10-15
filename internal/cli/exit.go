@@ -6,7 +6,7 @@ package cli
 import (
 	"errors"
 
-	"github.com/KNUFFIXX/mailwerk/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
 // Exit-Codes (docs/cli.md). Skripte und Agenten dürfen sich darauf verlassen.

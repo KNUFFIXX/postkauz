@@ -34,7 +34,7 @@ func TestAccountsListHuman(t *testing.T) {
 func TestVersionJSON(t *testing.T) {
 	code, out, _ := run(t, "version", "--json")
 	var v map[string]any
-	if code != ExitOK || json.Unmarshal([]byte(out), &v) != nil || v["version"] != "test" || v["name"] != "mailwerk" {
+	if code != ExitOK || json.Unmarshal([]byte(out), &v) != nil || v["version"] != "test" || v["name"] != "postkauz" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 	if _, ok := v["schema_version"]; !ok {
@@ -43,13 +43,13 @@ func TestVersionJSON(t *testing.T) {
 }
 
 func TestDoctorStubReportsPlaceholders(t *testing.T) {
-	t.Setenv("MAILWERK_CONFIG", "/nonexistent/mailwerk-test.toml")
+	t.Setenv("POSTKAUZ_CONFIG", "/nonexistent/postkauz-test.toml")
 	code, out, _ := run(t, "doctor", "--json")
 	var r DoctorReport
 	if code != ExitOK || json.Unmarshal([]byte(out), &r) != nil {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
-	if r.ConfigPath != "/nonexistent/mailwerk-test.toml" || r.ConfigExists || r.Keyring != "not_checked" {
+	if r.ConfigPath != "/nonexistent/postkauz-test.toml" || r.ConfigExists || r.Keyring != "not_checked" {
 		t.Errorf("report = %+v", r)
 	}
 }

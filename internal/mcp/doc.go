@@ -7,7 +7,7 @@
 //   - Server auf Basis des offiziellen github.com/modelcontextprotocol/go-sdk
 //     (aktuelle Version per `go get` auflösen, nicht hier festschreiben).
 //   - Transport stdio; der API-Schlüssel kommt aus der Umgebung
-//     (MAILWERK_KEY) oder einer Datei mit Rechten 600, nie als Argument.
+//     (POSTKAUZ_KEY) oder einer Datei mit Rechten 600, nie als Argument.
 //   - Tools werden aus dem Operationsregister (internal/ops) gebunden, per
 //     ausdrücklicher Tabelle „Operation → Tool-Name" (accounts.list →
 //     mail_list_accounts), nicht per Reflection. Die Tool-Liste folgt den
