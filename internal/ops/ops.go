@@ -29,6 +29,27 @@ type Call struct {
 	// bei accounts.add). Er wird nie auditiert, nie geloggt und nie
 	// ausgegeben; nur Operationen, die ihn brauchen, lesen ihn.
 	Secret secrets.Secret
+	// Progress empfängt Fortschrittsmeldungen langer Operationen (Sync).
+	// Darf nil sein; Handler rufen es über Call.progress auf.
+	Progress func(Progress)
+}
+
+// Progress ist eine Fortschrittsmeldung einer langen Operation. Sie enthält
+// nie Mailinhalte, nur Ordnernamen und Zähler.
+type Progress struct {
+	Event   string `json:"event"` // mailbox_start | window | mailbox_done | round | error | info
+	Mailbox string `json:"mailbox,omitempty"`
+	Done    int    `json:"done,omitempty"`
+	Total   int    `json:"total,omitempty"`
+	Message string `json:"message,omitempty"`
+	// Round ist das Ergebnis eines Laufs im Dauerbetrieb (sync --watch).
+	Round *SyncOutput `json:"round,omitempty"`
+}
+
+func (c Call) progress(p Progress) {
+	if c.Progress != nil {
+		c.Progress(p)
+	}
 }
 
 // RedactFunc leitet aus der Eingabe die Audit-Parameter ab: nur IDs,

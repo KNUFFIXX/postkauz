@@ -39,6 +39,8 @@ type Request struct {
 	DryRun *bool
 	// Secret wird unverändert an den Handler gereicht (Call.Secret), nie auditiert.
 	Secret secrets.Secret
+	// Progress wird an den Handler gereicht (Call.Progress); nil = keine Meldungen.
+	Progress func(Progress)
 }
 
 // Result ist das Ergebnis eines erfolgreichen Aufrufs.
@@ -122,7 +124,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("ops: audit: %w", err)
 	}
 
-	out, herr := op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret})
+	out, herr := op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress})
 	if herr != nil {
 		ev.Result = audit.ResultError
 		ev.Reason = "handler_error"

@@ -1,0 +1,225 @@
+package ops
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// MessageRepo liefert gespiegelte Nachrichten.
+type MessageRepo interface {
+	MessageByID(ctx context.Context, id int64) (store.Message, error)
+	MessageIDsByHeader(ctx context.Context, accountID int64, messageID string) ([]int64, error)
+	MessageText(ctx context.Context, id int64) (string, error)
+}
+
+// BlobReader liest Rohmails aus dem Blob-Store.
+type BlobReader interface {
+	Get(sha256 string) (io.ReadCloser, error)
+}
+
+// MessageLocation ist eine Ordnerkopie in messages.get.
+type MessageLocation struct {
+	Mailbox string `json:"mailbox"`
+	Role    string `json:"role"`
+	UID     uint32 `json:"uid"`
+}
+
+// MessageOutput ist die Ausgabe von messages.get (Stand S1.5: minimal für
+// `show`; Untrusted-Hülle, HTML-Bereinigung und Anhänge folgen mit S1.6,
+// S1.8 und S1.9).
+type MessageOutput struct {
+	ID             int64             `json:"id"`
+	Account        string            `json:"account"`
+	MessageID      string            `json:"message_id,omitempty"`
+	Subject        string            `json:"subject"`
+	From           string            `json:"from"`
+	To             json.RawMessage   `json:"to"`
+	Cc             json.RawMessage   `json:"cc"`
+	Date           string            `json:"date,omitempty"` // Date-Kopfzeile, sonst INTERNALDATE (RFC 3339)
+	InternalDate   string            `json:"internal_date,omitempty"`
+	Size           int64             `json:"size"`
+	Flags          []string          `json:"flags"` // seen, flagged, answered, draft
+	Keywords       []string          `json:"keywords"`
+	HasAttachments bool              `json:"has_attachments"`
+	DeletedRemote  bool              `json:"deleted_remote"`
+	Mailboxes      []MessageLocation `json:"mailboxes"`
+	Headers        string            `json:"headers,omitempty"` // nur mit headers=true
+	Text           *string           `json:"text,omitempty"`    // nur ohne headers
+}
+
+// maxHeaderBytes begrenzt die ausgegebenen Kopfzeilen.
+const maxHeaderBytes = 256 << 10
+
+// MessagesGet zeigt eine gespiegelte Nachricht: Metadaten und Flags, dazu
+// entweder den Text oder (headers) die Kopfzeilen der Rohmail. Lesend (R0).
+func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Operation {
+	return Operation{
+		Name:       "messages.get",
+		Scope:      policy.ScopeMailRead,
+		Risk:       policy.R0,
+		Idempotent: true,
+		Summary:    "Show a mirrored message: metadata, flags and its text or raw headers.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "id": {"type": "integer", "minimum": 1},
+    "message_id": {"type": "string"},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "headers": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}`),
+		OutputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "id": {"type": "integer"}, "account": {"type": "string"}, "message_id": {"type": "string"},
+    "subject": {"type": "string"}, "from": {"type": "string"},
+    "to": {"type": "array"}, "cc": {"type": "array"},
+    "date": {"type": "string", "format": "date-time"}, "internal_date": {"type": "string", "format": "date-time"},
+    "size": {"type": "integer"},
+    "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
+    "keywords": {"type": "array", "items": {"type": "string"}},
+    "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"},
+    "mailboxes": {"type": "array", "items": {"type": "object", "properties": {
+      "mailbox": {"type": "string"}, "role": {"type": "string"}, "uid": {"type": "integer"}},
+      "required": ["mailbox", "role", "uid"]}},
+    "headers": {"type": "string"}, "text": {"type": "string"}
+  },
+  "required": ["id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords", "has_attachments", "deleted_remote", "mailboxes"]
+}`),
+		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
+			var in struct {
+				ID int64 `json:"id"`
+			}
+			params, _ := redactAccountRef(raw)
+			if json.Unmarshal(raw, &in) == nil && in.ID > 0 {
+				return params, []string{"message:" + itoa(in.ID)}
+			}
+			return params, nil
+		},
+		Handler: func(ctx context.Context, call Call) (any, error) {
+			var in struct {
+				ID        int64  `json:"id,omitempty"`
+				MessageID string `json:"message_id,omitempty"`
+				Account   string `json:"account,omitempty"`
+				Headers   bool   `json:"headers,omitempty"`
+			}
+			if err := decodeInput(call.Input, &in); err != nil {
+				return nil, err
+			}
+			if (in.ID == 0) == (in.MessageID == "") {
+				return nil, inputErr("give either id or message_id")
+			}
+			id := in.ID
+			if id == 0 {
+				a, err := ResolveAccount(ctx, accounts, in.Account)
+				if err != nil {
+					return nil, err
+				}
+				ids, err := msgs.MessageIDsByHeader(ctx, a.ID, strings.Trim(strings.TrimSpace(in.MessageID), "<>"))
+				if err != nil {
+					return nil, err
+				}
+				if len(ids) == 0 {
+					return nil, store.ErrMessageNotFound
+				}
+				id = ids[0]
+			}
+			m, err := msgs.MessageByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if in.Account != "" && m.Account != in.Account {
+				return nil, store.ErrMessageNotFound
+			}
+			out := MessageOutput{ID: m.ID, Account: m.Account, MessageID: m.MessageID, Subject: m.Subject, From: m.From,
+				To: arr(m.To), Cc: arr(m.Cc), Size: m.Size, Keywords: m.Keywords, HasAttachments: m.HasAttachments,
+				DeletedRemote: !m.DeletedRemoteAt.IsZero(), Flags: []string{}, Mailboxes: []MessageLocation{}}
+			if out.Keywords == nil {
+				out.Keywords = []string{}
+			}
+			for _, f := range []struct {
+				on   bool
+				name string
+			}{{m.Seen, "seen"}, {m.Flagged, "flagged"}, {m.Answered, "answered"}, {m.Draft, "draft"}} {
+				if f.on {
+					out.Flags = append(out.Flags, f.name)
+				}
+			}
+			if !m.DateHeader.IsZero() {
+				out.Date = m.DateHeader.Format(time.RFC3339)
+			} else if !m.InternalDate.IsZero() {
+				out.Date = m.InternalDate.Format(time.RFC3339)
+			}
+			if !m.InternalDate.IsZero() {
+				out.InternalDate = m.InternalDate.Format(time.RFC3339)
+			}
+			for _, l := range m.Locations {
+				out.Mailboxes = append(out.Mailboxes, MessageLocation{Mailbox: l.Mailbox, Role: l.Role, UID: l.UID})
+			}
+			if in.Headers {
+				if m.BlobSHA256 != "" {
+					h, err := readHeaders(blobs, m.BlobSHA256)
+					if err != nil {
+						return nil, err
+					}
+					out.Headers = h
+				}
+			} else {
+				t, err := msgs.MessageText(ctx, m.ID)
+				if err != nil {
+					return nil, err
+				}
+				out.Text = &t
+			}
+			return out, nil
+		},
+	}
+}
+
+func arr(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return json.RawMessage("[]")
+	}
+	return raw
+}
+
+func itoa(i int64) string {
+	b, _ := json.Marshal(i)
+	return string(b)
+}
+
+// readHeaders liest den Kopf der Rohmail (bis zur ersten Leerzeile).
+func readHeaders(blobs BlobReader, sha string) (string, error) {
+	rc, err := blobs.Get(sha)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	br := bufio.NewReader(io.LimitReader(rc, maxHeaderBytes))
+	var out bytes.Buffer
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(bytes.TrimRight(line, "\r\n")) == 0 && (len(line) > 0 || err != nil) {
+			break
+		}
+		out.Write(bytes.TrimRight(line, "\r\n"))
+		out.WriteByte('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return "", err
+		}
+	}
+	return strings.ToValidUTF8(out.String(), "�"), nil
+}
