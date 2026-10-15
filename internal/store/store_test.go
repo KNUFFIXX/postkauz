@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMigrationsAreContiguous(t *testing.T) {
@@ -220,5 +221,73 @@ func TestMigration0002KeepsDataAndSnapshots(t *testing.T) {
 	_ = snap.db.QueryRow(`SELECT count(*) FROM message_mailboxes`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("snapshot rows = %d", n)
+	}
+}
+
+// Zwei Prozesse (hier: zwei Store-Instanzen auf derselben Datei) schreiben
+// gleichzeitig, z. B. `sync --watch` und `account test`. Eine Transaktion,
+// die erst liest und dann schreibt, darf nicht mit SQLITE_BUSY scheitern,
+// weil die andere inzwischen geschrieben hat: Transaktionen beginnen deshalb
+// mit BEGIN IMMEDIATE und warten (busy_timeout) statt abzubrechen.
+func TestConcurrentWritersWaitInsteadOfBusy(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pk.db")
+	a, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	if err := a.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if _, err := a.db.Exec(`INSERT INTO meta(key, value) VALUES ('n', '0')`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	txA, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := txA.Exec(`UPDATE meta SET value = '1' WHERE key = 'n'`); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		txB, err := b.db.BeginTx(ctx, nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		var v string
+		if err := txB.QueryRow(`SELECT value FROM meta WHERE key = 'n'`).Scan(&v); err != nil {
+			_ = txB.Rollback()
+			done <- err
+			return
+		}
+		if _, err := txB.Exec(`UPDATE meta SET value = ? WHERE key = 'n'`, v+"+b"); err != nil {
+			_ = txB.Rollback()
+			done <- err
+			return
+		}
+		done <- txB.Commit()
+	}()
+	<-started
+	time.Sleep(200 * time.Millisecond) // B hat begonnen (und gelesen, falls nicht IMMEDIATE)
+	if err := txA.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("second writer failed instead of waiting: %v", err)
+	}
+	var v string
+	_ = a.db.QueryRow(`SELECT value FROM meta WHERE key = 'n'`).Scan(&v)
+	if v != "1+b" {
+		t.Fatalf("value = %q, want 1+b (B must read A's committed write)", v)
 	}
 }

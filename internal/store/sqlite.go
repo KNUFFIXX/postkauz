@@ -46,6 +46,13 @@ func Open(path string) (*SQLite, error) {
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "busy_timeout(5000)")
+	// Schreibende Transaktionen beginnen mit BEGIN IMMEDIATE: Sie holen die
+	// Schreibsperre sofort und warten sonst bis busy_timeout. Mit dem
+	// Standard (DEFERRED) liest eine Transaktion erst und scheitert beim
+	// ersten Schreiben sofort mit SQLITE_BUSY, wenn ein anderer Prozess
+	// (z. B. `sync --watch` neben `account test`) inzwischen geschrieben
+	// hat; busy_timeout hilft dann nicht. Alle BeginTx im Store schreiben.
+	q.Set("_txlock", "immediate")
 	if path != ":memory:" {
 		q.Add("_pragma", "journal_mode(WAL)")
 	}
