@@ -682,3 +682,48 @@ func TestClampIdleRestart(t *testing.T) {
 		}
 	}
 }
+
+// brokenRemote liefert für eine UID eine unlesbare Antwort (ErrProtocol),
+// sobald sie im angefragten Fenster steht.
+type brokenRemote struct {
+	Remote
+	bad   provider.UID
+	calls atomic.Int32
+}
+
+func (b *brokenRemote) has(uids []provider.UID) bool { return slices.Contains(uids, b.bad) }
+
+func (b *brokenRemote) FetchHeaders(ctx context.Context, mb string, uv uint32, uids []provider.UID) ([]provider.Header, error) {
+	b.calls.Add(1)
+	if b.has(uids) && len(uids) > 0 && mb == "INBOX" {
+		return nil, fmt.Errorf("%w: imapwire: expected SP", provider.ErrProtocol)
+	}
+	return b.Remote.FetchHeaders(ctx, mb, uv, uids)
+}
+
+// Eine Nachricht, die der Server nicht lesbar ausliefert, wird durch
+// Halbieren des Fensters eingegrenzt und übersprungen; alle anderen werden
+// gespiegelt, der Fehler wird gezählt.
+func TestProtocolErrorIsIsolatedByBisection(t *testing.T) {
+	addr, u := memServer(t, false)
+	for i := 1; i <= 40; i++ {
+		_, _ = u.Append("INBOX", lit(mail(i)), &imap.AppendOptions{})
+	}
+	e := newEnv(t, addr)
+	br := &brokenRemote{Remote: connect(t, addr, 0), bad: 17}
+	rep, err := e.engine(t, br).SyncAll(context.Background(), Options{Window: 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Mirrored != 39 || rep.Errors != 1 || len(rep.Mailboxes[0].Problems) != 1 || !strings.Contains(rep.Mailboxes[0].Problems[0], "uid 17") {
+		t.Fatalf("report = %+v", rep)
+	}
+	if c := br.calls.Load(); c > 15 {
+		t.Fatalf("%d header fetches; bisection should need about 2*log2(40)", c)
+	}
+	// Liefert der Server die Nachricht später lesbar, holt der nächste Lauf sie nach.
+	rep, err = e.engine(t, br.Remote).SyncAll(context.Background(), Options{})
+	if err != nil || rep.Mirrored != 40 || rep.New != 1 || rep.Errors != 0 {
+		t.Fatalf("second run = %+v %v", rep, err)
+	}
+}

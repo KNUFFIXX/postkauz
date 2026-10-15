@@ -39,6 +39,11 @@ var (
 	// ErrConnection: Server nicht erreichbar, TLS-Fehler oder Zeitüberschreitung
 	// (Watchdog). Wiederholbar mit Backoff; CLI-Exit-Code 5.
 	ErrConnection = errors.New("provider: connection failed")
+	// ErrProtocol: Der Server hat eine Antwort geschickt, die sich nicht
+	// lesen lässt (z. B. falsche Literal-Länge). Die Verbindung ist danach
+	// unbrauchbar; dasselbe Kommando zu wiederholen hilft nicht. Der Sync
+	// grenzt die betroffene Nachricht durch kleinere Fenster ein.
+	ErrProtocol = errors.New("provider: unreadable server response")
 )
 
 // Capabilities beschreibt, was der Server kann. Sie werden beim Verbinden

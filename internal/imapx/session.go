@@ -169,8 +169,8 @@ func (s *Session) Do(ctx context.Context, f func(*Client) error) error {
 			return nil
 		}
 		if !retryable(err) {
-			if errors.Is(err, provider.ErrAuth) {
-				s.drop()
+			if errors.Is(err, provider.ErrAuth) || errors.Is(err, provider.ErrProtocol) {
+				s.drop() // nach einer unlesbaren Antwort ist der Datenstrom aus dem Takt
 			}
 			return err
 		}

@@ -1,6 +1,7 @@
 package imapx
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -215,5 +216,68 @@ func TestBackoffDelay(t *testing.T) {
 	}
 	if d := (Backoff{}).Delay(1, mid); d != DefaultBackoff.Initial {
 		t.Errorf("default = %s", d)
+	}
+}
+
+// scriptServer spricht minimales IMAP: LOGIN und EXAMINE gelingen, jedes
+// FETCH bekommt ein Literal mit falscher Länge (wie GreenMail 2.1 bei rohen
+// 8-Bit-Köpfen).
+func scriptServer(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = io.WriteString(c, "* OK [CAPABILITY IMAP4rev1] ready\r\n")
+				br := bufio.NewReader(c)
+				for {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					tag, rest, _ := strings.Cut(line, " ")
+					switch {
+					case strings.HasPrefix(rest, "LOGIN"):
+						_, _ = io.WriteString(c, tag+" OK logged in\r\n")
+					case strings.HasPrefix(rest, "EXAMINE"):
+						_, _ = io.WriteString(c, "* 1 EXISTS\r\n* OK [UIDVALIDITY 7] x\r\n* OK [UIDNEXT 2] x\r\n"+tag+" OK [READ-ONLY] done\r\n")
+					case strings.HasPrefix(rest, "UID FETCH"):
+						_, _ = io.WriteString(c, "* 1 FETCH (UID 1 BODY[] {5}\r\nSubject: x\r\n)\r\n"+tag+" OK done\r\n")
+					default:
+						_, _ = io.WriteString(c, tag+" OK\r\n")
+					}
+				}
+			}(c)
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// Eine unlesbare Antwort ist ErrProtocol: Die Session verwirft die
+// Verbindung, wiederholt aber nicht (es käme genauso wieder).
+func TestUnreadableResponseIsProtocolErrorWithoutRetry(t *testing.T) {
+	addr := scriptServer(t)
+	s := NewSession(cfgFor(t, addr), loginFunc, SessionOptions{Sleep: func(context.Context, time.Duration) error { return nil }})
+	defer s.Close()
+	err := s.Do(context.Background(), func(c *Client) error {
+		if _, err := c.Select("INBOX", SelectOptions{ReadOnly: true}); err != nil {
+			return err
+		}
+		return c.FetchRaw([]uint32{1}, func(uint32, io.Reader) error { return nil })
+	})
+	if !errors.Is(err, provider.ErrProtocol) || errors.Is(err, provider.ErrConnection) {
+		t.Fatalf("err = %v", err)
+	}
+	if d := s.Dials(); d != 1 {
+		t.Fatalf("dials = %d, want 1 (no retry)", d)
 	}
 }

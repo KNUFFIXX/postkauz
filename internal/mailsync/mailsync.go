@@ -338,7 +338,7 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		n := min(len(fetch), DefaultWindow)
 		chunk := fetch[:n]
 		fetch = fetch[n:]
-		headers, err := e.Remote.FetchHeaders(ctx, mb.Path, uv, chunk)
+		headers, err := e.fetchHeaders(ctx, mb.Path, uv, chunk, rep)
 		if err != nil {
 			return err
 		}
@@ -362,7 +362,7 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 			uids = append(uids, h.UID)
 		}
 		got := map[provider.UID]bool{}
-		err = e.Remote.FetchRaw(ctx, mb.Path, uv, uids, func(uid provider.UID, r io.Reader) error {
+		err = e.fetchRaw(ctx, mb.Path, uv, uids, got, rep, func(uid provider.UID, r io.Reader) error {
 			h, ok := byUID[uid]
 			if !ok || got[uid] {
 				_, _ = io.Copy(io.Discard, r)
@@ -404,6 +404,61 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 	}
 	return flush(true)
+}
+
+// fetchHeaders holt Köpfe; schickt der Server eine unlesbare Antwort
+// (ErrProtocol), wird das Fenster halbiert, bis die betroffene Nachricht
+// allein steht. Sie zählt dann als Fehler und wird übersprungen (der
+// nächste Lauf versucht sie erneut), der Rest wird gespiegelt.
+func (e *Engine) fetchHeaders(ctx context.Context, path string, uv uint32, uids []provider.UID, rep *MailboxReport) ([]provider.Header, error) {
+	h, err := e.Remote.FetchHeaders(ctx, path, uv, uids)
+	if err == nil || !errors.Is(err, provider.ErrProtocol) {
+		return h, err
+	}
+	if len(uids) == 1 {
+		rep.Errors++
+		rep.problem(fmt.Sprintf("uid %d: %v", uids[0], err))
+		e.log().Warn("unreadable server response; message skipped", "mailbox", path, "uid", uids[0])
+		return nil, nil
+	}
+	mid := len(uids) / 2
+	a, err := e.fetchHeaders(ctx, path, uv, uids[:mid], rep)
+	if err != nil {
+		return nil, err
+	}
+	b, err := e.fetchHeaders(ctx, path, uv, uids[mid:], rep)
+	return append(a, b...), err
+}
+
+// fetchRaw wie fetchHeaders für die Rohmails; got verhindert, dass eine
+// Nachricht beim Halbieren zweimal verarbeitet wird.
+func (e *Engine) fetchRaw(ctx context.Context, path string, uv uint32, uids []provider.UID, got map[provider.UID]bool,
+	rep *MailboxReport, fn func(provider.UID, io.Reader) error) error {
+	var todo []provider.UID
+	for _, u := range uids {
+		if !got[u] {
+			todo = append(todo, u)
+		}
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+	err := e.Remote.FetchRaw(ctx, path, uv, todo, fn)
+	if err == nil || !errors.Is(err, provider.ErrProtocol) {
+		return err
+	}
+	if len(todo) == 1 {
+		got[todo[0]] = true
+		rep.Errors++
+		rep.problem(fmt.Sprintf("uid %d: %v", todo[0], err))
+		e.log().Warn("unreadable server response; message skipped", "mailbox", path, "uid", todo[0])
+		return nil
+	}
+	mid := len(todo) / 2
+	if err := e.fetchRaw(ctx, path, uv, todo[:mid], got, rep, fn); err != nil {
+		return err
+	}
+	return e.fetchRaw(ctx, path, uv, todo[mid:], got, rep, fn)
 }
 
 func (r *MailboxReport) problem(s string) {

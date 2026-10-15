@@ -15,7 +15,8 @@
 //   - Klartext und unbestätigte Zertifikate nur für Testserver auf localhost.
 //
 // Fehlerklassen: ErrConnection (wiederholbar), ErrAuth (nie wiederholen),
-// ErrRejected (Server lehnt ein Kommando mit NO/BAD ab; nicht wiederholen).
+// ErrRejected (Server lehnt ein Kommando mit NO/BAD ab; nicht wiederholen),
+// ErrProtocol (unlesbare Antwort; Verbindung verwerfen, nicht wiederholen).
 //
 // Seit S1.4/S1.5: EXAMINE/SELECT, UID SEARCH, FETCH (Metadaten, Flags mit
 // CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND und STORE (mailbox.go)
@@ -133,8 +134,15 @@ func connErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth) || errors.Is(err, ErrRejected) {
+	if errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth) || errors.Is(err, ErrRejected) ||
+		errors.Is(err, provider.ErrProtocol) {
 		return err
+	}
+	// go-imap meldet unlesbare Antworten als Fehler des Decoders
+	// („imapwire: …"); sie sind kein Netzproblem und kommen beim Wiederholen
+	// genauso (z. B. GreenMail mit falscher Literal-Länge bei 8-Bit-Köpfen).
+	if strings.Contains(err.Error(), "imapwire:") {
+		return fmt.Errorf("%w: %v", provider.ErrProtocol, err)
 	}
 	return fmt.Errorf("%w: %v", provider.ErrConnection, err)
 }
