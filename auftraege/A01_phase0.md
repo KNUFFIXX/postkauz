@@ -49,7 +49,7 @@ Jeden Punkt abarbeiten oder ausdrücklich in `docs/roadmap.md` zurückstellen (m
 | P4 | Schlüsselbund (`go-keyring`) auf Windows, Linux (Secret Service), macOS; Fallback ohne Schlüsselbund | S1.1 | Test und `doctor`-Ausgabe |
 | P5 | UIDVALIDITY-Wechsel gezielt (Ordner neu angelegt) | S1.5 | Test: Reset führt zum Abgleich per Message-ID |
 | P6 | COMPRESS, BINARY (optional) | später | Entscheidung notieren |
-| P7 | Race-Detector (`go test -race ./...`) und Unit-Tests für `imapx`, Sync, Parser | ab S1.3, dauerhaft in `make check` | `make check` enthält `-race` |
+| P7 | Race-Detector (`go test -race ./...`) und Unit-Tests für `imapx`, Sync, Parser | ab S1.3, dauerhaft (Betreiber-Entscheid 15.10.2026: eigenes Ziel `make race` mit CGO, eigener CI-Job; nicht in `make check`) | `make race` und CI-Job `race` grün |
 | P8 | QRESYNC: Upstream-Beitrag oder Fork | nach S1 | Entscheidung als ADR |
 | P9 | Weitere Anbieter (M365, IONOS, Strato, T-Online) | manuell durch den Betreiber | Eintrag in der Roadmap |
 
@@ -75,7 +75,7 @@ Gemeinsame Regeln je Schritt: kleine Commits; `make check` grün; Tests mit Dock
 | S1.10 | Import mbox/Maildir mit Message-ID-/Hash-Abgleich und Überlappung | Import eines Bestands mit 30 % Überlappung zu einem gesyncten Konto: keine Doppelten, Zählung ausgegeben |
 | S1.11 | Audit-Export mit Prüfsumme, `audit verify`, Kanarientest über alle Ausgabekanäle, Installationsanleitung im README, Release-Binärdateien per `make cross` | `audit verify` erkennt eine geänderte Zeile; Kanarientest grün; Installation in unter 15 Minuten nach README |
 
-Reihenfolge einhalten; ein Schritt gilt erst als fertig, wenn seine Akzeptanz grün ist. `make check` enthält ab S1.3 den Race-Detector (P7). Nach S1.5 und nach S1.9 jeweils **anhalten und den Betreiber abnehmen lassen** (Teil D).
+Reihenfolge einhalten; ein Schritt gilt erst als fertig, wenn seine Akzeptanz grün ist. Ab S1.3 läuft der Race-Detector als `make race` und als eigener CI-Job (P7). Nach S1.5 und nach S1.9 jeweils **anhalten und den Betreiber abnehmen lassen** (Teil D).
 
 ## Teil D: Abnahme-Checkliste für den Betreiber
 

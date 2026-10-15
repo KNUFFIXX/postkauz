@@ -1,11 +1,11 @@
-# Roadmap
+Stand: **S1.3 erledigt** (15.10.2026: `internal/imapx` mit Watchdog, Reconnect und Backoff; IMAP-Provider mit Fähigkeiten und Ordnerrollen; Integrationstests gegen Dovecot, Stalwart, GreenMail; `make race`). Davor S1.2 (Blob-Store, MIME-Parser, Threading, Korpus) und S1.1 (Konten, Store, Audit, Schlüsselbund). Nächstes: S1.4 (Erstsync in Fenstern, resume-fähig). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 Stand: **S1.2 erledigt** (15.10.2026: Blob-Store, MIME-Parser auf `go-message`, Threading per Message-ID, Korpus-Generator `make corpus`; davor S1.1: Konten, Store, Audit, Schlüsselbund, `doctor`). Nächstes: S1.3 (`internal/imapx` vervollständigen, IMAP-Provider mit Ordnerrollen, Integrationstests). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 und S1.2 erledigt 15.10.2026**; S1.3 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.3 erledigt 15.10.2026**; S1.4 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -23,6 +23,18 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 **Offen (Auftrag A01):** S1 ab S1.2. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.3 (15.10.2026, erledigt)
+
+**Akzeptanz S1.3 erfüllt:** Integrationstest gegen Dovecot 2.4, Stalwart 0.11.8 und GreenMail (`make testmail-up testmail-setup integration`): erwartete Fähigkeiten, Strategie (`condstore`, `condstore`, `uid-scan`), Rollen und `ErrAuth` bei falschem Passwort, je Server grün. Ohne `POSTKAUZ_IT` werden die Tests übersprungen; `make check` läuft ohne Docker. Watchdog-Tests mit stummem Server: Blackhole-Listener ohne Gruß und Blackhole-Proxy mitten in der Sitzung werden in der konfigurierten Deadline (300 ms) erkannt; danach baut die Session mit Backoff neu auf. `make race` grün (lokal, auch mit den Integrationstests) und als CI-Job.
+
+- **`internal/imapx`:** `Session` (Reconnect mit exponentiellem Backoff und Jitter, Standard 1 s bis 5 min, höchstens 5 Versuche je Aufruf; `ErrAuth` und Ablehnungen `ErrRejected` nie wiederholt; Kontextabbruch schließt ein hängendes Kommando), LIST mit `RETURN (SPECIAL-USE)` und LIST-STATUS, CREATE (idempotent), NOOP. `make guard` prüft zusätzlich den Pin auf v2.0.0-beta.8.
+- **`internal/provider/imap`:** `Connect`, `Capabilities`, `Strategy`, `ListMailboxes` (Rollen: SPECIAL-USE vor Namen, jede Rolle einmal, Gmail-Namen unter `[Gmail]`/`[Google Mail]` als Rückfall; neue Rolle `all`). `account test` nutzt denselben Weg. `MailProvider` vollständig erst mit S1.4/S1.5.
+- **Testserver:** `deploy/testmail/stalwart-setup.sh` (`make testmail-setup`) richtet Stalwart ein (IPv4, Domain, Konto `test`).
+- **Befunde:** Stalwart nennt SPECIAL-USE nur auf `RETURN (SPECIAL-USE)` und liefert in LIST-STATUS `HIGHESTMODSEQ 0` trotz CONDSTORE (S1.4: Wert aus SELECT nehmen); GreenMail kann weder SPECIAL-USE noch LIST-STATUS (Zustand erst mit SELECT) und antwortet auf CREATE eines vorhandenen Ordners ohne `ALREADYEXISTS`; Dovecot meldet zusätzlich `COMPRESS=DEFLATE` und `BINARY` (P6).
+- **Beifang:** CI auf `actions/checkout@v7` und `actions/setup-go@v7` (Dependabot-PRs #1/#2 damit überholt).
+
+**Nicht in S1.3 (bewusst verschoben):** IDLE und dessen Neustart alle 5 bis 10 Minuten (S1.5; braucht eine eigene Verbindung, weil `Session.Do` Aufrufe nacheinander ausführt); SELECT/FETCH/Changes (S1.4/S1.5); Rolle `all` in der Datenbank (Migration 0002, S1.4).
 
 ### Stand S1.2 (15.10.2026, erledigt)
 
@@ -47,7 +59,7 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 - **P3 als Entwurf:** SASL XOAUTH2 (eigen) und OAUTHBEARER (go-sasl) in `internal/imapx`, Token-Quelle mit Refresh und Sperrzeit in `internal/oauth`; Tests gegen einen Fake-IMAP-Server und einen Fake-Refresher. Offen: Autorisierungs-Flow (Loopback/Device Code), HTTP-Refresher, Kontenanlage mit `oauth2`.
 - **`internal/imapx` vorgezogen (Ausschnitt):** Dial mit TCP-Keepalive, Watchdog je Kommando (Blackhole-Test grün), `WordDecoder` mit Charset-Reader (Test), Login, CAPABILITY, LIST; `internal/provider/imap` bestimmt daraus Fähigkeiten, Ordnerrollen (SPECIAL-USE, sonst Namen auf Deutsch/Englisch) und die Strategie (QRESYNC maskiert, ADR-007). `make guard` prüft, dass nur `imapx` go-imap importiert. Handgeprüft gegen Dovecot (`condstore`, Rollen INBOX/Sent/Drafts/Trash/Junk) und GreenMail (`uid-scan`); TLS mit selbstsigniertem Zertifikat (Dovecot 11993) erreicht die Anmeldung.
 - **Binärgrößen** (`make cross`, ohne `-s -w`): linux/amd64 17,6 MB, windows/amd64 17,1 MB, darwin/arm64 16,4 MB; mit `-s -w` 12,0 / 11,7 / 11,1 MB (Spike: rund 11 MB).
-- `go test -race ./...` lokal grün (braucht CGO, deshalb noch nicht in `make check`; P7 ab S1.3).
+- `go test -race ./...` lokal grün (braucht CGO; seit S1.3 `make race` und CI-Job, P7).
 
 **Nicht in S1.1 (bewusst verschoben):** globale Optionen `--account`, `--key`, `--quiet`, `--profile` (mit S1.8); `doctor --secrets` und `doctor --blobs` (S1.11); `VACUUM INTO` vor Migrationen (mit der ersten Migration 0002); gemountete Secret-Dateien.
 
@@ -109,17 +121,19 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 5. Gmail-API-/Graph-Anbindung (bring your own client), Embeddings/semantische Suche (lokal), Mehrbenutzerbetrieb mit Rollen je Mensch.
 6. **GUI** frühestens nach 1.0 und nur gegen REST (siehe Nicht-Ziele).
 
-## Entschiedene Fragen (14.10.2026)
+## Entschiedene Fragen (14./15.10.2026)
 
 1. **Gate:** bestanden mit Auflagen (ADR-007).
 2. **Go-Version:** Zielversion 1.27, Anhebung als Schritt 0 von A01 (ADR-008).
 3. **Postfach-Aktionen:** Tags, Move und Trash bleiben in S3.
 4. **Sprache:** Programmausgaben Englisch, Doku Deutsch.
 5. **Erkennung des Versands (S2):** `Message-ID` zuerst, **Rückfall-Abgleich** über Empfänger, Betreff, Body-Hash und Zeitfenster; das Verhalten je Client wird in S2 gemessen.
+6. **Commit-Sprache** (15.10.2026): Englisch.
+7. **Passwörter ohne Schlüsselbund** (15.10.2026): kein Dateispeicher mit Passphrase; es bleibt bei Umgebungsvariable bzw. `insecure-file` nur für Testserver.
+8. **Race-Detector** (15.10.2026): eigenes Ziel `make race` (CGO) und CI-Job ab S1.3, nicht Teil von `make check`.
 
 ## Offene Fragen
 
 1. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
 2. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
-3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, UIDVALIDITY-Wechsel, COMPRESS/BINARY, Race-Detector in `make check` (braucht CGO; Vorschlag: eigenes Ziel `make race`, in der CI mit `CGO_ENABLED=1`), QRESYNC per Beitrag oder Fork. Erledigt bzw. als Entwurf: P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen).
-4. **Unsicherer Dateispeicher für Passwörter:** `secrets.backend = "insecure-file"` ist nur für Testserver gedacht. Soll es zusätzlich einen sicheren Dateispeicher mit Passphrase geben (für Rechner ohne Schlüsselbund), oder reicht die Umgebungsvariable? Vorschlag: reicht vorerst.
+3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, UIDVALIDITY-Wechsel, COMPRESS/BINARY, QRESYNC per Beitrag oder Fork. Erledigt bzw. als Entwurf: P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen), P7 (Race-Detector: `make race` und CI-Job, S1.3).

@@ -26,8 +26,12 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - **S1.2:** Blob-Store `internal/blob` (atomar, SHA-256, Deduplizierung, optional zstd, Größenlimit); MIME-Parser `internal/mimeparse` auf `go-message` mit Charset-Reader, tolerantem Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`) und Limits gegen Zip-Bomben und übergroße Teile; Threading `internal/thread` (Union-Find); Korpus-Generator `internal/corpus` mit Manifest, `make corpus`.
 - Neue Abhängigkeit (per `go get`): `github.com/klauspost/compress` v1.20.3 (BSD-3-Clause) für zstd; `golang.org/x/text` jetzt direkt genutzt (v0.14.0, unverändert).
 
+- **S1.3:** `internal/imapx` mit `Session` (Watchdog-Abbruch → Close + Reconnect mit exponentiellem Backoff und Jitter; `ErrAuth`/`ErrRejected` ohne Wiederholung), LIST mit SPECIAL-USE und LIST-STATUS, CREATE, NOOP; IMAP-Provider `Connect`/`ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen, neue Rolle `all`) und Ordnerzustand; Integrationstests gegen Dovecot, Stalwart, GreenMail (`make integration`, nur mit `POSTKAUZ_IT`); `make testmail-setup` richtet Stalwart ein; `make race` und CI-Job `race`; `make guard` prüft den go-imap-Pin.
+
 ### Changed
 
+- CI: `actions/checkout` und `actions/setup-go` auf v7 (ersetzt Dependabot-PRs #1/#2).
+- `account test` nutzt den IMAP-Provider (eine Verbindung, ein Versuch); Serverablehnungen (NO/BAD) gelten nicht mehr als Verbindungsfehler.
 - `policy.Check`: `--dry-run` gilt auch für R1-Operationen (wurde bisher ignoriert).
 - Store verweigert Datenbanken mit neuerer Schemaversion; Migration 0001 um `accounts.insecure_test_server` ergänzt.
 - **Go 1.27** (ADR-008, A01 Schritt 0): `go.mod` auf `go 1.27`, `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4), `GOTOOLCHAIN=local` im Makefile, CI installiert `1.27.x`; `make cross` meldet die Binärgrößen.
