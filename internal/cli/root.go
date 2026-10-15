@@ -29,7 +29,7 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 	// Register ohne Abhängigkeiten: für Hilfe und Bindungsprüfung. Der
 	// Executor mit Store, Schlüsselbund und SQLite-Audit entsteht erst, wenn
 	// ein Kommando läuft (app.open).
-	reg, err := buildRegistry(registryDeps{})
+	reg, err := ops.NewDefaultRegistry(ops.Deps{})
 	if err != nil {
 		return nil, nil, err
 	}

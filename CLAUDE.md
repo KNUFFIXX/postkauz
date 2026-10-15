@@ -24,7 +24,7 @@ PostKauz ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go
 ## Arbeitsweise
 
 - **Kleine Commits**, ein Gedanke je Commit. Vor **jedem** Commit: `make check` (gofmt, `go vet ./...`, `go test ./...`, Guards, PII-Gate). Vor jedem Push/Abschluss zusätzlich `make cross` (linux/amd64, windows/amd64, darwin/arm64).
-- **Je Operation ein Test** im Register (`internal/ops`), dazu der Vertragstest für Scope → Policy → Freigabe → Audit → Handler. Neue Operation heißt: Registereintrag, Test, je Adapter eine Bindungszeile, Eintrag in `docs/mcp.md`/`docs/cli.md`.
+- **Je Operation ein Test** im Register (`internal/ops`), dazu der Vertragstest für Scope → Policy → Freigabe → Audit → Handler. Neue Operation heißt: Registereintrag in `ops.Catalog`, Test, Zeile in `contractInputs` (Vertragstest), je Adapter eine Bindungszeile, Eintrag in `docs/mcp.md`/`docs/cli.md`.
 - **Handler nie direkt aufrufen**, immer über `ops.Executor.Execute`. Adapter sind dünn und ausdrücklich geschrieben (keine Reflection, kein Generator; ADR-004).
 - Der Executor bleibt **fail closed**: Audit-Fehler → Handler läuft nicht.
 - Fehlermeldungen und CLI-/MCP-Texte sind **Englisch**, Kommentare und Doku **Deutsch**, `README.md` Englisch.

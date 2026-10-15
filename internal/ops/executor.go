@@ -17,10 +17,9 @@ import (
 //	Scope + Policy  →  (Freigabe, ab Schnitt 2)  →  Audit  →  Handler
 //
 // Keine Oberfläche darf einen Handler direkt aufrufen; Operation.Handler
-// anzufassen ist ein Review-Fehler (Regel in CLAUDE.md). Sobald mehrere
-// Operationen existieren, kommt ein Vertragstest hinzu, der jede
-// registrierte Operation mit jedem Scope und jeder Risikostufe durch den
-// Executor schickt.
+// anzufassen ist ein Review-Fehler (Regel in CLAUDE.md). Der Vertragstest
+// (TestContractEveryOperationRoleAndDryRun) schickt jede Operation aus
+// Catalog mit jeder Rolle und jeder Trockenlauf-Variante durch den Executor.
 type Executor struct {
 	Registry *Registry
 	Audit    audit.Writer

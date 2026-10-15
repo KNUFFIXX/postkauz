@@ -54,37 +54,6 @@ func newApp(version string, stdin io.Reader, stdout, stderr io.Writer) *app {
 	return a
 }
 
-// registryDeps sind die Abhängigkeiten der Operationen.
-type registryDeps struct {
-	repo   ops.AccountRepo
-	sec    secrets.Store
-	prober ops.AccountProber
-	boxes  ops.MailboxRepo
-	msgs   ops.MessageRepo
-	blobs  ops.BlobReader
-	runner ops.SyncRunner
-}
-
-// buildRegistry registriert alle Operationen. Ohne Abhängigkeiten (für Hilfe
-// und Bindungsprüfung) entsteht dieselbe Tabelle; Handler laufen dann nie.
-func buildRegistry(d registryDeps) (*ops.Registry, error) {
-	reg := ops.NewRegistry()
-	for _, op := range []ops.Operation{
-		ops.AccountsList(d.repo),
-		ops.AccountsAdd(d.repo, d.sec),
-		ops.AccountsRemove(d.repo, d.sec),
-		ops.AccountsTest(d.repo, d.sec, d.prober),
-		ops.SyncRun(d.repo, d.sec, d.runner),
-		ops.MailboxesList(d.repo, d.boxes),
-		ops.MessagesGet(d.repo, d.msgs, d.blobs),
-	} {
-		if err := reg.Register(op); err != nil {
-			return nil, err
-		}
-	}
-	return reg, nil
-}
-
 func parseLevel(s string) slog.Level {
 	switch s {
 	case "debug":
@@ -134,8 +103,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := buildRegistry(registryDeps{repo: st, sec: sec, prober: newProber(), boxes: st, msgs: st, blobs: blobs,
-		runner: newSyncRunner(st, blobs, a.log)})
+	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(), Mailboxes: st,
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log)})
 	if err != nil {
 		return nil, err
 	}

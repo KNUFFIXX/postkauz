@@ -53,3 +53,4 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 - `content_hash` deckt die ganze Rohmail ab, auch wenn der Parser vorzeitig aufhört (unlesbarer Kopf über 1 MiB); vorher bekamen zwei verschiedene Mails mit gleichem Anfang denselben Hash.
 - CLI-Textausgabe (`show`, `sync`, `mailbox list`, Fortschritt) filtert Steuerzeichen aus Mail und Server (ESC/CSI/OSC, C0/C1, einzelnes CR, ungültiges UTF-8 → `U+FFFD`); vorher konnte eine Mail Escape-Sequenzen im Terminal auslösen. `--json` unverändert.
+- Vertragstest nach ADR-004 ergänzt: jede Operation aus dem neuen `ops.Catalog` × jede Rolle × fünf Trockenlauf-Varianten durch den Executor (Policy, genau ein Audit-Eintrag, Handler nur bei Erlaubnis, Trockenlauf schreibt nichts, Pflichtfelder der Ausgabe) sowie fail closed je Operation; die CLI registriert über `ops.NewDefaultRegistry`.
