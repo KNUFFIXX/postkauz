@@ -570,7 +570,14 @@ func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (store.NewMessage, er
 	}
 	defer rc.Close()
 	hr := sha256.New()
-	m, perr := mimeparse.Parse(io.TeeReader(rc, crStripper{hr}), mimeparse.Options{InternalDate: h.InternalDate})
+	tee := io.TeeReader(rc, crStripper{hr})
+	m, perr := mimeparse.Parse(tee, mimeparse.Options{InternalDate: h.InternalDate})
+	// Parse hört bei unlesbarem Kopf oder an seinen Grenzen vorzeitig auf;
+	// content_hash muss aber die ganze Rohmail abdecken, sonst bekommen zwei
+	// verschiedene Mails mit gleichem Anfang denselben Hash.
+	if _, err := io.Copy(io.Discard, tee); err != nil {
+		return nm, fmt.Errorf("hash message: %w", err)
+	}
 	nm.ContentHash = hex.EncodeToString(hr.Sum(nil))
 	if perr != nil {
 		// Unlesbarer Kopf: Nachricht trotzdem spiegeln (Blob, Größe, Datum).

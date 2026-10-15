@@ -665,6 +665,38 @@ func TestContentHashIgnoresLineEndings(t *testing.T) {
 	}
 }
 
+// Regression: Bei unlesbarem Kopf (> 1 MiB) bricht der Parser früh ab; der
+// content_hash muss trotzdem die ganze Rohmail abdecken, sonst ordnet
+// FindByContentHash eine andere Mail mit gleichem Anfang falsch zu.
+func TestMirrorRawHashesWholeUnreadableMessage(t *testing.T) {
+	b, err := blob.Open(t.TempDir(), blob.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Blobs: b}
+	hdr := "Message-ID: <x@example.org>\r\nX-Big: " + strings.Repeat("a", 2<<20) + "\r\n\r\n"
+	m1 := hdr + "body one " + strings.Repeat("1", 200000)
+	m2 := hdr + "body two " + strings.Repeat("2", 200000)
+	n1, err := e.mirrorRaw(strings.NewReader(m1), provider.Header{UID: 1, Size: int64(len(m1))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2, err := e.mirrorRaw(strings.NewReader(m2), provider.Header{UID: 2, Size: int64(len(m2))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n1.Subject != "" || n1.ContentHash == "" {
+		t.Fatalf("expected unreadable header with hash, got subject %q hash %q", n1.Subject, n1.ContentHash)
+	}
+	if n1.ContentHash == n2.ContentHash {
+		t.Fatalf("different messages share content_hash %s", n1.ContentHash)
+	}
+	want, _ := ContentHash(strings.NewReader(m1))
+	if n1.ContentHash != want {
+		t.Fatalf("content_hash = %s, want hash of whole message %s", n1.ContentHash, want)
+	}
+}
+
 func TestSnippet(t *testing.T) {
 	if s := snippet("  Hallo\r\n\r\n  Welt  "); s != "Hallo Welt" {
 		t.Fatalf("snippet = %q", s)

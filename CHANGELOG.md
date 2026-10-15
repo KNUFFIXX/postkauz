@@ -48,3 +48,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - ADR-001 und ADR-005 an die Spike-Befunde angepasst (`modernc.org/sqlite`: v1.46.1 ist das Maximum für Go 1.24).
 - CI: `GOTOOLCHAIN=local`, Go 1.27 ausdrücklich installiert.
 - README, `docs/roadmap.md` (S0 erledigt, entschiedene Fragen), `docs/architektur.md`, `docs/datenmodell.md` (ß/ss-Normalisierer), `docs/sicherheit.md` (Rückfall-Abgleich), A01 (Schritt 0, Vorgaben, Prüfliste).
+
+### Fixed
+
+- `content_hash` deckt die ganze Rohmail ab, auch wenn der Parser vorzeitig aufhört (unlesbarer Kopf über 1 MiB); vorher bekamen zwei verschiedene Mails mit gleichem Anfang denselben Hash.
