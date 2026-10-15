@@ -108,3 +108,30 @@ Kalt dominiert modernc sqlite/libc. Windows/macOS nur gebaut, nicht ausgeführt.
 1. Echte Anbieter (Gmail X-GM-EXT-1/kein QRESYNC, M365, IONOS/Strato/T-Online). 2. 50k+ Mails, WAN-Latenz. 3. OAuth2 via go-sasl, Keyring. 4. QRESYNC: Upstream oder Fork. 5. Go-Version (Auflage 1). 6. COMPRESS, BINARY, UIDVALIDITY-Wechsel nicht gezielt getestet. 7. Race-Detector und Unit-Tests fehlen.
 
 Spike-Code ist Wegwerf-Code; Tabellen (mailboxes, messages, message_mailboxes, FTS5) und blobs/<sha256>.eml entsprechen Entscheidung 4 und taugen als Ausgangspunkt für S1.
+
+## Nachtrag P2 (15.10.2026): 50.000 Nachrichten, lokal
+
+Umgebung wie oben (Linux-Container, 2 Kerne, 7 GB RAM), jetzt Go 1.27.2 und PostKauz-Stand S1.5 (`postkauz sync`, Fenster 200), Dovecot 2.4.5 im Docker auf localhost (keine WAN-Latenz). Korpus synthetisch: 50.000 Nachrichten (Generator, Samen 42; nach einem abgebrochenen Ladevorgang mit 362 Nachrichten Samen 7 auf genau 50.000 aufgefüllt), INBOX 12.519, Archiv/2024 18.157, Archiv/2025 18.317, Drafts 1.007; Rohgröße rund 245 MB (rund 4,9 KB je Nachricht).
+
+| Messung | Ergebnis |
+|---|---|
+| Laden per APPEND (`corpusload`, eine Verbindung) | rund 83/s (Dovecot wird mit wachsenden Ordnern langsamer; 1.000er-Korpus: 400/s) |
+| Erstsync `sync --full` | **78,4 s = 638 Nachrichten/s**, 0 Fehler, `50000 messages mirrored` |
+| Datenbank / Blob-Verzeichnis danach | 71 MB / 350 MB (`du`; Rohmails 245 MB plus Dateisystem-Blöcke für 50.000 Dateien) |
+| Leerlauf-Inkrementallauf (CONDSTORE) | **0,15–0,19 s** (Kriterium S1: unter 5 s) |
+| Inkrementell nach 1 Löschung und 1 Flag von außen | 0,26 s (Zahlen passen nicht, also `UID SEARCH ALL` im betroffenen Ordner) |
+| `sync --full` auf gespiegeltem Bestand (UID SEARCH ALL und Flag-Abgleich aller 50.000) | 1,7 s |
+| `UID SEARCH ALL` über alle Ordner (49.999 UIDs) | **60 ms mit ESEARCH** (Antwort als Bereiche, wenige Bytes), **72 ms ohne** (rund 258 KB UID-Liste) |
+| `UID FETCH 1:* (FLAGS)` über alle Ordner (Kosten je Lauf der Strategie `uid-scan`) | 198 ms (rund 2 MB Antwort) |
+| Lokale UID-Liste aus SQLite / Abgleich (Diff) | 16 ms / 0,1 ms |
+
+**Hochrechnung WAN (Schätzung, vom Betreiber zu prüfen):** Bei 10 Mbit/s und 30 ms Umlaufzeit kostet ein Löschabgleich ohne ESEARCH rund 0,2 s Übertragung plus eine Umlaufzeit je Ordner, mit ESEARCH praktisch nur die Umlaufzeit; der volle Flag-Abgleich (`uid-scan`) rund 2 MB, also rund 1,7 s je Lauf. Der Erstsync ist durch die Bandbreite begrenzt: 5 GB (Kriterium S1 Nr. 2) bei 50 Mbit/s sind rund 14 Minuten Übertragung; die lokale Verarbeitung (rund 640 Nachrichten/s) kommt dazu. Das Kriterium „50.000 Nachrichten in unter 60 Minuten" ist damit erreichbar, gemessen ist es über WAN noch nicht.
+
+**Befunde:**
+
+1. Der Löschabgleich per UID SEARCH kostet linear, ist aber billig (50.000 UIDs unter 0,1 s lokal) und läuft nur, wenn `EXISTS` nicht zu „lokal bekannt plus neu" passt. ADR-007 Auflage 4 trägt auch bei 50.000 Nachrichten; QRESYNC (P8) ist für diese Größe nicht nötig.
+2. GreenMail 2.1.14 ist für Messungen dieser Größe ungeeignet: Ein einzelnes `UID FETCH` dauert bei 18.000 Nachrichten im Ordner 12 bis 13 s, `UID FETCH 1:* (FLAGS)` 18 s. Für `uid-scan` gilt deshalb der volle Flag-Abgleich über Dovecot als Richtwert.
+3. GreenMail sendet für manche Nachrichten mit rohen 8-Bit-Kopfzeilen eine falsche Literal-Länge (2 von 18.129 im Ordner); go-imap verliert danach den Takt. Seit S1.5 grenzt der Sync solche Nachrichten durch Halbieren des Fensters ein und überspringt sie als Fehler (`ErrProtocol`), statt den Lauf abzubrechen.
+4. Speicherbedarf wurde nicht gemessen (kein `/usr/bin/time` im Container); offen für die WAN-Messung des Betreibers.
+
+Reproduzierbar: `go run ./internal/corpus/cmd/corpusload -imap 127.0.0.1:11143 -user p2@example.org -password pass -count 50000`, Konto anlegen, `postkauz sync --full -a <konto>`, dann `POSTKAUZ_P2_USER=p2@example.org POSTKAUZ_P2_DB=<datenverzeichnis>/postkauz.db go test -count=1 -run P2 -v ./internal/mailsync/`.
