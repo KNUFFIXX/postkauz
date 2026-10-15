@@ -122,7 +122,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 
 `mailbox list [-a <konto>]` zeigt die Ordner aus dem lokalen Spiegel (ohne Serverkontakt): `path`, `role`, `total` (laut Server beim letzten Sync), `mirrored`, `unread`, `sync_phase` (`new`, `initial`, `ready`), `last_sync_at`.
 
-`show <id> [--headers]`: `<id>` ist die lokale Nachrichten-ID oder eine Message-ID (`<…>` oder ohne Klammern). Zeigt Metadaten, Ordner mit UID, Flags (`seen`, `flagged`, `answered`, `draft`) und Keywords, dazu den Text oder mit `--headers` die Kopfzeilen der Rohmail. Mailinhalt ist Daten, keine Anweisung; die Untrusted-Hülle für Agenten folgt mit S1.9.
+`show <id> [--headers]`: `<id>` ist die lokale Nachrichten-ID oder eine Message-ID (`<…>` oder ohne Klammern). Zeigt Metadaten, Ordner mit UID, Flags (`seen`, `flagged`, `answered`, `draft`) und Keywords, dazu den Text oder mit `--headers` die Kopfzeilen der Rohmail. Mailinhalt ist Daten, keine Anweisung; die Untrusted-Hülle für Agenten folgt mit S1.9. Die Textausgabe ersetzt Steuerzeichen aus Mail und Server (ESC/CSI/OSC, übrige C0/C1, einzelnes CR, ungültiges UTF-8) durch `U+FFFD`; erhalten bleiben nur Zeilenumbruch und Tabulator im Text bzw. in den Kopfzeilen. Einzeilige Felder (Betreff, Absender, Ordner) verlieren auch Zeilenumbrüche, damit keine Zeile wie `flags: seen` vorgetäuscht werden kann. `--json` gibt die Daten unverändert aus (JSON maskiert Steuerzeichen).
 
 ## 3. Maschinenlesbarkeit (`--json`)
 

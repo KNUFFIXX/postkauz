@@ -52,3 +52,4 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 ### Fixed
 
 - `content_hash` deckt die ganze Rohmail ab, auch wenn der Parser vorzeitig aufhört (unlesbarer Kopf über 1 MiB); vorher bekamen zwei verschiedene Mails mit gleichem Anfang denselben Hash.
+- CLI-Textausgabe (`show`, `sync`, `mailbox list`, Fortschritt) filtert Steuerzeichen aus Mail und Server (ESC/CSI/OSC, C0/C1, einzelnes CR, ungültiges UTF-8 → `U+FFFD`); vorher konnte eine Mail Escape-Sequenzen im Terminal auslösen. `--json` unverändert.

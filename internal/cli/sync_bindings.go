@@ -77,15 +77,15 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 				return // nur laufende Erstsyncs melden, höchstens einmal je Sekunde
 			}
 			last[p.Mailbox] = time.Now()
-			fmt.Fprintf(a.stderr, "  %s: %d/%d\n", p.Mailbox, p.Done, p.Total)
+			fmt.Fprintf(a.stderr, "  %s: %d/%d\n", termLine(p.Mailbox), p.Done, p.Total)
 		case "error":
-			fmt.Fprintf(a.stderr, "  %s: error: %s\n", p.Mailbox, p.Message)
+			fmt.Fprintf(a.stderr, "  %s: error: %s\n", termLine(p.Mailbox), termLine(p.Message))
 		case "round":
 			if r := p.Round; r != nil {
 				line := fmt.Sprintf("%s  %d new, %d updated, %d removed, %d errors; %d messages mirrored",
 					time.Now().UTC().Format(time.RFC3339), r.New, r.Updated, r.Removed, r.Errors, r.MessagesMirrored)
 				if p.Message != "" {
-					line += "; " + p.Message
+					line += "; " + termLine(p.Message)
 				}
 				fmt.Fprintln(a.stdout, line)
 			}
@@ -103,7 +103,7 @@ func renderSync(w io.Writer, out any) error {
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "MAILBOX\tROLE\tMIRRORED")
 		for _, m := range o.Mailboxes {
-			fmt.Fprintf(tw, "%s\t%s\t%d\n", m.Path, m.Role, m.Mirrored)
+			fmt.Fprintf(tw, "%s\t%s\t%d\n", termLine(m.Path), m.Role, m.Mirrored)
 		}
 		_ = tw.Flush()
 		_, err := fmt.Fprintf(w, "%d messages mirrored so far\n", o.MessagesMirrored)
@@ -120,12 +120,12 @@ func renderSync(w io.Writer, out any) error {
 			if m.Reset {
 				note = "\t(UIDVALIDITY changed, re-matched by Message-ID)"
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d%s\n", m.Path, m.Role, m.New, m.Updated, m.Removed, m.Errors, m.Mirrored, m.Total, note)
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d%s\n", termLine(m.Path), m.Role, m.New, m.Updated, m.Removed, m.Errors, m.Mirrored, m.Total, note)
 		}
 		_ = tw.Flush()
 		for _, m := range o.Mailboxes {
 			for _, p := range m.Problems {
-				fmt.Fprintf(w, "  %s: %s\n", m.Path, p)
+				fmt.Fprintf(w, "  %s: %s\n", termLine(m.Path), termLine(p))
 			}
 		}
 	}
@@ -161,7 +161,7 @@ func renderMailboxes(w io.Writer, out any) error {
 		if last == "" {
 			last = "never"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", m.Path, m.Role, m.Total, m.Mirrored, m.Unread, m.SyncPhase, last)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", termLine(m.Path), m.Role, m.Total, m.Mirrored, m.Unread, m.SyncPhase, last)
 	}
 	return tw.Flush()
 }
@@ -215,25 +215,25 @@ func renderShow(w io.Writer, out any) error {
 	}
 	var where []string
 	for _, l := range o.Mailboxes {
-		where = append(where, fmt.Sprintf("%s (uid %d)", l.Mailbox, l.UID))
+		where = append(where, fmt.Sprintf("%s (uid %d)", termLine(l.Mailbox), l.UID))
 	}
 	yn := map[bool]string{true: "yes", false: "no"}
 	tw := tabwriter.NewWriter(w, 0, 4, 1, ' ', 0)
 	fmt.Fprintf(tw, "id:\t%d\n", o.ID)
-	fmt.Fprintf(tw, "account:\t%s\n", o.Account)
+	fmt.Fprintf(tw, "account:\t%s\n", termLine(o.Account))
 	fmt.Fprintf(tw, "mailboxes:\t%s\n", strings.Join(where, ", "))
-	fmt.Fprintf(tw, "message-id:\t%s\n", o.MessageID)
-	fmt.Fprintf(tw, "date:\t%s\n", o.Date)
-	fmt.Fprintf(tw, "from:\t%s\n", o.From)
-	fmt.Fprintf(tw, "to:\t%s\n", addrList(o.To))
+	fmt.Fprintf(tw, "message-id:\t%s\n", termLine(o.MessageID))
+	fmt.Fprintf(tw, "date:\t%s\n", termLine(o.Date))
+	fmt.Fprintf(tw, "from:\t%s\n", termLine(o.From))
+	fmt.Fprintf(tw, "to:\t%s\n", termLine(addrList(o.To)))
 	if cc := addrList(o.Cc); cc != "" {
-		fmt.Fprintf(tw, "cc:\t%s\n", cc)
+		fmt.Fprintf(tw, "cc:\t%s\n", termLine(cc))
 	}
-	fmt.Fprintf(tw, "subject:\t%s\n", o.Subject)
+	fmt.Fprintf(tw, "subject:\t%s\n", termLine(o.Subject))
 	fmt.Fprintf(tw, "size:\t%d\n", o.Size)
-	fmt.Fprintf(tw, "flags:\t%s\n", strings.Join(o.Flags, ", "))
+	fmt.Fprintf(tw, "flags:\t%s\n", strings.Join(termLines(o.Flags), ", "))
 	if len(o.Keywords) > 0 {
-		fmt.Fprintf(tw, "keywords:\t%s\n", strings.Join(o.Keywords, ", "))
+		fmt.Fprintf(tw, "keywords:\t%s\n", strings.Join(termLines(o.Keywords), ", "))
 	}
 	fmt.Fprintf(tw, "attachments:\t%s\n", yn[o.HasAttachments])
 	fmt.Fprintf(tw, "deleted on server:\t%s\n", yn[o.DeletedRemote])
@@ -242,12 +242,12 @@ func renderShow(w io.Writer, out any) error {
 	}
 	if o.Headers != "" {
 		fmt.Fprintln(w, "--- headers ---")
-		_, err := fmt.Fprint(w, o.Headers)
+		_, err := fmt.Fprint(w, termText(o.Headers))
 		return err
 	}
 	if o.Text != nil {
 		fmt.Fprintln(w, "--- text ---")
-		_, err := fmt.Fprintln(w, strings.TrimRight(*o.Text, "\r\n"))
+		_, err := fmt.Fprintln(w, termText(strings.TrimRight(*o.Text, "\r\n")))
 		return err
 	}
 	return nil
