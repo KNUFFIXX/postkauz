@@ -38,7 +38,7 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("second Migrate must be a no-op: %v", err)
 	}
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 1 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != KnownSchemaVersion() || v < 2 {
 		t.Fatalf("SchemaVersion = %d, %v", v, err)
 	}
 	want := []string{"accounts", "identities", "mailboxes", "messages", "message_mailboxes", "threads",
@@ -131,5 +131,94 @@ func TestFTS5Strategy(t *testing.T) {
 	}
 	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `body: prüfen`); n != 0 {
 		t.Errorf("row still indexed after delete: %d", n)
+	}
+}
+
+// Migration 0002 baut mailboxes neu (Rolle 'all'). Ein Bestand mit Version 1
+// wird vorher per VACUUM INTO gesichert; Ordner und Ordnerzuordnungen der
+// Nachrichten überleben den Umbau (kein CASCADE), Fremdschlüssel sind danach
+// wieder an.
+func TestMigration0002KeepsDataAndSnapshots(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "pk.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.migrateTo(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if s.LastSnapshot != "" {
+		t.Fatal("no snapshot for an empty database")
+	}
+	for _, q := range []string{
+		`INSERT INTO accounts(id,name,email,host,port,username,credential_ref,created_at) VALUES (1,'demo','demo@example.org','127.0.0.1',143,'u','account/demo',1)`,
+		`INSERT INTO mailboxes(id,account_id,path,name,role,uidvalidity,uidnext) VALUES (7,1,'INBOX','INBOX','inbox',42,3)`,
+		`INSERT INTO mailboxes(id,account_id,path,name) VALUES (8,1,'Neu','Neu')`,
+		`INSERT INTO messages(id,account_id,subject,created_at) VALUES (5,1,'Hallo',1)`,
+		`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (5,7,2)`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO mailboxes(account_id,path,name,role) VALUES (1,'[Gmail]/All Mail','All Mail','all')`); err == nil {
+		t.Fatal("schema 1 must reject role all")
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := s.SchemaVersion(ctx); v != KnownSchemaVersion() {
+		t.Fatalf("version = %d", v)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM message_mailboxes WHERE message_id=5 AND mailbox_id=7 AND uid=2 AND flag_seen=0 AND keywords='[]'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("message_mailboxes row lost: n=%d err=%v", n, err)
+	}
+	var phase7, phase8 string
+	_ = s.db.QueryRow(`SELECT sync_phase FROM mailboxes WHERE id=7`).Scan(&phase7)
+	_ = s.db.QueryRow(`SELECT sync_phase FROM mailboxes WHERE id=8`).Scan(&phase8)
+	if phase7 != "ready" || phase8 != "new" {
+		t.Fatalf("sync_phase = %q, %q", phase7, phase8)
+	}
+	if _, err := s.db.Exec(`INSERT INTO mailboxes(account_id,path,name,role) VALUES (1,'[Gmail]/All Mail','All Mail','all')`); err != nil {
+		t.Fatalf("role all must be accepted after 0002: %v", err)
+	}
+	var fk int
+	_ = s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk)
+	if fk != 1 {
+		t.Fatal("foreign_keys must be on again after the migration")
+	}
+	if _, err := s.db.Exec(`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (5,999,3)`); err == nil {
+		t.Fatal("foreign key on message_mailboxes.mailbox_id must still be enforced")
+	}
+	// Löschen eines Ordners nimmt seine Zuordnungen mit (CASCADE zeigt auf die neue Tabelle).
+	if _, err := s.db.Exec(`DELETE FROM mailboxes WHERE id=7`); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.db.QueryRow(`SELECT count(*) FROM message_mailboxes`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("cascade after rebuild: %d rows left", n)
+	}
+
+	// Snapshot: neben der Datenbank, Schema 1, enthält die Daten von vorher.
+	if s.LastSnapshot == "" || !strings.Contains(filepath.Base(s.LastSnapshot), "pk.db.pre-0002-") {
+		t.Fatalf("snapshot = %q", s.LastSnapshot)
+	}
+	if st, err := os.Stat(s.LastSnapshot); err != nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
+		t.Fatalf("snapshot file: %v %v", st, err)
+	}
+	snap, err := Open(s.LastSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	if v, _ := snap.SchemaVersion(ctx); v != 1 {
+		t.Fatalf("snapshot version = %d", v)
+	}
+	_ = snap.db.QueryRow(`SELECT count(*) FROM message_mailboxes`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("snapshot rows = %d", n)
 	}
 }

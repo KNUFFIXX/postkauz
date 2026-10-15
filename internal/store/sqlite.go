@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // reiner Go-Treiber, registriert "sqlite"; FTS5 ist enthalten
@@ -28,7 +30,11 @@ func unixMilliUTC(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 
 // SQLite ist die Store-Implementierung auf modernc.org/sqlite.
 type SQLite struct {
-	db *sql.DB
+	db   *sql.DB
+	path string // "" bei :memory:
+	// LastSnapshot ist der Pfad des Snapshots, den das letzte Migrate vor
+	// einer Migration angelegt hat ("" = keiner nötig).
+	LastSnapshot string
 }
 
 var _ Store = (*SQLite)(nil)
@@ -65,14 +71,31 @@ func Open(path string) (*SQLite, error) {
 			_ = os.Chmod(f, 0o600)
 		}
 	}
-	return &SQLite{db: db}, nil
+	st := &SQLite{db: db}
+	if path != ":memory:" {
+		st.path = path
+	}
+	return st, nil
 }
 
 // Close schließt die Datenbank.
 func (s *SQLite) Close() error { return s.db.Close() }
 
 // Migrate wendet ausstehende Migrationen je in einer eigenen Transaktion an.
+// Hat die Datenbank schon ein Schema (Bestand), legt es vorher einen
+// Snapshot per VACUUM INTO neben der Datenbankdatei an
+// (<db>.pre-NNNN-<Zeit>.bak, 0600; docs/datenmodell.md, Migrationen).
 func (s *SQLite) Migrate(ctx context.Context) error {
+	return s.migrateTo(ctx, 0)
+}
+
+// fkOffDirective in der ersten Zeile einer Migration schaltet die
+// Fremdschlüssel für deren Dauer ab (Tabellenumbau ohne CASCADE-Folgen);
+// danach muss PRAGMA foreign_key_check leer sein.
+const fkOffDirective = "-- postkauz:foreign_keys=off"
+
+// migrateTo migriert bis einschließlich Version max (0 = alle).
+func (s *SQLite) migrateTo(ctx context.Context, max int) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT`); err != nil {
 		return err
@@ -91,28 +114,78 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 		return fmt.Errorf("%w: database has schema version %d, this program knows up to %d; use a newer version",
 			ErrSchemaTooNew, have, len(ms))
 	}
+	if max <= 0 || max > len(ms) {
+		max = len(ms)
+	}
+	s.LastSnapshot = ""
+	if have > 0 && have < max && s.path != "" {
+		if s.LastSnapshot, err = s.snapshot(ctx, have+1); err != nil {
+			return err
+		}
+	}
 	for _, m := range ms {
-		if m.Version <= have {
+		if m.Version <= have || m.Version > max {
 			continue
 		}
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, name, applied_at) VALUES (?,?,?)`,
-			m.Version, m.Name, time.Now().UnixMilli()); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := s.apply(ctx, m); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// snapshot schreibt eine konsistente Kopie der Datenbank (VACUUM INTO).
+func (s *SQLite) snapshot(ctx context.Context, next int) (string, error) {
+	name := fmt.Sprintf("%s.pre-%04d-%s.bak", s.path, next, time.Now().UTC().Format("20060102T150405.000Z"))
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, name); err != nil {
+		return "", fmt.Errorf("store: snapshot before migration %04d: %w", next, err)
+	}
+	_ = os.Chmod(name, 0o600)
+	return filepath.Clean(name), nil
+}
+
+// apply wendet eine Migration an: eigene Verbindung (PRAGMA foreign_keys
+// gilt je Verbindung und nur außerhalb einer Transaktion), eine Transaktion.
+func (s *SQLite) apply(ctx context.Context, m Migration) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	fkOff := strings.HasPrefix(m.SQL, fkOffDirective)
+	if fkOff {
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		defer func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`) }()
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
+	}
+	if fkOff {
+		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		bad := rows.Next()
+		_ = rows.Close()
+		if bad {
+			_ = tx.Rollback()
+			return fmt.Errorf("store: migration %04d_%s: foreign key check failed", m.Version, m.Name)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, name, applied_at) VALUES (?,?,?)`,
+		m.Version, m.Name, time.Now().UnixMilli()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 // SchemaVersion liefert die höchste angewendete Migration.
