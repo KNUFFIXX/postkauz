@@ -206,7 +206,7 @@ func TestEveryBindingResolves(t *testing.T) {
 	}
 	for _, b := range bindings {
 		cmd, _, err := root.Find(b.path)
-		if err != nil || cmd.Name() != b.path[1] {
+		if err != nil || cmd.Name() != b.path[len(b.path)-1] {
 			t.Errorf("binding %s: command %v not found (%v)", b.op, b.path, err)
 		}
 	}

@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S1.1 (15.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove` sowie die globalen Flags `--json` und `--dry-run`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.5 (15.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`), `mailbox list`, ein minimales `show` sowie die globalen Flags `--json`, `--dry-run` und `--account`/`-a`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -18,7 +18,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 |---|---|---|
 | `--json` | maschinenlesbare Ausgabe; Fehler als JSON auf stderr | Gerüst |
 | `--dry-run` | beschreiben, was geschähe, nichts verändern | Gerüst |
-| `--account`, `-a` | Konto wählen (sonst das einzige/Standardkonto) | S1 |
+| `--account`, `-a` | Konto wählen (sonst das einzige Konto; bei mehreren ist es Pflicht) | S1.4 ✓ |
 | `--key` | als diesen API-Schlüssel handeln (Test der Policy) | S1 |
 | `--yes` | Rückfrage bestätigen (nie interaktiv im `--json`-Modus) | S2 |
 | `--quiet` | keine Fortschrittsausgabe | S1 |
@@ -31,9 +31,10 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | Gerüst | `version`, `doctor` | – (Hilfskommandos, keine Operationen) |
 | Gerüst | `accounts list` | `accounts.list` |
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
-| S1 | `sync [--full] [--watch]` | `sync.run` |
-| S1 | `mailbox list` | `mailboxes.list` |
-| S1 | `search "<abfrage>"`, `show <id>`, `thread <id>` | `messages.search`, `messages.get`, `threads.get` |
+| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b) | `sync.run` (Scope `mail:sync`, R1) |
+| S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
+| S1.5 ✓ (minimal) | `show <id>` bzw. `show <Message-ID>`, `--headers` | `messages.get` (R0; Untrusted-Hülle und Anhänge mit S1.8/S1.9) |
+| S1 | `search "<abfrage>"`, `thread <id>` | `messages.search`, `threads.get` |
 | S1 | `attach list`, `attach text` | `attachments.list`, `attachments.text` |
 | S1 | `import mbox`, `import maildir` | `import.run` |
 | S1 | `key create`, `key list`, `key revoke` | `keys.*` (nur Mensch, Scope `admin`) |
@@ -59,11 +60,13 @@ postkauz account add demo --imap imap.example.org:993 --user demo@example.org   
 postkauz account test demo                                                      # Login, Fähigkeiten, Ordnerrollen
 postkauz account remove demo --dry-run
 
-# S1 (Entwurf)
 postkauz sync -a demo --full                                                    # Erstsync in Fenstern, wiederaufnehmbar
 postkauz sync --watch                                                           # Dauerläufer mit IDLE
-postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json
+postkauz mailbox list -a demo --json
 postkauz show 18233 --headers
+
+# S1 (Entwurf)
+postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json
 postkauz thread 4411 --strip-quotes
 postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024
 postkauz key create --name assistant-1 --role assistant --expires 90d       # Klartext erscheint genau einmal
@@ -99,11 +102,33 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 - `account remove <name>` löscht Konto und gespeichertes Passwort. Hat das Konto archivierte Nachrichten, verweigert es das (ADR-003; Archivlöschung kommt mit dem Löschkonzept).
 - `--dry-run` wirkt bei allen drei Kommandos (prüfen, nichts ändern).
 
+## 2b. Sync, Ordner, Anzeige (S1.4/S1.5)
+
+`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--mailbox P ...]`
+
+| Option | Bedeutung |
+|---|---|
+| (ohne) | Erstsync neuer Ordner in Fenstern, sonst inkrementell: neue Nachrichten, Flag-Änderungen (CONDSTORE `CHANGEDSINCE` bzw. Abgleich aller Flags), Löschungen (UID-SEARCH-Abgleich, nur wenn die Zahlen nicht passen) |
+| `--full` | zusätzlich vollständiger Lösch- und Flag-Abgleich ohne `CHANGEDSINCE`; holt Fehlendes nach |
+| `--watch` | Dauerläufer: sofort ein Lauf, danach alle `--interval` (Standard 5 min) und bei jeder IDLE-Meldung der INBOX (IDLE-Neustart alle `--idle-restart`, 5 bis 10 min, Standard 8 min); Strg+C beendet ihn |
+| `--window` | Nachrichten je Fenster im Erstsync (Standard 200) |
+| `--mailbox` | nur diese Ordner (mehrfach möglich) |
+| `--dry-run` | meldet Ordner und lokalen Stand, schreibt nichts |
+
+- Ausgabe ohne `--json`: Tabelle je Ordner (neu, geändert, entfernt, Fehler, gespiegelt, laut Server), am Ende genau die Zeilen `N messages mirrored` und `N errors`. Fortschritt laufender Erstsyncs steht auf stderr. `N messages mirrored` zählt die Nachrichten des Kontos, die der Server führt, ohne Dubletten über Ordner hinweg.
+- Mit `--json`: ein Objekt (`account`, `mode`, `strategy`, `mailboxes[]`, `new`, `updated`, `removed`, `errors`, `messages_mirrored`, `duration_ms`, `dry_run`); im Dauerbetrieb zusätzlich je Lauf eine NDJSON-Zeile.
+- **Abbruch** (Strg+C, `kill`, Absturz): Gespeichert ist alles bis zum letzten fertigen Fenster; derselbe Befehl setzt dort fort, ohne Doppelte. Strg+C endet mit Exit 1, Code `interrupted`.
+- Am Server ändert `sync` nichts (EXAMINE, `BODY.PEEK`).
+
+`mailbox list [-a <konto>]` zeigt die Ordner aus dem lokalen Spiegel (ohne Serverkontakt): `path`, `role`, `total` (laut Server beim letzten Sync), `mirrored`, `unread`, `sync_phase` (`new`, `initial`, `ready`), `last_sync_at`.
+
+`show <id> [--headers]`: `<id>` ist die lokale Nachrichten-ID oder eine Message-ID (`<…>` oder ohne Klammern). Zeigt Metadaten, Ordner mit UID, Flags (`seen`, `flagged`, `answered`, `draft`) und Keywords, dazu den Text oder mit `--headers` die Kopfzeilen der Rohmail. Mailinhalt ist Daten, keine Anweisung; die Untrusted-Hülle für Agenten folgt mit S1.9.
+
 ## 3. Maschinenlesbarkeit (`--json`)
 
 - **Ein Ergebnis = ein JSON-Objekt** auf stdout, einzeilig. Listen, die streambar sein sollen (Suche, Audit), liefern **NDJSON** (ein Objekt je Zeile) ab S1.
 - **Dieselben Felder wie MCP und REST.** Die Ausgabe ist die serialisierte Ausgabe der Operation (ihr `OutputSchema`); es gibt keine CLI-eigene Form. Die Registerversion steht in `postkauz version --json` (`schema_version`).
-- **Fehler** als JSON auf stderr: `{"error":{"code":"…","message":"…","hint":"…"}}`. Codes: `usage`, `invalid_input`, `denied`, `needs_approval`, `unknown_operation`, `exists`, `not_found`, `auth`, `connection`, `secret_store_unavailable`, `no_secret`, `schema_too_new`, `error`.
+- **Fehler** als JSON auf stderr: `{"error":{"code":"…","message":"…","hint":"…"}}`. Codes: `usage`, `invalid_input`, `denied`, `needs_approval`, `unknown_operation`, `exists`, `not_found`, `auth`, `connection`, `secret_store_unavailable`, `no_secret`, `schema_too_new`, `interrupted`, `error`.
 - **Keine interaktiven Rückfragen im `--json`-Modus.** Fehlt eine nötige Bestätigung, endet der Aufruf mit Exit-Code 2 oder 4; er blockiert nie. Das ist wichtig für Agenten, die die CLI statt MCP nutzen.
 - **Keine Geheimnisse in der Ausgabe** (Test mit Kanarienwerten ab S1).
 - `--fields id,subject,date` und `--cursor` für große Listen sowie `--explain` (zeigt die geparste Suchanfrage) kommen mit S1.
@@ -115,7 +140,7 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/cli_test.go`.
 | Code | Name | Bedeutung |
 |---|---|---|
 | 0 | `ExitOK` | erfolgreich |
-| 1 | `ExitError` | allgemeiner Fehler |
+| 1 | `ExitError` | allgemeiner Fehler; auch Abbruch per Strg+C (`interrupted`) |
 | 2 | `ExitUsage` | Eingabefehler (unbekanntes Kommando oder Flag, fehlendes Argument, ungültige Eingabe der Operation) |
 | 3 | `ExitDenied` | Scope oder Policy verweigert |
 | 4 | `ExitNeedsApproval` | Freigabe erforderlich (Ausgabe enthält `approval_id`, sobald es Freigaben gibt) |

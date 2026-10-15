@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -42,6 +45,7 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
 	root.PersistentFlags().Bool("json", false, "machine-readable output (JSON); errors as JSON on stderr")
 	root.PersistentFlags().Bool("dry-run", false, "describe what would happen without changing anything")
+	root.PersistentFlags().StringP("account", "a", "", "account name (default: the only configured account)")
 
 	root.AddCommand(versionCmd(version, stdout), doctorCmd(a))
 	if err := bindOperations(root, reg, a); err != nil {
@@ -64,11 +68,19 @@ func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, vers
 	}
 	defer a.close()
 	root.SetArgs(args)
-	err = root.Execute()
+	// Strg+C beendet laufende Operationen geordnet (Sync: das laufende
+	// Fenster wird verworfen, der gespeicherte Stand bleibt).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err = root.ExecuteContext(ctx)
 	if err == nil {
 		return ExitOK
 	}
 	code, info := classify(err)
+	if ctx.Err() != nil {
+		code, info = ExitError, ErrorInfo{Code: "interrupted", Message: "interrupted",
+			Hint: "progress up to the last completed window is saved; run the same command again to resume"}
+	}
 	// Unbekannte Kommandos meldet cobra als einfachen Fehler: als Eingabefehler behandeln.
 	if code == ExitError && info.Code == "error" && isCobraUsage(err) {
 		code, info = ExitUsage, ErrorInfo{Code: "usage", Message: err.Error(), Hint: "see --help"}

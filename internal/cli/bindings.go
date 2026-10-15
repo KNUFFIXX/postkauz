@@ -34,6 +34,8 @@ type binding struct {
 	// input baut die Eingabe; Geheimnisse gehen getrennt zurück (nie in Input).
 	input func(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error)
 	human func(w io.Writer, out any) error
+	// progress liefert optional einen Empfänger für Fortschrittsmeldungen.
+	progress func(cmd *cobra.Command, a *app) func(ops.Progress)
 }
 
 var bindings = []binding{
@@ -44,6 +46,12 @@ var bindings = []binding{
 		input: nameInput, human: renderAccountTest},
 	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
 		input: nameInput, human: renderAccountRemove},
+	{op: "sync.run", path: []string{"sync"}, args: cobra.NoArgs, flags: syncFlags, input: syncInput,
+		human: renderSync, progress: syncProgress},
+	{op: "mailboxes.list", path: []string{"mailbox", "list"}, args: cobra.NoArgs, input: accountOnlyInput,
+		human: renderMailboxes},
+	{op: "messages.get", path: []string{"show"}, use: "<id>", args: cobra.ExactArgs(1), flags: showFlags,
+		input: showInput, human: renderShow},
 }
 
 // humanKey ist der Schlüssel, unter dem die CLI handelt: der Mensch am
@@ -58,17 +66,21 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 		if err != nil {
 			return fmt.Errorf("cli: binding for unregistered operation: %w", err)
 		}
-		if len(b.path) != 2 {
-			return fmt.Errorf("cli: binding %s: path must be <object> <verb>", b.op)
+		if len(b.path) != 1 && len(b.path) != 2 {
+			return fmt.Errorf("cli: binding %s: path must be <verb> or <object> <verb>", b.op)
 		}
-		group, ok := groups[b.path[0]]
-		if !ok {
-			group = &cobra.Command{Use: b.path[0], Short: "Commands for " + b.path[0]}
-			groups[b.path[0]] = group
-			root.AddCommand(group)
+		parent := root
+		if len(b.path) == 2 {
+			group, ok := groups[b.path[0]]
+			if !ok {
+				group = &cobra.Command{Use: b.path[0], Short: "Commands for " + b.path[0]}
+				groups[b.path[0]] = group
+				root.AddCommand(group)
+			}
+			parent = group
 		}
 		b := b
-		use := b.path[1]
+		use := b.path[len(b.path)-1]
 		if b.use != "" {
 			use += " " + b.use
 		}
@@ -89,6 +101,9 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 					return err
 				}
 				req := ops.Request{Key: humanKey, Actor: audit.ActorHuman, Operation: b.op, Input: input, Secret: secret}
+				if b.progress != nil {
+					req.Progress = b.progress(cmd, a)
+				}
 				if cmd.Flags().Changed("dry-run") {
 					v, _ := cmd.Flags().GetBool("dry-run")
 					req.DryRun = &v
@@ -108,7 +123,7 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 		if b.flags != nil {
 			b.flags(cmd)
 		}
-		group.AddCommand(cmd)
+		parent.AddCommand(cmd)
 	}
 	return nil
 }

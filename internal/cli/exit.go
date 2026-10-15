@@ -48,6 +48,8 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "choose another name or remove the account first"}
 	case errors.Is(err, store.ErrAccountNotFound):
 		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list accounts with: accounts list"}
+	case errors.Is(err, store.ErrMessageNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "message not found", Hint: "the id is the local id shown by sync/search, or give the Message-ID"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, secrets.ErrUnavailable):

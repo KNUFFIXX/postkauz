@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -19,6 +21,11 @@ var openSecrets = secrets.Open
 
 // newProber ist in Tests ersetzbar.
 var newProber = func() ops.AccountProber { return imapprov.Prober{} }
+
+// newSyncRunner ist in Tests ersetzbar.
+var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.SyncRunner {
+	return &mailsync.Runner{Store: st, Blobs: b, Log: log}
+}
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,
 // Datenbank, Log und Schlüsselbund werden erst geöffnet, wenn ein Kommando
@@ -52,6 +59,10 @@ type registryDeps struct {
 	repo   ops.AccountRepo
 	sec    secrets.Store
 	prober ops.AccountProber
+	boxes  ops.MailboxRepo
+	msgs   ops.MessageRepo
+	blobs  ops.BlobReader
+	runner ops.SyncRunner
 }
 
 // buildRegistry registriert alle Operationen. Ohne Abhängigkeiten (für Hilfe
@@ -63,6 +74,9 @@ func buildRegistry(d registryDeps) (*ops.Registry, error) {
 		ops.AccountsAdd(d.repo, d.sec),
 		ops.AccountsRemove(d.repo, d.sec),
 		ops.AccountsTest(d.repo, d.sec, d.prober),
+		ops.SyncRun(d.repo, d.sec, d.runner),
+		ops.MailboxesList(d.repo, d.boxes),
+		ops.MessagesGet(d.repo, d.msgs, d.blobs),
 	} {
 		if err := reg.Register(op); err != nil {
 			return nil, err
@@ -116,7 +130,12 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	a.sec = sec
-	reg, err := buildRegistry(registryDeps{repo: st, sec: sec, prober: newProber()})
+	blobs, err := blob.Open(a.paths.Blobs, blob.Options{})
+	if err != nil {
+		return nil, err
+	}
+	reg, err := buildRegistry(registryDeps{repo: st, sec: sec, prober: newProber(), boxes: st, msgs: st, blobs: blobs,
+		runner: newSyncRunner(st, blobs, a.log)})
 	if err != nil {
 		return nil, err
 	}
