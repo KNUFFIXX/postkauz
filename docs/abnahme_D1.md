@@ -1,6 +1,6 @@
 # Abnahme D1: Sync (nach S1.5)
 
-Stand: 15.10.2026. Gehört zu `auftraege/A01_phase0.md`, Teil D, Abschnitt D1. Die Kommandos und erwarteten Ausgaben sind einmal vollständig gegen den Dovecot-Testserver durchgespielt.
+Stand: 15.10.2026 (nach Gegenprüfung korrigiert). Gehört zu `auftraege/A01_phase0.md`, Teil D, Abschnitt D1. Die Kommandos und erwarteten Ausgaben sind gegen den Dovecot-Testserver durchgespielt (Linux-Entsprechungen; PowerShell-Fassung unten).
 
 **Was du prüfst:** PostKauz spiegelt ein Testpostfach mit 1.000 Nachrichten, setzt nach einem Abbruch ohne Doppelte fort, zeigt die Ordner mit Zählern und erkennt eine Gelesen-Markierung, die außerhalb von PostKauz gesetzt wurde. Dauer: rund 15 Minuten. Du musst nichts programmieren: Kommando eingeben, Ausgabe mit „Erwartet" vergleichen, abhaken. Bei einer Abweichung: Kommando und Ausgabe an Claude geben, nichts reparieren.
 
@@ -20,7 +20,7 @@ Alle Kommandos sind für **PowerShell** geschrieben. `make` brauchst du nicht (u
 $env:GOTOOLCHAIN = "local"
 go version
 docker compose -f deploy/testmail/docker-compose.yml up -d
-docker compose -f deploy/testmail/docker-compose.yml up -d --force-recreate dovecot
+docker compose -f deploy/testmail/docker-compose.yml up -d --force-recreate --renew-anon-volumes dovecot
 go build -o bin\postkauz.exe .\cmd\postkauz
 $env:POSTKAUZ_DATA_DIR = "$env:TEMP\postkauz-abnahme-d1"
 .\bin\postkauz.exe version
@@ -29,13 +29,15 @@ $env:POSTKAUZ_DATA_DIR = "$env:TEMP\postkauz-abnahme-d1"
 Erwartet:
 
 - `go version` zeigt `go version go1.27.` und eine Ziffer, dann `windows/amd64`.
-- Die zweite `docker compose`-Zeile setzt nur Dovecot frisch auf (leeres Testpostfach); Stalwart und GreenMail bleiben unberührt.
+- Die zweite `docker compose`-Zeile setzt nur Dovecot frisch auf (leeres Testpostfach); Stalwart und GreenMail bleiben unberührt. Wichtig ist `--renew-anon-volumes`: Das Dovecot-Image legt die Postfächer in einem eigenen, unbenannten Docker-Speicher ab; `--force-recreate` allein würde den alten Speicher samt Nachrichten wieder einhängen.
 - `version` zeigt eine Zeile mit `postkauz`, Version und `go1.27`.
 
 Erklärungen:
 
 - `GOTOOLCHAIN = "local"` verhindert, dass Go still eine andere Version nachlädt (ADR-008).
 - `POSTKAUZ_DATA_DIR` legt für die Abnahme eine **eigene Datenbank** an. Dein normales Datenverzeichnis bleibt unberührt. Die Einstellung gilt nur in diesem PowerShell-Fenster; öffnest du ein neues Fenster, die Zeilen `$env:…` wiederholen.
+- **Passwortspeicher:** Unter Windows landet das Testpasswort in der Windows-Anmeldeinformationsverwaltung; dafür ist nichts zu tun. Gibt es **keinen Schlüsselbund des Betriebssystems** (z. B. in einem Linux-Container oder auf einem Server ohne Desktop), endet D1.1 mit `secret store unavailable`. Dann **nur für den Testserver** vorher `$env:POSTKAUZ_SECRETS_BACKEND = "insecure-file"` setzen (unter Linux: `export POSTKAUZ_SECRETS_BACKEND=insecure-file`). Das Passwort liegt dann unverschlüsselt im Abnahme-Datenverzeichnis; für echte Konten nie verwenden.
+- **Passwort ohne Abfrage:** Statt es einzutippen, kann man es auch übergeben: `"pass" | .\bin\postkauz.exe account add demo --imap 127.0.0.1:11143 --user tester --insecure-test-server --password-stdin`. Das ist praktisch, wenn die verdeckte Abfrage im Terminal nicht funktioniert.
 
 ## D1.1 Konto anlegen
 
@@ -92,7 +94,7 @@ INBOX                      221
 1000 messages loaded in 3.9s
 ```
 
-Steht dort `target mailbox is not empty (already loaded?)`: Das Testpostfach ist nicht frisch. Schritt 0 (zweite `docker compose`-Zeile) wiederholen, dann dieses Kommando noch einmal.
+Steht dort `target mailbox is not empty: INBOX has … messages (already loaded?)`: Das Testpostfach ist nicht frisch. Dovecot mit `docker compose -f deploy/testmail/docker-compose.yml up -d --force-recreate --renew-anon-volumes dovecot` neu aufsetzen (ohne `--renew-anon-volumes` bleiben die alten Nachrichten erhalten), dann dieses Kommando noch einmal. Hast du in diesem Datenverzeichnis schon gesynct, vorher auch die Abnahme-Datenbank löschen und D1.1 wiederholen (siehe dort).
 
 Jetzt der erste vollständige Sync:
 
@@ -197,53 +199,57 @@ Erwartet (Spaltenbreiten können etwas abweichen):
 ```text
 path        role    total mirrored unread sync_phase
 ----        ----    ----- -------- ------ ----------
-INBOX       inbox     221      221    132 ready
-Archiv      archive     0        0      0 ready
-Archiv/2024 custom    386      386      0 ready
-Archiv/2025 custom    373      373      0 ready
-Drafts      drafts     20       20     20 ready
-Junk        junk        0        0      0 ready
-Sent        sent        0        0      0 ready
-Trash       trash       0        0      0 ready
+INBOX       inbox     221      221    … ready
+Archiv      archive     0        0    … ready
+Archiv/2024 custom    386      386    … ready
+Archiv/2025 custom    373      373    … ready
+Drafts      drafts     20       20    … ready
+Junk        junk        0        0    … ready
+Sent        sent        0        0    … ready
+Trash       trash       0        0    … ready
 ```
 
-Prüfen: `INBOX` hat `total` 221 und `mirrored` 221; die Summe von `mirrored` ist 1000, die Zahl aus D1.3.
+Prüfen: `INBOX` hat `total` 221 und `mirrored` 221; die Summe von `mirrored` ist 1000, die Zahl aus D1.3; überall `ready`. Die Spalte `unread` (ungelesen) hängt vom Zustand des Testpostfachs ab und wird nicht verglichen.
 
 ## D1.6 Gelesen-Markierung von außen
 
-Statt eines Mailprogramms markiert das Korpus-Werkzeug die erste ungelesene Nachricht der INBOX auf dem Testserver als gelesen:
+Statt eines Mailprogramms markiert das Korpus-Werkzeug die erste ungelesene Nachricht der INBOX auf dem Testserver als gelesen. Die erste Zeile führt es aus und merkt sich die Ausgabe, die zweite zeigt sie an, die dritte holt daraus die Message-ID (die Kennung der Nachricht) in `$mid`:
 
 ```powershell
-go run .\internal\corpus\cmd\corpusload -imap 127.0.0.1:11143 -user tester -password pass -mark-seen
+$ms = go run .\internal\corpus\cmd\corpusload -imap 127.0.0.1:11143 -user tester -password pass -mark-seen
+$ms
+$mid = ($ms | Select-String '^message-id: (.+)$').Matches[0].Groups[1].Value
 ```
 
-Erwartet:
+Erwartet (Ordner, Nummer und Message-ID können abweichen, je nachdem, was schon gelesen ist):
 
 ```text
-marked as read: INBOX uid 2
-message-id: pk.00002.54fb76d8@corpus.example.org
+marked as read: INBOX uid …
+message-id: pk.….@corpus.example.org
 ```
+
+Weiter unten ist mit `$mid` immer **die Message-ID gemeint, die `corpusload -mark-seen` gerade ausgegeben hat**. (Ohne die dritte Zeile: die Message-ID aus der Ausgabe kopieren und statt `$mid` einsetzen.)
 
 PostKauz weiß davon noch nichts:
 
 ```powershell
-.\bin\postkauz.exe show pk.00002.54fb76d8@corpus.example.org --headers
+.\bin\postkauz.exe show $mid --headers
 ```
 
-Erwartet (Auszug; `show` nimmt die lokale Nummer oder, wie hier, die Message-ID):
+Erwartet (Auszug; `show` nimmt die lokale Nummer oder, wie hier, die Message-ID; Nummer und Betreff hängen von der Nachricht ab):
 
 ```text
-mailboxes:         INBOX (uid 2)
-message-id:        pk.00002.54fb76d8@corpus.example.org
-subject:           WG: AW: Fenster schließt nicht – Reparatur nötig 🔧 (Vorgang 1)
+mailboxes:         INBOX (uid …)
+message-id:        pk.….@corpus.example.org
+subject:           …
 flags:
 …
 --- headers ---
-From: Postfach Test <postfach@example.org>
+From: …
 …
 ```
 
-Die Zeile `flags:` ist **leer**. (Das Werkzeug-Symbol im Betreff zeigt die Konsole eventuell als `??`; das ist eine Frage der Schriftart, nicht der Daten.)
+**Erwartung vor dem Sync:** Die Zeile `flags:` ist **leer** (hinter `flags:` steht nichts, auch nicht `seen`). (Sonderzeichen oder Symbole im Betreff zeigt die Konsole eventuell als `??`; das ist eine Frage der Schriftart, nicht der Daten.)
 
 Jetzt ein normaler (inkrementeller) Sync:
 
@@ -265,10 +271,10 @@ INBOX        inbox    0    1        0        0       221       221
 Und noch einmal anzeigen:
 
 ```powershell
-.\bin\postkauz.exe show pk.00002.54fb76d8@corpus.example.org --headers
+.\bin\postkauz.exe show $mid --headers
 ```
 
-Erwartet: **`flags:             seen`**.
+**Erwartung nach dem Sync:** Die Zeile lautet jetzt **`flags:             seen`**.
 
 ## Aufräumen
 
@@ -276,9 +282,10 @@ Erwartet: **`flags:             seen`**.
 Remove-Item -Recurse -Force "$env:TEMP\postkauz-abnahme-d1", "$env:TEMP\postkauz-abnahme-d1-abbruch"
 cmdkey /delete:postkauz:account/demo
 Remove-Item Env:\POSTKAUZ_DATA_DIR
+Remove-Item Env:\POSTKAUZ_SECRETS_BACKEND -ErrorAction SilentlyContinue
 ```
 
-Die erste Zeile löscht die beiden Abnahme-Datenbanken, die zweite das Testpasswort `pass` aus der Windows-Anmeldeinformationsverwaltung. `account remove demo` würde hier mit Absicht verweigern: Das Konto hat archivierte Nachrichten, und das Archiv löscht PostKauz nie nebenbei (ADR-003).
+Die erste Zeile löscht die beiden Abnahme-Datenbanken (mit `insecure-file` auch das dort abgelegte Testpasswort), die zweite das Testpasswort `pass` aus der Windows-Anmeldeinformationsverwaltung (meldet sie „nicht gefunden", ist das bei `insecure-file` richtig). `account remove demo` würde hier mit Absicht verweigern: Das Konto hat archivierte Nachrichten, und das Archiv löscht PostKauz nie nebenbei (ADR-003).
 
 ## Rückmeldung an Claude
 
@@ -291,6 +298,6 @@ Je Punkt „ok" oder „Abweichung":
 | D1.3 | `1000 messages mirrored`, `0 errors` | |
 | D1.4 | nach Abbruch (Strg+C oder hart) wieder genau `1000 messages mirrored` | |
 | D1.5 | JSON mit `total` je Ordner, INBOX 221 | |
-| D1.6 | nach `sync` zeigt `show … --headers` `seen` | |
+| D1.6 | `show $mid --headers`: vor dem Sync leere `flags:`-Zeile, danach `flags: seen` | |
 
 Bei einer Abweichung: das Kommando und die vollständige Ausgabe schicken. Danach entscheidest du: S1.5 angenommen, Nachbesserung (Liste) oder weiter mit S1.6.
