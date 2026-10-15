@@ -63,9 +63,9 @@ Regeln und Regelläufe (ab S4), Embeddings, Kalender und Kontakte, Snooze, Versa
 Rohmails (`.eml`) und Anhänge liegen **als Dateien** unter `<datenverzeichnis>/blobs/`.
 
 - **Adressierung:** SHA-256 der **unkomprimierten** Bytes; Pfad `blobs/ab/cd/<sha256>` (zwei Verzeichnisebenen aus den ersten vier Hex-Zeichen). Gleiche Inhalte liegen genau einmal (Deduplizierung, auch über Konten hinweg).
-- **Schreiben atomar:** in eine Temporärdatei im selben Verzeichnis, `fsync`, dann `rename`. Erst danach die Zeile in `blobs`. Eine verwaiste Datei ist unschädlich, eine Zeile ohne Datei nicht.
-- **Komprimierung:** optional zstd, erkennbar an `blobs.compressed`; der Hash bleibt der des Klartexts.
-- **Lesen prüft nichts neu**, aber `postkauz doctor` kann Stichproben-Hashes prüfen (`doctor --blobs`, ab S1).
+- **Schreiben atomar** (`internal/blob`, S1.2): in eine Temporärdatei unter `blobs/tmp/` (gleiches Dateisystem), `fsync`, `rename` an den Zielpfad, `fsync` des Zielverzeichnisses (nicht auf Windows). Erst danach die Zeile in `blobs`. Eine verwaiste Datei ist unschädlich, eine Zeile ohne Datei nicht. Ist der Inhalt schon vorhanden, bleibt die vorhandene Datei unverändert. Größenlimit je Blob (Standard 256 MiB, unkomprimiert); darüber wird nichts angelegt.
+- **Komprimierung:** optional zstd (`github.com/klauspost/compress/zstd`), erkennbar an `blobs.compressed` und an der Dateiendung `.zst` (`blobs/ab/cd/<sha256>.zst`); der Hash bleibt der des Klartexts. Lesen erkennt die Form am Dateinamen, nie am Inhalt (ein Anhang darf selbst zstd-Daten enthalten). Ein bereits vorhandener Blob wird nicht in die andere Form umgeschrieben.
+- **Lesen prüft nichts neu**, aber `Store.Verify` prüft Hash und Größe; `postkauz doctor` nutzt das für Stichproben (`doctor --blobs`, S1.11). Hash-Argumente werden streng geprüft (64 Kleinbuchstaben-Hex), sonst wären Pfade wie `../` möglich.
 - **Aufräumen:** Mark-and-Sweep über `messages.blob_sha256`, `attachments.sha256` und Entwurfs-Anhänge; nur über eine ausdrückliche Wartungsoperation, nie automatisch beim Sync (ADR-003, Regel 2).
 - **Speicherort:** niemals in einem Drive-/Cloud-synchronisierten Ordner (WAL + Synchronisierung = Korruption). Standard: das Datenverzeichnis des Betriebssystems unterhalb von `postkauz/`. Auf Windows ist eine **Ausnahme im Virenscanner** für den Blob-Ordner einzuplanen, weil echte Postfächer Phishing-Anhänge enthalten.
 - **Verschlüsselung im Ruhezustand:** nicht im MVP (Datenträgerverschlüsselung des Betriebssystems ist Voraussetzung); Backups müssen verschlüsselt werden (S3).
