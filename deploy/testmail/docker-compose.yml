@@ -11,7 +11,9 @@ name: postkauz-testmail
 
 services:
   dovecot:
-    image: dovecot/dovecot:latest
+    # Festgelegt auf die geprüfte Version (Spike S0 und S1.3–S1.5: 2.4.5);
+    # Wechsel nur nach erneutem `make integration`.
+    image: dovecot/dovecot:2.4.5
     environment:
       USER_PASSWORD: pass            # Demo-Modus des Images: beliebiger Nutzername, Passwort "pass"
     volumes:
@@ -36,7 +38,8 @@ services:
 
   greenmail:
     # Leichtgewichtiger Server für schnelle Tests ohne Fähigkeiten wie CONDSTORE (Fallback-Pfad).
-    image: greenmail/standalone:latest
+    # Festgelegt auf die geprüfte Version 2.1.14 (S1.3–S1.5).
+    image: greenmail/standalone:2.1.14
     environment:
       GREENMAIL_OPTS: >-
         -Dgreenmail.setup.test.all

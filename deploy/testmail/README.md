@@ -13,9 +13,9 @@ make testmail-down      # stoppt und löscht die Volumes (frischer Zustand beim 
 
 | Server | Zweck | Host-Port | Inhalt | Zugang |
 |---|---|---|---|---|
-| Dovecot (`dovecot/dovecot`) | verbreitetster IMAP-Server, steht für viele Hoster | 11143 IMAP, 11993 IMAPS (selbstsigniert) | – | Demo-Modus des Images: beliebiger Nutzername, Passwort `pass` |
+| Dovecot (`dovecot/dovecot:2.4.5`) | verbreitetster IMAP-Server, steht für viele Hoster | 11143 IMAP, 11993 IMAPS (selbstsigniert) | – | Demo-Modus des Images: beliebiger Nutzername, Passwort `pass` |
 | Stalwart (`stalwartlabs/mail-server:v0.11.8`) | moderner Server mit CONDSTORE/QRESYNC und später JMAP | 12143 IMAP, 12993 IMAPS, 12587 Submission, 18080 Verwaltung | – | Verwaltung: Nutzer `admin`, Passwort steht bei jedem Start im Log (`docker compose -f deploy/testmail/docker-compose.yml logs stalwart`) |
-| GreenMail (`greenmail/standalone`) | schnell, ohne erweiterte IMAP-Fähigkeiten (Fallback-Pfad `uid-scan`) | 13143 IMAP, 13993 IMAPS, 13025 SMTP, 18081 API | – | Nutzer `test`, Passwort `pass`, Adresse `test@example.org` |
+| GreenMail (`greenmail/standalone:2.1.14`) | schnell, ohne erweiterte IMAP-Fähigkeiten (Fallback-Pfad `uid-scan`) | 13143 IMAP, 13993 IMAPS, 13025 SMTP, 18081 API | – | Nutzer `test`, Passwort `pass`, Adresse `test@example.org` |
 
 ## Einrichten und Integrationstests (Stand S1.3)
 
@@ -38,4 +38,4 @@ make integration IT=dovecot,greenmail   # Auswahl
 
 - **Stalwart** startet ohne Domain und Konto und lauscht im Container zunächst nur auf IPv6; `make testmail-setup` behebt beides (nach jedem `testmail-up` mit frischem Volume). Auf dem Klartext-Port 12143 erlaubt Stalwart kein LOGIN. Das Image ist auf 0.11.8 festgelegt, weil `stalwartlabs/stalwart:latest` (0.16) im Bootstrap-Modus startet und die Ersteinrichtung über eine Web-Oberfläche im Internet verlangt.
 - **Befüllen** mit dem synthetischen Korpus (IMAP `APPEND`) folgt mit dem Sync (S1.4); den Korpus erzeugt `make corpus`.
-- Image-Versionen von Dovecot und GreenMail sind nicht festgenagelt (`latest`).
+- Alle drei Images sind auf geprüfte Versionen festgelegt (Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14; Betreiber-Entscheid 15.10.2026). Ein Wechsel heißt: Tag ändern, `make testmail-down testmail-up testmail-setup integration`, Befunde in `docs/roadmap.md`.
