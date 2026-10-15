@@ -16,6 +16,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- **Go 1.27** (ADR-008, A01 Schritt 0): `go.mod` auf `go 1.27`, `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4), `GOTOOLCHAIN=local` im Makefile, CI installiert `1.27.x`; `make cross` meldet die Binärgrößen.
 - ADR-001 und ADR-005 an die Spike-Befunde angepasst (`modernc.org/sqlite`: v1.46.1 ist das Maximum für Go 1.24).
 - CI: `GOTOOLCHAIN=local`, Go 1.27 ausdrücklich installiert.
 - README, `docs/roadmap.md` (S0 erledigt, entschiedene Fragen), `docs/architektur.md`, `docs/datenmodell.md` (ß/ss-Normalisierer), `docs/sicherheit.md` (Rückfall-Abgleich), A01 (Schritt 0, Vorgaben, Prüfliste).

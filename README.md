@@ -77,7 +77,7 @@ Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`.
 
 ## Contributing
 
-See `CONTRIBUTING.md`. Short version: Go (target 1.27, see ADR-008), small commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), `make check` before every commit, no secrets and no personal data in the repository, never test against a real mailbox. Security issues: `SECURITY.md`.
+See `CONTRIBUTING.md`. Short version: Go 1.27 with `GOTOOLCHAIN=local` (ADR-008), small commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`), `make check` before every commit, no secrets and no personal data in the repository, never test against a real mailbox. Security issues: `SECURITY.md`.
 
 ## License
 

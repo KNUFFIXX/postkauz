@@ -9,6 +9,9 @@ PLATFORMS := linux/amd64 windows/amd64 darwin/arm64
 COMPOSE := docker compose -f deploy/testmail/docker-compose.yml
 
 export CGO_ENABLED ?= 0
+# ADR-008: nie still eine andere Toolchain nachladen (sonst hebt `go get` die
+# go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
+export GOTOOLCHAIN ?= local
 
 .PHONY: all build install test vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-down clean
 
@@ -58,6 +61,7 @@ cross:
 	  echo "build $$os/$$arch"; \
 	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$(BINARY)-$$os-$$arch$$ext ./cmd/postkauz; \
 	done
+	@ls -l dist/ | awk 'NR>1 {printf "%-32s %6.1f MB\n", $$NF, $$5/1048576}'
 
 # Platzhalter: der Korpus-Generator entsteht in Schnitt 1 (docs/testkorpus.md).
 corpus:
