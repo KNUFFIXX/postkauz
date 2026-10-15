@@ -189,3 +189,41 @@ func head(s string, n int) string {
 	}
 	return s
 }
+
+// Der Sync gleicht vor dem Laden per Message-ID aus BODY.PEEK[HEADER.FIELDS
+// (MESSAGE-ID)] ab. HeaderMessageID muss dafür dieselbe ID liefern wie Parse
+// über die ganze Nachricht (sonst entstünden Dubletten).
+func TestHeaderMessageIDMatchesParse(t *testing.T) {
+	c := standardCorpus(t)
+	for i, raw := range c.Raw {
+		m, err := mimeparse.Parse(bytes.NewReader(raw), mimeparse.Options{})
+		if err != nil {
+			continue
+		}
+		// Nachbildung von HEADER.FIELDS: nur die Message-ID-Zeile(n) samt Fortsetzung.
+		head := raw
+		if i := bytes.Index(raw, []byte("\r\n\r\n")); i >= 0 {
+			head = raw[:i+2]
+		} else if i := bytes.Index(raw, []byte("\n\n")); i >= 0 {
+			head = raw[:i+1]
+		}
+		var field bytes.Buffer
+		take := false
+		for _, line := range bytes.SplitAfter(head, []byte("\n")) {
+			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+				if take {
+					field.Write(line)
+				}
+				continue
+			}
+			take = len(line) >= 11 && strings.EqualFold(string(line[:11]), "message-id:")
+			if take {
+				field.Write(line)
+			}
+		}
+		field.WriteString("\r\n")
+		if got := mimeparse.HeaderMessageID(field.Bytes()); got != m.MessageID {
+			t.Errorf("%s: HeaderMessageID = %q, Parse = %q", c.Manifest.Messages[i].File, got, m.MessageID)
+		}
+	}
+}

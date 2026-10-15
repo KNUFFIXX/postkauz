@@ -585,3 +585,14 @@ func (w *walker) attachment(e *message.Entity, mediaType, disp, filename, id str
 	}
 	w.m.Attachments = append(w.m.Attachments, a)
 }
+
+// HeaderMessageID liest die Message-ID aus rohen Kopfzeilen (z. B. dem
+// Ergebnis von IMAP BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]) mit denselben
+// toleranten Regeln wie Parse. Der Sync gleicht damit vor dem Laden des
+// Inhalts ab; beide Wege müssen dieselbe ID liefern. "" = keine.
+func HeaderMessageID(raw []byte) string {
+	clean, _ := sanitizeHeader(raw)
+	th, _ := textproto.ReadHeader(bufio.NewReader(bytes.NewReader(clean)))
+	m := &Message{}
+	return m.messageID(th.Get("Message-Id"))
+}
