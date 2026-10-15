@@ -1,0 +1,172 @@
+package imap
+
+import (
+	"context"
+	"path"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
+)
+
+// Config beschreibt die Verbindung eines Kontos.
+type Config struct {
+	Host               string
+	Port               int
+	TLS                string // tls | starttls | none
+	Username           string
+	InsecureTestServer bool
+	// CommandTimeout ist die Deadline des Watchdogs je Kommando (0 = 30 s).
+	CommandTimeout time.Duration
+	// Session steuert Reconnect und Backoff (Nullwert = Standard).
+	Session imapx.SessionOptions
+}
+
+// Provider ist der IMAP-Provider. Stand S1.3: Verbinden, Fähigkeiten und
+// Ordner mit Rollen. Changes, Fetch, Append und Idle folgen in S1.4/S1.5;
+// erst dann erfüllt Provider provider.MailProvider.
+type Provider struct {
+	s    *imapx.Session
+	caps provider.Capabilities
+	raw  []string
+}
+
+// Connect meldet sich an (mit Watchdog, Reconnect und Backoff) und liest
+// die Fähigkeiten. Anmeldefehler sind provider.ErrAuth und werden nicht
+// wiederholt.
+func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provider, error) {
+	s := imapx.NewSession(imapx.Config{
+		Host: cfg.Host, Port: cfg.Port, TLS: imapx.TLSMode(cfg.TLS),
+		InsecureTestServer: cfg.InsecureTestServer, CommandTimeout: cfg.CommandTimeout,
+	}, func(c *imapx.Client) error { return c.Login(cfg.Username, password) }, cfg.Session)
+	var raw []string
+	err := s.Do(ctx, func(c *imapx.Client) error {
+		var err error
+		raw, err = c.Caps()
+		return err
+	})
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return &Provider{s: s, caps: Capabilities(raw), raw: raw}, nil
+}
+
+// Capabilities liefert die erkannten Fähigkeiten.
+func (p *Provider) Capabilities() provider.Capabilities { return p.caps }
+
+// RawCapabilities liefert die CAPABILITY-Liste des Servers (sortiert).
+func (p *Provider) RawCapabilities() []string { return slices.Clone(p.raw) }
+
+// Strategy ist die Sync-Strategie, die PostKauz fährt (ADR-007: ohne QRESYNC).
+func (p *Provider) Strategy() provider.Strategy { return EffectiveStrategy(p.caps) }
+
+func (p *Provider) has(capability string) bool {
+	for _, c := range p.raw {
+		if strings.EqualFold(c, capability) {
+			return true
+		}
+	}
+	return false
+}
+
+// ListMailboxes liefert alle auswählbaren Ordner mit Rolle und, wo der
+// Server LIST-STATUS kann, mit Zustand (UIDVALIDITY, UIDNEXT, HIGHESTMODSEQ).
+func (p *Provider) ListMailboxes(ctx context.Context) ([]provider.Mailbox, error) {
+	opts := imapx.ListOptions{
+		SpecialUse:    p.caps.SpecialUse,
+		Status:        p.caps.IMAP4rev2 || p.has("LIST-STATUS"),
+		HighestModSeq: p.caps.CondStore,
+	}
+	var boxes []imapx.MailboxInfo
+	err := p.s.Do(ctx, func(c *imapx.Client) error {
+		var err error
+		boxes, err = c.ListWith(opts)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	var sel []imapx.MailboxInfo
+	for _, b := range boxes {
+		if hasAttr(b.Attrs, `\Noselect`) || hasAttr(b.Attrs, `\NonExistent`) {
+			continue
+		}
+		sel = append(sel, b)
+	}
+	roles := AssignRoles(sel)
+	out := make([]provider.Mailbox, 0, len(sel))
+	for i, b := range sel {
+		m := provider.Mailbox{Path: b.Path, Name: leafName(b), Role: roles[i]}
+		if st := b.Status; st != nil {
+			m.State = provider.SyncState{UIDValidity: st.UIDValidity, UIDNext: st.UIDNext, HighestModSeq: st.HighestModSeq}
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// Close meldet sich ab.
+func (p *Provider) Close() error { return p.s.Close() }
+
+func leafName(m imapx.MailboxInfo) string {
+	if m.Delim != "" {
+		parts := strings.Split(m.Path, m.Delim)
+		return parts[len(parts)-1]
+	}
+	return path.Base(m.Path)
+}
+
+// AssignRoles vergibt Rollen für eine Ordnerliste: INBOX, dann SPECIAL-USE
+// (Vorrang), dann Namen. Jede Rolle außer custom wird höchstens einmal
+// vergeben; per Name nur, wenn kein Ordner die Rolle per SPECIAL-USE trägt.
+// Bei mehreren Namenstreffern gewinnt der flachste Pfad, dann der
+// alphabetisch erste.
+func AssignRoles(boxes []imapx.MailboxInfo) []provider.Role {
+	roles := make([]provider.Role, len(boxes))
+	taken := map[provider.Role]bool{}
+	for i, b := range boxes {
+		r := Role(imapx.MailboxInfo{Path: b.Path, Delim: b.Delim, Attrs: b.Attrs})
+		if r == provider.RoleInbox || specialUseRole(b.Attrs) != "" {
+			if r != provider.RoleCustom && taken[r] {
+				r = provider.RoleCustom
+			}
+			roles[i] = r
+			taken[r] = true
+		}
+	}
+	order := make([]int, 0, len(boxes))
+	for i := range boxes {
+		if roles[i] == "" {
+			order = append(order, i)
+		}
+	}
+	slices.SortStableFunc(order, func(a, b int) int {
+		da, db := depth(boxes[a]), depth(boxes[b])
+		if da != db {
+			return da - db
+		}
+		return strings.Compare(boxes[a].Path, boxes[b].Path)
+	})
+	for _, i := range order {
+		r := nameRole(boxes[i])
+		if r != provider.RoleCustom && taken[r] {
+			r = provider.RoleCustom
+		}
+		roles[i] = r
+		if r != provider.RoleCustom {
+			taken[r] = true
+		}
+	}
+	return roles
+}
+
+func depth(m imapx.MailboxInfo) int {
+	if m.Delim == "" {
+		return 0
+	}
+	return strings.Count(m.Path, m.Delim)
+}

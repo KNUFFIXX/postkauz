@@ -330,13 +330,22 @@ func (c *Client) ListWith(o ListOptions) ([]MailboxInfo, error) {
 func (c *Client) Create(path string) error {
 	err := c.run(func() error { return c.c.Create(path, nil).Wait() })
 	var ie *imap.Error
-	if errors.As(err, &ie) && ie.Code == imap.ResponseCodeAlreadyExists {
+	if !errors.As(err, &ie) {
+		return connErr(err)
+	}
+	if ie.Code == imap.ResponseCodeAlreadyExists {
 		return nil
 	}
-	if err != nil {
-		return cmdErr(err)
+	// Manche Server (GreenMail) antworten ohne ALREADYEXISTS: nachsehen.
+	var found []*imap.ListData
+	if lerr := c.run(func() error {
+		var err error
+		found, err = c.c.List("", path, nil).Collect()
+		return err
+	}); lerr == nil && len(found) == 1 && found[0].Mailbox == path {
+		return nil
 	}
-	return nil
+	return cmdErr(err)
 }
 
 // Noop prüft, ob die Verbindung lebt (mit Watchdog).

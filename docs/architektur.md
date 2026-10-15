@@ -68,20 +68,20 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/store` | Migrationen mit Schema-Schutz, Konten, SQLite-Audit-Writer | S1.1 + Tests |
 | `internal/config` | TOML-Konfiguration, Pfade (Konfiguration, Daten, Datenbank, Log) | S1.1 + Tests |
 | `internal/secrets` | Schlüsselbund (go-keyring), Umgebung, unsicherer Testspeicher, `Secret`-Typ | S1.1 + Tests |
-| `internal/imapx` | dünne Schicht über go-imap (ADR-007): Dial mit Watchdog, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST | S1.1-Ausschnitt + Tests |
+| `internal/imapx` | dünne Schicht über go-imap (ADR-007, v2.0.0-beta.8 gepinnt): Dial mit Watchdog und TCP-Keepalive, `Session` mit Reconnect und Backoff, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST mit SPECIAL-USE/LIST-STATUS, CREATE, NOOP | S1.3 + Tests |
 | `internal/oauth` | Token-Quelle mit Refresh und Sperrzeit (Entwurf P3) | Entwurf + Tests |
 | `internal/blob` | Blob-Store: atomar, SHA-256, optional zstd, Größenlimit | S1.2 + Tests |
 | `internal/mimeparse` | MIME-Parser auf `go-message` mit Charset-Reader: Kopf, Adressen, tolerantes Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`), Text/HTML, Anhänge mit SHA-256; Limits für Kopf, Teile, Tiefe, Teilgröße; entpackt nie Archive | S1.2 + Korpus-Test |
 | `internal/thread` | Threading per Union-Find über Message-ID/In-Reply-To/References (Betreff-Rückfall S1.6) | S1.2 + Tests |
 | `internal/corpus` | Generator des synthetischen Testkorpus mit Manifest (`make corpus`) | S1.2 + Tests |
 | `internal/provider` | `MailProvider`, `Submission` | Schnittstellen |
-| `internal/provider/imap` | IMAP-Provider über `imapx`; heute nur Verbindungsprüfung (Fähigkeiten, Ordnerrollen) | S1.1-Ausschnitt + Tests |
+| `internal/provider/imap` | IMAP-Provider über `imapx`: `Connect`, Fähigkeiten, Strategie, `ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen) und Zustand; Verbindungsprüfung für `account test` | S1.3 + Tests, Integrationstest (Docker) |
 | `internal/cli` | cobra-Adapter, Exit-Codes, `doctor` | `version`, `doctor`, `accounts list`, `account add/test/remove` |
 | `internal/mcp` | MCP-Adapter | nur Plan (`doc.go`) |
 
 Spätere Pakete (nicht angelegt): `internal/sync`, `internal/search`, `internal/importer`.
 
-`make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen).
+`make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen) und dass go-imap auf v2.0.0-beta.8 gepinnt bleibt.
 
 ## 3. Zwei Wahrheiten (ADR-003)
 

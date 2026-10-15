@@ -101,7 +101,11 @@ const (
 	RoleTrash   Role = "trash"
 	RoleJunk    Role = "junk"
 	RoleArchive Role = "archive"
-	RoleCustom  Role = "custom"
+	// RoleAll: Ordner mit allen Nachrichten (Gmail „Alle Nachrichten",
+	// SPECIAL-USE \All). Jede Nachricht liegt dort ein weiteres Mal; der
+	// Sync dedupliziert über Message-ID (docs/architektur.md).
+	RoleAll    Role = "all"
+	RoleCustom Role = "custom"
 )
 
 // UID ist die Nachrichtennummer innerhalb eines Ordners (IMAP UID).

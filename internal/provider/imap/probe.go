@@ -1,14 +1,14 @@
 // Package imap ist der IMAP-Provider über internal/imapx (ADR-007).
 //
-// Stand S1.1: nur die Verbindungsprüfung für `account test` (Anmelden,
-// Fähigkeiten, Ordner mit Rollen). Der vollständige provider.MailProvider
-// (Changes, Fetch, Append, Idle) folgt in S1.3–S1.5.
+// Stand S1.3: Verbinden (Watchdog, Reconnect mit Backoff), Fähigkeiten,
+// Ordner mit Rollen (SPECIAL-USE, sonst Namen auf Deutsch/Englisch, Gmail-
+// Ordner unter „[Gmail]"/„[Google Mail]") und die Verbindungsprüfung für
+// `account test`. Changes, Fetch, Append und Idle folgen in S1.4/S1.5.
 package imap
 
 import (
 	"context"
 	"encoding/json"
-	"path"
 	"strings"
 	"time"
 
@@ -28,33 +28,25 @@ type Prober struct {
 var _ ops.AccountProber = Prober{}
 
 // Probe meldet sich an, liest Fähigkeiten und Ordner und meldet sich ab.
-// Am Server wird nichts verändert (kein SELECT, kein FETCH).
+// Am Server wird nichts verändert (kein SELECT, kein FETCH). Für eine
+// Prüfung genügt ein Versuch; Reconnect ist Sache des Sync.
 func (p Prober) Probe(ctx context.Context, a store.Account, pw secrets.Secret) (ops.ProbeResult, error) {
-	c, err := imapx.Dial(ctx, imapx.Config{Host: a.Host, Port: a.Port, TLS: imapx.TLSMode(a.TLS),
-		InsecureTestServer: a.InsecureTestServer, CommandTimeout: p.CommandTimeout})
+	prov, err := Connect(ctx, Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
+		InsecureTestServer: a.InsecureTestServer, CommandTimeout: p.CommandTimeout,
+		Session: imapx.SessionOptions{MaxAttempts: 1}}, pw)
 	if err != nil {
 		return ops.ProbeResult{}, err
 	}
-	defer c.Close()
-	if err := c.Login(a.Username, pw); err != nil {
-		return ops.ProbeResult{}, err
-	}
-	capsList, err := c.Caps()
+	defer prov.Close()
+	boxes, err := prov.ListMailboxes(ctx)
 	if err != nil {
 		return ops.ProbeResult{}, err
 	}
-	boxes, err := c.List()
-	if err != nil {
-		return ops.ProbeResult{}, err
-	}
-	caps := Capabilities(capsList)
+	caps := prov.Capabilities()
 	cj, _ := json.Marshal(caps)
-	res := ops.ProbeResult{Capabilities: capsList, SyncStrategy: string(EffectiveStrategy(caps)), CapabilitiesJSON: string(cj)}
+	res := ops.ProbeResult{Capabilities: prov.RawCapabilities(), SyncStrategy: string(EffectiveStrategy(caps)), CapabilitiesJSON: string(cj)}
 	for _, b := range boxes {
-		if hasAttr(b.Attrs, `\Noselect`) || hasAttr(b.Attrs, `\NonExistent`) {
-			continue
-		}
-		res.Mailboxes = append(res.Mailboxes, ops.ProbeMailbox{Path: b.Path, Role: string(Role(b))})
+		res.Mailboxes = append(res.Mailboxes, ops.ProbeMailbox{Path: b.Path, Role: string(b.Role)})
 	}
 	return res, nil
 }
@@ -97,10 +89,11 @@ func hasAttr(attrs []string, want string) bool {
 	return false
 }
 
-// Rollen aus SPECIAL-USE (RFC 6154).
+// Rollen aus SPECIAL-USE (RFC 6154). \Flagged und \Important sind
+// virtuelle Sichten (Gmail „Markiert"/„Wichtig") und bleiben custom.
 var specialUse = map[string]provider.Role{
 	`\sent`: provider.RoleSent, `\drafts`: provider.RoleDrafts, `\trash`: provider.RoleTrash,
-	`\junk`: provider.RoleJunk, `\archive`: provider.RoleArchive,
+	`\junk`: provider.RoleJunk, `\archive`: provider.RoleArchive, `\all`: provider.RoleAll,
 }
 
 // Namensheuristik, wenn der Server kein SPECIAL-USE meldet (verbreitete
@@ -108,34 +101,64 @@ var specialUse = map[string]provider.Role{
 var nameRoles = map[string]provider.Role{
 	"sent": provider.RoleSent, "sent items": provider.RoleSent, "sent messages": provider.RoleSent,
 	"sent mail": provider.RoleSent, "gesendet": provider.RoleSent, "gesendete objekte": provider.RoleSent,
-	"gesendete elemente": provider.RoleSent,
-	"drafts":             provider.RoleDrafts, "draft": provider.RoleDrafts, "entwürfe": provider.RoleDrafts,
-	"trash": provider.RoleTrash, "deleted items": provider.RoleTrash, "deleted messages": provider.RoleTrash,
+	"gesendete elemente": provider.RoleSent, "gesendete nachrichten": provider.RoleSent,
+	"drafts": provider.RoleDrafts, "draft": provider.RoleDrafts, "entwürfe": provider.RoleDrafts,
+	"entwurf": provider.RoleDrafts,
+	"trash":   provider.RoleTrash, "deleted items": provider.RoleTrash, "deleted messages": provider.RoleTrash,
 	"bin": provider.RoleTrash, "papierkorb": provider.RoleTrash, "gelöschte elemente": provider.RoleTrash,
 	"gelöschte objekte": provider.RoleTrash,
-	"junk":              provider.RoleJunk, "spam": provider.RoleJunk, "junk e-mail": provider.RoleJunk, "junk-e-mail": provider.RoleJunk,
-	"archive": provider.RoleArchive, "archiv": provider.RoleArchive,
+	"junk":              provider.RoleJunk, "spam": provider.RoleJunk, "junk e-mail": provider.RoleJunk,
+	"junk-e-mail": provider.RoleJunk, "junk mail": provider.RoleJunk, "werbung": provider.RoleJunk,
+	"archive": provider.RoleArchive, "archives": provider.RoleArchive, "archiv": provider.RoleArchive,
 }
 
-// Role bestimmt die Rolle eines Ordners: INBOX, dann SPECIAL-USE, dann Name.
-func Role(m imapx.MailboxInfo) provider.Role {
-	if strings.EqualFold(m.Path, "INBOX") {
-		return provider.RoleInbox
-	}
-	for _, a := range m.Attrs {
+// Gmail-Ordner unter „[Gmail]" bzw. „[Google Mail]" (ältere deutsche
+// Konten), englisch und deutsch. Rückfall, falls SPECIAL-USE fehlt.
+var gmailRoles = map[string]provider.Role{
+	"sent mail": provider.RoleSent, "gesendet": provider.RoleSent,
+	"drafts": provider.RoleDrafts, "entwürfe": provider.RoleDrafts,
+	"trash": provider.RoleTrash, "bin": provider.RoleTrash, "papierkorb": provider.RoleTrash,
+	"spam":     provider.RoleJunk,
+	"all mail": provider.RoleAll, "alle nachrichten": provider.RoleAll,
+	"starred": provider.RoleCustom, "markiert": provider.RoleCustom,
+	"important": provider.RoleCustom, "wichtig": provider.RoleCustom,
+}
+
+func specialUseRole(attrs []string) provider.Role {
+	for _, a := range attrs {
 		if r, ok := specialUse[strings.ToLower(a)]; ok {
 			return r
 		}
 	}
-	leaf := m.Path
-	if m.Delim != "" {
-		parts := strings.Split(m.Path, m.Delim)
-		leaf = parts[len(parts)-1]
-	} else {
-		leaf = path.Base(leaf)
+	return ""
+}
+
+func nameRole(m imapx.MailboxInfo) provider.Role {
+	if strings.EqualFold(m.Path, "INBOX") {
+		return provider.RoleInbox
 	}
-	if r, ok := nameRoles[strings.ToLower(strings.TrimSpace(leaf))]; ok {
+	leaf := strings.ToLower(strings.TrimSpace(leafName(m)))
+	if m.Delim != "" {
+		if first, _, ok := strings.Cut(m.Path, m.Delim); ok && (strings.EqualFold(first, "[Gmail]") || strings.EqualFold(first, "[Google Mail]")) {
+			if r, ok := gmailRoles[leaf]; ok {
+				return r
+			}
+		}
+	}
+	if r, ok := nameRoles[leaf]; ok {
 		return r
 	}
 	return provider.RoleCustom
+}
+
+// Role bestimmt die Rolle eines einzelnen Ordners: INBOX, dann SPECIAL-USE,
+// dann Name. Für eine ganze Liste (eindeutige Rollen) gilt AssignRoles.
+func Role(m imapx.MailboxInfo) provider.Role {
+	if strings.EqualFold(m.Path, "INBOX") {
+		return provider.RoleInbox
+	}
+	if r := specialUseRole(m.Attrs); r != "" {
+		return r
+	}
+	return nameRole(m)
 }

@@ -21,7 +21,7 @@ Stand: Phase 0. Das Schema steht als ausführbares SQL in [`internal/store/migra
 |---|---|---|
 | `accounts` | `name` (eindeutig), `email`, `provider_type` (`imap`\|`jmap`), `host`, `port`, `tls`, `username`, `auth_type`, `credential_ref`, `insecure_test_server`, `sync_policy` (JSON), `capabilities` (JSON), `status`, `last_error` | Ein Konto = ein Postfach. `insecure_test_server` erlaubt Klartext/selbstsignierte Zertifikate, nur für localhost (S1.1). `status`/`last_error`/`capabilities` setzt `account test`. `capabilities` speichert das Ergebnis der Fähigkeitserkennung (siehe `provider.Capabilities`), damit die Sync-Strategie ohne neue Verbindung feststeht. `credential_ref` verweist nur. |
 | `identities` | `account_id`, `name`, `email`, `signature`, `reply_to`, `is_default` | Absenderidentitäten je Konto (JMAP Identity). Entwürfe verweisen darauf. |
-| `mailboxes` | `account_id`, `path` (UTF-8), `name`, `role`, `parent_id`, `uidvalidity`, `uidnext`, `highestmodseq`, `total`, `unread`, `last_sync_at` | `role` kommt aus SPECIAL-USE oder Heuristik. `uidvalidity/uidnext/highestmodseq` sind der Sync-Zustand (JMAP: ein Token). `UNIQUE(account_id, path)`. |
+| `mailboxes` | `account_id`, `path` (UTF-8), `name`, `role`, `parent_id`, `uidvalidity`, `uidnext`, `highestmodseq`, `total`, `unread`, `last_sync_at` | `role` kommt aus SPECIAL-USE oder Heuristik. Der Provider kennt seit S1.3 zusätzlich die Rolle `all` (Gmail „Alle Nachrichten", SPECIAL-USE `\All`); die CHECK-Liste in `0001_init.sql` enthält sie noch nicht, die erste Migration 0002 (S1.4, wenn Ordner gespeichert werden) ergänzt sie. `uidvalidity/uidnext/highestmodseq` sind der Sync-Zustand (JMAP: ein Token). `UNIQUE(account_id, path)`. |
 
 ### Nachrichten
 

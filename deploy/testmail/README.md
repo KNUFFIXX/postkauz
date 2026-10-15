@@ -17,9 +17,25 @@ make testmail-down      # stoppt und löscht die Volumes (frischer Zustand beim 
 | Stalwart (`stalwartlabs/mail-server:v0.11.8`) | moderner Server mit CONDSTORE/QRESYNC und später JMAP | 12143 IMAP, 12993 IMAPS, 12587 Submission, 18080 Verwaltung | – | Verwaltung: Nutzer `admin`, Passwort steht bei jedem Start im Log (`docker compose -f deploy/testmail/docker-compose.yml logs stalwart`) |
 | GreenMail (`greenmail/standalone`) | schnell, ohne erweiterte IMAP-Fähigkeiten (Fallback-Pfad `uid-scan`) | 13143 IMAP, 13993 IMAPS, 13025 SMTP, 18081 API | – | Nutzer `test`, Passwort `pass`, Adresse `test@example.org` |
 
-## Stand und bekannte Einschränkungen (Phase 0)
+## Einrichten und Integrationstests (Stand S1.3)
 
-- **Geprüft** (14.10.2026): Compose-Datei ist gültig; Dovecot und GreenMail starten und akzeptieren IMAP-Logins mit den obigen Zugangsdaten.
-- **Stalwart** startet, hat aber nach dem ersten Start **keine Domain und kein Konto**; IMAP-Verbindungen werden bis dahin abgewiesen. Die automatische Bereitstellung (Domain, Konto, Passwort per Verwaltungs-API) ist Aufgabe des Spikes (`auftraege/A01_phase0.md`). Das Image ist auf die Reihe 0.11 festgelegt, weil `stalwartlabs/stalwart:latest` (0.16) im Bootstrap-Modus startet und die Ersteinrichtung über eine Web-Oberfläche im Internet verlangt.
-- **Befüllen** mit dem synthetischen Korpus (IMAP `APPEND`) kommt mit dem Generator in Schnitt 1 (`docs/testkorpus.md`).
-- Image-Versionen sind bewusst nicht für alle Server festgenagelt (`latest`); sobald der Spike läuft, werden sie auf geprüfte Versionen festgelegt.
+```sh
+make testmail-up        # Server starten
+make testmail-setup     # Stalwart: IPv4-Listener, Domain example.org, Konto test / pass (wiederholbar)
+make integration        # Integrationstests gegen alle drei Server (POSTKAUZ_IT=1)
+make integration IT=dovecot,greenmail   # Auswahl
+```
+
+| Server | Port im Test | Anmeldung | Erwartet (S1.3) |
+|---|---|---|---|
+| Dovecot 2.4 | 11143, Klartext | `it-user@example.org` / `pass` | CONDSTORE, QRESYNC, SPECIAL-USE, LIST-STATUS; Strategie `condstore`; Rollen INBOX/Sent/Drafts/Trash/Junk |
+| Stalwart 0.11.8 | 12993, TLS (selbstsigniert, nur localhost) | `test` / `pass` | wie Dovecot; Rollen nur mit `RETURN (SPECIAL-USE)`: „Sent Items", „Drafts", „Deleted Items", „Junk Mail" |
+| GreenMail | 13143, Klartext | `test` / `pass` | kein CONDSTORE, kein SPECIAL-USE, kein LIST-STATUS; Strategie `uid-scan`; der Test legt „Gesendet", „Entwürfe", „Papierkorb", „Spam", „Kunden" an und prüft die Rollen aus den Namen |
+
+`make check` und die CI überspringen diese Tests (ohne `POSTKAUZ_IT`). Ist die Variable gesetzt und ein Server nicht erreichbar, schlägt der Test fehl.
+
+## Bekannte Einschränkungen
+
+- **Stalwart** startet ohne Domain und Konto und lauscht im Container zunächst nur auf IPv6; `make testmail-setup` behebt beides (nach jedem `testmail-up` mit frischem Volume). Auf dem Klartext-Port 12143 erlaubt Stalwart kein LOGIN. Das Image ist auf 0.11.8 festgelegt, weil `stalwartlabs/stalwart:latest` (0.16) im Bootstrap-Modus startet und die Ersteinrichtung über eine Web-Oberfläche im Internet verlangt.
+- **Befüllen** mit dem synthetischen Korpus (IMAP `APPEND`) folgt mit dem Sync (S1.4); den Korpus erzeugt `make corpus`.
+- Image-Versionen von Dovecot und GreenMail sind nicht festgenagelt (`latest`).

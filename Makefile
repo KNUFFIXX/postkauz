@@ -13,7 +13,7 @@ export CGO_ENABLED ?= 0
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-down clean
+.PHONY: all build install test vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -81,8 +81,18 @@ testmail-up:
 	$(COMPOSE) up -d
 	@echo "Test servers are bound to 127.0.0.1 only; ports: deploy/testmail/README.md"
 
+# Stalwart einrichten (Domain, Konto test/pass); nach jedem testmail-up.
+testmail-setup:
+	sh deploy/testmail/stalwart-setup.sh
+
 testmail-down:
 	$(COMPOSE) down -v
+
+# Integrationstests gegen die Docker-Testserver (nicht in check und CI).
+# Auswahl: make integration IT=dovecot,greenmail
+IT ?= 1
+integration:
+	POSTKAUZ_IT=$(IT) go test -count=1 -run Integration -v ./internal/...
 
 clean:
 	rm -rf bin dist
