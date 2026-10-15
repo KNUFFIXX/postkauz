@@ -71,6 +71,9 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/imapx` | dünne Schicht über go-imap (ADR-007): Dial mit Watchdog, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST | S1.1-Ausschnitt + Tests |
 | `internal/oauth` | Token-Quelle mit Refresh und Sperrzeit (Entwurf P3) | Entwurf + Tests |
 | `internal/blob` | Blob-Store: atomar, SHA-256, optional zstd, Größenlimit | S1.2 + Tests |
+| `internal/mimeparse` | MIME-Parser auf `go-message` mit Charset-Reader: Kopf, Adressen, tolerantes Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`), Text/HTML, Anhänge mit SHA-256; Limits für Kopf, Teile, Tiefe, Teilgröße; entpackt nie Archive | S1.2 + Korpus-Test |
+| `internal/thread` | Threading per Union-Find über Message-ID/In-Reply-To/References (Betreff-Rückfall S1.6) | S1.2 + Tests |
+| `internal/corpus` | Generator des synthetischen Testkorpus mit Manifest (`make corpus`) | S1.2 + Tests |
 | `internal/provider` | `MailProvider`, `Submission` | Schnittstellen |
 | `internal/provider/imap` | IMAP-Provider über `imapx`; heute nur Verbindungsprüfung (Fähigkeiten, Ordnerrollen) | S1.1-Ausschnitt + Tests |
 | `internal/cli` | cobra-Adapter, Exit-Codes, `doctor` | `version`, `doctor`, `accounts list`, `account add/test/remove` |
