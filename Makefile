@@ -66,9 +66,13 @@ cross:
 	done
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %6.1f MB\n", $$NF, $$5/1048576}'
 
-# Platzhalter: der Korpus-Generator entsteht in Schnitt 1 (docs/testkorpus.md).
+# Synthetischer Testkorpus (docs/testkorpus.md): *.eml + corpus.json.
+# Lasttest: make corpus CORPUS_DIR=testdata/corpus-large CORPUS_COUNT=50000
+CORPUS_DIR   ?= testdata/corpus
+CORPUS_COUNT ?= 1000
+CORPUS_SEED  ?= 42
 corpus:
-	@echo "corpus: not implemented yet, see docs/testkorpus.md"; exit 1
+	go run ./internal/corpus/cmd/gencorpus -out $(CORPUS_DIR) -count $(CORPUS_COUNT) -seed $(CORPUS_SEED)
 
 testmail-up:
 	$(COMPOSE) up -d
