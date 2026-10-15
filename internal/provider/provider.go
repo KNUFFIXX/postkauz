@@ -36,6 +36,9 @@ var (
 	ErrNotFound = errors.New("provider: not found")
 	// ErrAuth: Anmeldung fehlgeschlagen; kein automatischer Wiederholungsversuch.
 	ErrAuth = errors.New("provider: authentication failed")
+	// ErrConnection: Server nicht erreichbar, TLS-Fehler oder Zeitüberschreitung
+	// (Watchdog). Wiederholbar mit Backoff; CLI-Exit-Code 5.
+	ErrConnection = errors.New("provider: connection failed")
 )
 
 // Capabilities beschreibt, was der Server kann. Sie werden beim Verbinden

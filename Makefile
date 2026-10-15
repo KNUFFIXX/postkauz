@@ -45,6 +45,9 @@ lint: fmt-check vet
 guard:
 	@if grep -rEn --include='*.go' '"net/smtp"|emersion/go-smtp' . ; then \
 	  echo "guard: SMTP code is not allowed before slice 4 (ADR-002)"; exit 1; fi
+	@# ADR-007: go-imap nur über internal/imapx (Tests dürfen den Fake-Server nutzen).
+	@if grep -rlnF --include='*.go' --exclude='*_test.go' '"github.com/emersion/go-imap' internal cmd | grep -v '^internal/imapx/' ; then \
+	  echo "guard: go-imap may only be imported by internal/imapx (ADR-007)"; exit 1; fi
 	@echo "guard: ok"
 
 pii-check:
