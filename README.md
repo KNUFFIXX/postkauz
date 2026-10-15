@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha. Phase 0: spike passed with conditions (see `spike/s0/REPORT.md`).** Repository skeleton, architecture docs, a compiling Go scaffold and the spike code. There is no sync, search or MCP server yet. The name "PostKauz" is a working title and will still change.
+**Status: pre-alpha, slice S1.1 (accounts).** Configuration, local database, audit log, OS keyring and `account add/test/remove` work. There is no sync, search or MCP server yet. The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -36,19 +36,23 @@ An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mail
 
 ## Quick start
 
-Works today (scaffold only):
+Works today (accounts only, no sync yet):
 
 ```sh
 make build                       # builds bin/postkauz (and the alias bin/pk)
 ./bin/postkauz version --json
-./bin/postkauz doctor
+./bin/postkauz doctor            # paths, keyring, database, schema version
+./bin/postkauz account add demo --imap imap.example.org:993 --user demo@example.org   # password prompt; stored in the OS keyring
+./bin/postkauz account test demo # login, capabilities, mailboxes with roles (read-only)
 ./bin/postkauz accounts list --json
+./bin/postkauz account remove demo
 ```
+
+Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and use `account add --password-from-env`. Configuration and paths: `docs/cli.md`, section 5.
 
 Planned (placeholders, not implemented yet):
 
 ```sh
-postkauz account add demo --imap imap.example.org:993 --user demo@example.org
 postkauz sync --full
 postkauz search "from:anna has:attachment" --json
 postkauz mcp        # stdio MCP server for Claude Code and other clients

@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: Phase 0 (Gerüst). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
+Stand: S1.1 (15.10.2026). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
 
 „PostKauz" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
 
@@ -62,15 +62,22 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 |---|---|---|
 | `cmd/postkauz` | `main`, ruft `cli.Run` | fertig |
 | `internal/brand` | Name, Alias, Präfixe an einer Stelle | fertig |
-| `internal/ops` | Register, Executor, Beispiel `accounts.list` | Gerüst + Tests |
+| `internal/ops` | Register, Executor (mit Schwärzung je Operation), `accounts.list/add/test/remove` | S1.1 + Tests |
 | `internal/policy` | Scope, Risiko R0–R3, `Check` | Stub + Tests |
-| `internal/audit` | Event-Typ, append-only Writer | Typ + Stubs |
-| `internal/store` | Migrationen, SQLite öffnen | Migrationsläufer + Schema + Tests |
-| `internal/provider` | `MailProvider`, `Submission` | nur Schnittstellen |
-| `internal/cli` | cobra-Adapter, Exit-Codes | `version`, `doctor`, `accounts list` |
+| `internal/audit` | Event-Typ, Writer-Schnittstelle | Typ + Stubs (SQLite-Writer im Store) |
+| `internal/store` | Migrationen mit Schema-Schutz, Konten, SQLite-Audit-Writer | S1.1 + Tests |
+| `internal/config` | TOML-Konfiguration, Pfade (Konfiguration, Daten, Datenbank, Log) | S1.1 + Tests |
+| `internal/secrets` | Schlüsselbund (go-keyring), Umgebung, unsicherer Testspeicher, `Secret`-Typ | S1.1 + Tests |
+| `internal/imapx` | dünne Schicht über go-imap (ADR-007): Dial mit Watchdog, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST | S1.1-Ausschnitt + Tests |
+| `internal/oauth` | Token-Quelle mit Refresh und Sperrzeit (Entwurf P3) | Entwurf + Tests |
+| `internal/provider` | `MailProvider`, `Submission` | Schnittstellen |
+| `internal/provider/imap` | IMAP-Provider über `imapx`; heute nur Verbindungsprüfung (Fähigkeiten, Ordnerrollen) | S1.1-Ausschnitt + Tests |
+| `internal/cli` | cobra-Adapter, Exit-Codes, `doctor` | `version`, `doctor`, `accounts list`, `account add/test/remove` |
 | `internal/mcp` | MCP-Adapter | nur Plan (`doc.go`) |
 
-Spätere Pakete (nicht angelegt): `internal/sync`, `internal/mime`, `internal/search`, `internal/blob`, `internal/importer`, `internal/config`.
+Spätere Pakete (nicht angelegt): `internal/sync`, `internal/mime`, `internal/search`, `internal/blob`, `internal/importer`.
+
+`make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen).
 
 ## 3. Zwei Wahrheiten (ADR-003)
 

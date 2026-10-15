@@ -87,7 +87,7 @@ Du musst nichts programmieren. Jeder Punkt: Kommando eingeben, Ergebnis mit „E
 2. `make build` → danach `./bin/postkauz version` zeigt eine Zeile mit `postkauz`, Version und Go-Version.
 3. `./bin/postkauz accounts list` → `No accounts configured yet.`
 4. `./bin/postkauz accounts list --json` → `{"accounts":[]}`
-5. `./bin/postkauz doctor` → Zeilen für version, config, keyring, database. Beim Gerüst steht bei keyring/database `not_checked`.
+5. `./bin/postkauz doctor` → Zeilen für version, config, data dir, log, database, schema, keyring. Nach Punkt 3 steht bei database `ok` und bei schema `1 (program knows 1)`; keyring zeigt unter Windows `available (Windows Credential Manager)`.
 6. `./bin/postkauz bogus; echo $?` → Fehlermeldung und danach `2`.
 
 ### D1: nach S1.5 (Sync)

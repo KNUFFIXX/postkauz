@@ -9,6 +9,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
 // Executor führt Operationen durch die feste Kette aus:
@@ -36,6 +37,8 @@ type Request struct {
 	// DryRun ist nil, wenn der Aufrufer nichts angegeben hat
 	// (dann gilt der Standard des Schlüssels).
 	DryRun *bool
+	// Secret wird unverändert an den Handler gereicht (Call.Secret), nie auditiert.
+	Secret secrets.Secret
 }
 
 // Result ist das Ergebnis eines erfolgreichen Aufrufs.
@@ -87,13 +90,18 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	dryRun := policy.EffectiveDryRun(req.Key, req.DryRun)
 	dec := policy.Check(req.Key, op.Requirement(), dryRun)
 
+	params, targets := json.RawMessage(`{}`), []string(nil)
+	if op.Redact != nil {
+		params, targets = op.Redact(req.Input)
+	}
 	ev := audit.Event{
 		TS:             start.UTC(),
 		ActorType:      req.Actor,
 		KeyID:          req.Key.ID,
 		Scope:          string(op.Scope),
 		Operation:      op.Name,
-		ParamsRedacted: []byte(`{}`), // TODO Schnitt 1: Schwärzung je Operation (nur IDs/Feldnamen)
+		ParamsRedacted: params,
+		Targets:        targets,
 		Reason:         dec.Reason,
 		DryRun:         dec.DryRun,
 	}
@@ -114,7 +122,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		return Result{}, fmt.Errorf("ops: audit: %w", err)
 	}
 
-	out, herr := op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun})
+	out, herr := op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret})
 	if herr != nil {
 		ev.Result = audit.ResultError
 		ev.Reason = "handler_error"

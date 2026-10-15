@@ -19,7 +19,7 @@ Stand: Phase 0. Das Schema steht als ausführbares SQL in [`internal/store/migra
 
 | Tabelle | Wichtige Felder | Begründung |
 |---|---|---|
-| `accounts` | `name` (eindeutig), `email`, `provider_type` (`imap`\|`jmap`), `host`, `port`, `tls`, `username`, `auth_type`, `credential_ref`, `sync_policy` (JSON), `capabilities` (JSON), `status`, `last_error` | Ein Konto = ein Postfach. `capabilities` speichert das Ergebnis der Fähigkeitserkennung (siehe `provider.Capabilities`), damit die Sync-Strategie ohne neue Verbindung feststeht. `credential_ref` verweist nur. |
+| `accounts` | `name` (eindeutig), `email`, `provider_type` (`imap`\|`jmap`), `host`, `port`, `tls`, `username`, `auth_type`, `credential_ref`, `insecure_test_server`, `sync_policy` (JSON), `capabilities` (JSON), `status`, `last_error` | Ein Konto = ein Postfach. `insecure_test_server` erlaubt Klartext/selbstsignierte Zertifikate, nur für localhost (S1.1). `status`/`last_error`/`capabilities` setzt `account test`. `capabilities` speichert das Ergebnis der Fähigkeitserkennung (siehe `provider.Capabilities`), damit die Sync-Strategie ohne neue Verbindung feststeht. `credential_ref` verweist nur. |
 | `identities` | `account_id`, `name`, `email`, `signature`, `reply_to`, `is_default` | Absenderidentitäten je Konto (JMAP Identity). Entwürfe verweisen darauf. |
 | `mailboxes` | `account_id`, `path` (UTF-8), `name`, `role`, `parent_id`, `uidvalidity`, `uidnext`, `highestmodseq`, `total`, `unread`, `last_sync_at` | `role` kommt aus SPECIAL-USE oder Heuristik. `uidvalidity/uidnext/highestmodseq` sind der Sync-Zustand (JMAP: ein Token). `UNIQUE(account_id, path)`. |
 
@@ -94,9 +94,9 @@ Zwei **contentless** FTS5-Tabellen (sie speichern nur den Index, nicht den Text;
 ## Migrationen
 
 - **Eingebettete SQL-Dateien** `internal/store/migrations/NNNN_name.sql` (`go:embed`), lückenlos nummeriert. Der Läufer prüft die Lückenlosigkeit.
-- **Nur vorwärts.** Eine angewendete Migration wird nie geändert; Korrekturen sind neue Dateien. Solange das Projekt pre-alpha ist und keine Datenbank außerhalb von Tests existiert, darf `0001_init.sql` noch überarbeitet werden; mit dem ersten Konto in einer echten Datenbank endet diese Freiheit.
+- **Nur vorwärts.** Eine angewendete Migration wird nie geändert; Korrekturen sind neue Dateien. `0001_init.sql` wurde zuletzt mit S1.1 überarbeitet (Spalte `accounts.insecure_test_server`); **ab S1.1 können echte Datenbanken mit Konten existieren, jede weitere Änderung ist eine neue Migration.**
 - **Je Migration eine Transaktion**, danach ein Eintrag in `schema_migrations`.
-- **Vor jeder Migration eines bestehenden Bestands** ein Snapshot per `VACUUM INTO` (ab S1, in `Migrate`).
-- **Abwärtskompatibilität der Programme (ab S1):** Ein Programm, das eine neuere Schemaversion findet als es kennt, startet nicht (Schutz vor stiller Beschädigung durch alte Binärdateien).
+- **Vor jeder Migration eines bestehenden Bestands** ein Snapshot per `VACUUM INTO` (noch offen; nötig ab der ersten Migration 0002).
+- **Abwärtskompatibilität der Programme:** Ein Programm, das eine neuere Schemaversion findet als es kennt, verweigert die Arbeit (`store.ErrSchemaTooNew`, `doctor` meldet `too_new`; umgesetzt und getestet S1.1).
 - **Treiber:** `modernc.org/sqlite`, reines Go, keine CGO-Abhängigkeit (ADR-005). FTS5 und `contentless_delete` sind enthalten und im Test belegt.
 - **Datensicherung:** konsistente Snapshots per `VACUUM INTO` plus Blob-Verzeichnis; Wiederherstellung wird in S3 mit einem Restore-Test belegt.

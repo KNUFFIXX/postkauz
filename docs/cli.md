@@ -1,6 +1,6 @@
 # CLI
 
-Stand: Phase 0. Implementiert und getestet sind `version`, `doctor` (Stub), `accounts list` sowie die globalen Flags `--json` und `--dry-run`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.1 (15.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove` sowie die globalen Flags `--json` und `--dry-run`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -30,7 +30,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 |---|---|---|
 | Gerüst | `version`, `doctor` | – (Hilfskommandos, keine Operationen) |
 | Gerüst | `accounts list` | `accounts.list` |
-| S1 | `account add`, `account test`, `account remove` (`account add --insecure-test-server` erlaubt Klartext/selbstsignierte Zertifikate, nur für localhost-Testserver) | `accounts.add` … |
+| S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S1 | `sync [--full] [--watch]` | `sync.run` |
 | S1 | `mailbox list` | `mailboxes.list` |
 | S1 | `search "<abfrage>"`, `show <id>`, `thread <id>` | `messages.search`, `messages.get`, `threads.get` |
@@ -55,10 +55,11 @@ Mit „(Entwurf)" markierte Beispiele laufen erst im genannten Schnitt.
 postkauz version --json
 postkauz doctor
 postkauz accounts list --json
-
-# S1 (Entwurf)
 postkauz account add demo --imap imap.example.org:993 --user demo@example.org   # Passwort wird abgefragt, landet im Schlüsselbund
 postkauz account test demo                                                      # Login, Fähigkeiten, Ordnerrollen
+postkauz account remove demo --dry-run
+
+# S1 (Entwurf)
 postkauz sync -a demo --full                                                    # Erstsync in Fenstern, wiederaufnehmbar
 postkauz sync --watch                                                           # Dauerläufer mit IDLE
 postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json
@@ -77,11 +78,32 @@ postkauz approve 17                                                         # Me
 
 Der Mensch sendet den Entwurf in seinem gewohnten Mailclient; PostKauz erkennt den Versand beim nächsten Sync.
 
+## 2a. Konten (S1.1)
+
+`account add <name> --imap host[:port] --user <login> [Optionen]`
+
+| Option | Bedeutung |
+|---|---|
+| `--imap` | Server als `host:port`; ohne Port 993 |
+| `--user` | Anmeldename |
+| `--email` | Adresse; Standard ist der Anmeldename, wenn er ein `@` enthält |
+| `--tls` | `tls`, `starttls` oder `none`. Ohne Angabe: `tls` bei Port 993 (bzw. …993), sonst `starttls`; mit `--insecure-test-server` `none` |
+| `--auth` | `password` (Standard) oder `app_password`; `oauth2` ist noch gesperrt (Prüfpunkt P3, nur Entwurf) |
+| `--insecure-test-server` | erlaubt Klartext und selbstsignierte Zertifikate, **nur** für Hosts auf dem eigenen Rechner (`localhost`, `127.0.0.1`, `::1`) |
+| `--password-stdin` | Passwort aus der Standardeingabe (eine Zeile), z. B. für Skripte |
+| `--password-from-env` | kein Passwort speichern; es kommt zur Laufzeit aus `POSTKAUZ_PASSWORD_<NAME>` (Server, Docker) |
+
+Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeckt ab; im `--json`-Modus oder ohne Terminal ist das ein Eingabefehler (Exit 2). Das Passwort wird **nie** als Kommandozeilenargument angenommen. Kontonamen: Kleinbuchstaben, Ziffern, Bindestrich (max. 63); daraus entsteht die Variable `POSTKAUZ_PASSWORD_<NAME>` (Bindestrich wird `_`).
+
+- `account test <name>` meldet sich an, liest Fähigkeiten und Ordner (mit Rolle) und meldet sich ab; am Server ändert sich nichts. Lokal werden Fähigkeiten und Status am Konto gespeichert (`doctor` zeigt den Status). Abgelehnte Anmeldung: Exit 1, Code `auth` (kein automatischer Wiederholungsversuch); Server nicht erreichbar oder Zeitüberschreitung: Exit 5, Code `connection`.
+- `account remove <name>` löscht Konto und gespeichertes Passwort. Hat das Konto archivierte Nachrichten, verweigert es das (ADR-003; Archivlöschung kommt mit dem Löschkonzept).
+- `--dry-run` wirkt bei allen drei Kommandos (prüfen, nichts ändern).
+
 ## 3. Maschinenlesbarkeit (`--json`)
 
 - **Ein Ergebnis = ein JSON-Objekt** auf stdout, einzeilig. Listen, die streambar sein sollen (Suche, Audit), liefern **NDJSON** (ein Objekt je Zeile) ab S1.
 - **Dieselben Felder wie MCP und REST.** Die Ausgabe ist die serialisierte Ausgabe der Operation (ihr `OutputSchema`); es gibt keine CLI-eigene Form. Die Registerversion steht in `postkauz version --json` (`schema_version`).
-- **Fehler** als JSON auf stderr: `{"error":{"code":"…","message":"…","hint":"…"}}`. Codes u. a.: `usage`, `denied`, `needs_approval`, `unknown_operation`, `error`.
+- **Fehler** als JSON auf stderr: `{"error":{"code":"…","message":"…","hint":"…"}}`. Codes: `usage`, `invalid_input`, `denied`, `needs_approval`, `unknown_operation`, `exists`, `not_found`, `auth`, `connection`, `secret_store_unavailable`, `no_secret`, `schema_too_new`, `error`.
 - **Keine interaktiven Rückfragen im `--json`-Modus.** Fehlt eine nötige Bestätigung, endet der Aufruf mit Exit-Code 2 oder 4; er blockiert nie. Das ist wichtig für Agenten, die die CLI statt MCP nutzen.
 - **Keine Geheimnisse in der Ausgabe** (Test mit Kanarienwerten ab S1).
 - `--fields id,subject,date` und `--cursor` für große Listen sowie `--explain` (zeigt die geparste Suchanfrage) kommen mit S1.
@@ -94,14 +116,24 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/cli_test.go`.
 |---|---|---|
 | 0 | `ExitOK` | erfolgreich |
 | 1 | `ExitError` | allgemeiner Fehler |
-| 2 | `ExitUsage` | Eingabefehler (unbekanntes Kommando oder Flag, fehlendes Argument) |
+| 2 | `ExitUsage` | Eingabefehler (unbekanntes Kommando oder Flag, fehlendes Argument, ungültige Eingabe der Operation) |
 | 3 | `ExitDenied` | Scope oder Policy verweigert |
 | 4 | `ExitNeedsApproval` | Freigabe erforderlich (Ausgabe enthält `approval_id`, sobald es Freigaben gibt) |
-| 5 | `ExitConnection` | Verbindung zum Server fehlgeschlagen (ab S1) |
+| 5 | `ExitConnection` | Verbindung zum Server fehlgeschlagen oder Zeitüberschreitung (Watchdog) |
 
 ## 5. Konfiguration und Pfade
 
-- **Konfigurationsdatei** (TOML): `POSTKAUZ_CONFIG`, sonst `<Konfigurationsordner des Betriebssystems>/postkauz/config.toml`. `postkauz doctor` zeigt den Pfad und ob die Datei existiert.
-- **Daten** (Datenbank, `blobs/`): Datenverzeichnis des Betriebssystems unterhalb von `postkauz/`, **nie** in einem Cloud-synchronisierten Ordner.
-- **Geheimnisse:** nur Schlüsselbund (Windows Credential Manager, macOS Keychain, Secret Service) oder Umgebungsvariablen (`POSTKAUZ_…`); die Konfigurationsdatei enthält nur Verweise.
+- **Konfigurationsdatei** (TOML, optional): `POSTKAUZ_CONFIG`, sonst `<Konfigurationsordner des Betriebssystems>/postkauz/config.toml`. Unbekannte Schlüssel sind ein Fehler. Inhalt:
+
+  ```toml
+  data_dir  = ""            # leer = Standard des Betriebssystems (siehe unten)
+  log_level = "info"        # debug | info | warn | error
+  [secrets]
+  backend = "auto"          # auto | keyring | insecure-file (UNSICHER, nur Testserver)
+  ```
+
+- **Umgebung** schlägt Datei: `POSTKAUZ_DATA_DIR`, `POSTKAUZ_SECRETS_BACKEND`, `POSTKAUZ_PASSWORD_<NAME>` (Passwort eines Kontos, nur lesen).
+- **Daten:** `postkauz.db` (SQLite, 0600), `postkauz.log` (JSON-Zeilen, 0600, ohne Inhalte und Geheimnisse), später `blobs/`. Standard: Linux `$XDG_DATA_HOME/postkauz` bzw. `~/.local/share/postkauz`, Windows `%LOCALAPPDATA%\postkauz` (lokal, nicht „Roaming"), macOS `~/Library/Application Support/postkauz`. Verzeichnis 0700, **nie** in einem Cloud-synchronisierten Ordner (`doctor` warnt bei OneDrive, Dropbox, iCloud u. Ä.). Angelegt wird es erst beim ersten Kommando, das es braucht; `version` und `doctor` legen nichts an.
+- **Geheimnisse:** Schlüsselbund (Windows Credential Manager, macOS Keychain, Secret Service) oder Umgebungsvariable; die Datenbank enthält nur den Verweis `account/<name>`. Ohne Schlüsselbund gibt es keinen stillen Rückfall (siehe [sicherheit.md](sicherheit.md), Abschnitt 4).
+- **`doctor`** meldet Version, Konfiguration (Pfad, vorhanden, Fehler), Datenverzeichnis, Log, Datenbank (`missing`, `ok`, `needs_migration`, `too_new`, `error`), Schemaversion (vorhanden und bekannt), Schlüsselbund (`available`, `unavailable`, `insecure`) und je Konto, woher das Passwort käme (`stored`, `environment`, `missing`) samt Status der letzten Prüfung; dazu Warnungen. Exit 1 nur bei ungültiger Konfiguration.
 - **Sprache:** Ausgaben und Fehlermeldungen sind Englisch (siehe CLAUDE.md); Mehrsprachigkeit ist kein Ziel des MVP.

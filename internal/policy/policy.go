@@ -112,9 +112,9 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 // Handler. Stub für Phase 0, Regeln:
 //
 //   - fehlender Scope: Deny.
-//   - R0 und R1: Allow (R1 nur lokale Wirkung).
-//   - R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
-//   - R2: Allow.
+//   - R0: Allow (lesen; ein Trockenlauf ist bedeutungslos).
+//   - R1/R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
+//   - R1 (nur lokale Wirkung) und R2: Allow.
 //   - R3: NeedsApproval. Es gibt im MVP keinen Weg, eine R3-Operation ohne
 //     Mensch auszuführen; die Freigabe-Zustandsmaschine folgt in Schnitt 2.
 func Check(key Key, op Requirement, dryRun bool) Decision {
@@ -122,11 +122,11 @@ func Check(key Key, op Requirement, dryRun bool) Decision {
 		return Decision{Outcome: Deny, Reason: "missing_scope"}
 	}
 	switch {
-	case op.Risk <= R1:
+	case op.Risk == R0:
 		return Decision{Outcome: Allow, Reason: "ok"}
 	case dryRun:
 		return Decision{Outcome: Allow, DryRun: true, Reason: "dry_run"}
-	case op.Risk == R2:
+	case op.Risk <= R2:
 		return Decision{Outcome: Allow, Reason: "ok"}
 	default:
 		return Decision{Outcome: NeedsApproval, Reason: "risk_r3"}

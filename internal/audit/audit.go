@@ -3,9 +3,9 @@
 // kein Delete in der Schnittstelle (die SQLite-Tabelle sperrt beides per
 // Trigger, siehe store/migrations/0001_init.sql).
 //
-// Stand Phase 0: Typ und Schnittstelle plus zwei Stub-Implementierungen.
-// Die SQLite-Implementierung und der tägliche Export mit Prüfsumme folgen
-// mit Schnitt 1.
+// Hier liegen Typ, Schnittstelle und zwei Test-Implementierungen; der
+// SQLite-Writer liegt in internal/store (S1.1). Der tägliche Export mit
+// Prüfsumme folgt mit S1.11.
 package audit
 
 import (

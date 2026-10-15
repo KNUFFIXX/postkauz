@@ -1,6 +1,6 @@
 # Sicherheitsmodell
 
-Stand: Phase 0. Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor, die append-only-Audit-Tabelle und deren Tests. Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
+Stand: S1.1 (15.10.2026). Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor, die append-only-Audit-Tabelle mit SQLite-Writer, die Ablage von Zugangsdaten (Abschnitt 4) und deren Tests. Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
 
 ## 1. Schutzgüter und Annahmen
 
@@ -45,11 +45,14 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 
 ## 4. Zugangsdaten (Credentials)
 
-- **Erste Wahl: Schlüsselbund des Betriebssystems** über `github.com/zalando/go-keyring` (Windows Credential Manager, macOS Keychain, Secret Service). Die Konfigurationsdatei und die Datenbank enthalten nur `credential_ref`.
-- **Fallback für Server und Docker:** Umgebungsvariablen oder gemountete Secret-Dateien; eine verschlüsselte Datei (AES-GCM, Schlüssel aus Passphrase) ist erst bei Bedarf geplant.
-- **Nie** im Repository, in Logs, im Audit, in Fehlermeldungen oder in `--json`-Ausgaben. Ein Test mit Kanarienwerten (S1) prüft das über alle Ausgabekanäle.
-- **OAuth2-Token** (ab S1, „bring your own client": Client-ID/Secret des Nutzers, Loopback- oder Device-Code-Flow; keine eigene verifizierte Google-App) werden wie Passwörter behandelt. Ein Refresh-Fehler erzeugt ein Audit-Ereignis und einen Hinweis, keine Endlosschleife.
-- `postkauz doctor --secrets` (S1) prüft Dateirechte, Erreichbarkeit des Schlüsselbunds und sucht Kanarienwerte in Logs.
+- **Erste Wahl: Schlüsselbund des Betriebssystems** über `github.com/zalando/go-keyring` (Windows Credential Manager, macOS Keychain, Secret Service; Dienstname `postkauz`, Eintrag `account/<name>`). Die Konfigurationsdatei und die Datenbank enthalten nur `credential_ref`. Jeder Zugriff hat eine Zeitgrenze (10 s), damit ein hängender D-Bus die CLI nicht blockiert. *(umgesetzt S1.1, `internal/secrets`)*
+- **Fallback für Server und Docker:** Umgebungsvariable `POSTKAUZ_PASSWORD_<NAME>`; sie wird immer zuerst gelesen und nie gespeichert (`account add --password-from-env`). *(umgesetzt S1.1)* Gemountete Secret-Dateien und eine verschlüsselte Datei mit Passphrase (AES-GCM) sind erst bei Bedarf geplant.
+- **Kein stiller Rückfall:** Fehlt der Schlüsselbund (z. B. Linux ohne Secret Service, Container), scheitert das Speichern mit einem Hinweis auf die Umgebungsvariable; `doctor` meldet `keyring: unavailable`. Getestet (Prüfpunkt P4) mit simuliertem D-Bus-Fehler, simulierter Zeitüberschreitung und dem echten Schlüsselbund des Testrechners (nur lesend).
+- **Nur für Testserver: `secrets.backend = "insecure-file"`.** AES-256-GCM-Datei im Datenverzeichnis (`insecure-secrets/`, Dateien 0600, Verzeichnis 0700), der Schlüssel liegt **daneben**. Das verhindert nur, dass der Klartext in Kopien der Datenbank, grep-Treffern oder Backups ohne Schlüsseldatei auftaucht; gegen jemanden mit Dateizugriff schützt es nicht. Nur ausdrücklich wählbar, `doctor` warnt. Für echte Postfächer nicht verwenden.
+- **Geheimnisse im Code:** Der Typ `secrets.Secret` schwärzt sich bei jeder Formatierung (fmt, JSON, slog) zu `[redacted]`; Klartext nur über `Reveal()` an der Stelle, die ihn an den Server gibt. Operationen bekommen ihn getrennt von der Eingabe (`Call.Secret`), deshalb steht er nie im Audit. Serverfehler werden vor der Ausgabe nach dem Passwort durchsucht und geschwärzt.
+- **Nie** im Repository, in Logs, im Audit, in Fehlermeldungen oder in `--json`-Ausgaben. Tests mit Kanarienwerten prüfen das: S1.1 für `account add/test/list/remove` und `doctor` (Datenbank samt WAL, Log, Audit, stdout/stderr, beide Speicher, Passwort geht über eine echte IMAP-Anmeldung an einen Testserver im Prozess); MCP-Ausgaben folgen mit S1.9.
+- **OAuth2-Token** (ab S1, „bring your own client": Client-ID/Secret des Nutzers, Loopback- oder Device-Code-Flow; keine eigene verifizierte Google-App) werden wie Passwörter behandelt. Ein Refresh-Fehler erzeugt ein Audit-Ereignis und einen Hinweis, keine Endlosschleife. *Stand S1.1 (Prüfpunkt P3, Entwurf):* SASL XOAUTH2 (eigene Umsetzung) und OAUTHBEARER (go-sasl) in `internal/imapx`, eine erneuernde Token-Quelle mit Sperrzeit nach Fehlern in `internal/oauth`, beides gegen einen Fake-Server bzw. Fake-Refresher getestet. Kontenanlage mit `auth_type = oauth2` ist noch gesperrt; Autorisierungs-Flow und Token-Endpunkt fehlen.
+- `postkauz doctor` meldet seit S1.1 die Erreichbarkeit des Schlüsselbunds und je Konto, ob ein Passwort hinterlegt ist. `doctor --secrets` (Dateirechte prüfen, Kanarienwerte in Logs suchen) folgt in S1.11.
 
 ## 5. Freigabe-Zustände (MVP: draft-only)
 
@@ -136,7 +139,8 @@ Grundannahme: Mailtext ist feindliche Eingabe. Gegenmaßnahmen, nach Wirksamkeit
 ## 10. Betriebssicherheit
 
 - **Netz:** Standardmäßig lauscht nichts außer stdio. Ein späterer HTTP-Port bindet an localhost oder an eine private Schnittstelle (z. B. VPN); nie ungeschützt ins Internet.
-- **Dateirechte:** Datenverzeichnis nur für den Nutzer lesbar; Schlüsseldateien 600.
+- **Dateirechte:** Datenverzeichnis nur für den Nutzer lesbar (0700), Datenbank und Log 0600 (umgesetzt S1.1; unter Windows gelten die Rechte des Profilordners); Schlüsseldateien 600.
+- **Klartext-IMAP und unbestätigte Zertifikate** nur mit `--insecure-test-server` und nur für Hosts auf dem eigenen Rechner; `internal/imapx` prüft das ein zweites Mal.
 - **Lieferkette:** wenige, bewusst gewählte Abhängigkeiten; `go.sum` committen; Abhängigkeiten per Dependabot beobachten; Builds reproduzierbar (`-trimpath`, feste Go-Version); Release-Artefakte mit Prüfsummen (und später Signaturen).
 - **Backups enthalten Mail** und müssen verschlüsselt sein (S3).
 - **Testserver** (`deploy/testmail`) sind nur für localhost gedacht und tragen Standard-Zugangsdaten: **nie im Internet betreiben**.

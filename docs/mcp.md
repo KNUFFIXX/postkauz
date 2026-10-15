@@ -37,6 +37,8 @@ Spalte „Schnitt": in welchem Schnitt das Tool entsteht. Spalte „Scope": ben�
 | `mail_audit_log` | Aktionen nachvollziehen | `since`, `actor?`, `operation?`, `limit?` | Ereignisse (ohne Inhalte) | R0 | `audit:read` |
 | `mail_get_policy` | Was darf dieser Schlüssel? | – | Scopes, Risikostufen, Limits, `dry_run_default` (auch als Resource) | R0 | beliebig |
 
+Nicht über MCP angeboten (bewusst): `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, Zugangsdaten; nur der Mensch über die CLI).
+
 ### Entwürfe (S2, draft-only)
 
 | Tool | Zweck | Eingabe | Ausgabe | Risiko | Scope |

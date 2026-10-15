@@ -17,6 +17,8 @@ func TestCheck(t *testing.T) {
 		{"read with scope", reader, Requirement{"messages.get", ScopeMailRead, R0}, false, Allow, false},
 		{"read without scope", Key{ID: "k0"}, Requirement{"messages.get", ScopeMailRead, R0}, false, Deny, false},
 		{"local write allowed", operator, Requirement{"drafts.create", ScopeMailDraft, R1}, false, Allow, false},
+		{"R1 dry run is honoured", operator, Requirement{"drafts.create", ScopeMailDraft, R1}, true, Allow, true},
+		{"R0 ignores dry run", reader, Requirement{"messages.get", ScopeMailRead, R0}, true, Allow, false},
 		{"R2 without scope", reader, Requirement{"messages.move", ScopeMailMove, R2}, false, Deny, false},
 		{"R2 with scope", operator, Requirement{"messages.move", ScopeMailMove, R2}, false, Allow, false},
 		{"R2 dry run", operator, Requirement{"messages.move", ScopeMailMove, R2}, true, Allow, true},

@@ -11,10 +11,6 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
-type fakeAccounts struct{ list []AccountInfo }
-
-func (f fakeAccounts) ListAccounts(context.Context) ([]AccountInfo, error) { return f.list, nil }
-
 func newTestOp(name string, scope policy.Scope, risk policy.Risk, h Handler) Operation {
 	return Operation{
 		Name: name, Scope: scope, Risk: risk, Summary: "test",
@@ -150,40 +146,5 @@ func TestExecutorFailsClosedWhenAuditFails(t *testing.T) {
 	_, err := x.Execute(context.Background(), Request{Key: policy.Key{Scopes: []policy.Scope{policy.ScopeMailRead}}, Operation: "m.read"})
 	if err == nil || called {
 		t.Fatalf("handler must not run without audit: err=%v called=%v", err, called)
-	}
-}
-
-func TestAccountsList(t *testing.T) {
-	reg := NewRegistry()
-	if err := reg.Register(AccountsList(EmptyAccounts{})); err != nil {
-		t.Fatal(err)
-	}
-	x := &Executor{Registry: reg, Audit: audit.Nop{}}
-	key := policy.Key{ID: "k", Scopes: policy.Roles["reader"]}
-	res, err := x.Execute(context.Background(), Request{Key: key, Operation: "accounts.list"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(res.Output)
-	if string(b) != `{"accounts":[]}` {
-		t.Errorf("empty list must serialize as [] not null, got %s", b)
-	}
-
-	reg2 := NewRegistry()
-	_ = reg2.Register(AccountsList(fakeAccounts{[]AccountInfo{{ID: 1, Name: "demo", Email: "demo@example.invalid", Provider: "imap"}}}))
-	x2 := &Executor{Registry: reg2, Audit: audit.Nop{}}
-	res, err = x2.Execute(context.Background(), Request{Key: key, Operation: "accounts.list"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ = json.Marshal(res.Output)
-	var back struct{ Accounts []AccountInfo }
-	if err := json.Unmarshal(b, &back); err != nil || len(back.Accounts) != 1 || back.Accounts[0].Name != "demo" {
-		t.Errorf("round trip: %s %v", b, err)
-	}
-
-	// Ohne Scope: verweigert
-	if _, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "none"}, Operation: "accounts.list"}); !errors.Is(err, ErrDenied) {
-		t.Errorf("missing scope must be denied, got %v", err)
 	}
 }

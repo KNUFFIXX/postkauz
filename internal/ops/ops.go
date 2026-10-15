@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
 // Call ist, was ein Handler vom Aufruf mitbekommt.
@@ -24,7 +25,17 @@ type Call struct {
 	// DryRun ist true, wenn der Handler nichts verändern darf, sondern nur
 	// beschreiben soll, was geschähe. Entschieden von der Policy.
 	DryRun bool
+	// Secret ist ein geheimer Wert außerhalb von Input (z. B. das Passwort
+	// bei accounts.add). Er wird nie auditiert, nie geloggt und nie
+	// ausgegeben; nur Operationen, die ihn brauchen, lesen ihn.
+	Secret secrets.Secret
 }
+
+// RedactFunc leitet aus der Eingabe die Audit-Parameter ab: nur IDs,
+// Feldnamen, Zähler und Hashes, nie Inhalte oder Geheimnisse
+// (docs/sicherheit.md, Abschnitt 6). targets sind Objektbezeichner wie
+// "account:demo".
+type RedactFunc func(input json.RawMessage) (params json.RawMessage, targets []string)
 
 // Handler führt eine Operation aus. Der Rückgabewert muss sich nach JSON
 // serialisieren lassen und OutputSchema entsprechen.
@@ -47,6 +58,8 @@ type Operation struct {
 	// Summary ist ein Satz für Hilfetexte und Tool-Beschreibungen.
 	Summary string
 	Handler Handler
+	// Redact ist optional; ohne sie stehen im Audit leere Parameter ({}).
+	Redact RedactFunc
 }
 
 // Requirement übersetzt die Operation in das, was policy.Check braucht.
