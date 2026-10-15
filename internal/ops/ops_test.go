@@ -457,3 +457,35 @@ func TestContractEveryOperationFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// ctxAudit verhält sich wie der SQLite-Writer: Mit beendetem ctx schreibt er nicht.
+type ctxAudit struct{ audit.Memory }
+
+func (c *ctxAudit) Append(ctx context.Context, e audit.Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Memory.Append(ctx, e)
+}
+
+// Nach Strg+C (ctx abgebrochen, Handler liefert context.Canceled) muss das
+// Fehler-Ereignis trotzdem im Audit stehen.
+func TestExecutorAuditsHandlerErrorAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reg := NewRegistry()
+	_ = reg.Register(newTestOp("m.sync", policy.ScopeMailSync, policy.R1, func(ctx context.Context, _ Call) (any, error) {
+		cancel() // Strg+C während des Laufs
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}))
+	au := &ctxAudit{}
+	x := &Executor{Registry: reg, Audit: au}
+	_, err := x.Execute(ctx, Request{Key: policy.Key{ID: "k", Scopes: policy.Roles["assistant"]}, Operation: "m.sync"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	evs := au.Events()
+	if len(evs) != 2 || evs[1].Result != audit.ResultError || evs[1].Reason != "handler_error" {
+		t.Fatalf("error event missing after cancel: %+v", evs)
+	}
+}

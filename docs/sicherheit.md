@@ -104,7 +104,7 @@ Regeln werden von Agenten **nur vorgeschlagen** (deaktiviert angelegt, ab S4); a
 
 ## 6. Audit
 
-- **Append-only-Tabelle** `audit_events`; Trigger blockieren `UPDATE` und `DELETE` (getestet). Der Executor schreibt den Eintrag **vor** dem Handler und bricht ab, wenn das Schreiben scheitert (fail closed, getestet).
+- **Append-only-Tabelle** `audit_events`; Trigger blockieren `UPDATE` und `DELETE` (getestet). Der Executor schreibt den Eintrag **vor** dem Handler und bricht ab, wenn das Schreiben scheitert (fail closed, getestet). Scheitert der Handler, folgt ein zweiter Eintrag `error`/`handler_error`; er wird auch nach einem Abbruch (Strg+C) geschrieben, ohne den abgebrochenen Kontext, mit eigener Frist von 5 s (getestet).
 - **Inhalt:** Zeit, Akteurtyp (`human`\|`agent`\|`system`), Schlüssel, Scope, Operation, Parameter **ohne Inhalte** (IDs, Feldnamen, Zähler, Hashes), Ziele, Ergebnis (`ok`\|`denied`\|`needs_approval`\|`error`), Grund, Trockenlauf, Dauer. **Mailtexte stehen nie im Audit** (Datenminimierung). Auch Systemereignisse (Sync-Läufe, Token-Refresh, Konfigurationsänderungen) werden erfasst.
 - **Täglicher Export mit Prüfsumme** an einen **zweiten Ort** (anderer Datenträger oder Rechner; Eintrag in `audit_exports`). Das ist der eigentliche Manipulationsschutz: Wer nur die Datenbankdatei ändert, ändert den Export nicht. `postkauz audit verify` (S1) vergleicht Datenbankzeilen mit den exportierten Dateien und deren Prüfsummen.
 - **Ehrlich:** Wer Schreibrechte auf Datenbank **und** zweiten Ort hat, kann das Log verfälschen. Das Audit belegt das Verhalten der Agenten, nicht die Redlichkeit des Betreibers.

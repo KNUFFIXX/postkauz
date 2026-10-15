@@ -75,6 +75,10 @@ func (e *PolicyError) Is(target error) bool {
 	return false
 }
 
+// auditGrace begrenzt das Nachtragen des Fehler-Ereignisses nach einem
+// abgebrochenen Aufruf.
+const auditGrace = 5 * time.Second
+
 // Execute führt die Operation aus. Schlägt das Schreiben des Audit-Eintrags
 // fehl, läuft der Handler nicht (fail closed).
 func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
@@ -128,8 +132,13 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		ev.Result = audit.ResultError
 		ev.Reason = "handler_error"
 		ev.Duration = now().Sub(start)
-		// Fehler beim Nachtragen dürfen den Handler-Fehler nicht verdecken.
-		_ = x.Audit.Append(ctx, ev)
+		// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann
+		// schon beendet. Das Nachtragen läuft deshalb ohne dessen Abbruch,
+		// aber mit eigener Frist. Fehler beim Nachtragen dürfen den
+		// Handler-Fehler nicht verdecken.
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
+		_ = x.Audit.Append(actx, ev)
+		cancel()
 		return Result{Decision: dec}, herr
 	}
 	return Result{Output: out, Decision: dec}, nil
