@@ -48,6 +48,9 @@ guard:
 	@# ADR-007: go-imap nur über internal/imapx (Tests dürfen den Fake-Server nutzen).
 	@if grep -rlnF --include='*.go' --exclude='*_test.go' '"github.com/emersion/go-imap' internal cmd | grep -v '^internal/imapx/' ; then \
 	  echo "guard: go-imap may only be imported by internal/imapx (ADR-007)"; exit 1; fi
+	@# ADR-007: go-imap bleibt auf v2.0.0-beta.8 gepinnt; ein Wechsel nur über einen ADR.
+	@grep -Eq '^[[:space:]]*github.com/emersion/go-imap/v2 v2\.0\.0-beta\.8$$' go.mod || { \
+	  echo "guard: github.com/emersion/go-imap/v2 must stay pinned to v2.0.0-beta.8 (ADR-007)"; exit 1; }
 	@echo "guard: ok"
 
 pii-check:

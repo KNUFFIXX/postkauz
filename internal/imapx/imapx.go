@@ -1,18 +1,23 @@
 // Package imapx ist die dünne eigene Schicht über github.com/emersion/go-imap/v2
-// (ADR-007). Nichts außerhalb dieses Pakets importiert go-imap; ein Fork
-// oder Wechsel der Bibliothek ändert nur diese Schicht.
+// (ADR-007). Nichts außerhalb dieses Pakets importiert go-imap (`make guard`
+// prüft das und dass v2.0.0-beta.8 gepinnt ist); ein Fork oder Wechsel der
+// Bibliothek ändert nur diese Schicht.
 //
-// Auflagen aus ADR-007, Stand S1.1 (Verbinden, Anmelden, Fähigkeiten, LIST):
+// Auflagen aus ADR-007, Stand S1.3:
 //
 //   - Watchdog: Jedes Kommando hat eine Deadline; bei Überschreitung wird die
-//     Verbindung geschlossen (go-imap kennt keine Kommando-Timeouts). Der
-//     Neuaufbau mit Backoff folgt mit dem Sync (S1.5).
+//     Verbindung geschlossen (go-imap kennt keine Kommando-Timeouts) und
+//     ErrConnection gemeldet. Session baut die Verbindung danach mit
+//     exponentiellem Backoff und Jitter neu auf (session.go).
 //   - TCP-Keepalive über net.Dialer.KeepAliveConfig.
 //   - WordDecoder immer mit go-message/charset (sonst bleiben Betreffzeilen
 //     in windows-1252 oder iso-8859-1 roh).
 //   - Klartext und unbestätigte Zertifikate nur für Testserver auf localhost.
 //
-// SELECT, FETCH, IDLE, APPEND und die Änderungserkennung folgen in S1.3–S1.5.
+// Fehlerklassen: ErrConnection (wiederholbar), ErrAuth (nie wiederholen),
+// ErrRejected (Server lehnt ein Kommando mit NO/BAD ab; nicht wiederholen).
+//
+// SELECT, FETCH, IDLE und APPEND folgen mit Sync und Entwürfen (S1.4, S1.5, S2).
 package imapx
 
 import (
@@ -85,20 +90,47 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ErrRejected: Der Server hat ein Kommando mit NO oder BAD abgelehnt. Die
+// Verbindung ist in Ordnung; ein Wiederholen ändert nichts.
+var ErrRejected = errors.New("imapx: command rejected by server")
+
 func connErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth) {
+	if errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth) || errors.Is(err, ErrRejected) {
 		return err
 	}
 	return fmt.Errorf("%w: %v", provider.ErrConnection, err)
+}
+
+// cmdErr unterscheidet Ablehnungen (NO/BAD, ErrRejected) von
+// Verbindungsfehlern. Nur Typ und Code des Servers werden weitergegeben,
+// nicht sein Freitext.
+func cmdErr(err error) error {
+	var ie *imap.Error
+	if errors.As(err, &ie) {
+		code := string(ie.Code)
+		if code == "" {
+			code = "-"
+		}
+		return fmt.Errorf("%w (%s, code %s)", ErrRejected, ie.Type, code)
+	}
+	return connErr(err)
 }
 
 // Dial baut die Verbindung auf (TCP mit Keepalive, TLS bzw. STARTTLS) und
 // wartet auf den Gruß des Servers, alles unter Deadline. ctx bricht auch
 // spätere Kommandos ab (Verbindung wird geschlossen).
 func Dial(ctx context.Context, cfg Config) (*Client, error) {
+	return dial(ctx, ctx, cfg)
+}
+
+// dial trennt den Kontext des Verbindungsaufbaus (dialCtx) von dem der
+// Lebensdauer (lifeCtx); Session hält Verbindungen über einzelne Aufrufe
+// hinaus.
+func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
+	ctx := dialCtx
 	if cfg.DialTimeout <= 0 {
 		cfg.DialTimeout = DefaultDialTimeout
 	}
@@ -151,7 +183,7 @@ func Dial(ctx context.Context, cfg Config) (*Client, error) {
 		_ = conn.Close()
 		return nil, connErr(err)
 	}
-	cl.stopCtx = context.AfterFunc(ctx, func() { _ = cl.c.Close() })
+	cl.stopCtx = context.AfterFunc(lifeCtx, func() { _ = cl.c.Close() })
 	return cl, nil
 }
 
@@ -210,7 +242,7 @@ func (c *Client) Caps() ([]string, error) {
 		return err
 	})
 	if err != nil {
-		return nil, connErr(err)
+		return nil, cmdErr(err)
 	}
 	out := make([]string, 0, len(set))
 	for cp := range set {
@@ -222,22 +254,51 @@ func (c *Client) Caps() ([]string, error) {
 
 // MailboxInfo ist ein Ordner aus LIST.
 type MailboxInfo struct {
-	Path  string   // UTF-8 (IMAP-UTF-7 dekodiert die Bibliothek)
-	Delim string   // Trennzeichen, "" wenn flach
-	Attrs []string // z. B. \Sent, \Noselect
+	Path   string         // UTF-8 (IMAP-UTF-7 dekodiert die Bibliothek)
+	Delim  string         // Trennzeichen, "" wenn flach
+	Attrs  []string       // z. B. \Sent, \Noselect
+	Status *MailboxStatus // nur mit ListOptions.Status und LIST-STATUS
 }
 
-// List liefert alle Ordner (LIST "" "*"). Server mit SPECIAL-USE nennen die
-// Rollen-Attribute dabei von sich aus (RFC 6154).
-func (c *Client) List() ([]MailboxInfo, error) {
+// MailboxStatus ist der Zustand eines Ordners aus STATUS bzw. LIST-STATUS.
+type MailboxStatus struct {
+	Messages      uint32
+	Unseen        uint32
+	UIDNext       uint32
+	UIDValidity   uint32
+	HighestModSeq uint64 // 0 = unbekannt (ohne CONDSTORE)
+}
+
+// ListOptions steuert LIST. Der Aufrufer setzt nur, was der Server laut
+// CAPABILITY kann (SPECIAL-USE bzw. LIST-STATUS/IMAP4rev2, CONDSTORE).
+type ListOptions struct {
+	SpecialUse    bool // RETURN (SPECIAL-USE): Rollen-Attribute anfordern
+	Status        bool // RETURN (STATUS (MESSAGES UNSEEN UIDNEXT UIDVALIDITY))
+	HighestModSeq bool // zusätzlich HIGHESTMODSEQ im STATUS (CONDSTORE)
+}
+
+// List liefert alle Ordner (LIST "" "*"). Manche Server nennen
+// SPECIAL-USE-Attribute nur mit ListOptions.SpecialUse (Stalwart).
+func (c *Client) List() ([]MailboxInfo, error) { return c.ListWith(ListOptions{}) }
+
+// ListWith liefert alle Ordner mit den gewünschten Zusatzangaben.
+func (c *Client) ListWith(o ListOptions) ([]MailboxInfo, error) {
+	var opts *imap.ListOptions
+	if o.SpecialUse || o.Status {
+		opts = &imap.ListOptions{ReturnSpecialUse: o.SpecialUse}
+		if o.Status {
+			opts.ReturnStatus = &imap.StatusOptions{NumMessages: true, NumUnseen: true, UIDNext: true,
+				UIDValidity: true, HighestModSeq: o.HighestModSeq}
+		}
+	}
 	var data []*imap.ListData
 	err := c.run(func() error {
 		var err error
-		data, err = c.c.List("", "*", nil).Collect()
+		data, err = c.c.List("", "*", opts).Collect()
 		return err
 	})
 	if err != nil {
-		return nil, connErr(err)
+		return nil, cmdErr(err)
 	}
 	out := make([]MailboxInfo, 0, len(data))
 	for _, d := range data {
@@ -248,10 +309,47 @@ func (c *Client) List() ([]MailboxInfo, error) {
 		for _, a := range d.Attrs {
 			mi.Attrs = append(mi.Attrs, string(a))
 		}
+		if st := d.Status; st != nil {
+			ms := &MailboxStatus{UIDNext: uint32(st.UIDNext), UIDValidity: st.UIDValidity, HighestModSeq: st.HighestModSeq}
+			if st.NumMessages != nil {
+				ms.Messages = *st.NumMessages
+			}
+			if st.NumUnseen != nil {
+				ms.Unseen = *st.NumUnseen
+			}
+			mi.Status = ms
+		}
 		out = append(out, mi)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// Create legt einen Ordner an; ein schon vorhandener Ordner ist kein Fehler.
+// Gebraucht zum Befüllen der Testserver (Korpus) und später für Entwürfe.
+func (c *Client) Create(path string) error {
+	err := c.run(func() error { return c.c.Create(path, nil).Wait() })
+	var ie *imap.Error
+	if errors.As(err, &ie) && ie.Code == imap.ResponseCodeAlreadyExists {
+		return nil
+	}
+	if err != nil {
+		return cmdErr(err)
+	}
+	return nil
+}
+
+// Noop prüft, ob die Verbindung lebt (mit Watchdog).
+func (c *Client) Noop() error {
+	return cmdErr(c.run(func() error { return c.c.Noop().Wait() }))
+}
+
+// closeNow schließt die Verbindung sofort, ohne LOGOUT (Watchdog, Abbruch).
+func (c *Client) closeNow() {
+	if c.stopCtx != nil {
+		c.stopCtx()
+	}
+	_ = c.c.Close()
 }
 
 // Close meldet sich ab (mit Deadline) und schließt die Verbindung.

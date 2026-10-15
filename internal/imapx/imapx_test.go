@@ -278,3 +278,40 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+func TestListWithStatusAndCreate(t *testing.T) {
+	addr := fakeServer(t, nil)
+	c, err := Dial(context.Background(), cfgFor(t, addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Login(testUser, testPass); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create("Entwürfe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create("Entwürfe"); err != nil {
+		t.Fatalf("second create must be a no-op: %v", err)
+	}
+	boxes, err := c.ListWith(ListOptions{Status: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, b := range boxes {
+		if b.Path == "Entwürfe" {
+			seen = true
+		}
+		if b.Status == nil || b.Status.UIDValidity == 0 || b.Status.UIDNext == 0 {
+			t.Errorf("%s: status = %+v", b.Path, b.Status)
+		}
+	}
+	if !seen {
+		t.Fatalf("created mailbox missing: %+v", boxes)
+	}
+	if err := c.Noop(); err != nil {
+		t.Fatal(err)
+	}
+}
