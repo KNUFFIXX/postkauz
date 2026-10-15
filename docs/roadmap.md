@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.1 erledigt** (15.10.2026: Go 1.27; Konfiguration, Datenverzeichnis, Store, SQLite-Audit, Schlüsselbund, `account add/test/remove`, `accounts list` aus der Datenbank, `doctor`). Nächstes: S1.2 (Blob-Store, MIME-Parser, Korpus-Generator). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.2 erledigt** (15.10.2026: Blob-Store, MIME-Parser auf `go-message`, Threading per Message-ID, Korpus-Generator `make corpus`; davor S1.1: Konten, Store, Audit, Schlüsselbund, `doctor`). Nächstes: S1.3 (`internal/imapx` vervollständigen, IMAP-Provider mit Ordnerrollen, Integrationstests). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 erledigt 15.10.2026**; S1.2 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 und S1.2 erledigt 15.10.2026**; S1.3 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -23,6 +23,17 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 **Offen (Auftrag A01):** S1 ab S1.2. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.2 (15.10.2026, erledigt)
+
+**Akzeptanz S1.2 erfüllt:** Der Parser besteht den Standardkorpus (1.000 Nachrichten, Samen 42) gegen das Manifest: Betreff, Absender, Empfänger, Message-ID, Datum samt Quelle, Anhangsnamen, Inline-Teile, Textprobe, List-Id; die 60 Threads werden exakt gebildet, keine Einzelnachricht wird angehängt (`TestParserAgainstCorpusManifest`). Eine Zip-Bombe (256 MiB entpackt) wird nicht entpackt, Größe und Hash sind die der gepackten Bytes; zu große Teile werden nur bis zur Grenze dekodiert (`TestZipBombIsNotExtracted`, `TestOversizedPartIsTruncated`, `TestNoDecompressorImports`).
+
+- **Blob-Store** `internal/blob`: SHA-256 der unkomprimierten Bytes, `blobs/ab/cd/<sha256>`, atomar über `blobs/tmp` + fsync + rename, Deduplizierung, optional zstd (`.zst`), Größenlimit 256 MiB, `Verify`. Neue Abhängigkeit `github.com/klauspost/compress` v1.20.3 (BSD-3; Go 1.27 hat keinen zstd-Encoder). Die Zeile in `blobs` schreibt erst der Sync (S1.4).
+- **Parser** `internal/mimeparse` auf `go-message` mit `charset.Reader` (ADR-007): RFC 2047 B/Q in allen Zeichensätzen, rohe 8-Bit-Köpfe als Windows-1252, kaputte Kopfzeilen und NUL-Bytes entfernt, Message-IDs tolerant (auch ohne Klammern), Datum tolerant (Zone ohne Vorzeichen; fehlend/unlesbar → `INTERNALDATE`, ohne beides Nullzeit mit `date_source = none`); Limits für Kopf, Rohgröße, Teile, Tiefe, Teilgröße, Text. Abweichungen stehen in `Problems`, nicht als Fehler.
+- **Threading** `internal/thread`: Union-Find über Message-ID, In-Reply-To, References (Spike-Verfahren). Betreff-Rückfall im Zeitfenster folgt mit S1.6.
+- **Korpus** `internal/corpus`, `make corpus` (Inhalt und Lücken: [testkorpus.md](testkorpus.md), Abschnitt 1a).
+
+**Nicht in S1.2 (bewusst verschoben):** Magic-Bytes, HTML-Bereinigung, versteckter Text, `message/rfc822` rekursiv lesen (S1.6); Betreff-Threading (S1.6); Blobs in der Datenbank verbuchen (S1.4); `doctor --blobs` (S1.11).
 
 ### Stand S1.1 (15.10.2026, erledigt)
 

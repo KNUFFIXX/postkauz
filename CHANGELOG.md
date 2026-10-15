@@ -23,6 +23,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - `make guard`: go-imap nur in `internal/imapx`.
 - Neue Abhängigkeiten (per `go get`): `github.com/BurntSushi/toml` v1.6.0 (MIT), `github.com/zalando/go-keyring` v0.2.8 (MIT), `golang.org/x/term` v0.47.0 (BSD), `github.com/emersion/go-imap/v2` v2.0.0-beta.8 (MIT, gepinnt), `github.com/emersion/go-message` v0.18.2 (MIT), `github.com/emersion/go-sasl` (MIT).
 
+- **S1.2:** Blob-Store `internal/blob` (atomar, SHA-256, Deduplizierung, optional zstd, Größenlimit); MIME-Parser `internal/mimeparse` auf `go-message` mit Charset-Reader, tolerantem Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`) und Limits gegen Zip-Bomben und übergroße Teile; Threading `internal/thread` (Union-Find); Korpus-Generator `internal/corpus` mit Manifest, `make corpus`.
+- Neue Abhängigkeit (per `go get`): `github.com/klauspost/compress` v1.20.3 (BSD-3-Clause) für zstd; `golang.org/x/text` jetzt direkt genutzt (v0.14.0, unverändert).
+
 ### Changed
 
 - `policy.Check`: `--dry-run` gilt auch für R1-Operationen (wurde bisher ignoriert).
