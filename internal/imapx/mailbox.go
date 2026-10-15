@@ -142,14 +142,19 @@ type MessageMeta struct {
 	ModSeq       uint64
 	InternalDate time.Time
 	Size         int64
-	// HeaderFields sind die angeforderten Kopfzeilen roh (z. B. Message-ID).
+	// HeaderFields sind der Kopf bzw. die angeforderten Kopfzeilen, roh.
 	HeaderFields []byte
 }
 
 // MetaOptions steuert FetchMeta.
 type MetaOptions struct {
-	HeaderFields []string // z. B. {"Message-ID"}; leer = keine Kopfzeilen
-	ModSeq       bool     // MODSEQ mitholen (CONDSTORE)
+	// Header holt den ganzen Kopf (BODY.PEEK[HEADER]).
+	Header bool
+	// HeaderFields holt nur diese Kopfzeilen (BODY.PEEK[HEADER.FIELDS]).
+	// Vorsicht: GreenMail 2.1 liefert dafür leere Inhalte, weil go-imap die
+	// Feldnamen in Anführungszeichen setzt; der Sync nutzt deshalb Header.
+	HeaderFields []string
+	ModSeq       bool // MODSEQ mitholen (CONDSTORE)
 }
 
 func uidSet(uids []uint32) imap.UIDSet {
@@ -169,8 +174,11 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 	}
 	opts := &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, RFC822Size: true, ModSeq: o.ModSeq}
 	var sec *imap.FetchItemBodySection
-	if len(o.HeaderFields) > 0 {
-		sec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: o.HeaderFields, Peek: true}
+	if o.Header || len(o.HeaderFields) > 0 {
+		sec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, Peek: true}
+		if !o.Header {
+			sec.HeaderFields = o.HeaderFields
+		}
 		opts.BodySection = []*imap.FetchItemBodySection{sec}
 	}
 	var bufs []*imapclient.FetchMessageBuffer

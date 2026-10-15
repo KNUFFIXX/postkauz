@@ -5,6 +5,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
@@ -23,25 +24,37 @@ type Config struct {
 	CommandTimeout time.Duration
 	// Session steuert Reconnect und Backoff (Nullwert = Standard).
 	Session imapx.SessionOptions
+	// IdleRestart ist der Abstand, in dem IDLE neu gestartet wird
+	// (0 = imapx.DefaultIdleRestart, 8 min; ADR-007: 5 bis 10 min).
+	IdleRestart time.Duration
 }
 
-// Provider ist der IMAP-Provider. Stand S1.3: Verbinden, Fähigkeiten und
-// Ordner mit Rollen. Changes, Fetch, Append und Idle folgen in S1.4/S1.5;
-// erst dann erfüllt Provider provider.MailProvider.
+// Provider ist der IMAP-Provider. Stand S1.5: Verbinden, Fähigkeiten,
+// Ordner mit Rollen, Changes, FetchHeaders, FetchRaw und Idle (sync.go).
+// SetFlags, Move, Trash und Append folgen mit S2/S3; erst dann erfüllt
+// Provider provider.MailProvider vollständig.
 type Provider struct {
-	s    *imapx.Session
-	caps provider.Capabilities
-	raw  []string
+	s          *imapx.Session
+	newSession func() *imapx.Session // eigene Verbindung für IDLE
+	cfg        Config
+	caps       provider.Capabilities
+	raw        []string
+
+	mu    sync.Mutex
+	cache map[string]searchCache
 }
 
 // Connect meldet sich an (mit Watchdog, Reconnect und Backoff) und liest
 // die Fähigkeiten. Anmeldefehler sind provider.ErrAuth und werden nicht
 // wiederholt.
 func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provider, error) {
-	s := imapx.NewSession(imapx.Config{
-		Host: cfg.Host, Port: cfg.Port, TLS: imapx.TLSMode(cfg.TLS),
-		InsecureTestServer: cfg.InsecureTestServer, CommandTimeout: cfg.CommandTimeout,
-	}, func(c *imapx.Client) error { return c.Login(cfg.Username, password) }, cfg.Session)
+	newSession := func() *imapx.Session {
+		return imapx.NewSession(imapx.Config{
+			Host: cfg.Host, Port: cfg.Port, TLS: imapx.TLSMode(cfg.TLS),
+			InsecureTestServer: cfg.InsecureTestServer, CommandTimeout: cfg.CommandTimeout,
+		}, func(c *imapx.Client) error { return c.Login(cfg.Username, password) }, cfg.Session)
+	}
+	s := newSession()
 	var raw []string
 	err := s.Do(ctx, func(c *imapx.Client) error {
 		var err error
@@ -52,7 +65,7 @@ func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provide
 		_ = s.Close()
 		return nil, err
 	}
-	return &Provider{s: s, caps: Capabilities(raw), raw: raw}, nil
+	return &Provider{s: s, newSession: newSession, cfg: cfg, caps: Capabilities(raw), raw: raw}, nil
 }
 
 // Capabilities liefert die erkannten Fähigkeiten.

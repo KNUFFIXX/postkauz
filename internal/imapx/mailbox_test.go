@@ -101,7 +101,7 @@ func TestAppendSelectSearchFetch(t *testing.T) {
 	if from, err := c.UIDSearch(4, SearchOptions{}); err != nil || !slices.Equal(from, []uint32{4, 5}) {
 		t.Fatalf("search 4:* = %v %v", from, err)
 	}
-	meta, err := c.FetchMeta([]uint32{2, 3, 99}, MetaOptions{HeaderFields: []string{"Message-ID"}})
+	meta, err := c.FetchMeta([]uint32{2, 3, 99}, MetaOptions{Header: true})
 	if err != nil || len(meta) != 2 {
 		t.Fatalf("meta = %+v %v", meta, err)
 	}

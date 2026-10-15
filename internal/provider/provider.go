@@ -2,9 +2,9 @@
 // JMAP-Semantik (Zustandstokens, changes, Rollen) und wird für IMAP
 // nachgebildet (ADR-003, docs/architektur.md).
 //
-// Stand Phase 0: nur Schnittstellen und Typen, keine Implementierung. Die
-// erste Implementierung (IMAP auf github.com/emersion/go-imap/v2) entsteht
-// nach dem Gate-Entscheid des Spikes in auftraege/A01_phase0.md.
+// Stand S1.5: Die IMAP-Implementierung (internal/provider/imap) deckt
+// Capabilities, ListMailboxes, Changes, FetchHeaders, FetchRaw und Idle ab;
+// SetFlags, Move, Trash und Append folgen mit S2/S3.
 //
 // Verbindliche Eigenschaften:
 //
@@ -147,8 +147,12 @@ type Header struct {
 	Flags        Flags
 	InternalDate time.Time
 	Size         int64
-	// Roh-Kopfzeilen; geparst wird im Store-nahen Code (einheitlich für IMAP,
-	// mbox/Maildir-Import und Tests), nicht im Provider.
+	// MessageID ist die Message-ID ohne spitze Klammern ("" = keine oder
+	// unlesbar). Der Sync gleicht damit vor dem Laden des Inhalts ab
+	// (Dubletten, Verschieben, UIDVALIDITY-Wechsel).
+	MessageID string
+	// Roh-Kopfzeilen (IMAP: BODY.PEEK[HEADER]); geparst wird
+	// im Store-nahen Code (einheitlich für IMAP, Import und Tests).
 	RawHeader []byte
 }
 
@@ -162,17 +166,38 @@ type FlagUpdate struct {
 // ChangeSet ist das Ergebnis von Changes (JMAP: Email/changes).
 type ChangeSet struct {
 	// Reset ist true bei UIDVALIDITY-Wechsel: Alle früheren UIDs des Ordners
-	// sind ungültig; Created enthält dann den vollständigen Ordnerinhalt.
+	// sind ungültig; Created enthält dann den Ordnerinhalt (in Fenstern).
 	Reset   bool
 	Created []UID
 	Updated []FlagUpdate
 	Removed []UID
+	// Present ist, falls ermittelt, die vollständige UID-Liste des Ordners
+	// (IMAP: UID SEARCH ALL). Der Aufrufer leitet daraus Löschungen ab
+	// (lokal bekannt, aber nicht mehr vorhanden) und holt Fehlendes nach.
+	// nil heißt: nicht ermittelt (nichts deutet auf Löschungen hin).
+	Present []UID
+	// Exists ist die Nachrichtenzahl des Ordners laut Server.
+	Exists uint32
 	// NewState ist der Zustand, ab dem der nächste Aufruf weitermacht. Er wird
 	// erst NACH erfolgreicher lokaler Verarbeitung gespeichert.
 	NewState SyncState
 	// More ist true, wenn das Fenster voll war und ein weiterer Aufruf folgt
 	// (Erstsync in Fenstern, wiederaufnehmbar).
 	More bool
+}
+
+// ChangesOptions steuert Changes.
+type ChangesOptions struct {
+	// Limit begrenzt die neuen Nachrichten je Aufruf (Fenster); 0 =
+	// Standard des Providers.
+	Limit int
+	// KnownCount ist die Zahl der lokal bekannten, vorhandenen Nachrichten
+	// des Ordners. Stimmt sie mit dem Server überein (plus neue), entfällt
+	// der teure Löschabgleich.
+	KnownCount int
+	// FullScan erzwingt Löschabgleich und Flag-Abgleich aller Nachrichten
+	// (ohne CHANGEDSINCE), z. B. für `sync --full`.
+	FullScan bool
 }
 
 // MailProvider ist die Schnittstelle zu einem Postfach.
@@ -184,20 +209,23 @@ type MailProvider interface {
 	ListMailboxes(ctx context.Context) ([]Mailbox, error)
 
 	// Changes liefert die Änderungen eines Ordners seit since. Ein leerer
-	// SyncState verlangt den Erstabgleich; limit begrenzt das Fenster
-	// (0 = Standardgröße des Providers).
+	// SyncState verlangt den Erstabgleich; Limit begrenzt das Fenster.
 	//
 	// JMAP: Email/changes. IMAP: UIDVALIDITY-Wechsel setzt Reset; neue UIDs ab
 	// UIDNEXT; Flags per FETCH CHANGEDSINCE (CONDSTORE) sonst Fenster-Scan;
-	// Löschungen per VANISHED (QRESYNC) sonst UID-SEARCH-Abgleich.
-	Changes(ctx context.Context, mailbox string, since SyncState, limit int) (ChangeSet, error)
+	// Löschungen per VANISHED (QRESYNC) sonst UID-SEARCH-Abgleich (Present).
+	Changes(ctx context.Context, mailbox string, since SyncState, opts ChangesOptions) (ChangeSet, error)
 
-	// FetchHeaders liefert die Köpfe der angegebenen UIDs.
-	FetchHeaders(ctx context.Context, mailbox string, uids []UID) ([]Header, error)
+	// FetchHeaders liefert die Köpfe der angegebenen UIDs. uidValidity ist
+	// der Stand, unter dem die UIDs gelten; weicht der Server ab, kommt
+	// ErrUIDValidityChanged (nichts wird geliefert).
+	FetchHeaders(ctx context.Context, mailbox string, uidValidity uint32, uids []UID) ([]Header, error)
 
-	// FetchRaw streamt die vollständige Rohmail (RFC 5322) einer Nachricht.
-	// Der Aufrufer legt sie im Blob-Store ab und schließt den Reader.
-	FetchRaw(ctx context.Context, mailbox string, uid UID) (io.ReadCloser, error)
+	// FetchRaw streamt die vollständigen Rohmails (RFC 5322) der UIDs und
+	// ruft fn je Nachricht auf; der Reader gilt nur während fn. Nach einem
+	// Verbindungsabbruch kann fn für dieselbe UID erneut kommen (idempotent
+	// verarbeiten). uidValidity wie bei FetchHeaders.
+	FetchRaw(ctx context.Context, mailbox string, uidValidity uint32, uids []UID, fn func(UID, io.Reader) error) error
 
 	// SetFlags ändert Flags und Keywords. Nur Nachrichten, die der Aufrufer
 	// zuvor gelesen hat (Policy-Regel „Ziele aus Leseergebnissen").
@@ -217,8 +245,10 @@ type MailProvider interface {
 	Append(ctx context.Context, mailbox string, raw []byte, flags Flags, date time.Time) (UID, error)
 
 	// Idle blockiert und sendet auf notify, sobald sich der Ordner ändert,
-	// bis ctx endet. Nur aufrufen, wenn Capabilities().Idle gilt; sonst
-	// ErrUnsupported (der Aufrufer fällt auf Polling zurück).
+	// bis ctx endet (Rückgabe nil) oder die Verbindung trotz Wiederholung
+	// scheitert (Rückgabe des Fehlers; der Aufrufer startet später neu).
+	// Nur aufrufen, wenn Capabilities().Idle gilt; sonst ErrUnsupported
+	// (der Aufrufer fällt auf Polling zurück).
 	Idle(ctx context.Context, mailbox string, notify chan<- struct{}) error
 
 	// Close beendet die Verbindung.
