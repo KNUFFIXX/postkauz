@@ -171,3 +171,14 @@ func (s *SQLite) ExecForTest(query string, args ...any) error {
 	_, err := s.db.Exec(query, args...)
 	return err
 }
+
+// QueryIntForTest liefert das Ergebnis einer Zählabfrage. Nur für Tests
+// anderer Pakete.
+func (s *SQLite) QueryIntForTest(query string, args ...any) (int, error) {
+	var n int
+	err := s.db.QueryRow(query, args...).Scan(&n)
+	return n, err
+}
+
+// DBForTest gibt die Datenbank frei. Nur für Tests.
+func (s *SQLite) DBForTest() *sql.DB { return s.db }
