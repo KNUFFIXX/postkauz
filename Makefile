@@ -13,7 +13,7 @@ export CGO_ENABLED ?= 0
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vet fmt fmt-check lint guard pii-check check cross corpus testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -27,6 +27,11 @@ install: build
 
 test:
 	go test ./...
+
+# Race-Detector (P7). Braucht CGO und einen C-Compiler; deshalb ein eigenes
+# Ziel und nicht Teil von `make check` (Builds und Releases bleiben CGO-frei).
+race:
+	CGO_ENABLED=1 go test -race ./...
 
 vet:
 	go vet ./...

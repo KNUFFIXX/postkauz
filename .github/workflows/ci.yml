@@ -1,5 +1,6 @@
 # CI für PostKauz (Arbeitstitel). Bewusst ohne Docker: Integrationstests gegen
-# die Testserver laufen vorerst lokal und nachts, nicht in dieser Pipeline.
+# die Testserver laufen vorerst lokal und nachts (make integration), nicht in
+# dieser Pipeline. Der Race-Detector läuft als eigener Job mit CGO.
 name: ci
 
 on:
@@ -31,6 +32,17 @@ jobs:
         run: go test ./...
       - name: guards (no SMTP code, PII gate)
         run: make guard pii-check
+
+  # Race-Detector (P7, ab S1.3): braucht CGO; nur hier, Builds bleiben CGO-frei.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+      - name: go test -race
+        run: make race
 
   cross:
     needs: test
