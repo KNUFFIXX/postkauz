@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **Phase 0 abgeschlossen, A01 Schritt 0 erledigt** (15.10.2026: Go 1.27, `modernc.org/sqlite` v1.60.1). Nächstes: S1.1 (Konfiguration, Store, Audit, Schlüsselbund, Konten). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.1 erledigt** (15.10.2026: Go 1.27; Konfiguration, Datenverzeichnis, Store, SQLite-Audit, Schlüsselbund, `account add/test/remove`, `accounts list` aus der Datenbank, `doctor`). Nächstes: S1.2 (Blob-Store, MIME-Parser, Korpus-Generator). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 erledigt 15.10.2026**; S1.2 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,25 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.1. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.2. Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.1 (15.10.2026, erledigt)
+
+**Akzeptanz S1.1 erfüllt:** Konto anlegen und auflisten (aus der Datenbank); Passwort nur im Schlüsselbund bzw. in der Umgebung, Kanarientest grün (Datenbank samt WAL, Log, Audit, stdout/stderr; auch über eine echte IMAP-Anmeldung an einen Testserver im Prozess); `doctor` meldet Pfade, Schlüsselbund, Datenbank und Schemaversion.
+
+- **Konfiguration** `internal/config`: TOML (`POSTKAUZ_CONFIG`), unbekannte Schlüssel sind Fehler; `POSTKAUZ_DATA_DIR`, `POSTKAUZ_SECRETS_BACKEND`; Datenverzeichnis je Betriebssystem (Windows `%LOCALAPPDATA%`, nicht Roaming), 0700, Warnung bei Cloud-Ordnern.
+- **Store:** Konten-Repository, SQLite-Audit-Writer (ersetzt `audit.Nop` im CLI), Schema-Schutz gegen neuere Datenbanken, Datenbankdatei 0600. `0001_init.sql` um `accounts.insecure_test_server` ergänzt (letzte Änderung an 0001; ab jetzt nur neue Migrationen).
+- **Executor:** Schwärzung je Operation (`Redact`: nur Feldnamen und Ziele wie `account:demo`), Geheimnisse getrennt von der Eingabe (`Call.Secret`). **Policy-Korrektur:** `--dry-run` gilt jetzt auch für R1 (lokal schreibende Operationen); vorher wurde es bei R1 stillschweigend ignoriert.
+- **Operationen** `accounts.add/test/remove` (Scope `admin`, R1, nicht über MCP), `accounts.list` aus der Datenbank. `account remove` verweigert bei archivierten Nachrichten (ADR-003).
+- **P4 erledigt:** Schlüsselbund über `go-keyring` mit Zeitgrenze; ohne Schlüsselbund kein stiller Rückfall, sondern Hinweis auf `POSTKAUZ_PASSWORD_<NAME>`/`--password-from-env`; unsicherer Dateispeicher nur ausdrücklich (`insecure-file`, für Testserver). Getestet mit simuliertem D-Bus-Fehler, Zeitüberschreitung und dem echten Schlüsselbund dieses Linux-Containers (kein Secret Service → `unavailable`). **Windows und macOS** sind nur kompiliert, nicht ausgeführt: Abnahme D0 Punkt 5 und D1 Punkt 1 auf dem Windows-Rechner des Betreibers.
+- **P3 als Entwurf:** SASL XOAUTH2 (eigen) und OAUTHBEARER (go-sasl) in `internal/imapx`, Token-Quelle mit Refresh und Sperrzeit in `internal/oauth`; Tests gegen einen Fake-IMAP-Server und einen Fake-Refresher. Offen: Autorisierungs-Flow (Loopback/Device Code), HTTP-Refresher, Kontenanlage mit `oauth2`.
+- **`internal/imapx` vorgezogen (Ausschnitt):** Dial mit TCP-Keepalive, Watchdog je Kommando (Blackhole-Test grün), `WordDecoder` mit Charset-Reader (Test), Login, CAPABILITY, LIST; `internal/provider/imap` bestimmt daraus Fähigkeiten, Ordnerrollen (SPECIAL-USE, sonst Namen auf Deutsch/Englisch) und die Strategie (QRESYNC maskiert, ADR-007). `make guard` prüft, dass nur `imapx` go-imap importiert. Handgeprüft gegen Dovecot (`condstore`, Rollen INBOX/Sent/Drafts/Trash/Junk) und GreenMail (`uid-scan`); TLS mit selbstsigniertem Zertifikat (Dovecot 11993) erreicht die Anmeldung.
+- **Binärgrößen** (`make cross`, ohne `-s -w`): linux/amd64 17,6 MB, windows/amd64 17,1 MB, darwin/arm64 16,4 MB; mit `-s -w` 12,0 / 11,7 / 11,1 MB (Spike: rund 11 MB).
+- `go test -race ./...` lokal grün (braucht CGO, deshalb noch nicht in `make check`; P7 ab S1.3).
+
+**Nicht in S1.1 (bewusst verschoben):** globale Optionen `--account`, `--key`, `--quiet`, `--profile` (mit S1.8); `doctor --secrets` und `doctor --blobs` (S1.11); `VACUUM INTO` vor Migrationen (mit der ersten Migration 0002); gemountete Secret-Dateien.
 
 **Umfang:** Konto anlegen und testen (`account add/test`); Erstsync in Fenstern, inkrementell mit CONDSTORE wo vorhanden, Löschungen per UID-SEARCH-Abgleich (QRESYNC fehlt in `go-imap`, ADR-007), IDLE auf INBOX, Reconnect mit Backoff und Watchdog; Spiegel (Rohmail im Blob-Store, Metadaten in SQLite); MIME-Parser und Threading; Textextraktion für PDF/DOCX/TXT (abschaltbar); Volltextsuche mit deutscher Stemmung und Trigram; CLI mit `--json`; stdio-MCP **lesend** (Tools, Resources, Prompts aus [mcp.md](mcp.md)); Audit; Import aus mbox/Maildir mit Message-ID-Abgleich und Überlappung; Schlüsselverwaltung.
 
@@ -94,4 +110,5 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 
 1. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
 2. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
-3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, OAuth2 über `go-sasl`, Schlüsselbund, UIDVALIDITY-Wechsel, COMPRESS/BINARY, Race-Detector, QRESYNC per Beitrag oder Fork.
+3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1`, Postfächer ab 50.000 Nachrichten und WAN-Latenz, UIDVALIDITY-Wechsel, COMPRESS/BINARY, Race-Detector in `make check` (braucht CGO; Vorschlag: eigenes Ziel `make race`, in der CI mit `CGO_ENABLED=1`), QRESYNC per Beitrag oder Fork. Erledigt bzw. als Entwurf: P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen).
+4. **Unsicherer Dateispeicher für Passwörter:** `secrets.backend = "insecure-file"` ist nur für Testserver gedacht. Soll es zusätzlich einen sicheren Dateispeicher mit Passphrase geben (für Rechner ohne Schlüsselbund), oder reicht die Umgebungsvariable? Vorschlag: reicht vorerst.

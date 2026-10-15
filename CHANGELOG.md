@@ -14,8 +14,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Spike S0 unter `spike/s0/` als eigenständiges Go-Modul (Code, Testserver-Skripte, Korpus-Generator, Rohdaten, `REPORT.md`): **Gate Go bestanden mit Auflagen** (14.10.2026).
 - ADR-007 (go-imap v2 beta.8 mit Auflagen: `internal/imapx`, Watchdog, WordDecoder, UID-SEARCH statt QRESYNC, `go-message`) und ADR-008 (Zielversion Go 1.27).
 
+- **S1.1 Konten:** `account add` (Passwort verdeckt abgefragt, per `--password-stdin` oder aus `POSTKAUZ_PASSWORD_<NAME>`), `account test` (Anmeldung, Fähigkeiten, Ordnerrollen; nur lesend am Server), `account remove`; `accounts list` liest die Datenbank.
+- Konfiguration (`internal/config`, TOML, `POSTKAUZ_CONFIG`/`POSTKAUZ_DATA_DIR`/`POSTKAUZ_SECRETS_BACKEND`), Datenverzeichnis (0700) mit Datenbank und Log (0600).
+- SQLite-Audit-Writer; Audit-Parameter je Operation geschwärzt (nur Feldnamen und Ziele).
+- Zugangsdaten (`internal/secrets`): Schlüsselbund über `github.com/zalando/go-keyring`, Umgebungsvariable, unsicherer Testspeicher `insecure-file`; selbstschwärzender Typ `Secret`; Kanarientests.
+- `internal/imapx` (Ausschnitt, ADR-007): Verbindung mit Watchdog und TCP-Keepalive, `WordDecoder` mit Charset-Reader, Login, CAPABILITY, LIST; SASL XOAUTH2/OAUTHBEARER und `internal/oauth` als Entwurf (P3).
+- `doctor` prüft Pfade, Schlüsselbund, Datenbank, Schemaversion und je Konto die Passwortquelle.
+- `make guard`: go-imap nur in `internal/imapx`.
+- Neue Abhängigkeiten (per `go get`): `github.com/BurntSushi/toml` v1.6.0 (MIT), `github.com/zalando/go-keyring` v0.2.8 (MIT), `golang.org/x/term` v0.47.0 (BSD), `github.com/emersion/go-imap/v2` v2.0.0-beta.8 (MIT, gepinnt), `github.com/emersion/go-message` v0.18.2 (MIT), `github.com/emersion/go-sasl` (MIT).
+
 ### Changed
 
+- `policy.Check`: `--dry-run` gilt auch für R1-Operationen (wurde bisher ignoriert).
+- Store verweigert Datenbanken mit neuerer Schemaversion; Migration 0001 um `accounts.insecure_test_server` ergänzt.
 - **Go 1.27** (ADR-008, A01 Schritt 0): `go.mod` auf `go 1.27`, `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4), `GOTOOLCHAIN=local` im Makefile, CI installiert `1.27.x`; `make cross` meldet die Binärgrößen.
 - ADR-001 und ADR-005 an die Spike-Befunde angepasst (`modernc.org/sqlite`: v1.46.1 ist das Maximum für Go 1.24).
 - CI: `GOTOOLCHAIN=local`, Go 1.27 ausdrücklich installiert.
