@@ -1,0 +1,408 @@
+package imapx
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
+
+	"github.com/KNUFFIXX/postkauz/internal/provider"
+)
+
+// SelectInfo ist der Zustand eines gewählten Ordners (SELECT/EXAMINE).
+type SelectInfo struct {
+	Mailbox        string
+	ReadOnly       bool
+	Messages       uint32 // EXISTS
+	UIDNext        uint32
+	UIDValidity    uint32
+	HighestModSeq  uint64 // 0 = unbekannt (ohne CONDSTORE)
+	PermanentFlags []string
+}
+
+// SelectOptions steuert Select.
+type SelectOptions struct {
+	// ReadOnly wählt per EXAMINE: Der Sync verändert nie etwas (auch nicht
+	// \Recent); schreibende Kommandos brauchen ReadOnly=false.
+	ReadOnly bool
+	// CondStore hängt (CONDSTORE) an; nur setzen, wenn der Server es kann.
+	CondStore bool
+}
+
+// Select wählt einen Ordner und liefert seinen Zustand.
+func (c *Client) Select(mailbox string, o SelectOptions) (SelectInfo, error) {
+	var d *imap.SelectData
+	err := c.run(func() error {
+		var err error
+		d, err = c.c.Select(mailbox, &imap.SelectOptions{ReadOnly: o.ReadOnly, CondStore: o.CondStore}).Wait()
+		return err
+	})
+	if err != nil {
+		c.sel = nil
+		return SelectInfo{}, selectErr(err)
+	}
+	info := SelectInfo{Mailbox: mailbox, ReadOnly: o.ReadOnly, Messages: d.NumMessages, UIDNext: uint32(d.UIDNext),
+		UIDValidity: d.UIDValidity, HighestModSeq: d.HighestModSeq}
+	for _, f := range d.PermanentFlags {
+		info.PermanentFlags = append(info.PermanentFlags, string(f))
+	}
+	c.sel = &info
+	return info, nil
+}
+
+// selectErr: Ein abgelehntes SELECT heißt meist „Ordner gibt es nicht".
+func selectErr(err error) error {
+	var ie *imap.Error
+	if errors.As(err, &ie) && ie.Type == imap.StatusResponseTypeNo &&
+		(ie.Code == imap.ResponseCodeNonExistent || ie.Code == "") {
+		return fmt.Errorf("%w: mailbox (%v)", provider.ErrNotFound, cmdErr(err))
+	}
+	return cmdErr(err)
+}
+
+// Selected liefert den aktuell gewählten Ordner (nil = keiner).
+func (c *Client) Selected() *SelectInfo { return c.sel }
+
+// Ensure wählt mailbox, falls nicht schon gewählt, und prüft UIDVALIDITY.
+// Ein Wechsel (z. B. nach Reconnect, Ordner neu angelegt) ist
+// provider.ErrUIDValidityChanged: Gespeicherte UIDs gelten nicht mehr.
+func (c *Client) Ensure(mailbox string, uidValidity uint32, o SelectOptions) (SelectInfo, error) {
+	if s := c.sel; s != nil && s.Mailbox == mailbox && (s.ReadOnly == o.ReadOnly || !s.ReadOnly) {
+		if uidValidity != 0 && s.UIDValidity != uidValidity {
+			return *s, provider.ErrUIDValidityChanged
+		}
+		return *s, nil
+	}
+	info, err := c.Select(mailbox, o)
+	if err != nil {
+		return info, err
+	}
+	if uidValidity != 0 && info.UIDValidity != uidValidity {
+		return info, provider.ErrUIDValidityChanged
+	}
+	return info, nil
+}
+
+// SearchOptions steuert UIDSearch.
+type SearchOptions struct {
+	// ESearch nutzt RETURN (ALL): Der Server antwortet mit Bereichen
+	// (1:50000) statt jeder einzelnen UID. Nur mit IMAP4rev2/ESEARCH.
+	ESearch bool
+}
+
+// UIDSearch liefert alle UIDs ab from im gewählten Ordner, aufsteigend
+// (from <= 1: UID SEARCH ALL). „UID n:*" liefert laut RFC immer auch die
+// höchste UID, selbst wenn sie kleiner als n ist; sie wird herausgefiltert.
+func (c *Client) UIDSearch(from uint32, o SearchOptions) ([]uint32, error) {
+	crit := &imap.SearchCriteria{}
+	if from > 1 {
+		crit.UID = []imap.UIDSet{{imap.UIDRange{Start: imap.UID(from), Stop: 0}}}
+	}
+	var opts *imap.SearchOptions
+	if o.ESearch {
+		opts = &imap.SearchOptions{ReturnAll: true}
+	}
+	var data *imap.SearchData
+	err := c.run(func() error {
+		var err error
+		data, err = c.c.UIDSearch(crit, opts).Wait()
+		return err
+	})
+	if err != nil {
+		return nil, cmdErr(err)
+	}
+	var out []uint32
+	if data.All != nil {
+		set, ok := data.All.(imap.UIDSet)
+		if !ok || set.Dynamic() {
+			return nil, fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
+		}
+		nums, _ := set.Nums()
+		out = make([]uint32, 0, len(nums))
+		for _, u := range nums {
+			if uint32(u) >= from {
+				out = append(out, uint32(u))
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
+}
+
+// MessageMeta ist die Kopfsicht einer Nachricht ohne Inhalt.
+type MessageMeta struct {
+	UID          uint32
+	Flags        []string
+	ModSeq       uint64
+	InternalDate time.Time
+	Size         int64
+	// HeaderFields sind die angeforderten Kopfzeilen roh (z. B. Message-ID).
+	HeaderFields []byte
+}
+
+// MetaOptions steuert FetchMeta.
+type MetaOptions struct {
+	HeaderFields []string // z. B. {"Message-ID"}; leer = keine Kopfzeilen
+	ModSeq       bool     // MODSEQ mitholen (CONDSTORE)
+}
+
+func uidSet(uids []uint32) imap.UIDSet {
+	var s imap.UIDSet
+	for _, u := range uids {
+		s.AddNum(imap.UID(u))
+	}
+	return s
+}
+
+// FetchMeta holt UID, FLAGS, INTERNALDATE, RFC822.SIZE (und MODSEQ sowie
+// gewählte Kopfzeilen per BODY.PEEK) der angegebenen UIDs im gewählten
+// Ordner. Nicht mehr vorhandene UIDs fehlen im Ergebnis.
+func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+	opts := &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, RFC822Size: true, ModSeq: o.ModSeq}
+	var sec *imap.FetchItemBodySection
+	if len(o.HeaderFields) > 0 {
+		sec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, HeaderFields: o.HeaderFields, Peek: true}
+		opts.BodySection = []*imap.FetchItemBodySection{sec}
+	}
+	var bufs []*imapclient.FetchMessageBuffer
+	err := c.run(func() error {
+		var err error
+		bufs, err = c.c.Fetch(uidSet(uids), opts).Collect()
+		return err
+	})
+	if err != nil {
+		return nil, cmdErr(err)
+	}
+	out := make([]MessageMeta, 0, len(bufs))
+	for _, b := range bufs {
+		if b.UID == 0 {
+			continue
+		}
+		m := MessageMeta{UID: uint32(b.UID), Flags: flagStrings(b.Flags), ModSeq: b.ModSeq,
+			InternalDate: b.InternalDate, Size: b.RFC822Size}
+		if sec != nil {
+			m.HeaderFields = b.FindBodySection(sec)
+		}
+		out = append(out, m)
+	}
+	slices.SortFunc(out, func(a, b MessageMeta) int { return int(a.UID) - int(b.UID) })
+	return out, nil
+}
+
+func flagStrings(fs []imap.Flag) []string {
+	out := make([]string, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, string(f))
+	}
+	return out
+}
+
+// FlagsData sind die Flags einer Nachricht (FetchFlags).
+type FlagsData struct {
+	UID    uint32
+	Flags  []string
+	ModSeq uint64
+}
+
+// FlagsOptions steuert FetchFlags.
+type FlagsOptions struct {
+	// ChangedSince > 0: nur Nachrichten mit MODSEQ darüber (CONDSTORE).
+	ChangedSince uint64
+	// ModSeq holt MODSEQ mit (CONDSTORE).
+	ModSeq bool
+}
+
+// FetchFlags ruft fn für die Flags aller Nachrichten mit UID in [from, to]
+// auf (to = 0: bis zur höchsten UID). Gestreamt, damit 50.000 Nachrichten
+// nicht auf einmal im Speicher liegen.
+func (c *Client) FetchFlags(from, to uint32, o FlagsOptions, fn func(FlagsData)) error {
+	if from == 0 {
+		from = 1
+	}
+	if to != 0 && to < from {
+		return nil
+	}
+	set := imap.UIDSet{imap.UIDRange{Start: imap.UID(from), Stop: imap.UID(to)}}
+	opts := &imap.FetchOptions{UID: true, Flags: true, ModSeq: o.ModSeq || o.ChangedSince > 0, ChangedSince: o.ChangedSince}
+	err := c.run(func() error {
+		cmd := c.c.Fetch(set, opts)
+		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
+			b, err := msg.Collect()
+			if err != nil {
+				_ = cmd.Close()
+				return err
+			}
+			if b.UID == 0 || uint32(b.UID) < from || (to != 0 && uint32(b.UID) > to) {
+				continue
+			}
+			fn(FlagsData{UID: uint32(b.UID), Flags: flagStrings(b.Flags), ModSeq: b.ModSeq})
+		}
+		return cmd.Close()
+	})
+	return cmdErr(err)
+}
+
+// FetchRaw streamt die vollständigen Rohmails (BODY.PEEK[], \Seen bleibt
+// unberührt) der angegebenen UIDs und ruft fn je Nachricht auf. Der Reader
+// gilt nur während fn. Nennt der Server die UID erst nach dem Inhalt, wird
+// der Inhalt gepuffert.
+func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	sec := &imap.FetchItemBodySection{Peek: true}
+	opts := &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{sec}}
+	var fnErr error
+	err := c.run(func() error {
+		cmd := c.c.Fetch(uidSet(uids), opts)
+		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
+			var uid uint32
+			var pending []byte
+			delivered := false
+			for item := msg.Next(); item != nil; item = msg.Next() {
+				switch it := item.(type) {
+				case imapclient.FetchItemDataUID:
+					uid = uint32(it.UID)
+				case imapclient.FetchItemDataBodySection:
+					if it.Literal == nil {
+						continue
+					}
+					if uid != 0 && fnErr == nil {
+						fnErr = fn(uid, it.Literal)
+						delivered = true
+					} else {
+						b, err := io.ReadAll(it.Literal)
+						if err != nil {
+							_ = cmd.Close()
+							return err
+						}
+						pending = b
+					}
+				}
+			}
+			if !delivered && pending != nil && uid != 0 && fnErr == nil {
+				fnErr = fn(uid, bytes.NewReader(pending))
+			}
+		}
+		return cmd.Close()
+	})
+	if err != nil {
+		return cmdErr(err)
+	}
+	return fnErr
+}
+
+// StatusInfo ist das Ergebnis von STATUS.
+type StatusInfo struct {
+	Messages    uint32
+	Unseen      uint32
+	UIDNext     uint32
+	UIDValidity uint32
+}
+
+// Status fragt den Zustand eines Ordners ab, ohne ihn zu wählen.
+func (c *Client) Status(mailbox string) (StatusInfo, error) {
+	var d *imap.StatusData
+	err := c.run(func() error {
+		var err error
+		d, err = c.c.Status(mailbox, &imap.StatusOptions{NumMessages: true, NumUnseen: true, UIDNext: true, UIDValidity: true}).Wait()
+		return err
+	})
+	if err != nil {
+		return StatusInfo{}, selectErr(err)
+	}
+	st := StatusInfo{UIDNext: uint32(d.UIDNext), UIDValidity: d.UIDValidity}
+	if d.NumMessages != nil {
+		st.Messages = *d.NumMessages
+	}
+	if d.NumUnseen != nil {
+		st.Unseen = *d.NumUnseen
+	}
+	return st, nil
+}
+
+// Append legt eine Rohmail in mailbox ab und liefert die neue UID
+// (APPENDUID, sonst 0). Gebraucht für Entwürfe (S2) und zum Befüllen der
+// Testserver mit dem Korpus.
+func (c *Client) Append(mailbox string, raw []byte, flags []string, date time.Time) (uint32, error) {
+	opts := &imap.AppendOptions{Time: date}
+	for _, f := range flags {
+		opts.Flags = append(opts.Flags, imap.Flag(f))
+	}
+	var data *imap.AppendData
+	err := c.run(func() error {
+		cmd := c.c.Append(mailbox, int64(len(raw)), opts)
+		if _, err := cmd.Write(raw); err != nil {
+			_ = cmd.Close()
+			return err
+		}
+		if err := cmd.Close(); err != nil {
+			return err
+		}
+		var err error
+		data, err = cmd.Wait()
+		return err
+	})
+	if err != nil {
+		return 0, cmdErr(err)
+	}
+	return uint32(data.UID), nil
+}
+
+// StoreFlags setzt (add=true) oder entfernt Flags an den angegebenen UIDs
+// im per Select(ReadOnly=false) gewählten Ordner. Im Sync nie benutzt (der
+// Sync liest nur); vorbereitet für S3 (mark) und für Testwerkzeuge.
+// Es gibt bewusst kein EXPUNGE in dieser Schicht (ADR-002).
+func (c *Client) StoreFlags(uids []uint32, flags []string, add bool) error {
+	if c.sel == nil || c.sel.ReadOnly {
+		return fmt.Errorf("imapx: StoreFlags needs a mailbox selected read-write")
+	}
+	for _, f := range flags {
+		if strings.EqualFold(f, `\Deleted`) {
+			return fmt.Errorf("imapx: setting \\Deleted is not allowed (no expunge path, ADR-002)")
+		}
+	}
+	op := imap.StoreFlagsDel
+	if add {
+		op = imap.StoreFlagsAdd
+	}
+	sf := &imap.StoreFlags{Op: op, Silent: true}
+	for _, f := range flags {
+		sf.Flags = append(sf.Flags, imap.Flag(f))
+	}
+	err := c.run(func() error { return c.c.Store(uidSet(uids), sf, nil).Close() })
+	return cmdErr(err)
+}
+
+// unilateralHandler meldet unaufgeforderte Serverdaten über c.changed
+// (nicht blockierend; IDLE wertet es aus).
+func (c *Client) unilateralHandler() *imapclient.UnilateralDataHandler {
+	kick := func() {
+		select {
+		case c.changed <- struct{}{}:
+		default:
+		}
+	}
+	return &imapclient.UnilateralDataHandler{
+		Expunge: func(uint32) { kick() },
+		Mailbox: func(d *imapclient.UnilateralDataMailbox) {
+			if d.NumMessages != nil {
+				kick()
+			}
+		},
+		Fetch: func(msg *imapclient.FetchMessageData) {
+			for msg.Next() != nil {
+			}
+			kick()
+		},
+	}
+}

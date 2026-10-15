@@ -17,7 +17,10 @@
 // Fehlerklassen: ErrConnection (wiederholbar), ErrAuth (nie wiederholen),
 // ErrRejected (Server lehnt ein Kommando mit NO/BAD ab; nicht wiederholen).
 //
-// SELECT, FETCH, IDLE und APPEND folgen mit Sync und Entwürfen (S1.4, S1.5, S2).
+// Seit S1.4/S1.5: EXAMINE/SELECT, UID SEARCH, FETCH (Metadaten, Flags mit
+// CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND und STORE (mailbox.go)
+// sowie IDLE mit eigenem Neustart (idle.go). Der Watchdog misst Schweigen,
+// nicht Gesamtdauer: Er schlägt zu, wenn seit der Deadline kein Byte kam.
 package imapx
 
 import (
@@ -74,6 +77,38 @@ type Client struct {
 	c       *imapclient.Client
 	timeout time.Duration
 	stopCtx func() bool
+	act     *activityConn
+	// changed wird bei unaufgeforderten Serverdaten (EXISTS, EXPUNGE,
+	// FETCH FLAGS) angestoßen; IDLE wartet darauf (idle.go).
+	changed chan struct{}
+	// sel ist der zuletzt per SELECT/EXAMINE gewählte Ordner (mailbox.go).
+	sel *SelectInfo
+}
+
+// activityConn merkt sich den Zeitpunkt des letzten gelesenen Bytes. Der
+// Watchdog misst daran, ob der Server schweigt; ein langer FETCH über eine
+// langsame Leitung bricht deshalb nicht ab, solange Daten fließen.
+type activityConn struct {
+	net.Conn
+	last atomic.Int64 // UnixNano
+}
+
+func (a *activityConn) Read(p []byte) (int, error) {
+	n, err := a.Conn.Read(p)
+	if n > 0 {
+		a.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (a *activityConn) lastRead() time.Time {
+	if a == nil {
+		return time.Time{}
+	}
+	if v := a.last.Load(); v != 0 {
+		return time.Unix(0, v)
+	}
+	return time.Time{}
 }
 
 // WordDecoder liefert den RFC-2047-Decoder mit Zeichensatz-Unterstützung
@@ -153,7 +188,9 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	}
 	tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12, NextProtos: []string{"imap"},
 		InsecureSkipVerify: cfg.InsecureTestServer} //nolint:gosec // nur localhost-Testserver, oben geprüft
-	opts := &imapclient.Options{WordDecoder: WordDecoder(), TLSConfig: tlsCfg}
+	cl := &Client{timeout: cfg.CommandTimeout, changed: make(chan struct{}, 1)}
+	opts := &imapclient.Options{WordDecoder: WordDecoder(), TLSConfig: tlsCfg,
+		UnilateralDataHandler: cl.unilateralHandler()}
 
 	var conn net.Conn = raw
 	if cfg.TLS == TLSImplicit {
@@ -164,8 +201,9 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 		}
 		conn = tc
 	}
+	cl.act = &activityConn{Conn: conn}
+	conn = cl.act
 
-	cl := &Client{timeout: cfg.CommandTimeout}
 	err = cl.guard(func() error {
 		var err error
 		switch cfg.TLS {
@@ -187,13 +225,38 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	return cl, nil
 }
 
-// guard ist der Watchdog: f läuft mit Deadline; bei Überschreitung wird
-// die Verbindung über closeFn geschlossen und ErrConnection gemeldet.
+// guard ist der Watchdog: f läuft, bis es fertig ist; schweigt der Server
+// länger als die Deadline (kein gelesenes Byte seit Start bzw. seit dem
+// letzten Byte), wird die Verbindung über closeFn geschlossen und
+// ErrConnection gemeldet.
 func (c *Client) guard(f func() error, closeFn func()) error {
+	start := time.Now()
 	var timedOut atomic.Bool
-	t := time.AfterFunc(c.timeout, func() { timedOut.Store(true); closeFn() })
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTimer(c.timeout)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				last := start
+				if la := c.act.lastRead(); la.After(last) {
+					last = la
+				}
+				if rem := c.timeout - time.Since(last); rem > 0 {
+					t.Reset(rem)
+					continue
+				}
+				timedOut.Store(true)
+				closeFn()
+				return
+			}
+		}
+	}()
 	err := f()
-	t.Stop()
+	close(done)
 	if timedOut.Load() {
 		return fmt.Errorf("%w: server did not answer within %s (watchdog closed the connection)", provider.ErrConnection, c.timeout)
 	}
