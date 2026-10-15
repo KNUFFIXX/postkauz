@@ -59,6 +59,10 @@ type SyncRunner interface {
 	Sync(ctx context.Context, a store.Account, password secrets.Secret, o SyncOptions, progress func(Progress)) (SyncOutput, error)
 }
 
+// ErrSyncRunning: Für das Konto läuft schon ein schreibender Sync (anderer
+// Prozess, z. B. `sync --watch`). Der Runner prüft das vor dem Verbinden.
+var ErrSyncRunning = errors.New("another sync is running")
+
 // ResolveAccount wählt das Konto: den Namen, sonst das einzige Konto.
 func ResolveAccount(ctx context.Context, repo AccountRepo, name string) (store.Account, error) {
 	if name != "" {

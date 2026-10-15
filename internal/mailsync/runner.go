@@ -2,7 +2,10 @@ package mailsync
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
@@ -19,6 +22,9 @@ type Runner struct {
 	Store *store.SQLite
 	Blobs *blob.Store
 	Log   *slog.Logger
+	// LockDir ist der Ordner der Sperrdateien je Konto; leer = neben der
+	// Datenbank (bei :memory: ohne Sperre).
+	LockDir string
 	// Connect ersetzt den Verbindungsaufbau (Tests); nil = IMAP-Provider.
 	Connect func(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error)
 }
@@ -63,6 +69,15 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	idleRestart := imapx.DefaultIdleRestart
 	if o.IdleRestart > 0 {
 		idleRestart = ClampIdleRestart(o.IdleRestart)
+	}
+	if !o.DryRun {
+		// Vor dem Verbindungsaufbau: Ein zweiter Sync desselben Kontos
+		// meldet sich gar nicht erst am Server an.
+		lock, err := r.lock(a)
+		if err != nil {
+			return out, err
+		}
+		defer lock.release()
 	}
 	start := time.Now()
 	remote, err := connect(ctx, a, pw, idleRestart)
@@ -112,6 +127,22 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	}})
 	out.DurationMS = time.Since(start).Milliseconds()
 	return out, err
+}
+
+// lock sperrt das Konto für einen schreibenden Sync (siehe lock.go).
+func (r *Runner) lock(a store.Account) (*accountLock, error) {
+	dir := r.LockDir
+	if dir == "" && r.Store != nil && r.Store.Path() != "" {
+		dir = filepath.Dir(r.Store.Path())
+	}
+	if dir == "" {
+		return nil, nil
+	}
+	l, err := lockAccount(dir, a.ID)
+	if errors.Is(err, errLocked) {
+		return nil, fmt.Errorf("%w: account %s", ops.ErrSyncRunning, a.Name)
+	}
+	return l, err
 }
 
 func fill(out *ops.SyncOutput, rep Report) {

@@ -60,6 +60,8 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "auth", Message: err.Error(), Hint: "check user name and password; the server rejected the login (no automatic retry)"}
 	case errors.Is(err, provider.ErrConnection):
 		return ExitConnection, ErrorInfo{Code: "connection", Message: err.Error(), Hint: "check host, port, TLS mode and network"}
+	case errors.Is(err, ops.ErrSyncRunning):
+		return ExitError, ErrorInfo{Code: "sync_running", Message: err.Error(), Hint: "wait for the other sync (e.g. sync --watch) to finish or stop it with Ctrl+C, then try again"}
 	case errors.Is(err, ops.ErrDenied):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "the key lacks the required scope or the policy forbids this"}
 	case errors.Is(err, ops.ErrNeedsApproval):

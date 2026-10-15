@@ -85,6 +85,9 @@ func Open(path string) (*SQLite, error) {
 	return st, nil
 }
 
+// Path ist der Pfad der Datenbankdatei ("" bei :memory:).
+func (s *SQLite) Path() string { return s.path }
+
 // Close schließt die Datenbank.
 func (s *SQLite) Close() error { return s.db.Close() }
 

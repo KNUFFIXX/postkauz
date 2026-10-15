@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -90,5 +91,12 @@ func TestTermFilterLeavesCleanTextAlone(t *testing.T) {
 	}
 	if got := termLine("a\xffb"); got != "a�b" {
 		t.Fatalf("invalid UTF-8: %q", got)
+	}
+}
+
+func TestClassifySyncRunning(t *testing.T) {
+	code, info := classify(fmt.Errorf("%w: account demo", ops.ErrSyncRunning))
+	if code != ExitError || info.Code != "sync_running" || !strings.Contains(info.Message, "another sync is running") {
+		t.Fatalf("classify = %d %+v", code, info)
 	}
 }

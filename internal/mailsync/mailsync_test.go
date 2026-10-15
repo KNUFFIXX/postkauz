@@ -27,6 +27,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/corpus"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -757,5 +758,60 @@ func TestProtocolErrorIsIsolatedByBisection(t *testing.T) {
 	rep, err = e.engine(t, br.Remote).SyncAll(context.Background(), Options{})
 	if err != nil || rep.Mirrored != 40 || rep.New != 1 || rep.Errors != 0 {
 		t.Fatalf("second run = %+v %v", rep, err)
+	}
+}
+
+// Zwei schreibende Syncs desselben Kontos (`sync --watch` und ein manueller
+// `sync`, hier zwei Runner auf eigenen Store-Instanzen wie zwei Prozesse):
+// Der zweite bricht sofort mit ErrSyncRunning ab, ohne sich am Server
+// anzumelden. Ein Trockenlauf und ein späterer Lauf sind nicht betroffen.
+func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
+	e := newEnv(t, "")
+	a, err := e.st.AccountByName(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	blocking := func(ctx context.Context, _ store.Account, _ secrets.Secret, _ time.Duration) (RemoteCloser, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return nil, errors.New("test: no server")
+	}
+	first := &Runner{Store: e.st, Blobs: e.blobs, Connect: blocking}
+	done := make(chan error, 1)
+	go func() {
+		_, err := first.Sync(context.Background(), a, testPass, ops.SyncOptions{}, nil)
+		done <- err
+	}()
+	<-entered
+
+	st2, err := store.Open(e.dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+	second := &Runner{Store: st2, Blobs: e.blobs, Connect: blocking}
+	_, err = second.Sync(context.Background(), a, testPass, ops.SyncOptions{Full: true}, nil)
+	if !errors.Is(err, ops.ErrSyncRunning) || !strings.Contains(err.Error(), "demo") {
+		t.Fatalf("second sync: err = %v, want ErrSyncRunning", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("second sync connected to the server (%d connects)", n)
+	}
+	// Trockenlauf schreibt nichts und braucht keine Sperre.
+	if _, err := second.Sync(context.Background(), a, testPass, ops.SyncOptions{DryRun: true}, nil); errors.Is(err, ops.ErrSyncRunning) {
+		t.Fatalf("dry run was blocked by the lock: %v", err)
+	}
+
+	close(release)
+	if err := <-done; err == nil || errors.Is(err, ops.ErrSyncRunning) {
+		t.Fatalf("first sync: %v", err)
+	}
+	// Nach dem Ende des ersten Laufs ist das Konto wieder frei.
+	if _, err := second.Sync(context.Background(), a, testPass, ops.SyncOptions{}, nil); errors.Is(err, ops.ErrSyncRunning) {
+		t.Fatalf("lock not released: %v", err)
 	}
 }
