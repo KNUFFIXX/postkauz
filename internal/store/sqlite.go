@@ -55,6 +55,13 @@ func Open(path string) (*SQLite, error) {
 	q.Set("_txlock", "immediate")
 	if path != ":memory:" {
 		q.Add("_pragma", "journal_mode(WAL)")
+		// Memory-mapped I/O: Jede Verbindung hat ihren eigenen Seiten-Cache
+		// (2 MB); kurzlebige Prozesse (search) und die parallelen
+		// Verbindungen der Suche starten kalt. Mit mmap lesen sie direkt aus
+		// dem Seiten-Cache des Betriebssystems, ohne Kopie (gemessen bei
+		// 100.000 Nachrichten: häufige Suchwörter von rund 450 auf 250 ms;
+		// docs/suche_messung.md). Bis 1 GiB der Datei, darüber normales Lesen.
+		q.Add("_pragma", "mmap_size(1073741824)")
 	}
 	dsn := "file:" + path + "?" + q.Encode()
 	if path == ":memory:" {

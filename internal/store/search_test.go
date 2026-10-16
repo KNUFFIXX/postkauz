@@ -426,3 +426,42 @@ func TestMigration0004QueuesExistingMessages(t *testing.T) {
 		t.Fatalf("search after migration = %+v %v", res, err)
 	}
 }
+
+func TestHitListMerges(t *testing.T) {
+	w := hitList{ids: []int64{2, 5, 9}, r: []float64{-1, -2, -3}}
+	u := unionHits(w, []int64{1, 5, 7, 9, 12})
+	if !slices.Equal(u.ids, []int64{1, 2, 5, 7, 9, 12}) || !slices.Equal(u.r, []float64{substringScore, -1, -2, substringScore, -3, substringScore}) {
+		t.Fatalf("union = %+v", u)
+	}
+	if u := unionHits(hitList{}, nil); len(u.ids) != 0 {
+		t.Fatalf("empty union = %+v", u)
+	}
+	x := intersectHits(u, hitList{ids: []int64{2, 3, 9, 12}, r: []float64{-10, -10, -10, -10}})
+	if !slices.Equal(x.ids, []int64{2, 9, 12}) || !slices.Equal(x.r, []float64{-11, -13, -10 + substringScore}) {
+		t.Fatalf("intersect = %+v", x)
+	}
+	d := subtractIDs(u, []int64{0, 2, 7, 8, 13})
+	if !slices.Equal(d.ids, []int64{1, 5, 9, 12}) {
+		t.Fatalf("subtract = %+v", d)
+	}
+	if m := mergeIDs([]int64{1, 4, 6}, []int64{2, 4, 7}); !slices.Equal(m, []int64{1, 2, 4, 6, 7}) {
+		t.Fatalf("merge = %v", m)
+	}
+}
+
+// Die Suche nutzt die schmalen Indizes aus Migration 0005 (INDEXED BY
+// scheitert, wenn es sie nicht gibt).
+func TestSearchUsesLookupIndexes(t *testing.T) {
+	f := newSearchFixture(t)
+	indexAll(t, f.s, f.acct)
+	for _, q := range []string{"has:attachment", "Rechnung in:inbox"} {
+		parsed, _ := search.Parse(q, time.UTC)
+		sqlText := SearchSQL(SearchParams{Query: parsed, Limit: 5, Now: time.Now()})
+		if !strings.Contains(sqlText, "messages_sortdate") && !strings.Contains(sqlText, "messages_search") {
+			t.Errorf("%q: %s", q, sqlText)
+		}
+		if got := f.find(t, q); len(got) == 0 {
+			t.Errorf("%q: no hits", q)
+		}
+	}
+}

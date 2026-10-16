@@ -13,19 +13,26 @@ import (
 //
 // Jeder positive Textterm liefert Treffer aus dem Wortindex (Wortstamm,
 // Präfix oder Phrase; BM25 mit Spaltengewichten) und aus dem
-// Trigram-Index (Teilwort; halbes Gewicht). Eine Nachricht passt, wenn
-// jeder Term in einem der beiden Indizes trifft (UND); ihr Wert ist die
-// Summe der besten Werte je Term (BM25 ist selbst eine Summe über Terme).
+// Trigram-Index (Teilwort). Eine Nachricht passt, wenn jeder Term in einem
+// der beiden Indizes trifft (UND); ihr Wert ist die Summe der Werte je
+// Term (BM25 ist selbst eine Summe über Terme; Ausführung in
+// search_text.go). Ein reiner
+// Teilwort-Treffer zählt mit einem sehr kleinen festen Wert: Er liegt
+// immer hinter Wort-Treffern, untereinander entscheidet das Datum (BM25
+// über den Trigram-Index wäre teuer und sagt über Teilwörter wenig).
 // Dazu kommt das Datum: Relevanz × (1 + 1 / (1 + Alter / 90 Tage)), eine
 // neue Nachricht zählt also bis zu doppelt, eine 90 Tage alte 1,5-fach.
-// Ohne Textterme wird nach Datum sortiert. Ausschluss (-wort) und
-// Operatoren sind SQL-Bedingungen mit Parametern.
+// Ohne Textterme wird nach Datum sortiert (Lauf über den Index
+// messages_sortdate). Ausschluss (-wort) und Operatoren sind
+// SQL-Bedingungen mit Parametern.
 
 // bm25Weights: Betreff vor Absender vor Empfängern/Text vor Anhängen.
 const bm25Weights = "3.0, 2.0, 1.0, 1.0, 0.5"
 
-// trigramFactor gewichtet reine Teilwort-Treffer geringer.
-const trigramFactor = 0.5
+// substringScore ist der Wert eines reinen Teilwort-Treffers (BM25-Werte
+// sind negativ, kleiner ist besser; FTS5 setzt die IDF sehr häufiger Wörter
+// auf 1e-6, dieser Wert liegt darunter).
+const substringScore = -1e-9
 
 // recencyMillis ist die Zeitkonstante des Datumsanteils (90 Tage).
 const recencyMillis = 90 * 24 * 3600 * 1000
@@ -63,7 +70,8 @@ type SearchHit struct {
 // SearchResult ist eine Seite der Treffer.
 type SearchResult struct {
 	Hits []SearchHit
-	// Total zählt alle Treffer der Anfrage (0, wenn die Seite leer ist).
+	// Total zählt alle Treffer der Anfrage (bei Relevanzsortierung 0, wenn
+	// die Seite leer ist).
 	Total int
 }
 
@@ -71,14 +79,16 @@ const dateExpr = `COALESCE(m.date_header, m.internal_date, 0)`
 
 // Search führt eine übersetzte Anfrage aus.
 func (s *SQLite) Search(ctx context.Context, p SearchParams) (SearchResult, error) {
-	var res SearchResult
+	if len(p.Query.Positive()) > 0 {
+		return s.searchText(ctx, p)
+	}
+	res := SearchResult{Hits: []SearchHit{}}
 	sqlText, args := buildSearch(p)
 	rows, err := s.db.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return res, fmt.Errorf("store: search: %w", err)
 	}
 	defer rows.Close()
-	res.Hits = []SearchHit{}
 	for rows.Next() {
 		var h SearchHit
 		var date int64
@@ -94,18 +104,32 @@ func (s *SQLite) Search(ctx context.Context, p SearchParams) (SearchResult, erro
 		h.HasAttachments, h.DeletedRemote = att == 1, deleted == 1
 		res.Hits = append(res.Hits, h)
 	}
-	return res, rows.Err()
+	if err := rows.Err(); err != nil {
+		return res, err
+	}
+	if len(p.Query.Positive()) == 0 {
+		// Datumssortierung: Die Seite kommt aus dem Indexlauf; gezählt
+		// wird getrennt (über die schmalen Indizes).
+		where, wargs := searchWhere(p)
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM messages m`+where, wargs...).Scan(&res.Total); err != nil {
+			return res, fmt.Errorf("store: search count: %w", err)
+		}
+	}
+	return res, nil
 }
 
-// buildSearch setzt die SQL-Anweisung zusammen. Nutzertext steht nur in
-// den Parametern (FTS5-Ausdrücke aus internal/search, Filterwerte).
-func buildSearch(p SearchParams) (string, []any) {
-	var with strings.Builder
-	var withArgs, whereArgs []any
-	where := []string{}
+// searchWhere baut die Bedingungen aus Konto, Operatoren und Ausschluss
+// (über messages m).
+func searchWhere(p SearchParams) (string, []any) {
+	return searchWhereOpt(p, true)
+}
+
+func searchWhereOpt(p SearchParams, negatives bool) (string, []any) {
+	var where []string
+	var args []any
 	if p.AccountID > 0 {
 		where = append(where, `m.account_id = ?`)
-		whereArgs = append(whereArgs, p.AccountID)
+		args = append(args, p.AccountID)
 	}
 	for _, f := range p.Query.Filters {
 		cond, a := filterSQL(f)
@@ -113,80 +137,59 @@ func buildSearch(p SearchParams) (string, []any) {
 			cond = `NOT (` + cond + `)`
 		}
 		where = append(where, cond)
-		whereArgs = append(whereArgs, a...)
+		args = append(args, a...)
 	}
 	for _, t := range p.Query.Negative() {
+		if !negatives {
+			break
+		}
 		var parts []string
 		if t.Word != "" {
 			parts = append(parts, `SELECT rowid FROM fts_messages WHERE fts_messages MATCH ?`)
-			whereArgs = append(whereArgs, t.Word)
+			args = append(args, t.Word)
 		}
 		if t.Tri != "" {
 			parts = append(parts, `SELECT rowid FROM fts_trigram WHERE fts_trigram MATCH ?`)
-			whereArgs = append(whereArgs, t.Tri)
+			args = append(args, t.Tri)
 		}
 		where = append(where, `m.id NOT IN (`+strings.Join(parts, ` UNION ALL `)+`)`)
 	}
-	whereSQL := ""
-	if len(where) > 0 {
-		whereSQL = ` WHERE ` + strings.Join(where, ` AND `)
+	if len(where) == 0 {
+		return "", nil
 	}
+	return ` WHERE ` + strings.Join(where, ` AND `), args
+}
 
-	pos := p.Query.Positive()
-	var rankedSQL string
-	var rankedArgs []any
-	if len(pos) > 0 {
-		with.WriteString(`WITH hits(id, t, r) AS MATERIALIZED (`)
-		first := true
-		for i, t := range pos {
-			if t.Word != "" {
-				if !first {
-					with.WriteString(` UNION ALL `)
-				}
-				fmt.Fprintf(&with, `SELECT rowid, %d, bm25(fts_messages, %s) FROM fts_messages WHERE fts_messages MATCH ?`, i, bm25Weights)
-				withArgs = append(withArgs, t.Word)
-				first = false
-			}
-			if t.Tri != "" {
-				if !first {
-					with.WriteString(` UNION ALL `)
-				}
-				fmt.Fprintf(&with, `SELECT rowid, %d, %g * bm25(fts_trigram, %s) FROM fts_trigram WHERE fts_trigram MATCH ?`,
-					i, trigramFactor, bm25Weights)
-				withArgs = append(withArgs, t.Tri)
-				first = false
-			}
-		}
-		fmt.Fprintf(&with, `), per(id, t, r) AS (SELECT id, t, min(r) FROM hits GROUP BY id, t),
-			cand(id, r) AS (SELECT id, sum(r) FROM per GROUP BY id HAVING count(*) = %d), `, len(pos))
-		rankedSQL = `ranked AS (SELECT m.id AS id,
-			(-c.r) * (1.0 + 1.0 / (1.0 + max(0, ? - ` + dateExpr + `) / ` + fmt.Sprint(recencyMillis) + `.0)) AS score,
-			count(*) OVER () AS total
-			FROM cand c JOIN messages m ON m.id = c.id` + whereSQL + `)`
-		rankedArgs = append([]any{p.Now.UnixMilli()}, whereArgs...)
-	} else {
-		with.WriteString(`WITH `)
-		rankedSQL = `ranked AS (SELECT m.id AS id, CAST(` + dateExpr + ` AS REAL) AS score, count(*) OVER () AS total
-			FROM messages m` + whereSQL + `)`
-		rankedArgs = whereArgs
-	}
-	outer := ` SELECT r.id, r.score, r.total, m.account_id, a.name, COALESCE(m.thread_id, 0), ` + dateExpr + `,
-		m.from_addr, m.subject, m.snippet, m.flag_seen, m.flag_flagged, m.flag_answered, m.flag_draft, m.has_attachments,
-		m.deleted_remote_at IS NOT NULL
-		FROM ranked r JOIN messages m ON m.id = r.id JOIN accounts a ON a.id = m.account_id`
-	var outerArgs []any
+// pageSQL holt die Zeilen einer Seite (ranked: id, score, total).
+const pageSQL = ` SELECT r.id, r.score, r.total, m.account_id, a.name, COALESCE(m.thread_id, 0), ` + dateExpr + `,
+	m.from_addr, m.subject, m.snippet, m.flag_seen, m.flag_flagged, m.flag_answered, m.flag_draft, m.has_attachments,
+	m.deleted_remote_at IS NOT NULL
+	FROM ranked r JOIN messages m ON m.id = r.id JOIN accounts a ON a.id = m.account_id
+	ORDER BY r.score DESC, r.id DESC`
+
+// buildSearch setzt die Anweisung für Anfragen nur mit Operatoren
+// zusammen (neueste zuerst; Lauf über messages_sortdate bis zur
+// Seitengröße). Anfragen mit Texttermen: search_text.go.
+func buildSearch(p SearchParams) (string, []any) {
+	cond, args := searchWhere(p)
 	if p.After != nil {
-		outer += ` WHERE (r.score < ? OR (r.score = ? AND r.id < ?))`
-		outerArgs = append(outerArgs, p.After.Score, p.After.Score, p.After.ID)
+		c := `(` + dateExpr + `, m.id) < (?, ?)`
+		if cond == "" {
+			cond = ` WHERE ` + c
+		} else {
+			cond += ` AND ` + c
+		}
+		args = append(args, int64(p.After.Score), p.After.ID)
 	}
-	outer += ` ORDER BY r.score DESC, r.id DESC LIMIT ?`
-	outerArgs = append(outerArgs, p.Limit)
-
-	args := append(append(withArgs, rankedArgs...), outerArgs...)
-	return with.String() + rankedSQL + outer, args
+	args = append(args, p.Limit)
+	return `WITH ranked AS (SELECT m.id AS id, CAST(` + dateExpr + ` AS REAL) AS score, 0 AS total
+		FROM messages m INDEXED BY messages_sortdate` + cond + `
+		ORDER BY ` + dateExpr + ` DESC, m.id DESC LIMIT ?)` + pageSQL, args
 }
 
 // filterSQL übersetzt einen Operator in eine Bedingung über messages m.
+// Ordner und Tags sind Mengen (IN mit Unterabfrage): SQLite baut sie
+// einmal auf, statt je Nachricht nachzusehen.
 func filterSQL(f search.Filter) (string, []any) {
 	switch f.Kind {
 	case "has_attachment":
@@ -198,14 +201,14 @@ func filterSQL(f search.Filter) (string, []any) {
 		// Pfad (ohne Groß-/Kleinschreibung), Unterordner (Trenner / oder .)
 		// oder Rolle (inbox, sent, archive …).
 		esc := likeEscape(f.Value)
-		return `EXISTS (SELECT 1 FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
-			WHERE mm.message_id = m.id AND (b.path = ? COLLATE NOCASE OR b.path LIKE ? ESCAPE '\'
-			OR b.path LIKE ? ESCAPE '\' OR b.role = ?))`, []any{f.Value, esc + "/%", esc + ".%", strings.ToLower(f.Value)}
+		return `m.id IN (SELECT mm.message_id FROM mailboxes b JOIN message_mailboxes mm ON mm.mailbox_id = b.id
+			WHERE b.path = ? COLLATE NOCASE OR b.path LIKE ? ESCAPE '\' OR b.path LIKE ? ESCAPE '\' OR b.role = ?)`,
+			[]any{f.Value, esc + "/%", esc + ".%", strings.ToLower(f.Value)}
 	case "thread":
 		return `m.thread_id = ?`, []any{f.ID}
 	case "tag":
-		return `EXISTS (SELECT 1 FROM message_tags mt JOIN tags g ON g.id = mt.tag_id
-			WHERE mt.message_id = m.id AND g.name = ? COLLATE NOCASE)`, []any{f.Value}
+		return `m.id IN (SELECT mt.message_id FROM tags g JOIN message_tags mt ON mt.tag_id = g.id
+			WHERE g.name = ? COLLATE NOCASE)`, []any{f.Value}
 	case "after":
 		return dateExpr + ` >= ?`, []any{f.Time.UnixMilli()}
 	case "before":
@@ -218,9 +221,12 @@ func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-// SearchSQL liefert die Anweisung einer Suche mit Platzhaltern statt
+// SearchSQL liefert die Anweisungen einer Suche mit Platzhaltern statt
 // Werten (--explain); Nutzertext steht nur in den Parametern.
 func SearchSQL(p SearchParams) string {
+	if len(p.Query.Positive()) > 0 {
+		return textSQL(p)
+	}
 	q, _ := buildSearch(p)
 	return q
 }
