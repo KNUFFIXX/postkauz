@@ -47,6 +47,8 @@ Erwartet:
     demo: password missing, status new …
   ```
 
+  Mit einem Programm ab S1.10 (Import, Migration 0007) steht bei `schema` zunächst `6 (program knows 7)`; das erste Kommando, das die Datenbank öffnet (z. B. `accounts list`), hebt sie auf 7 (mit Sicherungskopie daneben), danach `7 (program knows 7)`. Beides ist richtig.
+
   Die Zeile `demo: password missing` und eine Warnung dazu sind **richtig**: Das Konto `demo` gehörte zum Testserver, auf dem die Daten erzeugt wurden; für D2 wird nichts synchronisiert. Steht bei `demo` stattdessen `stored`, liegt noch das Testpasswort aus D1 im Schlüsselbund; auch das ist in Ordnung.
 
 Erklärungen:

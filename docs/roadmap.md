@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **Nachbesserung nach der Gegenprüfung von S1.9 erledigt** (16.10.2026, 14 Befunde, Abschnitt „Nachbesserung" unten; Abnahme-Datenbank für D2 neu erzeugt). **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio mit dem offiziellen Go-SDK v1.8.0, Tools/Resources/Prompts nach Scopes, Untrusted-Hülle, Audit je Aufruf; Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten), danach S1.10 (Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.10 erledigt** (16.10.2026: Import aus mbox und Maildir mit Abgleich per Message-ID und `content_hash`, Thunderbird-Profile, Gmail-Labels, Wiederaufnahme, Trockenlauf; Abschnitt „Stand S1.10" unten). **Nachbesserung nach der Gegenprüfung von S1.9 erledigt** (16.10.2026, 14 Befunde; Abnahme-Datenbank für D2 neu erzeugt). **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio, Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.6 bis S1.8 erledigt** (16.10.2026), **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten; S1.10 lief auf Auftrag parallel), danach S1.11 (Audit-Export täglich, Kanarientest über alle Kanäle, Installationsanleitung) und die Gesamtabnahme D3 (darin D3.4 Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.9 erledigt 16.10.2026**, Abnahme D2 offen; S1.10 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.10 erledigt 16.10.2026**, Abnahme D2 offen; S1.11 offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,41 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** Abnahme D2 (vorbereitet, [abnahme_D2.md](abnahme_D2.md)), danach S1.10 und S1.11 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** Abnahme D2 (vorbereitet, [abnahme_D2.md](abnahme_D2.md)), S1.11 und die Gesamtabnahme D3 (Abnahme D1 bestanden 16.10.2026; S1.10 erledigt 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.10 (16.10.2026, erledigt): Import aus mbox und Maildir
+
+**Akzeptanz S1.10 erfüllt** („Import eines Bestands mit 30 % Überlappung zu einem gesyncten Konto: keine Doppelten, Zählung ausgegeben"; alles in `make check` ohne Docker, dazu ein Integrationstest):
+
+- **Überlappung mit einem gesyncten Konto:** `TestImportOverlapWithSyncedAccount` (Testserver im Prozess: Korpus ab Index 300 gesynct, Thunderbird-Profil der Indizes unter 430 importiert; 435 Nachrichten, davon 128 = 29 % schon gesynct, 4 davon ohne Message-ID und nur über `content_hash` erkannt) und `TestIntegrationImportOverlapDovecot` (frisches Dovecot-Konto mit 700 Nachrichten: `new 305, existing 173, skipped 3, errors 0`, 30 % Überlappung): keine doppelte Message-ID, überlappende Nachrichten behalten Serverordner und Flags und bekommen den Import-Ordner, die Zahl der Nachrichten „auf dem Server" bleibt gleich; zweiter Lauf `new: 0`; ein Sync danach findet nichts Neues und entfernt nichts. Umgekehrt (Import zuerst, Sync danach, `TestSyncAfterImport`): keine Doppelten.
+- **Zählung `new: N, existing: M, skipped: S, errors: E`** als letzte Zeile (D3.4), zweiter Lauf `new: 0` (`TestImportCommand`, CLI; `TestImportThunderbirdCorpus`).
+- **Thunderbird-Variante** (synthetisches Profil, `corpus.WriteThunderbird`): `From - `-Trenner, `X-Mozilla-Status` mit allen Bits → Flags (gelesen, beantwortet, markiert; Bits ohne Bedeutung ignoriert), gelöscht markierte (0x0008) übersprungen, `X-Mozilla-*` entfernt (keine Rohmail enthält sie), `>From` zurückgenommen (auch eine Zeile, die wie eine Trennzeile aussieht), `.sbd`-Unterordner → `Archiv/2024`, IMAP-UTF-7-Name `Entw&APw-rfe` → „Entwürfe", `.msf` und `msgFilterRules.dat` ignoriert, leere Ordner ohne Quelle, Gmail-artige Kopien in „Wichtig" nur zugeordnet (Inhalt einmal), Nachricht nur aus Kopf, überlange Zeile (300 KiB), letzte Nachricht ohne Zeilenende. Jede Korpus-Nachricht ist nach dem Import wieder das Original (`content_hash`).
+- **Maildir** (`corpus.WriteMaildir`): `cur/new/tmp`, Flag-Suffixe S/R/F/D, T und `tmp/` übersprungen, Maildir++-Unterordner; eine neue Datei wird beim nächsten Lauf nachgeholt.
+- **Wiederaufnahme nach hartem Abbruch:** `TestImportResumesAfterKill9` (Kindprozess per SIGKILL nach 160 Nachrichten beendet; der nächste Lauf setzt an der gespeicherten Byte-Position fort, Bestand vollständig, keine Doppelten), Maildir-Cursor nach Abbruch (`TestImportResumesMaildirAfterAbort`).
+- **Großer Datei-Stream:** `TestImportLargeFileStreams` (210 MB in einer Datei, darunter ein Anhang mit 30 MB): Heap vorher 0,7 MB, Spitze 5,1 MB (+4,4 MB); Grenze im Test 64 MB.
+- **Trockenlauf:** gleiche Zählung, keine Zeile, keine Datei im Blob-Store (`TestImportDryRun`).
+- **Policy/Audit über das Register:** Operation `import.run` (Scope `admin`, R1, nicht über MCP), Vertragstest über alle Rollen und Trockenlauf-Varianten, Audit mit Feldnamen und Konto, ohne Pfad (`TestImportRun`).
+- **Messung:** [import_messung.md](import_messung.md).
+
+**Umsetzung:**
+
+- Migration 0007: `import_folders`, `message_import_folders` (importierte Ordner getrennt von den Ordnern des Servers, ADR-003), `import_sources` (Stand je Quelle). Nur importierte Nachrichten tragen `deleted_remote_at`; `show` nennt sie „not on the server (imported only)" und importierte Ordner „(imported)"; `in:<pfad>` und `in:import` finden sie.
+- `internal/importer`: Quellen finden, mbox/Maildir streamend lesen, Abgleich (Message-ID, dann `content_hash` mit Varianten am Zeilenende), Aufbereitung über `mailsync.Prepare` (gleicher Parser, Bereinigung, Anhänge, Threads wie beim Sync), Stapel zu 200 Nachrichten bzw. 32 MiB mit Stand je Quelle, Labels-Modus (`--labels-from`), Kontosperre wie der Sync, danach die Jobs `extract` und `index`.
+- `mailsync.ContentHasher`: `content_hash` plus Varianten mit 0, 1, 2 Zeilenenden am Schluss; der Sync sucht seit S1.10 ebenfalls mit allen Varianten (sonst lud er importierte Nachrichten mit anderem Zeilenende doppelt).
+- CLI `import mbox|maildir` mit `--mailbox`, `--labels-from`, `--rescan`, `--dry-run`, Fortschritt je Datei; Doku [cli.md](cli.md) Abschnitt 2i. Korpus-Generator: [testkorpus.md](testkorpus.md) Abschnitt 1b.
+
+**Befunde:**
+
+- **Thunderbird quotet nach mboxo:** Eine Zeile, die im Original mit `>From ` beginnt, steht in der Datei genauso da wie eine gequotete `From `-Zeile; nach dem Import heißt sie `From `. Der Inhalt weicht dann vom Server ab, der Abgleich läuft über die Message-ID. Selten (Zitate von Zitaten).
+- **Thunderbird kennt kein Entwurf-Bit:** Aus mbox kommt das Flag `draft` nie (aus Maildir schon, `D`).
+- **Teilweise geladene Nachrichten** (Thunderbird-Bit 0x0400, große Mails bei „nur Kopf laden"): werden mit Hinweis importiert. Liegt die vollständige Nachricht schon im Konto, wird sie per Message-ID nur zugeordnet; kommt sie erst später per Sync, entsteht eine zweite Nachricht mit gleicher Message-ID (Inhalt verschieden; Frage 15 unten).
+- **Ordnernamen, die Thunderbird als Hash ablegt** (unzulässige Zeichen, sehr lange Namen), lassen sich ohne `.msf`/`folderTree.json` nicht zurückführen; der Ordner heißt dann wie die Datei.
+- **Durchsatz** im Container (2 Kerne ohne SHA-Befehlssatz): rund 23 MB/s beim Import, 130 MB/s im Trockenlauf, 1 GB/s für einen zweiten Lauf über vorhandene Nachrichten; SHA-256 (Blob, `content_hash`, Anhänge) und base64 dominieren. Für 20,7 GB rund 15 Minuten (Frage 14 unten).
+- `mailbox list` zeigt nur Ordner des Servers; importierte Ordner sieht man in `show` und über `in:`.
+
+**Nicht in S1.10 (bewusst verschoben):** Import als Eintrag in der Tabelle `jobs` (läuft im Vordergrund wie `sync`); EML-Verzeichnisse, PST, Google-Takeout-Labels aus `X-Gmail-Labels`; `mailbox list` für importierte Ordner; Import über MCP (bewusst nicht); paralleles Aufbereiten mehrerer Nachrichten.
 
 ### Nachbesserung nach der Gegenprüfung (16.10.2026, Stand `04a9ab8` geprüft)
 
@@ -346,3 +378,5 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 11. **Suchlatenz bei sehr häufigen Wörtern** (S1.7): Im synthetischen Korpus steht jedes Wort in 25–50 % aller Nachrichten; dafür liegt der Median knapp unter 300 ms, einzelne Läufe und zwei solche Wörter über die CLI darüber (bis rund 390 ms auf 2 Kernen). Vorschlag: so lassen; die Messung auf dem Windows-PC des Betreibers wiederholen (mehr Kerne, Kommandos in [suche_messung.md](suche_messung.md)) und erst weiter optimieren (Vollscan-Pfad, Bleve laut ADR-005 als Option), wenn im Alltag Anfragen spürbar über 300 ms liegen.
 12. *(entschieden 16.10.2026: Teilwortsuche ab 3 Zeichen bleibt immer an; Worst-Case-Suchwörter (Frage 11) erst auf Windows nachmessen; mmap bleibt)*
 13. **`mail_sync_now`** (S1.9): Der MCP-Server synct nicht selbst; ein Agent kann also keinen Sync anstoßen. Vorschlag: mit dem Job-Typ `sync` nachrüsten (MCP reiht ein, `sync --watch` führt aus), zusammen mit dem Dauerbetrieb für mehrere Konten (Frage 5); bis dahin hält `sync --watch` die Daten aktuell.
+14. **Import-Durchsatz** (S1.10): rund 23 MB/s im Container, das Gmail-Archiv (20,7 GB) bräuchte rund 15 Minuten. Vorschlag: so lassen und auf dem Windows-PC nachmessen (Kommandos in [import_messung.md](import_messung.md)); Aufbereitung auf mehrere Kerne verteilen erst, wenn es im Alltag stört.
+15. **Teilweise geladene Thunderbird-Nachrichten** (S1.10): Vorschlag: wie jetzt importieren (mit Hinweis), statt sie zu überspringen; kommt die vollständige Fassung später per Sync, stehen beide im Archiv.
