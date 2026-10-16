@@ -38,7 +38,7 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 - `internal/jobs`: `extract` (60 s je Lauf, mindestens ein Anhang) und `index` (200 Nachrichten je Transaktion) über die Tabelle `jobs`, am Ende jedes Syncs; Sperre mit Ablauf, Übernahme nach Abbruch, Wiederholung nach Fehlern, Neuaufbau bei neuer `FTSVersion`; PDFs, die ohne `pdftotext` übersprungen wurden, kommen wieder dran, sobald es gefunden wird (Betreiber-Entscheid zu Frage 10: PDF nur über das optionale Werkzeug, README).
 - Ausführung der Suche: FTS-Abfragen je Begriff nebeneinander, Mengenarbeit in Go, Kandidaten über den schmalen Index, Memory-Mapped I/O (`mmap_size` 1 GiB) für alle Datenbankdateien.
 - Operation `messages.search` (R0, `mail:search`; Audit ohne Suchtext) und CLI `search` mit `--limit`, `--cursor`, `--explain`, `--json` (NDJSON); `sync` meldet den Index, `doctor` meldet `pdftotext` und wartende Nachrichten.
-- `make check`, `make race`, `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` und `make cross` grün (Werte im Abschlussbericht der Sitzung); Binärgrößen siehe `make cross`.
+- `make check`, `make race` (rund 9 min), `make integration` (Dovecot, Stalwart, GreenMail; neu: Index-Job über die vom Server gelieferten 1.000 Nachrichten in rund 0,3 s und zwei Suchfälle je Server), `make vuln` (keine Schwachstellen) und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 20,9 MB, windows/amd64 20,6 MB, darwin/arm64 19,6 MB.
 
 **Befunde:**
 
