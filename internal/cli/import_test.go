@@ -56,9 +56,21 @@ func TestImportCommand(t *testing.T) {
 		t.Fatalf("rescan --json: %d %s", code, out)
 	}
 
+	// --labels-from mit Komma im Pfad: nur Zuordnung, nichts Neues.
+	lab := filepath.Join(dir, "Labels, alt")
+	if err := os.MkdirAll(filepath.Join(lab, "cur"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(lab, "cur", "9.M9P1.x:2,S"), []byte(files["cur/1.M1P1.x:2,S"]), 0o600)
+	_ = os.WriteFile(filepath.Join(lab, "cur", "8.M8P1.x:2,S"), []byte("Subject: fremd\r\nMessage-ID: <fremd@example.org>\r\n\r\nx\r\n"), 0o600)
+	code, out, _ = run(t, "import", "maildir", md, "-a", "demo", "--mailbox", "Archive", "--labels-from", lab)
+	if code != ExitOK || !strings.Contains(out, "1 folder assignments added") || !strings.HasSuffix(out, "new: 0, existing: 1, skipped: 1, errors: 0\n") {
+		t.Fatalf("labels: %s", out)
+	}
+
 	// Anzeige und Suche: importierte Ordner mit Rolle import.
 	code, out, _ = run(t, "show", "eins@example.org")
-	if code != ExitOK || !strings.Contains(out, "Archive (imported), Archive/Projekte (imported)") ||
+	if code != ExitOK || !strings.Contains(out, "Archive (imported), Archive/Projekte (imported), INBOX (imported)") ||
 		!strings.Contains(out, "not on the server (imported only)") {
 		t.Fatalf("show: %s", out)
 	}

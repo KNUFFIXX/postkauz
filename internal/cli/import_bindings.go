@@ -20,7 +20,7 @@ import (
 func importFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String("mailbox", "", "target folder (a file or the maildir root) or prefix of the folders below (default: from the paths)")
-	f.StringSlice("labels-from", nil, "folder whose messages are only linked to existing ones by Message-ID, e.g. Gmail labels (repeatable)")
+	f.StringArray("labels-from", nil, "folder whose messages are only linked to existing ones by Message-ID, e.g. Gmail labels (repeatable)")
 	f.Bool("rescan", false, "read sources again that did not change since the last import")
 }
 
@@ -31,7 +31,7 @@ func importInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	}
 	f := cmd.Flags()
 	mailbox, _ := f.GetString("mailbox")
-	labels, _ := f.GetStringSlice("labels-from")
+	labels, _ := f.GetStringArray("labels-from")
 	rescan, _ := f.GetBool("rescan")
 	if f.Changed("mailbox") && mailbox == "" {
 		return nil, "", usageError{errors.New("--mailbox must not be empty")}
