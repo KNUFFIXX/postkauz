@@ -49,20 +49,49 @@ func helper(mode string, o Options) *Extractor {
 
 // Akzeptanz S1.6: Ein hängender Extraktor wird nach der Zeitgrenze
 // beendet; der Aufruf kehrt zurück, der Prozess lebt nicht weiter.
+//
+// Gemessen wird ab dem Moment, in dem der Kindprozess läuft (PID-Datei),
+// nicht ab dem Aufruf: Unter -race braucht schon der Start der
+// Testbinärdatei Hunderte Millisekunden, und eine knappe Zeitgrenze hätte
+// den Kindprozess beendet, bevor er die Datei schreibt.
 func TestTimeoutKillsHangingExtractor(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a child process; skipped with -short")
 	}
+	const timeout = 3 * time.Second
 	pidFile := filepath.Join(t.TempDir(), "pid")
-	x := helper("hang", Options{Timeout: 500 * time.Millisecond, Env: []string{"POSTKAUZ_EXTRACT_TEST_PIDFILE=" + pidFile}})
+	x := helper("hang", Options{Timeout: timeout, Env: []string{"POSTKAUZ_EXTRACT_TEST_PIDFILE=" + pidFile}})
 	start := time.Now()
-	res := x.Extract(context.Background(), KindPDF, strings.NewReader("%PDF-1.4"), 8)
-	took := time.Since(start)
+	done := make(chan Result, 1)
+	go func() { done <- x.Extract(context.Background(), KindPDF, strings.NewReader("%PDF-1.4"), 8) }()
+	var running time.Time // Kindprozess hat seine PID geschrieben
+	var res Result
+	finished := false
+	for running.IsZero() && !finished {
+		select {
+		case res = <-done:
+			finished = true
+		case <-time.After(10 * time.Millisecond):
+			if b, err := os.ReadFile(pidFile); err == nil && len(b) > 0 {
+				running = time.Now()
+			}
+		}
+	}
+	if running.IsZero() {
+		t.Fatalf("helper did not start within the time limit of %s (result %+v)", timeout, res)
+	}
+	if !finished {
+		res = <-done
+	}
+	took, afterStart := time.Since(start), time.Since(running)
 	if res.Status != StatusFailed || !strings.Contains(res.Error, "timed out") {
 		t.Fatalf("result = %+v", res)
 	}
-	if took < 500*time.Millisecond || took > 5*time.Second {
-		t.Fatalf("returned after %s, want about 0.5s", took)
+	// Die Frist läuft ab dem Start des Kindprozesses: nicht früher zurück
+	// als die Frist, und nach dem Anlaufen höchstens Frist plus Aufräumen
+	// (WaitDelay 2 s) plus Spielraum.
+	if took < timeout || afterStart > timeout+4*time.Second {
+		t.Fatalf("returned %s after the call and %s after the child ran, want about %s", took, afterStart, timeout)
 	}
 	if runtime.GOOS == "windows" {
 		return
