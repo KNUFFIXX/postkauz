@@ -1,6 +1,6 @@
 # Roadmap
 
-Stand: **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio mit dem offiziellen Go-SDK v1.8.0, Tools/Resources/Prompts nach Scopes, Untrusted-Hülle, Audit je Aufruf; Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten), danach S1.10 (Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **Nachbesserung nach der Gegenprüfung von S1.9 erledigt** (16.10.2026, 14 Befunde, Abschnitt „Nachbesserung" unten; Abnahme-Datenbank für D2 neu erzeugt). **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio mit dem offiziellen Go-SDK v1.8.0, Tools/Resources/Prompts nach Scopes, Untrusted-Hülle, Audit je Aufruf; Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten), danach S1.10 (Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
@@ -23,6 +23,39 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 **Offen (Auftrag A01):** Abnahme D2 (vorbereitet, [abnahme_D2.md](abnahme_D2.md)), danach S1.10 und S1.11 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Nachbesserung nach der Gegenprüfung (16.10.2026, Stand `04a9ab8` geprüft)
+
+Je Befund ein Commit mit Test (der ohne die Änderung scheitert), `make check` nach jedem Commit grün.
+
+**Wichtig:**
+
+1. **Unsichtbare Zeichen:** eine zentrale Funktion `sanitize.Invisible` (ganze Kategorie Cf: Bidi, Nullbreite, Tag-Zeichen U+E0000–E007F, U+FFF9–FFFB; dazu Variantenwähler U+FE00–FE0F, U+E0100–E01EF) für Sync, CLI-Textausgabe und MCP; Test je Klasse.
+2. **Klartext ≠ HTML** (multipart/alternative): Vergleich als Text (Wortmengen, Zahlen ab 4 Ziffern, ohne URLs und Formatierung), Markierung `alternative_mismatch` (Migration 0006) in `show`, `thread`, `--json` und MCP. Im Korpus keine Fehlmarkierung.
+3. **Schlüssel-Widerruf in laufender Sitzung:** `ops.KeyGuard` im Executor prüft vor jedem Aufruf Widerruf und Ablauf (Zwischenspeicher ≤ 2 s); Test: `key revoke` während einer MCP-Sitzung → nächster Aufruf `denied`/`key_revoked`.
+4. **Threads:** Der Betreff-Rückfall verlangt gemeinsame Beteiligte (From/To/Cc, ohne die eigenen Adressen des Kontos); Zeitfenster bleibt. Bestehende Zuordnungen werden nicht neu berechnet.
+5. **`make race`** mit `-timeout 30m` (gemessen: `internal/ops` 612 s, `internal/mailsync` 514 s, gesamt rund 13 min; der Standard von 600 s je Paket wäre gerissen). Schwere Korpus- und Kindprozess-Tests überspringen sich mit `-short`; `make check`, `make race` und CI setzen es nicht (CLAUDE.md).
+
+**Klein:**
+
+6. Versteckter Text zusätzlich: `transform: scale(0)`, `hsl()`/`hsla()`, Schrift ≤ 2 px, `clip`/`clip-path` ohne Fläche; Grenzen in `docs/sicherheit.md`.
+7. Betreff, Absender-/Empfängernamen, Dateinamen beim Sync durch `sanitize.Text`; `CleanVersion` 2 (jetzt 3 mit Punkt 2) zieht den Bestand nach, einschließlich der Kopffelder in `messages`.
+8. DOCX: `<w:vanish/>`-Text fehlt, `hidden_text` gesetzt.
+9. Trigram-Index ohne ue→u, ü → „ue" (`FTSVersion` 2; „uer" in „Steuer", „uelle" in „Quelle" treffen).
+10. Cursor sind kein Schnappschuss: Absatz in `docs/cli.md` und `docs/mcp.md`.
+11. Neue Operation `mailboxes.overview`; `attachments.text` (`message`, `account`) und `threads.get` (`account`) prüfen die Zugehörigkeit selbst; MCP-Resources rufen je URI genau eine Operation.
+12. `scripts/abnahme-d2-db.sh`: `D2_USER` statt `USER`, Prüfung von `zip`/`sha256sum`/`pdftotext` und `doctor --json` (neu: `extract_pending`) vor dem Packen.
+13. Extraktor-Timeout-Test misst ab dem laufenden Kindprozess.
+14. `docs/abnahme_D2.md`: Schlüssel steht im Klartext in `%USERPROFILE%\.claude.json`, Aufräumen entfernt ihn.
+
+**Prüfläufe:** `make check`, `make race` (rund 13 min, siehe 5), `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` (keine Schwachstellen), `make cross` grün.
+
+**Offen bzw. neue Fragen an den Betreiber:**
+
+- Emoji-Sequenzen verlieren durch Punkt 1 Verbinder und Variantenwähler (eine Familien-Emoji erscheint als Einzelpersonen). Default: so lassen (Sicherheit vor Darstellung), einverstanden?
+- Threads (Punkt 4): Weitere eigene Adressen (Aliasse), die nicht im Konto stehen, zählen als gemeinsamer Beteiligter. Default: später ein Feld „weitere eigene Adressen" am Konto (S1.10/S2), einverstanden?
+- Teilwortsuche (Punkt 9): Ein ohne Umlaut getipptes „pruf" findet „Prüfung" nur noch als Wort/Präfix, nicht mitten im Kompositum. Default: hinnehmen.
+- Die Erkennung `alternative_mismatch` vergleicht Wortmengen; umgestellte Sätze oder ein einzelnes vertauschtes Wort („nicht") fallen nicht auf (Zahlen schon).
 
 ### Stand S1.9 (16.10.2026, erledigt): MCP über stdio, lesend
 

@@ -62,8 +62,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Abnahme D2 für Windows ohne Docker und Go (`docs/abnahme_D2.md`) mit vorbereiteter Datenbank; `scripts/abnahme-d2-db.sh` erzeugt sie (`dist/abnahme-d2-daten.zip`) aus dem Standardkorpus über den Dovecot-Testserver.
 - Neue Abhängigkeit (per `go get`): `github.com/google/jsonschema-go` v0.4.3 (MIT; dieselbe Version, die das offizielle MCP-SDK verwendet) für die Prüfung der Eingaben gegen die Schemas.
 
+- **Nachbesserung nach der Gegenprüfung (16.10.2026):** neue Operation `mailboxes.overview` (R0, `mail:read`; CLI `mailbox overview`, MCP-Resource `mail://{account}/mailbox/{id}/overview`); `attachments.text` mit `message`/`account` und `threads.get` mit `account` prüfen die Zugehörigkeit selbst (CLI `attach text --message/-a`, `thread -a`); Markierung `alternative_mismatch` (Klartext weicht vom HTML ab; Migration 0006, `show`/`thread`/`--json`/MCP); `doctor` meldet `extract_pending`; `go test -short ./...` für schnelle Läufe.
+
 ### Changed
 
+- Gegenprüfung 16.10.2026: Der Executor prüft vor jedem Aufruf mit API-Schlüssel Widerruf und Ablauf (`ops.KeyGuard`, Zwischenspeicher ≤ 2 s; MCP `denied`/`key_revoked`); MCP-Resources rufen je URI genau eine Operation (ADR-004, Logik aus dem Adapter ins Register); Trigram-Index ohne die Regel ue→u, ü → „ue" (`FTSVersion` 2, Index wird neu aufgebaut); `CleanVersion` 3 (Bestand wird beim nächsten Sync neu aufbereitet, auch Betreff/Absender/Empfänger); `make race` mit `-timeout 30m`; Doku zu Cursor-Stabilität (`docs/cli.md`, `docs/mcp.md`), Grenzen der Versteckt-Erkennung (`docs/sicherheit.md`), Klartext-Schlüssel in `.claude.json` (`docs/abnahme_D2.md`).
 - Dokumentation S1.9: `docs/mcp.md` (Umsetzung, Feldnamen, Standardwerte, Resources, Prompts, Hülle, Vertragstest), `docs/cli.md` (Abschnitt 2h), `docs/architektur.md`, `docs/sicherheit.md`, `docs/roadmap.md`; neu `docs/abnahme_D2.md`.
 - Der Executor prüft auf Wunsch der Oberfläche zusätzlich ein engeres Eingabeschema (`Request.Narrow`, MCP: `mail_search.limit` ≤ 100), ebenfalls nach dem Audit-Eintrag.
 - Dokumentation S1.8: `docs/cli.md` (globale Optionen, Abschnitte 2e–2g, Exit-Code-Test), `docs/sicherheit.md` (Schlüssel, Eingabeprüfung, Audit-Export, Hülle), `docs/architektur.md`, `docs/datenmodell.md`, `docs/roadmap.md`.
@@ -93,6 +96,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- Unsichtbare Zeichen: zentral `sanitize.Invisible` (ganze Kategorie Cf, Tag-Zeichen U+E0000–E007F, Variantenwähler, U+FFF9–FFFB) in Sync, CLI-Textausgabe und MCP; Betreff, Absender-/Empfängernamen und Dateinamen werden schon beim Sync bereinigt (Suche findet „Neben‹ZWSP›kosten").
+- Threads: Der Betreff-Rückfall verlangt gemeinsame Beteiligte (From/To/Cc ohne eigene Adressen des Kontos); gleichlautende Antworten fremder Absender laufen nicht mehr zusammen.
+- Versteckter Text in HTML zusätzlich: `transform: scale(0)`, `hsl()`/`hsla()`-Farben, Schrift ≤ 2 px, `clip: rect(…)` und `clip-path` ohne Fläche; in DOCX `<w:vanish/>` (Text fehlt, `hidden_text` gesetzt).
+- `scripts/abnahme-d2-db.sh`: Variable `USER` (überschrieb die Umgebung) heißt `D2_USER`; Prüfung von `zip`, `sha256sum`, `pdftotext` und von `doctor --json` (Index und Extraktion fertig) vor dem Packen.
+- Flake: `TestTimeoutKillsHangingExtractor` misst ab dem laufenden Kindprozess (PID-Datei) statt ab dem Aufruf.
 - `sync --watch`: Die IDLE-Schleife endet jetzt mit dem Dauerbetrieb. Beendete ein Anmeldefehler in einem Lauf den Dauerbetrieb, lief sie vorher mit eigener Verbindung weiter, bis der Prozess endete. Leck-Tests (Profil `goroutineleak` und Vergleich aller Goroutinen) für Erstsync und Dauerbetrieb, Zeitbelege mit `testing/synctest` für Intervall und IDLE-Wiederholung (A01 N1, N3).
 - `content_hash` deckt die ganze Rohmail ab, auch wenn der Parser vorzeitig aufhört (unlesbarer Kopf über 1 MiB); vorher bekamen zwei verschiedene Mails mit gleichem Anfang denselben Hash.
 - CLI-Textausgabe (`show`, `sync`, `mailbox list`, Fortschritt) filtert Steuerzeichen aus Mail und Server (ESC/CSI/OSC, C0/C1, einzelnes CR, ungültiges UTF-8 → `U+FFFD`); vorher konnte eine Mail Escape-Sequenzen im Terminal auslösen. `--json` unverändert.
