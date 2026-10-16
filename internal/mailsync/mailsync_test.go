@@ -220,6 +220,9 @@ func folderCounts(c *corpus.Corpus) map[string]int {
 // Akzeptanz S1.4: 1.000 Korpus-Nachrichten in Fenstern gespiegelt, mit
 // geparsten Feldern; ein zweiter Lauf ändert nichts.
 func TestInitialSyncMirrorsCorpus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	addr, _ := memServer(t, true)
 	e := newEnv(t, addr)
@@ -382,6 +385,9 @@ func (f *flakyRemote) FetchRaw(ctx context.Context, mb string, uv uint32, uids [
 // Akzeptanz S1.4: Abbruch mitten im Fenster und nach einem Fenster; der
 // Neustart setzt fort und ergibt dieselbe Anzahl ohne Doppelte.
 func TestAbortedSyncResumesWithoutDuplicates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	addr, _ := memServer(t, true)
 	e := newEnv(t, addr)
 	prov := connect(t, addr, 0)
@@ -612,6 +618,9 @@ func (c *countingRemote) FetchRaw(ctx context.Context, mb string, uv uint32, uid
 // UIDVALIDITY), Inhalt gleich: Reset und Abgleich per Message-ID, ohne
 // Doppelte und ohne die Inhalte erneut zu laden.
 func TestUIDValidityChangeMatchesByMessageID(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	addr, u := memServer(t, true)
 	e := newEnv(t, addr)

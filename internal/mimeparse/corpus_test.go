@@ -38,6 +38,9 @@ func checked(e corpus.Entry, field string) bool { return !slices.Contains(e.Unch
 // Akzeptanz S1.2: Der Parser besteht den Korpus gegen das Manifest
 // (Betreff, Absender, Datum, Message-ID, Anhänge, Threads).
 func TestParserAgainstCorpusManifest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	if c.Manifest.Count != 1000 || c.Manifest.Summary["threads"] != 60 || c.Manifest.Summary["broken"] != 50 {
 		t.Fatalf("unexpected corpus shape: %+v", c.Manifest.Summary)
@@ -241,6 +244,9 @@ func head(s string, n int) string {
 // (MESSAGE-ID)] ab. HeaderMessageID muss dafür dieselbe ID liefern wie Parse
 // über die ganze Nachricht (sonst entstünden Dubletten).
 func TestHeaderMessageIDMatchesParse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	for i, raw := range c.Raw {
 		m, err := mimeparse.Parse(bytes.NewReader(raw), mimeparse.Options{})

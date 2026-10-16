@@ -21,6 +21,9 @@ import (
 // Danach wird der Stand „vor S1.6" simuliert und der nächste Lauf baut
 // alles aus den Rohmails wieder auf.
 func TestCorpusCleanupAttachmentsAndExtraction(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	addr, _ := memServer(t, true)
 	e := newEnv(t, addr)

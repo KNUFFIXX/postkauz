@@ -354,6 +354,9 @@ func TestMCPRequiresValidKey(t *testing.T) {
 // Smoke-Test über echtes stdio: Der SDK-Client startet das Programm als
 // Kindprozess (`postkauz mcp`), initialize, tools/list, tools/call.
 func TestMCPStdioSmoke(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	dataDir, _ := setupEnv(t)
 	ph := seedS16(t)
 	key := newKey(t, "--name", "smoke", "--role", "reader")

@@ -15,6 +15,9 @@ import (
 // Korpus (PDF, DOCX, XLSX, Bilder, ZIP, Zip-Bombe, TXT, weitergeleitete
 // Nachrichten, ohne Namen) gelten nicht als Widerspruch.
 func TestCorpusAttachmentTypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c, err := corpus.Generate(corpus.Options{})
 	if err != nil {
 		t.Fatal(err)

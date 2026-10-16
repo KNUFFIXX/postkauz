@@ -16,6 +16,9 @@ import (
 // anderen HTML-Mails melden nichts (keine Fehlalarme); Links, entfernte
 // Ziele, Tracking-Pixel und Zitate wie im Manifest.
 func TestCorpusCleanup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c, err := corpus.Generate(corpus.Options{ZipBombBytes: 1 << 16})
 	if err != nil {
 		t.Fatal(err)

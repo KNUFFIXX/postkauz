@@ -25,13 +25,19 @@ build:
 install: build
 	@echo "Copy bin/$(BINARY) and bin/$(ALIAS) to a directory on your PATH."
 
+# Alle Tests, auch die schweren (voller Korpus, Kindprozesse). Für einen
+# schnellen Durchlauf beim Entwickeln: go test -short ./... (überspringt
+# Korpus- und Subprozess-Tests; nie für check, race oder CI).
 test:
 	go test ./...
 
 # Race-Detector (P7). Braucht CGO und einen C-Compiler; deshalb ein eigenes
 # Ziel und nicht Teil von `make check` (Builds und Releases bleiben CGO-frei).
+# Unter -race laufen die Korpus-Tests mehrfach langsamer; der Standard von
+# go test (10 Minuten je Paket) reicht dafür knapp nicht, daher 30 Minuten.
+# Bewusst ohne -short: Gerade die schweren Tests sollen unter -race laufen.
 race:
-	CGO_ENABLED=1 go test -race ./...
+	CGO_ENABLED=1 go test -race -timeout 30m ./...
 
 # Bekannte Schwachstellen in Abhängigkeiten und Standardbibliothek (A01 N2).
 # Version gepinnt (per `go list -m golang.org/x/vuln@latest` aufgelöst, nicht

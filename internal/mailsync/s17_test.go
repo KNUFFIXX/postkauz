@@ -20,6 +20,9 @@ import (
 // Anhangstext, versteckter Text) liefert die erwarteten Treffer und
 // Nichttreffer.
 func TestCorpusSearchSet(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c := standardCorpus(t)
 	if len(c.Manifest.Search) < 20 {
 		t.Fatalf("manifest has %d search cases", len(c.Manifest.Search))

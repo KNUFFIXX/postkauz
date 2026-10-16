@@ -50,6 +50,9 @@ func helper(mode string, o Options) *Extractor {
 // Akzeptanz S1.6: Ein hängender Extraktor wird nach der Zeitgrenze
 // beendet; der Aufruf kehrt zurück, der Prozess lebt nicht weiter.
 func TestTimeoutKillsHangingExtractor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	x := helper("hang", Options{Timeout: 500 * time.Millisecond, Env: []string{"POSTKAUZ_EXTRACT_TEST_PIDFILE=" + pidFile}})
 	start := time.Now()
@@ -79,6 +82,9 @@ func TestTimeoutKillsHangingExtractor(t *testing.T) {
 }
 
 func TestOutputLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	x := helper("flood", Options{MaxOutput: 1000, Timeout: 10 * time.Second})
 	res := x.Extract(context.Background(), KindPDF, strings.NewReader("%PDF-1.4"), 8)
 	if res.Status != StatusOK || !res.Truncated || len(res.Text) != 1000 {
@@ -88,6 +94,9 @@ func TestOutputLimit(t *testing.T) {
 
 // Kindprozesse sehen keine Geheimnisse aus der Umgebung.
 func TestChildEnvironmentHasNoSecrets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	t.Setenv("POSTKAUZ_PASSWORD_DEMO", "kanarienvogel-4711")
 	t.Setenv("POSTKAUZ_KEY", "kanarienvogel-4712")
 	res := helper("env", Options{}).Extract(context.Background(), KindPDF, strings.NewReader("x"), 1)
@@ -110,6 +119,9 @@ func docx(document string) []byte {
 func self() Options { return Options{Self: []string{os.Args[0], "-test.run=^$"}} }
 
 func TestDOCXInSubprocess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	d := docx(`<?xml version="1.0"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Übergabe</w:t></w:r><w:r><w:tab/><w:t>Schlüssel</w:t></w:r></w:p><w:p><w:r><w:t>Zweiter Absatz</w:t></w:r></w:p></w:body></w:document>`)
 	res := New(self()).Extract(context.Background(), KindDOCX, bytes.NewReader(d), int64(len(d)))
 	if res.Status != StatusOK || res.Text != "Übergabe\tSchlüssel\nZweiter Absatz\n" {
@@ -123,6 +135,9 @@ func TestDOCXInSubprocess(t *testing.T) {
 }
 
 func TestDOCXZipBombAndGarbage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	bomb := docx("<w:document>" + strings.Repeat(" ", 40<<20) + "</w:document>")
 	res := New(self()).Extract(context.Background(), KindDOCX, bytes.NewReader(bomb), int64(len(bomb)))
 	if res.Status != StatusFailed || !strings.Contains(res.Error, "zip bomb") {
@@ -135,6 +150,9 @@ func TestDOCXZipBombAndGarbage(t *testing.T) {
 }
 
 func TestPDF(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a child process; skipped with -short")
+	}
 	x := New(Options{})
 	if x.PDFTool() == "" {
 		t.Skip("pdftotext not installed; PDF extraction is skipped in that case (tested below)")

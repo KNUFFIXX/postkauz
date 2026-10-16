@@ -57,6 +57,9 @@ func TestParseDateTolerant(t *testing.T) {
 // Die acht Korpus-Fälle mit Zone ohne Vorzeichen (wie im Spike) werden
 // korrekt gelesen, fehlendes/kaputtes Date fällt auf INTERNALDATE.
 func TestDateFallbacksFromCorpus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full corpus (1,000 messages); skipped with -short")
+	}
 	c, err := corpus.Generate(corpus.Options{ZipBombBytes: -1})
 	if err != nil {
 		t.Fatal(err)
