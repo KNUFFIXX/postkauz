@@ -51,7 +51,9 @@ type DoctorReport struct {
 	AuditExportLocation  string          `json:"audit_export_location,omitempty"`
 	AuditDaysNotExported int             `json:"audit_days_not_exported"`
 	Accounts             []DoctorAccount `json:"accounts"`
-	Warnings             []string        `json:"warnings"`
+	// Secrets nur mit --secrets.
+	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
+	Warnings []string       `json:"warnings"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
@@ -63,25 +65,36 @@ type DoctorAccount struct {
 }
 
 func doctorCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check the installation: paths, keyring, database, schema version",
+		Short: "Check the installation: paths, keyring, database, schema version, audit export",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rep := doctor(cmd.Context(), a)
+			if withSecrets, _ := cmd.Flags().GetBool("secrets"); withSecrets {
+				rep.Secrets = doctorSecrets(cmd.Context(), a, rep)
+			}
 			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 				if err := json.NewEncoder(a.stdout).Encode(rep); err != nil {
 					return err
 				}
 			} else {
 				printDoctor(a.stdout, rep)
+				if rep.Secrets != nil {
+					printDoctorSecrets(a.stdout, rep.Secrets)
+				}
 			}
 			if rep.ConfigError != "" {
 				return errors.New("configuration is invalid: " + rep.ConfigError)
 			}
+			if rep.Secrets != nil && rep.Secrets.Problems > 0 {
+				return fmt.Errorf("%w: %d problems (see the lines marked fail)", errSecretCheck, rep.Secrets.Problems)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().Bool("secrets", false, "also check file permissions and search log, audit, audit exports and configuration for stored passwords and API keys")
+	return cmd
 }
 
 // doctor legt nichts an: Fehlt die Datenbank, meldet er das nur.

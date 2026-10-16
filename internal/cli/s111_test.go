@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -93,5 +95,52 @@ func TestPanicReportWithoutContent(t *testing.T) {
 	logb, _ := os.ReadFile(filepath.Join(dataDir, "postkauz.log"))
 	if strings.Contains(string(logb), mailText) || strings.Count(string(logb), `"msg":"panic`) != 3 || !strings.Contains(string(logb), `"stack":[`) {
 		t.Fatalf("log:\n%s", logb)
+	}
+}
+
+// S1.11: doctor --secrets prüft Dateirechte und sucht Passwörter und
+// API-Schlüssel in Log, Audit, Tabellen und Exporten, ohne sie auszugeben.
+func TestDoctorSecrets(t *testing.T) {
+	dataDir, _ := setupEnv(t)
+	seedS16(t) // Konto demo mit dem Kanarien-Passwort im (Test-)Schlüsselbund
+	key := newKey(t, "--name", "agent", "--role", "reader")
+	dir := filepath.Join(t.TempDir(), "export")
+	run(t, "audit", "export", "--to", dir)
+
+	code, out, errs := run(t, "doctor", "--secrets")
+	if code != ExitOK || !strings.Contains(out, "result: ok") || !strings.Contains(out, "ok      secrets in database table audit_events") ||
+		!strings.Contains(out, "ok      secrets in audit export "+dir) || strings.Contains(out, canary) {
+		t.Fatalf("clean: %d\n%s\n%s", code, out, errs)
+	}
+	rep := doctorJSON(t, "--secrets")
+	if rep.Secrets == nil || rep.Secrets.Problems != 0 || len(rep.Secrets.Findings) < 15 {
+		t.Fatalf("json: %+v", rep.Secrets)
+	}
+
+	// Leck im Log (Passwort) und in der Exportdatei (Schlüssel).
+	logPath := filepath.Join(dataDir, "postkauz.log")
+	f, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	_, _ = f.WriteString(`{"msg":"oops","password":"` + canary + `"}` + "\n")
+	_ = f.Close()
+	files, _ := filepath.Glob(filepath.Join(dir, "postkauz-audit-*.jsonl"))
+	g, _ := os.OpenFile(files[0], os.O_APPEND|os.O_WRONLY, 0o600)
+	_, _ = g.WriteString(`{"note":"` + key + `"}` + "\n")
+	_ = g.Close()
+	code, out, errs = run(t, "doctor", "--secrets")
+	if code != ExitError || strings.Contains(out+errs, canary) || strings.Contains(out+errs, key) ||
+		!regexp.MustCompile(`fail +secrets in log .*: password of account demo found \(line \d+\)`).MatchString(out) ||
+		!strings.Contains(out, "an API key (pk_key_…) in "+filepath.Base(files[0])+" found (line ") ||
+		!strings.Contains(errs, "secret check failed: 2 problems") {
+		t.Fatalf("leaks: %d\n%s\n%s", code, out, errs)
+	}
+
+	// Dateirechte (Unix): Log für andere lesbar (die Datenbank setzt der
+	// Store beim Öffnen selbst auf 0600).
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(logPath, 0o644)
+		_, out, _ = run(t, "doctor", "--secrets")
+		if !strings.Contains(out, "fail    permissions log: 0644, readable by others; run: chmod 600 ") {
+			t.Fatalf("permissions:\n%s", out)
+		}
 	}
 }
