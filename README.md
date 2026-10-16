@@ -221,7 +221,7 @@ The audit log is append-only; its real tamper protection is a daily export to a 
 export_dir = 'G:\My Drive\PostKauz-Audit'
 ```
 
-**Windows** (Task Scheduler, no administrator rights; the script lies in `deploy/windows/`, next to `postkauz.exe` or anywhere else):
+**Windows** (Task Scheduler, no administrator rights; the script `Register-AuditExport.ps1` comes with each release and lies in `deploy/windows/`; put it next to `postkauz.exe` or anywhere else):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -ExePath C:\PostKauz\postkauz.exe -ExportDir "G:\My Drive\PostKauz-Audit"

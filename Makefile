@@ -94,7 +94,8 @@ cross:
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %6.1f MB\n", $$NF, $$5/1048576}'
 
 # Release (S1.11): dist/ mit den drei Programmen ohne Symboltabelle und
-# Debug-Informationen (-s -w), dazu VERSION und SHA256SUMS. Beispiel:
+# Debug-Informationen (-s -w), dem Windows-Skript für den täglichen
+# Audit-Export, VERSION und SHA256SUMS. Beispiel:
 #   make release VERSION=0.1.0-rc1
 # Den Git-Tag setzt der Betreiber erst nach der Abnahme (D3). Andere Dateien
 # in dist/ (Abnahme-Zips) bleiben liegen.
@@ -103,7 +104,7 @@ SHA256 = $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 
 release:
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release: give a version, e.g. make release VERSION=0.1.0-rc1 (got $(VERSION))"; exit 1;; esac
 	@mkdir -p dist
-	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION
+	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION dist/*.ps1
 	@set -e; for p in $(PLATFORMS); do \
 	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	  echo "build $$os/$$arch ($(VERSION))"; \
@@ -113,7 +114,10 @@ release:
 	  echo "commit $$(git rev-parse HEAD 2>/dev/null || echo unknown)$$(git diff --quiet HEAD 2>/dev/null || echo ' (uncommitted changes)')"; \
 	  echo "$$(go env GOVERSION), CGO_ENABLED=$(CGO_ENABLED), -trimpath, -ldflags \"-s -w\""; \
 	  echo "built $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > dist/VERSION
-	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* VERSION > SHA256SUMS
+	@# Das Windows-Skript für den täglichen Audit-Export gehört dazu, mit
+	@# Zeilenenden CRLF (wie im Arbeitsbaum unter Windows, .gitattributes).
+	@sed 's/\r*$$/\r/' deploy/windows/Register-AuditExport.ps1 > dist/Register-AuditExport.ps1
+	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 VERSION > SHA256SUMS
 	@cat dist/VERSION; echo; cat dist/SHA256SUMS; echo
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %10d bytes %6.1f MB\n", $$NF, $$5, $$5/1048576}'
 
