@@ -3,6 +3,7 @@ package mailsync
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
@@ -47,10 +48,17 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	if o.IdleRetry <= 0 {
 		o.IdleRetry = idleRetry
 	}
+	// Die IDLE-Schleife endet mit Watch: eigener Kontext, und Watch wartet
+	// auf sie (sonst liefe sie nach einem Anmeldefehler eines Laufs mit
+	// eigener Verbindung weiter; Leck-Test in leak_test.go).
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer cancel()
 	kick := make(chan struct{}, 1)
 	idleErr := make(chan error, 1)
 	if e.Remote.Capabilities().Idle {
-		go e.idleLoop(ctx, o, kick, idleErr)
+		wg.Go(func() { e.idleLoop(ctx, o, kick, idleErr) })
 	} else {
 		e.log().Info("server has no IDLE; polling only", "interval", o.Interval.String())
 	}
@@ -117,10 +125,12 @@ func (e *Engine) idleLoop(ctx context.Context, o WatchOptions, kick chan<- struc
 		if err != nil {
 			e.log().Warn("IDLE connection failed; reconnecting later", "error", err.Error(), "retry_in", o.IdleRetry.String())
 		}
+		t := time.NewTimer(o.IdleRetry)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return
-		case <-time.After(o.IdleRetry):
+		case <-t.C:
 		}
 		// Nach dem Wiederaufbau einmal synchronisieren: Während der Pause
 		// gemeldete Änderungen wären sonst bis zum nächsten Intervall unsichtbar.

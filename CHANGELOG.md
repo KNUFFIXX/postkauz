@@ -54,6 +54,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- `sync --watch`: Die IDLE-Schleife endet jetzt mit dem Dauerbetrieb. Beendete ein Anmeldefehler in einem Lauf den Dauerbetrieb, lief sie vorher mit eigener Verbindung weiter, bis der Prozess endete. Leck-Tests (Profil `goroutineleak` und Vergleich aller Goroutinen) für Erstsync und Dauerbetrieb, Zeitbelege mit `testing/synctest` für Intervall und IDLE-Wiederholung (A01 N1, N3).
 - `content_hash` deckt die ganze Rohmail ab, auch wenn der Parser vorzeitig aufhört (unlesbarer Kopf über 1 MiB); vorher bekamen zwei verschiedene Mails mit gleichem Anfang denselben Hash.
 - CLI-Textausgabe (`show`, `sync`, `mailbox list`, Fortschritt) filtert Steuerzeichen aus Mail und Server (ESC/CSI/OSC, C0/C1, einzelnes CR, ungültiges UTF-8 → `U+FFFD`); vorher konnte eine Mail Escape-Sequenzen im Terminal auslösen. `--json` unverändert.
 - Vertragstest nach ADR-004 ergänzt: jede Operation aus dem neuen `ops.Catalog` × jede Rolle × fünf Trockenlauf-Varianten durch den Executor (Policy, genau ein Audit-Eintrag, Handler nur bei Erlaubnis, Trockenlauf schreibt nichts, Pflichtfelder der Ausgabe) sowie fail closed je Operation; die CLI registriert über `ops.NewDefaultRegistry`.
