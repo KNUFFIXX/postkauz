@@ -1,0 +1,2 @@
+# Windows-Skripte: CRLF im Arbeitsbaum (Windows PowerShell 5.1)
+*.ps1 text eol=crlf

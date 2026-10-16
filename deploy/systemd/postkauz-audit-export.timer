@@ -1,0 +1,13 @@
+# PostKauz: Timer für den täglichen Audit-Export (siehe
+# postkauz-audit-export.service). Persistent=true holt einen verpassten Lauf
+# nach (Rechner war aus).
+[Unit]
+Description=Daily PostKauz audit export
+
+[Timer]
+OnCalendar=*-*-* 12:30:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

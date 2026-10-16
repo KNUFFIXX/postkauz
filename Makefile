@@ -70,6 +70,11 @@ guard:
 	@# ADR-007: go-imap bleibt auf v2.0.0-beta.8 gepinnt; ein Wechsel nur über einen ADR.
 	@grep -Eq '^[[:space:]]*github.com/emersion/go-imap/v2 v2\.0\.0-beta\.8$$' go.mod || { \
 	  echo "guard: github.com/emersion/go-imap/v2 must stay pinned to v2.0.0-beta.8 (ADR-007)"; exit 1; }
+	@# Windows-Skripte: UTF-8 mit BOM (Windows PowerShell 5.1), Inhalt nur ASCII.
+	@for f in deploy/windows/*.ps1; do \
+	  [ "$$(head -c 3 "$$f" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] || { echo "guard: $$f must be UTF-8 with BOM"; exit 1; }; \
+	  if tail -c +4 "$$f" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then echo "guard: $$f must contain ASCII only after the BOM"; exit 1; fi; \
+	done
 	@echo "guard: ok"
 
 pii-check:

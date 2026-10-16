@@ -1,0 +1,25 @@
+# PostKauz: täglicher Export des Audit-Logs mit Prüfsummen (SHA-256-Kette
+# und Manifest) an einen zweiten Ort. Wird vom gleichnamigen Timer gestartet.
+#
+# Als Benutzer-Unit (kein root nötig):
+#   install -Dm644 postkauz-audit-export.service postkauz-audit-export.timer -t ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now postkauz-audit-export.timer
+#   systemctl --user start postkauz-audit-export.service   # einmal sofort, zum Prüfen
+#   journalctl --user -u postkauz-audit-export.service      # Ausgabe ansehen
+#   loginctl enable-linger "$USER"                          # auch ohne Anmeldung (Server)
+#
+# Das Ziel kommt aus [audit] export_dir in ~/.config/postkauz/config.toml;
+# alternativ ExecStart um --to /pfad/zum/zweiten/ort ergänzen (systemctl --user edit).
+# Programm unter einem anderen Pfad: ExecStart anpassen.
+[Unit]
+Description=PostKauz daily audit export (checksums to a second location)
+Documentation=https://github.com/KNUFFIXX/postkauz/blob/main/docs/sicherheit.md
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/postkauz audit export --quiet
+# Nur lesen und in das Exportziel schreiben; keine neuen Rechte.
+NoNewPrivileges=yes
+PrivateTmp=yes
+Nice=10

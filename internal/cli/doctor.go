@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -41,9 +42,16 @@ type DoctorReport struct {
 	IndexPending int `json:"index_pending"`
 	FTSVersion   int `json:"fts_version"`
 	// ExtractPending: Anhänge, deren Text der nächste Sync noch extrahiert.
-	ExtractPending int             `json:"extract_pending"`
-	Accounts       []DoctorAccount `json:"accounts"`
-	Warnings       []string        `json:"warnings"`
+	ExtractPending int `json:"extract_pending"`
+	// Audit-Export (S1.11): Ziel aus der Konfiguration, letzter Export,
+	// Tage mit Einträgen ohne Export. Der tägliche Export läuft als
+	// Windows-Aufgabe bzw. systemd-Timer (README, "Daily audit export").
+	AuditExportDir       string          `json:"audit_export_dir"`
+	AuditLastExport      string          `json:"audit_last_export,omitempty"`
+	AuditExportLocation  string          `json:"audit_export_location,omitempty"`
+	AuditDaysNotExported int             `json:"audit_days_not_exported"`
+	Accounts             []DoctorAccount `json:"accounts"`
+	Warnings             []string        `json:"warnings"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
@@ -80,7 +88,7 @@ func doctorCmd(a *app) *cobra.Command {
 func doctor(ctx context.Context, a *app) DoctorReport {
 	rep := DoctorReport{Version: a.version, ConfigPath: a.paths.ConfigFile, ConfigExists: a.paths.ConfigExists,
 		DataDir: a.paths.DataDir, DatabasePath: a.paths.Database, LogPath: a.paths.Log,
-		SchemaKnown: store.KnownSchemaVersion(), SecretsBackend: a.cfg.Secrets.Backend,
+		SchemaKnown: store.KnownSchemaVersion(), SecretsBackend: a.cfg.Secrets.Backend, AuditExportDir: a.cfg.Audit.ExportDir,
 		Accounts: []DoctorAccount{}, Warnings: []string{}}
 	if a.cfgErr != nil {
 		rep.ConfigError = a.cfgErr.Error()
@@ -147,6 +155,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.IndexPending, _ = db.IndexPending(ctx, 0)
 	rep.FTSVersion, _ = db.FTSVersion(ctx)
 	rep.ExtractPending, _ = db.ExtractPending(ctx, 0)
+	doctorAudit(ctx, db, &rep, time.Now())
 	list, err := db.ListAccounts(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
@@ -168,6 +177,49 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		rep.Accounts = append(rep.Accounts, da)
 	}
 	return rep
+}
+
+// auditExportStale: Ein Tag mit Einträgen, der so lange zurückliegt und noch
+// nicht exportiert ist, ergibt eine Warnung (der tägliche Export fehlt).
+const auditExportStale = 48 * time.Hour
+
+// doctorAudit meldet den Stand des Audit-Exports.
+func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
+	days, err := db.AuditDays(ctx)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
+		return
+	}
+	done, err := db.AuditExports(ctx)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
+		return
+	}
+	exported := map[string]bool{}
+	var last store.AuditExport
+	for _, e := range done {
+		exported[e.Day] = true
+		if e.ExportedAt.After(last.ExportedAt) {
+			last = e
+		}
+	}
+	if !last.ExportedAt.IsZero() {
+		rep.AuditLastExport = last.ExportedAt.UTC().Format(time.RFC3339)
+		rep.AuditExportLocation = last.Location
+	}
+	stale := false
+	for _, d := range days {
+		if exported[d] {
+			continue
+		}
+		rep.AuditDaysNotExported++
+		if t, err := time.Parse("2006-01-02", d); err == nil && now.Sub(t.Add(24*time.Hour)) > auditExportStale {
+			stale = true
+		}
+	}
+	if stale {
+		rep.Warnings = append(rep.Warnings, "audit: days older than two days are not exported; set up the daily audit export (README, \"Daily audit export\")")
+	}
 }
 
 func printDoctor(w io.Writer, r DoctorReport) {
@@ -193,6 +245,15 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if r.Database == "ok" {
 		fmt.Fprintf(w, "search:    %d messages waiting for the index (index version %d)\n", r.IndexPending, r.FTSVersion)
 		fmt.Fprintf(w, "extract:   %d attachments waiting for text extraction\n", r.ExtractPending)
+		dir := r.AuditExportDir
+		if dir == "" {
+			dir = "not set"
+		}
+		if r.AuditLastExport != "" {
+			fmt.Fprintf(w, "audit:     last export %s to %s; %d days not exported yet [audit.export_dir = %s]\n", r.AuditLastExport, r.AuditExportLocation, r.AuditDaysNotExported, dir)
+		} else {
+			fmt.Fprintf(w, "audit:     never exported; %d days not exported yet [audit.export_dir = %s]\n", r.AuditDaysNotExported, dir)
+		}
 	}
 	if len(r.Accounts) > 0 {
 		fmt.Fprintln(w, "accounts:")

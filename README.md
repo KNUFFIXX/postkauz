@@ -120,6 +120,35 @@ Optional entries in `env`: `POSTKAUZ_DATA_DIR` to use another data directory (fo
 
 The server only reads the local mirror; keep it current with `postkauz sync` (or `sync --watch`). Revoke a key you no longer need: `postkauz key revoke claude-code`. Note that the client configuration stores the key in plain text in your user profile; use a short expiry and the narrowest role that works. Details: `docs/mcp.md`, `docs/sicherheit.md`.
 
+## Daily audit export
+
+The audit log is append-only; its real tamper protection is a daily export to a **second location** (another disk, a network share or a synced folder such as Google Drive). Each day becomes one JSONL file whose lines form a SHA-256 hash chain across all days, plus a manifest (`postkauz-audit-manifest.json`) with checksum and chain head per file. `postkauz audit verify` compares the export with the database and the chain and names the first changed line (`mismatch`, exit code 1). Set the target once in the configuration (`postkauz doctor` shows its path), for example:
+
+```toml
+[audit]
+export_dir = 'G:\My Drive\PostKauz-Audit'
+```
+
+**Windows** (Task Scheduler, no administrator rights; the script lies in `deploy/windows/`, next to `postkauz.exe` or anywhere else):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -ExePath C:\PostKauz\postkauz.exe -ExportDir "G:\My Drive\PostKauz-Audit"
+```
+
+It registers the task "PostKauz audit export" (daily at 12:30, runs as soon as possible after a missed run, only while you are logged on, without a console window), starts it once and checks that the export arrived. Options: `-At 08:15`, `-ProfileName <name>`, `-ShowWindow` (if the hidden console is blocked), `-Unregister`. If Windows refuses to run a downloaded script, run `Unblock-File .\Register-AuditExport.ps1` first.
+
+**Linux** (systemd user timer, daily at 12:30 with `Persistent=true`):
+
+```sh
+install -Dm644 deploy/systemd/postkauz-audit-export.service deploy/systemd/postkauz-audit-export.timer -t ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now postkauz-audit-export.timer
+systemctl --user start postkauz-audit-export.service && postkauz audit verify
+```
+
+The service expects the program at `~/.local/bin/postkauz`; change `ExecStart` with `systemctl --user edit --full postkauz-audit-export.service` otherwise. On a server without login sessions also run `loginctl enable-linger "$USER"`. On macOS use `launchd` or `cron` with `postkauz audit export --quiet`.
+
+`postkauz doctor` shows the last export (line `audit:`) and warns when days older than two days were not exported.
+
 Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`. Never develop against a real mailbox.
 
 ## Security model in 8 lines
