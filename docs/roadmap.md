@@ -48,6 +48,8 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 - Die Untrusted-Felder stehen einmal oben in der Ausgabe statt je Nachricht (Planung in mcp.md); Inhalt bleibt Feld für Feld getrennt.
 - Claude Code und die Claude-App speichern den Schlüssel im Klartext in ihrer Konfiguration (Nutzerprofil). Empfehlung im README: kurze Laufzeit, engste Rolle, widerrufen, wenn nicht gebraucht.
 
+**Prüfläufe (16.10.2026, Stand S1.9):** `make check`, `make race` (rund 9 min; `internal/mailsync` und `internal/ops` mit dem Vertragstest über alle Rollen dominieren), `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` (keine Schwachstellen) und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 23,8 MB, windows/amd64 23,6 MB, darwin/arm64 22,4 MB (MCP-SDK rund +3 MB). Abnahme-Datenbank für D2: `dist/abnahme-d2-daten.zip` (3,6 MB, erzeugt mit `sh scripts/abnahme-d2-db.sh`, Anleitung [abnahme_D2.md](abnahme_D2.md)).
+
 **Nicht in S1.9 (bewusst verschoben):** `mail_sync_now` (Job-Typ `sync`), `fields`/`include_links`/`page_range`/`format: html_sanitized` der Planung, Resource-Abos und Änderungsmeldungen, HTTP-Transport (S3), Kanarientest über alle Kanäle (S1.11).
 
 ### Stand S1.8 (16.10.2026, erledigt): CLI lesend vollständig

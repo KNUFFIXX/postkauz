@@ -105,6 +105,8 @@ Testserver: `make testmail-up`; Dovecot ist auf Port 11143 (Nutzer `tester`, Pas
 
 ### D2: nach S1.9 (Suche, CLI, MCP)
 
+Ausführliche Anleitung für Windows ohne Docker und ohne Go (nur `postkauz.exe` und eine vorbereitete Datenbank), mit PowerShell-Kommandos und erwarteten Ausgaben: [`docs/abnahme_D2.md`](../docs/abnahme_D2.md). Die Punkte unten sind die Kurzfassung; maßgeblich für Kommandos und Ausgaben ist die Anleitung.
+
 1. `./bin/postkauz search "Rechnung" -a demo --limit 5` → bis zu fünf Zeilen mit `id`, Datum, Absender, Betreff; die Treffer enthalten auch „Rechnungen" (Flexion).
 2. `./bin/postkauz search "prüfen"` und `./bin/postkauz search "pruefen"` → beide liefern dieselben Treffer.
 3. `./bin/postkauz search "Vollstreck"` → findet die Mail mit „Zwangsvollstreckung" im Betreff.
