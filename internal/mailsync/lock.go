@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // Sperre je Konto: Zwei Syncs desselben Kontos (z. B. `sync --watch` und ein
@@ -14,6 +16,19 @@ import (
 // Datenbank (flock bzw. LockFileEx); sie fällt mit dem Prozess, auch nach
 // kill -9 oder Absturz, es bleibt also nie eine verwaiste Sperre zurück. Die
 // Datei selbst bleibt liegen (leer) und wird beim nächsten Lauf wiederverwendet.
+
+// LockAccount sperrt das Konto für einen schreibenden Lauf (Sync oder
+// Import, S1.10) wie Runner.Sync: Sperrdatei in lockDir, sonst neben der
+// Datenbank (bei :memory: ohne Sperre, locked=false). Ist das Konto
+// gesperrt, kommt ops.ErrSyncRunning.
+func LockAccount(st *store.SQLite, lockDir string, a store.Account) (release func(), locked bool, err error) {
+	r := &Runner{Store: st, LockDir: lockDir}
+	l, err := r.lock(a)
+	if err != nil {
+		return func() {}, false, err
+	}
+	return l.release, l != nil, nil
+}
 
 // errLocked meldet, dass ein anderer Prozess (oder Handle) die Datei sperrt.
 var errLocked = errors.New("locked")

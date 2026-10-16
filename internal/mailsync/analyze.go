@@ -124,6 +124,24 @@ func fillClean(nm *store.NewMessage, m *mimeparse.Message, atts []store.NewAttac
 	nm.CleanVersion = CleanVersion
 }
 
+// Prepare füllt die geparsten und bereinigten Felder einer Rohmail wie der
+// Sync (Parser, Bereinigung, Links, versteckter Text, Anhänge im Blob-Store
+// mit Typprüfung); für den Import (S1.10). Blob, Größe, Datum, Flags und
+// content_hash setzt der Aufrufer. false: Der Kopf ist unlesbar, die
+// Nachricht wird ohne geparste Felder gespeichert (wie beim Sync).
+func Prepare(blobs *blob.Store, nm *store.NewMessage, r io.Reader, internal time.Time) bool {
+	e := &Engine{Blobs: blobs}
+	nm.CleanVersion = CleanVersion
+	nm.Links = json.RawMessage("[]")
+	m, atts, err := e.analyze(r, internal)
+	if err != nil {
+		return false
+	}
+	fillParsed(nm, m)
+	fillClean(nm, m, atts)
+	return true
+}
+
 // reprocess bereitet Nachrichten mit älterer Aufbereitung aus der Rohmail
 // neu auf (Bestand von vor S1.6). Liefert die Zahl der Nachrichten.
 func (e *Engine) reprocess(ctx context.Context) (int, error) {
