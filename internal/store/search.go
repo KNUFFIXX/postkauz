@@ -218,8 +218,9 @@ func likeEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-// SearchSQLForTest liefert die Anweisung einer Suche (Tests, --explain).
-func SearchSQLForTest(p SearchParams) string {
+// SearchSQL liefert die Anweisung einer Suche mit Platzhaltern statt
+// Werten (--explain); Nutzertext steht nur in den Parametern.
+func SearchSQL(p SearchParams) string {
 	q, _ := buildSearch(p)
 	return q
 }

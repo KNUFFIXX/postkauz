@@ -179,6 +179,7 @@ var contractInputs = map[string]struct {
 	"sync.run":         {input: `{"account":"demo"}`},
 	"mailboxes.list":   {input: `{"account":"demo"}`},
 	"messages.get":     {input: `{"message_id":"a@example.org","account":"demo","headers":true}`},
+	"messages.search":  {input: `{"query":"Hallo -Werbung has:attachment","account":"demo","limit":5,"explain":true}`},
 	"threads.get":      {input: `{"message":1,"text":true}`},
 	"attachments.list": {input: `{"message":1}`},
 	"attachments.text": {input: `{"id":2}`},
@@ -211,7 +212,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 	m.prober.res = ProbeResult{Capabilities: []string{"IMAP4rev1"}, SyncStrategy: "uid-scan", CapabilitiesJSON: `{"imap4rev1":true}`}
 	r := &contractRunner{}
 	return &contractEnv{mirrorEnv: m, runner: r, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
-		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Extractor: extract.New(extract.Options{})}}
+		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Search: m.st, Extractor: extract.New(extract.Options{})}}
 }
 
 // fingerprint fasst den lokalen Zustand zusammen: alle Tabellen der

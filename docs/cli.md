@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S1.6 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`), `mailbox list`, `show` (mit bereinigtem Text, Links, Hinweis auf versteckten Text, `--strip-quotes`), minimal `thread`, `attach list`, `attach text` sowie die globalen Flags `--json`, `--dry-run` und `--account`/`-a`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.7 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (mit bereinigtem Text, Links, Hinweis auf versteckten Text, `--strip-quotes`), `search` (Abfragesprache, `--limit`, `--cursor`, `--explain`, NDJSON), minimal `thread`, `attach list`, `attach text` sowie die globalen Flags `--json`, `--dry-run` und `--account`/`-a`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -36,7 +36,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.5/S1.6 ✓ | `show <id>` bzw. `show <Message-ID>`, `--headers`, `--strip-quotes` | `messages.get` (R0; Untrusted-Hülle mit S1.8/S1.9) |
 | S1.6 ✓ (minimal) | `thread <thread-id>` bzw. `thread --message <id>`, `--strip-quotes` | `threads.get` (R0, `mail:read`) |
 | S1.6 ✓ (minimal) | `attach list <message-id>`, `attach text <attachment-id>` | `attachments.list`, `attachments.text` (R0, `mail:read`) |
-| S1 | `search "<abfrage>"` | `messages.search` |
+| S1.7 ✓ | `search "<abfrage>"` (siehe Abschnitt 2d) | `messages.search` (R0, `mail:search`) |
 | S1 | `import mbox`, `import maildir` | `import.run` |
 | S1 | `key create`, `key list`, `key revoke` | `keys.*` (nur Mensch, Scope `admin`) |
 | S1 | `audit [--since]`, `audit verify` | `audit.list`, `audit.verify` |
@@ -66,8 +66,9 @@ postkauz sync --watch                                                           
 postkauz mailbox list -a demo --json
 postkauz show 18233 --headers
 
+postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json   # S1.7 ✓
+
 # S1 (Entwurf)
-postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json
 postkauz thread 4411 --strip-quotes                                        # S1.6 ✓ (minimal)
 postkauz attach list 18233                                                  # S1.6 ✓ (minimal)
 postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024
@@ -118,7 +119,8 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 | `--dry-run` | meldet Ordner und lokalen Stand, schreibt nichts |
 
 - Ausgabe ohne `--json`: Tabelle je Ordner (neu, geändert, entfernt, Fehler, gespiegelt, laut Server), am Ende genau die Zeilen `N messages mirrored` und `N errors`. Fortschritt laufender Erstsyncs steht auf stderr. `N messages mirrored` zählt die Nachrichten des Kontos, die der Server führt, ohne Dubletten über Ordner hinweg.
-- Mit `--json`: ein Objekt (`account`, `mode`, `strategy`, `mailboxes[]`, `new`, `updated`, `removed`, `errors`, `messages_mirrored`, `duration_ms`, `dry_run`); im Dauerbetrieb zusätzlich je Lauf eine NDJSON-Zeile.
+- Mit `--json`: ein Objekt (`account`, `mode`, `strategy`, `mailboxes[]`, `new`, `updated`, `removed`, `errors`, `messages_mirrored`, `attachments_extracted`, `messages_indexed`, `index_pending`, `duration_ms`, `dry_run`); im Dauerbetrieb zusätzlich je Lauf eine NDJSON-Zeile.
+- **Nach dem Abgleich** arbeitet `sync` die Warteschlange des Kontos ab (seit S1.7, Tabelle `jobs`): Text aus Anhängen extrahieren (höchstens 60 s je Lauf, der Rest im nächsten) und neue oder geänderte Nachrichten in den Suchindex aufnehmen (bis alles drin ist; Fortschritt `search index: N/M` auf stderr). Ohne `--json` steht davor die Zeile `search index: N messages indexed` (mit `, M still pending …`, wenn ein Abbruch etwas übrig ließ). Ein Abbruch verliert nichts: Der nächste `sync` macht dort weiter.
 - **Abbruch** (Strg+C, `kill`, Absturz): Gespeichert ist alles bis zum letzten fertigen Fenster; derselbe Befehl setzt dort fort, ohne Doppelte. Strg+C endet mit Exit 1, Code `interrupted`. Je Konto läuft höchstens **ein** schreibender Sync: Ein zweiter (z. B. ein manueller `sync` neben `sync --watch`) bricht sofort mit Exit 1, Code `sync_running` (`another sync is running: account …`) ab, ohne sich am Server anzumelden; `--dry-run` ist davon ausgenommen. Die Sperre ist eine Dateisperre des Betriebssystems (`sync-<konto-id>.lock` neben der Datenbank) und fällt mit dem Prozess, auch nach `kill -9`.
 - Am Server ändert `sync` nichts (EXAMINE, `BODY.PEEK`).
 
@@ -134,6 +136,36 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 - `attach text <attachment-id>` zeigt den extrahierten Text. Steht die Extraktion noch aus, extrahiert der Befehl jetzt (Subprozess mit Grenzen, siehe [sicherheit.md](sicherheit.md) Abschnitt 7) und speichert nichts (`note: extracted now; the next sync stores it`); übersprungene oder gescheiterte Anhänge nennen den Grund. Den Text speichert der Sync am Ende jedes Laufs (Zeitbudget 60 s; Ausgabe `attachments_extracted` mit `--json`).
 - Fehler: unbekannter Thread oder Anhang → Exit 1, Code `not_found`; keine Zahl als ID → Exit 2.
 
+## 2d. Suche (S1.7)
+
+`search "<abfrage>" [-a <konto>] [--limit N] [--cursor C] [--explain] [--json]`
+
+Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehrere Argumente ergeben zusammen die Anfrage (`search from:anna Rechnung`); Phrasen brauchen Anführungszeichen, in der Shell also `search '"Erdgeschoss links"'`.
+
+| Teil | Bedeutung | Beispiel |
+|---|---|---|
+| Wort | findet Wortformen (Wortstamm: „Rechnungen" ↔ „Rechnung") und, ab 3 Zeichen, Teilwörter in Komposita („Vollstreck" ↔ „Zwangsvollstreckung", „steuer" ↔ „Grundsteuer"); Umlaute und ß in jeder Schreibweise („prüfen" = „pruefen", „Erdgeschoß" = „Erdgeschoss"); kürzere Wörter als Wortanfang („ab" ↔ „Abrechnung") | `Rechnung` |
+| `"…"` | Phrase: Wörter direkt hintereinander (Wortformen erlaubt) | `"Erdgeschoss links"` |
+| `-…` | schließt aus (Wort, Phrase oder Operator) | `steuer -grundsteuer`, `-has:attachment` |
+| `from:` | Absender (Name oder Adresse, auch Teilwort) | `from:anna`, `from:"Anna Beispiel"`, `from:example.org` |
+| `to:` | Empfänger (An und Cc) | `to:hausverwaltung` |
+| `subject:` | nur im Betreff | `subject:Mahnung` |
+| `has:attachment` | mit Anhang (`has:attachments` ebenso) | |
+| `is:` | `unread`, `read`, `flagged` (auch `starred`), `answered`, `draft` | `is:unread` |
+| `in:`, `mailbox:` | Ordner: Pfad (ohne Groß-/Kleinschreibung) samt Unterordnern, oder Rolle (`inbox`, `sent`, `drafts`, `trash`, `junk`, `archive`, `all`) | `in:inbox`, `mailbox:Archiv` |
+| `thread:` | Nachrichten eines Threads (ID aus `show`/`thread`) | `thread:4411` |
+| `tag:` | lokales Etikett (Tags ab S3) | `tag:wichtig` |
+| `after:`, `before:` | Datum (`YYYY-MM-DD`, auch `YYYY/MM/DD` oder `TT.MM.JJJJ`), Mitternacht in der Zeitzone des Rechners; `after:` einschließlich, `before:` ausschließlich | `after:2026-01-01 before:2026-02-01` |
+
+- Alle Teile sind mit **UND** verknüpft; `OR` ist ein gewöhnliches Wort (kein Operator in S1.7). Unbekannte `name:`-Präfixe bleiben Text (`Re:`, `15:00`). Fehler in Operatoren (`has:pdf`, `after:gestern`) sind Eingabefehler (Exit 2, `invalid_input`); ebenso eine leere Anfrage, mehr als 16 Suchbegriffe oder mehr als 1.024 Bytes.
+- **Sortierung:** mit Suchbegriffen nach Relevanz (BM25: Betreff vor Absender vor Text vor Anhängen, Wortstamm-Treffer vor reinen Teilwort-Treffern) mal Datumsanteil (neuere Nachrichten höher); nur mit Operatoren neueste zuerst. Einzelheiten: [datenmodell.md](datenmodell.md), „Volltextsuche".
+- Durchsucht werden Betreff, Absender, Empfänger, der bereinigte Text (versteckter Text ist nie im Index) und die Anhänge (Dateinamen und extrahierter Text). Auf dem Server gelöschte Nachrichten bleiben im Archiv und damit auffindbar (`deleted_remote: true`).
+- **Ausgabe ohne `--json`:** Tabelle `ID`, `DATE` (Ortszeit), `FROM`, `SUBJECT` (`[attachment]` bei Anhang), darunter `N of M results (by relevance|newest first)`, bei voller Seite `more: --cursor …`, und ein Hinweis, falls Nachrichten noch nicht im Index sind (`note: N messages are not in the search index yet; run sync to finish it`). Keine Treffer: `No messages found.`
+- **Mit `--json`: NDJSON, eine Zeile je Treffer** (`id`, `account`, `thread_id`, `date`, `from`, `subject`, `snippet`, `flags`, `has_attachments`, `deleted_remote`, `score`, `cursor`). Jeder Treffer trägt seinen Cursor: Mit `--cursor <cursor eines Treffers>` setzt dieselbe Anfrage genau dahinter fort. Mit `--explain` steht davor eine Zeile `{"explain":…,"total":…,"order":…,"index_pending":…,"next_cursor":…}`. Die Operation selbst (MCP, später REST) liefert ein Objekt mit `hits[]`, `total`, `next_cursor`, `order`, `index_pending` und optional `explain`.
+- `--limit` 1 bis 500 (Standard 20). Ein Cursor gilt nur für dieselbe Anfrage und dasselbe Konto (sonst Exit 2); er ist undurchsichtig.
+- `--explain` zeigt die Übersetzung: je Suchbegriff Feld, Art (`stem` Wortstamm, `prefix` Wortanfang, `phrase`, `substring` nur Teilwort) und die beiden FTS5-Ausdrücke (Wortindex und Trigram), die Filter, ignorierte Teile und die SQL-Anweisung mit Platzhaltern (`?`; der Suchtext steht nur in den Parametern).
+- Ins Audit kommen nur Zahl der Suchbegriffe, Art der Operatoren, `limit` und ob Cursor/Explain gesetzt waren; nie der Suchtext.
+
 ## 3. Maschinenlesbarkeit (`--json`)
 
 - **Ein Ergebnis = ein JSON-Objekt** auf stdout, einzeilig. Listen, die streambar sein sollen (Suche, Audit), liefern **NDJSON** (ein Objekt je Zeile) ab S1.
@@ -141,7 +173,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 - **Fehler** als JSON auf stderr: `{"error":{"code":"…","message":"…","hint":"…"}}`. Codes: `usage`, `invalid_input`, `denied`, `needs_approval`, `unknown_operation`, `exists`, `not_found`, `auth`, `connection`, `secret_store_unavailable`, `no_secret`, `schema_too_new`, `interrupted`, `sync_running`, `error`.
 - **Keine interaktiven Rückfragen im `--json`-Modus.** Fehlt eine nötige Bestätigung, endet der Aufruf mit Exit-Code 2 oder 4; er blockiert nie. Das ist wichtig für Agenten, die die CLI statt MCP nutzen.
 - **Keine Geheimnisse in der Ausgabe** (Test mit Kanarienwerten ab S1).
-- `--fields id,subject,date` und `--cursor` für große Listen sowie `--explain` (zeigt die geparste Suchanfrage) kommen mit S1.
+- `--cursor` und `--explain` gibt es seit S1.7 bei `search` (Abschnitt 2d); `--fields id,subject,date` kommt mit S1.8.
 
 ## 4. Exit-Codes
 

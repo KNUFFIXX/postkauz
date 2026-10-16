@@ -34,6 +34,9 @@ type binding struct {
 	// input baut die Eingabe; Geheimnisse gehen getrennt zurück (nie in Input).
 	input func(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error)
 	human func(w io.Writer, out any) error
+	// jsonOut ersetzt die JSON-Ausgabe (ein Objekt) für Listen, die als
+	// NDJSON gestreamt werden (search); nil = ein Objekt.
+	jsonOut func(w io.Writer, out any) error
 	// progress liefert optional einen Empfänger für Fortschrittsmeldungen.
 	progress func(cmd *cobra.Command, a *app) func(ops.Progress)
 }
@@ -52,6 +55,8 @@ var bindings = []binding{
 		human: renderMailboxes},
 	{op: "messages.get", path: []string{"show"}, use: "<id>", args: cobra.ExactArgs(1), flags: showFlags,
 		input: showInput, human: renderShow},
+	{op: "messages.search", path: []string{"search"}, use: `"<query>"`, args: cobra.MinimumNArgs(1), flags: searchFlags,
+		input: searchInput, human: renderSearch, jsonOut: searchJSON},
 	{op: "threads.get", path: []string{"thread"}, use: "<thread-id>", args: cobra.ExactArgs(1), flags: threadFlags,
 		input: threadInput, human: renderThread},
 	{op: "attachments.list", path: []string{"attach", "list"}, use: "<message-id>", args: cobra.ExactArgs(1),
@@ -121,6 +126,9 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 				}
 				a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)
 				if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+					if b.jsonOut != nil {
+						return b.jsonOut(a.stdout, res.Output)
+					}
 					return json.NewEncoder(a.stdout).Encode(res.Output)
 				}
 				return b.human(a.stdout, res.Output)

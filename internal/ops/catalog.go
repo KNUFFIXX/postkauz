@@ -15,6 +15,7 @@ type Deps struct {
 	Messages  MessageRepo
 	Blobs     BlobReader
 	Runner    SyncRunner
+	Search    SearchRepo
 	// Extractor extrahiert Anhangstext bei Bedarf (attachments.text);
 	// nil = nur gespeicherte Ergebnisse zeigen.
 	Extractor *extract.Extractor
@@ -33,6 +34,7 @@ func Catalog(d Deps) []Operation {
 		SyncRun(d.Accounts, d.Secrets, d.Runner),
 		MailboxesList(d.Accounts, d.Mailboxes),
 		MessagesGet(d.Accounts, d.Messages, d.Blobs),
+		MessagesSearch(d.Accounts, d.Search),
 		ThreadsGet(d.Messages),
 		AttachmentsList(d.Messages),
 		AttachmentsText(d.Messages, d.Blobs, d.Extractor),

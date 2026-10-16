@@ -61,7 +61,7 @@ func newMirrorEnv(t *testing.T) *mirrorEnv {
 	m := &mirrorEnv{accountsEnv: e, runner: &fakeRunner{}}
 	for _, op := range []Operation{SyncRun(e.st, e.sec, m.runner), MailboxesList(e.st, e.st),
 		MessagesGet(e.st, e.st, testBlobs), ThreadsGet(e.st), AttachmentsList(e.st),
-		AttachmentsText(e.st, testBlobs, extract.New(extract.Options{}))} {
+		AttachmentsText(e.st, testBlobs, extract.New(extract.Options{})), MessagesSearch(e.st, e.st)} {
 		if err := e.x.Registry.Register(op); err != nil {
 			t.Fatal(err)
 		}
