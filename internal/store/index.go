@@ -155,6 +155,20 @@ func (s *SQLite) IndexPending(ctx context.Context, accountID int64) (int, error)
 	return n, err
 }
 
+// ExtractPending zählt Anhänge mit ausstehender Textextraktion
+// (accountID 0 = alle Konten).
+func (s *SQLite) ExtractPending(ctx context.Context, accountID int64) (int, error) {
+	var n int
+	var err error
+	if accountID > 0 {
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM attachments a JOIN messages m ON m.id = a.message_id
+			WHERE a.extract_status = 'pending' AND m.account_id = ?`, accountID).Scan(&n)
+	} else {
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM attachments WHERE extract_status = 'pending'`).Scan(&n)
+	}
+	return n, err
+}
+
 // FTSVersion liefert meta.fts_version (0 = nicht gesetzt).
 func (s *SQLite) FTSVersion(ctx context.Context) (int, error) {
 	var v string

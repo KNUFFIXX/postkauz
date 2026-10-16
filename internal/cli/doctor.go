@@ -38,10 +38,12 @@ type DoctorReport struct {
 	PDFTool string `json:"pdftotext"`
 	// Suchindex (S1.7): wartende Nachrichten und Stand von Normalisierer
 	// und Stemmer (meta.fts_version).
-	IndexPending int             `json:"index_pending"`
-	FTSVersion   int             `json:"fts_version"`
-	Accounts     []DoctorAccount `json:"accounts"`
-	Warnings     []string        `json:"warnings"`
+	IndexPending int `json:"index_pending"`
+	FTSVersion   int `json:"fts_version"`
+	// ExtractPending: Anhänge, deren Text der nächste Sync noch extrahiert.
+	ExtractPending int             `json:"extract_pending"`
+	Accounts       []DoctorAccount `json:"accounts"`
+	Warnings       []string        `json:"warnings"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
@@ -144,6 +146,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	rep.IndexPending, _ = db.IndexPending(ctx, 0)
 	rep.FTSVersion, _ = db.FTSVersion(ctx)
+	rep.ExtractPending, _ = db.ExtractPending(ctx, 0)
 	list, err := db.ListAccounts(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
@@ -189,6 +192,7 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	}
 	if r.Database == "ok" {
 		fmt.Fprintf(w, "search:    %d messages waiting for the index (index version %d)\n", r.IndexPending, r.FTSVersion)
+		fmt.Fprintf(w, "extract:   %d attachments waiting for text extraction\n", r.ExtractPending)
 	}
 	if len(r.Accounts) > 0 {
 		fmt.Fprintln(w, "accounts:")

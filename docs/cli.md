@@ -29,7 +29,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 
 | Schnitt | Kommando | Operation |
 |---|---|---|
-| Gerüst | `version`, `doctor` | – (Hilfskommandos, keine Operationen) |
+| Gerüst | `version`, `doctor` (Pfade, Schlüsselbund, Schema, `pdftotext`; seit S1.7 wartende Nachrichten des Suchindex `index_pending` und `fts_version`, seit S1.9 wartende Anhang-Extraktionen `extract_pending`) | – (Hilfskommandos, keine Operationen) |
 | Gerüst | `accounts list` | `accounts.list` |
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b) | `sync.run` (Scope `mail:sync`, R1) |
