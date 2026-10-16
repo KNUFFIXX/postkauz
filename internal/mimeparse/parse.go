@@ -88,6 +88,13 @@ type Options struct {
 	// fehlendes oder unlesbares Date.
 	InternalDate time.Time
 	Limits       Limits
+	// OnAttachment wird je Anhang (auch Inline-Teile) mit dem dekodierten
+	// Inhalt aufgerufen, höchstens MaxPartBytes+1 Bytes (mehr heißt
+	// Truncated). a trägt die Metadaten ohne Größe und Hash; body gilt nur
+	// während des Aufrufs, Ungelesenes liest Parse selbst (für Größe und
+	// Hash). Ein Fehler wird als Problem notiert, Parse läuft weiter.
+	// Gebraucht für den Blob-Store und die Typprüfung (S1.6).
+	OnAttachment func(a Attachment, body io.Reader) error
 }
 
 // Address ist eine Absender- oder Empfängeradresse.
@@ -214,7 +221,7 @@ func Parse(r io.Reader, opts Options) (*Message, error) {
 	h := message.Header{Header: th}
 	parseEnvelope(m, &h, opts.InternalDate)
 
-	p := &walker{m: m, lim: lim}
+	p := &walker{m: m, lim: lim, onAttachment: opts.OnAttachment}
 	root, err := message.New(h, br)
 	if err != nil && root != nil {
 		m.problem("body: %v", err)
@@ -438,9 +445,10 @@ func parseEnvelope(m *Message, h *message.Header, internal time.Time) {
 
 // walker läuft durch den MIME-Baum.
 type walker struct {
-	m       *Message
-	lim     Limits
-	stopped bool
+	m            *Message
+	lim          Limits
+	stopped      bool
+	onAttachment func(Attachment, io.Reader) error
 }
 
 func partID(parent string, i int) string {
@@ -571,10 +579,17 @@ func (w *walker) attachment(e *message.Entity, mediaType, disp, filename, id str
 		ContentID:   strings.Trim(strings.TrimSpace(e.Header.Get("Content-Id")), "<>"),
 	}
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(e.Body, w.lim.MaxPartBytes+1))
-	if err != nil {
+	cnt := &countWriter{}
+	body := io.TeeReader(io.LimitReader(e.Body, w.lim.MaxPartBytes+1), io.MultiWriter(h, cnt))
+	if w.onAttachment != nil {
+		if err := w.onAttachment(a, body); err != nil {
+			w.m.problem("part %s: %v", id, err)
+		}
+	}
+	if _, err := io.Copy(io.Discard, body); err != nil {
 		w.m.problem("part %s: %v", id, err)
 	}
+	n := cnt.n
 	if n > w.lim.MaxPartBytes {
 		a.Truncated = true
 		a.Size = w.lim.MaxPartBytes
@@ -584,6 +599,13 @@ func (w *walker) attachment(e *message.Entity, mediaType, disp, filename, id str
 		a.SHA256 = hex.EncodeToString(h.Sum(nil))
 	}
 	w.m.Attachments = append(w.m.Attachments, a)
+}
+
+type countWriter struct{ n int64 }
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	return len(p), nil
 }
 
 // HeaderMessageID liest die Message-ID aus rohen Kopfzeilen (z. B. dem

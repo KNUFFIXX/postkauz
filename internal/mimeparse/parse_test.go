@@ -8,6 +8,7 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -168,6 +169,36 @@ func TestOversizedPartIsTruncated(t *testing.T) {
 	}
 	if !hasProblem(m, "not decoded further") {
 		t.Errorf("problems = %v", m.Problems)
+	}
+}
+
+// OnAttachment bekommt den dekodierten Inhalt jedes Anhangs, höchstens
+// MaxPartBytes+1 Bytes; Ungelesenes liest Parse für Größe und Hash selbst.
+func TestOnAttachmentGetsDecodedContent(t *testing.T) {
+	big := bytes.Repeat([]byte("A"), 10_000)
+	small := []byte("klein")
+	raw := multipartWith(b64Part("gross.bin", "application/octet-stream", big), b64Part("klein.txt", "text/plain", small))
+	got := map[string][]byte{}
+	m := parse(t, raw, Options{Limits: Limits{MaxPartBytes: 4096}, OnAttachment: func(a Attachment, r io.Reader) error {
+		if a.Filename == "klein.txt" {
+			b, err := io.ReadAll(r)
+			got[a.PartID] = b
+			return err
+		}
+		b := make([]byte, 10) // liest nur den Anfang
+		_, err := io.ReadFull(r, b)
+		got[a.PartID] = b
+		return err
+	}})
+	if !bytes.Equal(got["2"], small) || !bytes.Equal(got["1"], big[:10]) {
+		t.Fatalf("got = %q", got)
+	}
+	if a := m.Attachments[0]; !a.Truncated || a.Size != 4096 {
+		t.Errorf("big = %+v", a)
+	}
+	sum := sha256.Sum256(small)
+	if a := m.Attachments[1]; a.SHA256 != hex.EncodeToString(sum[:]) || a.Size != int64(len(small)) {
+		t.Errorf("small = %+v", a)
 	}
 }
 
