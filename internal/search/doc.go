@@ -56,7 +56,7 @@ func (s *Stemmer) Build(src Source) Doc {
 	var d Doc
 	for i, c := range cols {
 		d.Word[i] = s.StemText(c)
-		d.Tri[i] = FoldText(c)
+		d.Tri[i] = FoldTrigramText(c)
 	}
 	return d
 }

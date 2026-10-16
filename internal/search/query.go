@@ -274,8 +274,8 @@ func (s *Stemmer) compile(t *Term) bool {
 	}
 	// Teilwörter (Komposita) über den Trigram-Index, erst ab 3 Zeichen;
 	// kürzere Anfragen nur über den Wortindex mit Präfix.
-	if runeLen(folded) >= 3 {
-		t.Tri = ftsString(folded)
+	if tri := FoldTrigramText(t.Text); trigramLen(t.Text) >= 3 && runeLen(tri) >= 3 {
+		t.Tri = ftsString(tri)
 	}
 	if t.Word == "" && t.Tri == "" {
 		return false

@@ -274,6 +274,11 @@ func TestIndexFollowsChangesAndDeletes(t *testing.T) {
 func TestEnsureFTSVersionRebuilds(t *testing.T) {
 	f := newSearchFixture(t)
 	ctx := context.Background()
+	// Migration 0004 setzt Stand 1; der Index-Job hebt ihn vor dem
+	// Indizieren auf den des Programms (wie jobs.Runner).
+	if _, err := f.s.EnsureFTSVersion(ctx, search.FTSVersion); err != nil {
+		t.Fatal(err)
+	}
 	indexAll(t, f.s, f.acct)
 	if v, _ := f.s.FTSVersion(ctx); v != search.FTSVersion {
 		t.Fatalf("fts_version = %d", v)
@@ -414,7 +419,7 @@ func TestMigration0004QueuesExistingMessages(t *testing.T) {
 	if len(jobs) != 2 || jobs[0].Type != JobIndex || jobs[1].Type != JobExtract {
 		t.Fatalf("jobs = %+v", jobs)
 	}
-	if v, _ := s.FTSVersion(ctx); v != search.FTSVersion {
+	if v, _ := s.FTSVersion(ctx); v != 1 { // Stand der Migration; der Index-Job hebt ihn an
 		t.Fatalf("fts_version = %d", v)
 	}
 	if n := indexAll(t, s, 1); n != 2 {

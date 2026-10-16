@@ -62,7 +62,7 @@ func TestBuildDoc(t *testing.T) {
 	d := NewStemmer().Build(Source{Subject: "Rechnungen für das Erdgeschoß", From: "Bärbel Beispiel <baerbel@beispiel.example.org>",
 		To: json.RawMessage(`[{"name":"Postfach Test","address":"postfach@example.org"}]`), Body: "Bitte prüfen.",
 		Attachments: []string{"Zählerstände.pdf", "Text der Anlage"}})
-	if d.Word[ColSubject] != "rechnung fur das erdgeschoss" || d.Tri[ColSubject] != "rechnungen fur das erdgeschoss" {
+	if d.Word[ColSubject] != "rechnung fur das erdgeschoss" || d.Tri[ColSubject] != "rechnungen fuer das erdgeschoss" {
 		t.Errorf("subject = %q / %q", d.Word[ColSubject], d.Tri[ColSubject])
 	}
 	if !strings.Contains(d.Tri[ColSender], "barbel@beispiel.example.org") || !strings.Contains(d.Word[ColRecipients], "postfach") {
@@ -191,5 +191,40 @@ func TestCursorRoundTrip(t *testing.T) {
 	}
 	if _, err := DecodeCursor("!!", fp); err == nil {
 		t.Error("garbage cursor accepted")
+	}
+}
+
+// Teilwortsuche (Trigram): Die Regel ue→u hängt vom Zusammenhang ab und
+// gilt dort nicht; Teilwörter mitten aus „Steuer" oder „Quelle" treffen,
+// ü und ue finden sich weiter gegenseitig.
+func TestTrigramSubstringsWithUE(t *testing.T) {
+	st := NewStemmer()
+	cases := []struct {
+		text, query string
+		want        bool
+	}{
+		{"Steuerbescheid 2025", "uer", true},
+		{"Steuerbescheid 2025", "steuerb", true},
+		{"Quelle: Hausverwaltung", "uelle", true},
+		{"Bauernhof", "auer", true},
+		{"neue Zähler", "eue", true},
+		{"Prüfung der Abrechnung", "pruef", true},
+		{"Prüfung der Abrechnung", "prüf", true},
+		{"Pruefung der Abrechnung", "prüf", true},
+		{"Pruefung der Abrechnung", "uefung", true},
+		{"Grüße", "gruesse", true},
+		{"Mädchen", "maed", true},
+		{"Steuer", "stur", false},
+	}
+	for _, c := range cases {
+		d := st.Build(Source{Subject: c.text})
+		q, err := Parse(c.query, time.UTC)
+		if err != nil || len(q.Terms) != 1 || q.Terms[0].Tri == "" {
+			t.Fatalf("%q: %+v %v", c.query, q, err)
+		}
+		needle := strings.Trim(q.Terms[0].Tri, `"`)
+		if got := strings.Contains(d.Tri[ColSubject], needle); got != c.want {
+			t.Errorf("%q in %q (index %q, query %q) = %v, want %v", c.query, c.text, d.Tri[ColSubject], needle, got, c.want)
+		}
 	}
 }

@@ -21,7 +21,10 @@ import (
 // FTSVersion ist der Stand von Normalisierer, Stemmer und Spaltenaufbau.
 // Ändert sich einer davon, wird die Zahl erhöht; der Index-Job baut den
 // Index dann neu auf (meta.fts_version).
-const FTSVersion = 1
+//
+//	1  S1.7
+//	2  Trigram-Index ohne die kontextabhängige Regel ue→u (FoldTrigram)
+const FTSVersion = 2
 
 // Fold normalisiert Text für Index und Anfrage:
 //
@@ -36,7 +39,19 @@ const FTSVersion = 1
 // So ergeben „prüfen", „pruefen" und „prufen" dasselbe Wort („prufen"),
 // ebenso „Erdgeschoß" und „Erdgeschoss". Steuerzeichen werden zu
 // Leerzeichen. Die Funktion ist deterministisch und zustandslos.
-func Fold(s string) string {
+func Fold(s string) string { return fold(s, true, false) }
+
+// FoldTrigram faltet für den Trigram-Index (Teilwortsuche) wie Fold, aber
+// ohne die Regel ue→u: Sie hängt vom Zusammenhang ab (Steuer, Quelle
+// behalten „ue"), ein Teilwort wie „uer" oder „uelle" sähe ohne diesen
+// Zusammenhang anders aus als im Index und fände nichts. Damit „prüf" und
+// „pruef" sich trotzdem gegenseitig finden, wird ü hier zu „ue" (statt zu
+// u). ä/ö/ß wie bei Fold (ae→a und oe→o gelten ohne Ausnahme).
+func FoldTrigram(s string) string { return fold(s, false, true) }
+
+// fold: ueRule wendet ue→u an (Fold), expandU macht ü zu „ue"
+// (FoldTrigram); ohne beides bleibt ue und ü wird u (nur für Längen).
+func fold(s string, ueRule, expandU bool) string {
 	if !isASCII(s) {
 		s = norm.NFKD.String(s)
 	}
@@ -45,6 +60,11 @@ func Fold(s string) string {
 	// p1, p2: die beiden zuletzt gelesenen (gefalteten) Zeichen der Eingabe.
 	var p1, p2 rune
 	for _, r := range s {
+		if expandU && r == '\u0308' && p1 == 'u' {
+			b.WriteByte('e') // ü → ue
+			p2, p1 = p1, 'e'
+			continue
+		}
 		if unicode.Is(unicode.Mn, r) {
 			continue // diakritisches Zeichen nach der Zerlegung
 		}
@@ -59,7 +79,7 @@ func Fold(s string) string {
 		case r == 'e' && (p1 == 'a' || p1 == 'o'):
 			p2, p1 = p1, r
 			continue // ae → a, oe → o
-		case r == 'e' && p1 == 'u' && p2 != 'q' && !isVowel(p2):
+		case r == 'e' && p1 == 'u' && ueRule && p2 != 'q' && !isVowel(p2):
 			p2, p1 = p1, r
 			continue // ue → u (nicht nach q, nicht u zwischen Vokalen)
 		}
@@ -70,11 +90,20 @@ func Fold(s string) string {
 }
 
 // FoldText faltet wie Fold und fasst Leerraum zu je einem Leerzeichen
-// zusammen (ohne Rand). Grundlage des Trigram-Index und der
-// Teilwortsuche: Ein Teilwort aus mehreren Wörtern („Erdgeschoss links")
-// findet den Text unabhängig von Zeilenumbrüchen und doppelten Leerzeichen.
-func FoldText(s string) string {
-	f := Fold(s)
+// zusammen (ohne Rand): Ein Teilwort aus mehreren Wörtern („Erdgeschoss
+// links") findet den Text unabhängig von Zeilenumbrüchen und doppelten
+// Leerzeichen.
+func FoldText(s string) string { return collapseSpace(Fold(s)) }
+
+// FoldTrigramText faltet wie FoldTrigram und fasst Leerraum zusammen wie
+// FoldText. Grundlage des Trigram-Index und der Teilwortsuche.
+func FoldTrigramText(s string) string { return collapseSpace(FoldTrigram(s)) }
+
+// trigramLen ist die Länge eines Suchbegriffs für die Grenze der
+// Teilwortsuche (3 Zeichen): wie getippt, ohne Umschreibung von ue und ü.
+func trigramLen(s string) int { return runeLen(collapseSpace(fold(s, false, false))) }
+
+func collapseSpace(f string) string {
 	var b strings.Builder
 	b.Grow(len(f))
 	space := false

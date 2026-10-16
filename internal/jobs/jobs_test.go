@@ -140,7 +140,12 @@ func TestResumeAfterCrashedWorker(t *testing.T) {
 	ctx := context.Background()
 	r := f.runner()
 	r.Extractor = nil
-	// Ein „abgestürzter" Arbeiter hat den index-Job und 7 Nachrichten erledigt.
+	// Ein „abgestürzter" Arbeiter hat den Indexstand geprüft (wie RunAccount
+	// vor dem ersten Schritt), den index-Job übernommen und 7 Nachrichten
+	// erledigt.
+	if _, err := f.st.EnsureFTSVersion(ctx, search.FTSVersion); err != nil {
+		t.Fatal(err)
+	}
 	j, ok, err := f.st.ClaimJob(ctx, store.JobIndex, f.acct, "crashed", time.Hour, false)
 	if err != nil || !ok {
 		t.Fatal(err)
