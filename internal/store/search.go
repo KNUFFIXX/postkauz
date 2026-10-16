@@ -200,10 +200,13 @@ func filterSQL(f search.Filter) (string, []any) {
 	case "mailbox":
 		// Pfad (ohne Groß-/Kleinschreibung), Unterordner (Trenner / oder .)
 		// oder Rolle (inbox, sent, archive …).
+		// Importierte Ordner (S1.10) zählen genauso; ihre Rolle heißt
+		// "import" (in:import = alles Importierte).
 		esc := likeEscape(f.Value)
 		return `m.id IN (SELECT mm.message_id FROM mailboxes b JOIN message_mailboxes mm ON mm.mailbox_id = b.id
-			WHERE b.path = ? COLLATE NOCASE OR b.path LIKE ? ESCAPE '\' OR b.path LIKE ? ESCAPE '\' OR b.role = ?)`,
-			[]any{f.Value, esc + "/%", esc + ".%", strings.ToLower(f.Value)}
+			WHERE b.path = ? COLLATE NOCASE OR b.path LIKE ? ESCAPE '\' OR b.path LIKE ? ESCAPE '\' OR b.role = ?
+			UNION ` + importFolderFilter + `)`,
+			[]any{f.Value, esc + "/%", esc + ".%", strings.ToLower(f.Value), f.Value, esc + "/%", esc + ".%", strings.ToLower(f.Value)}
 	case "thread":
 		return `m.thread_id = ?`, []any{f.ID}
 	case "tag":

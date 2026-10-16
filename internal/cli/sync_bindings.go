@@ -253,7 +253,14 @@ func renderShow(w io.Writer, out any) error {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
 	var where []string
+	imported, onServer := false, false
 	for _, l := range o.Mailboxes {
+		if l.Role == "import" {
+			where = append(where, fmt.Sprintf("%s (imported)", termLine(l.Mailbox)))
+			imported = true
+			continue
+		}
+		onServer = true
 		where = append(where, fmt.Sprintf("%s (uid %d)", termLine(l.Mailbox), l.UID))
 	}
 	yn := map[bool]string{true: "yes", false: "no"}
@@ -275,7 +282,11 @@ func renderShow(w io.Writer, out any) error {
 		fmt.Fprintf(tw, "keywords:\t%s\n", strings.Join(termLines(o.Keywords), ", "))
 	}
 	fmt.Fprintf(tw, "attachments:\t%s\n", yn[o.HasAttachments])
-	fmt.Fprintf(tw, "deleted on server:\t%s\n", yn[o.DeletedRemote])
+	deleted := yn[o.DeletedRemote]
+	if o.DeletedRemote && imported && !onServer {
+		deleted = "not on the server (imported only)"
+	}
+	fmt.Fprintf(tw, "deleted on server:\t%s\n", deleted)
 	if o.ThreadID != 0 {
 		fmt.Fprintf(tw, "thread:\t%d\n", o.ThreadID)
 	}

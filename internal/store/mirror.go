@@ -425,33 +425,8 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		} else if ok {
 			continue // schon gespiegelt (wiederholtes Fenster)
 		}
-		if n.BlobSHA256 != "" {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO blobs(sha256, size, compressed, created_at) VALUES (?,?,?,?)
-				ON CONFLICT(sha256) DO NOTHING`, n.BlobSHA256, n.BlobSize, b2i(n.BlobCompressed), now); err != nil {
-				return res, fmt.Errorf("store: blob row: %w", err)
-			}
-		}
-		refs, _ := json.Marshal(n.References)
-		if n.References == nil {
-			refs = []byte("[]")
-		}
-		var mid int64
-		err := tx.QueryRowContext(ctx, `INSERT INTO messages(account_id, message_id_header, subject, from_addr, to_addrs, cc_addrs,
-			reply_to, date_header, internal_date, size, flag_seen, flag_flagged, flag_answered, flag_draft, keywords,
-			has_attachments, snippet, blob_sha256, in_reply_to, refs, list_id, auth_results, content_hash, created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-			b.AccountID, nullStr(n.MessageID), n.Subject, n.From, jsonOr(n.To, "[]"), jsonOr(n.Cc, "[]"),
-			nullStr(n.ReplyTo), nullTime(n.DateHeader), nullTime(n.InternalDate), n.Size,
-			b2i(n.Link.Seen), b2i(n.Link.Flagged), b2i(n.Link.Answered), b2i(n.Link.Draft), keywordsJSON(n.Link.Keywords),
-			b2i(n.HasAttachments), n.Snippet, nullStr(n.BlobSHA256), nullStr(n.InReplyTo), string(refs),
-			nullStr(n.ListID), nullStr(n.AuthResults), nullStr(n.ContentHash), now).Scan(&mid)
+		mid, err := insertMessage(ctx, tx, b.AccountID, n, now, nil)
 		if err != nil {
-			return res, fmt.Errorf("store: insert message: %w", err)
-		}
-		if err := upsertBody(ctx, tx, mid, n); err != nil {
-			return res, err
-		}
-		if err := upsertAttachments(ctx, tx, mid, n.Attachments, now, false); err != nil {
 			return res, err
 		}
 		if err := insertLink(mid, n.Link); err != nil {
@@ -508,6 +483,44 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		}
 	}
 	return res, tx.Commit()
+}
+
+// insertMessage legt eine neue Nachricht samt Blob-Zeile, Text und
+// Anhängen an (ohne Ordnerzuordnung und Thread; die setzt der Aufrufer in
+// derselben Transaktion). Die Flags kommen aus n.Link. deletedAt setzt
+// deleted_remote_at (nil = vom Server gemeldet; der Import setzt den
+// Zeitpunkt, weil der Server die Nachricht nicht führt).
+func insertMessage(ctx context.Context, tx *sql.Tx, accountID int64, n NewMessage, now int64, deletedAt any) (int64, error) {
+	if n.BlobSHA256 != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blobs(sha256, size, compressed, created_at) VALUES (?,?,?,?)
+			ON CONFLICT(sha256) DO NOTHING`, n.BlobSHA256, n.BlobSize, b2i(n.BlobCompressed), now); err != nil {
+			return 0, fmt.Errorf("store: blob row: %w", err)
+		}
+	}
+	refs, _ := json.Marshal(n.References)
+	if n.References == nil {
+		refs = []byte("[]")
+	}
+	var mid int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO messages(account_id, message_id_header, subject, from_addr, to_addrs, cc_addrs,
+		reply_to, date_header, internal_date, size, flag_seen, flag_flagged, flag_answered, flag_draft, keywords,
+		has_attachments, snippet, blob_sha256, in_reply_to, refs, list_id, auth_results, content_hash, deleted_remote_at, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		accountID, nullStr(n.MessageID), n.Subject, n.From, jsonOr(n.To, "[]"), jsonOr(n.Cc, "[]"),
+		nullStr(n.ReplyTo), nullTime(n.DateHeader), nullTime(n.InternalDate), n.Size,
+		b2i(n.Link.Seen), b2i(n.Link.Flagged), b2i(n.Link.Answered), b2i(n.Link.Draft), keywordsJSON(n.Link.Keywords),
+		b2i(n.HasAttachments), n.Snippet, nullStr(n.BlobSHA256), nullStr(n.InReplyTo), string(refs),
+		nullStr(n.ListID), nullStr(n.AuthResults), nullStr(n.ContentHash), deletedAt, now).Scan(&mid)
+	if err != nil {
+		return 0, fmt.Errorf("store: insert message: %w", err)
+	}
+	if err := upsertBody(ctx, tx, mid, n); err != nil {
+		return 0, err
+	}
+	if err := upsertAttachments(ctx, tx, mid, n.Attachments, now, false); err != nil {
+		return 0, err
+	}
+	return mid, nil
 }
 
 func nullModSeq(v uint64) any {

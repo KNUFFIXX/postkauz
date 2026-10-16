@@ -12,7 +12,8 @@ import (
 // ErrMessageNotFound: Nachricht unbekannt.
 var ErrMessageNotFound = errors.New("store: message not found")
 
-// MessageLocation ist eine Ordnerkopie einer Nachricht.
+// MessageLocation ist eine Ordnerkopie einer Nachricht (Server) oder ein
+// importierter Ordner (Role "import", UID 0).
 type MessageLocation struct {
 	Mailbox string
 	Role    string
@@ -84,8 +85,13 @@ func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 	if del.Valid {
 		m.DeletedRemoteAt = time.UnixMilli(del.Int64).UTC()
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT b.path, b.role, mm.uid FROM message_mailboxes mm
-		JOIN mailboxes b ON b.id = mm.mailbox_id WHERE mm.message_id = ? ORDER BY b.path`, id)
+	// Ordner des Servers, danach importierte Ordner (Rolle "import", ohne
+	// UID; S1.10).
+	rows, err := s.db.QueryContext(ctx, `SELECT path, role, uid FROM (
+		SELECT b.path AS path, b.role AS role, mm.uid AS uid, 0 AS o FROM message_mailboxes mm
+		JOIN mailboxes b ON b.id = mm.mailbox_id WHERE mm.message_id = ?
+		UNION ALL SELECT f.path, 'import', 0, 1 FROM message_import_folders mf
+		JOIN import_folders f ON f.id = mf.folder_id WHERE mf.message_id = ?) ORDER BY o, path`, id, id)
 	if err != nil {
 		return m, err
 	}
