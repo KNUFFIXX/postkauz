@@ -183,7 +183,8 @@ func TestShowFull(t *testing.T) {
 	_, out, _ = run(t, "search", "Heizung", "--json", "--fields", "id,subject")
 	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
 		var h map[string]any
-		if json.Unmarshal([]byte(l), &h) != nil || len(h) != 2 || h["id"] == nil || h["subject"] == nil {
+		// Die gewählten Felder und immer die Kennzeichnung der Hülle (S1.11).
+		if json.Unmarshal([]byte(l), &h) != nil || len(h) != 4 || h["id"] == nil || h["subject"] == nil || h["untrusted"] != true || h["source"] != "email" {
 			t.Fatalf("--fields: %s", l)
 		}
 	}

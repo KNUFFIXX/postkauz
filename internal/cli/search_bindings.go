@@ -76,6 +76,14 @@ func hitFields(s string) ([]string, error) {
 	return out, nil
 }
 
+// untrustedHit ist eine NDJSON-Zeile von search --json.
+// Die Felder des Treffers stehen vorn (die Zeile beginnt weiter mit "id").
+type untrustedHit struct {
+	ops.SearchHitOutput
+	Untrusted bool   `json:"untrusted"`
+	Source    string `json:"source"`
+}
+
 // searchJSON: NDJSON, eine Zeile je Treffer (jeder mit seinem Cursor; mit
 // --fields nur die genannten Felder). Mit --explain steht davor eine Zeile
 // {"explain":…, "total":…, …}.
@@ -103,9 +111,13 @@ func searchJSON(cmd *cobra.Command, w io.Writer, out any) error {
 		}
 	}
 	for _, h := range o.Hits {
-		var v any = h
+		// Jede Zeile trägt die Kennzeichnung der Untrusted-Hülle (Betreff,
+		// Absender und Snippet stammen aus Mails); den Hinweis notice gibt es
+		// nur in der Ausgabe ohne --json bzw. über MCP. Kein Kopf als eigene
+		// Zeile: `| head -n 3` liefert weiter drei Treffer.
+		var v any = untrustedHit{SearchHitOutput: h, Untrusted: o.Untrusted, Source: o.Source}
 		if len(fields) > 0 {
-			b, err := json.Marshal(h)
+			b, err := json.Marshal(v)
 			if err != nil {
 				return err
 			}
@@ -113,7 +125,7 @@ func searchJSON(cmd *cobra.Command, w io.Writer, out any) error {
 			if err := json.Unmarshal(b, &all); err != nil {
 				return err
 			}
-			sel := map[string]json.RawMessage{}
+			sel := map[string]json.RawMessage{"untrusted": all["untrusted"], "source": all["source"]}
 			for _, f := range fields {
 				if raw, ok := all[f]; ok {
 					sel[f] = raw
