@@ -283,6 +283,41 @@ func TestMCPSearchOnlyKey(t *testing.T) {
 	}
 }
 
+// Ein Widerruf wirkt während der laufenden Sitzung: Der nächste Aufruf
+// nach der Prüffrist scheitert mit klarem Grund (denied, key_revoked).
+func TestMCPKeyRevokedDuringSession(t *testing.T) {
+	setupEnv(t)
+	key := newKey(t, "--name", "agent", "--role", "reader")
+	cs, _ := mcpSession(t, key)
+	if v, res := callTool(t, cs, "mail_get_policy", nil); res.IsError {
+		t.Fatalf("before revoke: %v", v)
+	}
+	if code, _, errs := run(t, "key", "revoke", "agent"); code != ExitOK {
+		t.Fatalf("revoke: %d %s", code, errs)
+	}
+	deadline := time.Now().Add(ops.DefaultKeyCheckTTL + 3*time.Second)
+	for {
+		v, res := callTool(t, cs, "mail_list_accounts", nil)
+		if res.IsError {
+			if v["status"] != "denied" || v["code"] != "key_revoked" || !strings.Contains(fmt.Sprint(v["message"]), "revoked") {
+				t.Fatalf("error = %v", v)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("revoked key still works")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := cs.ReadResource(context.Background(), &sdk.ReadResourceParams{URI: "mail://accounts"}); err == nil {
+		t.Fatal("resource readable with a revoked key")
+	}
+	_, out, _ := run(t, "audit", "--json", "--result", "denied")
+	if !strings.Contains(out, "key_revoked") {
+		t.Fatalf("audit lacks key_revoked: %s", out)
+	}
+}
+
 // Ohne gültigen Schlüssel startet kein Server (Exit 3, Grund auf stderr,
 // kein Protokoll auf stdout); --key ist für mcp verboten.
 func TestMCPRequiresValidKey(t *testing.T) {

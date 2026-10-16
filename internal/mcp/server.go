@@ -186,6 +186,12 @@ func classify(err error) ToolError {
 		return ToolError{Status: st, Reason: pe.Decision.Reason, AuditID: pe.AuditID}
 	case errors.As(err, &ie):
 		return ToolError{Status: "error", Code: "invalid_input", Message: ie.Msg}
+	case errors.Is(err, ops.ErrKeyRevoked):
+		return ToolError{Status: "denied", Code: "key_revoked", Message: "the API key of this server was revoked; ask the user for a new key"}
+	case errors.Is(err, ops.ErrKeyExpired):
+		return ToolError{Status: "denied", Code: "key_expired", Message: "the API key of this server has expired; ask the user for a new key"}
+	case errors.Is(err, ops.ErrKeyInvalid):
+		return ToolError{Status: "denied", Code: "key_invalid", Message: "the API key of this server is no longer known"}
 	case errors.Is(err, store.ErrMessageNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "message not found; use an id from mail_search"}
 	case errors.Is(err, store.ErrThreadNotFound):

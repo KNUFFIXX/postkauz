@@ -112,7 +112,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter()}
+	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st}}
 	return a.exec, nil
 }
 

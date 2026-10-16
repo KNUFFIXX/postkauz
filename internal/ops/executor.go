@@ -25,6 +25,10 @@ import (
 type Executor struct {
 	Registry *Registry
 	Audit    audit.Writer
+	// Keys prüft bei jedem Aufruf mit einem API-Schlüssel, ob er noch gilt
+	// (Widerruf, Ablauf); nil = keine Prüfung (Tests, Werkzeuge ohne
+	// Schlüssel).
+	Keys *KeyGuard
 	// Now ist für Tests ersetzbar.
 	Now func() time.Time
 }
@@ -128,6 +132,21 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		Targets:        targets,
 		Reason:         dec.Reason,
 		DryRun:         dec.DryRun,
+	}
+
+	// Ein Schlüssel kann während einer langen Sitzung widerrufen werden
+	// oder ablaufen: vor jedem Aufruf prüfen (mit kurzem Zwischenspeicher).
+	if x.Keys != nil {
+		if kerr := x.Keys.Check(ctx, req.Key, start); kerr != nil {
+			ev.Result, ev.Reason = audit.ResultDenied, keyReason(kerr)
+			if ev.Reason == "key_check_failed" {
+				ev.Result = audit.ResultError
+			}
+			if _, err := x.appendAudit(ctx, ev); err != nil {
+				return Result{}, fmt.Errorf("ops: audit: %w", err)
+			}
+			return Result{}, kerr
+		}
 	}
 
 	if !dec.Allowed() {
