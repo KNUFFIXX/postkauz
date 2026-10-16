@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha, slice S1.6.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped) and attachments (type check by magic bytes, text extraction in a subprocess) work. There is no search and no MCP server yet. The name "PostKauz" is a working title and will still change.
+**Status: pre-alpha, slice S1.7.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess) and German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging) work. There is no MCP server yet. The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -50,14 +50,29 @@ make build                       # builds bin/postkauz (and the alias bin/pk)
 ./bin/postkauz thread --message 42 --strip-quotes
 ./bin/postkauz attach list 42    # detected type, type mismatch, executable, text extraction status
 ./bin/postkauz attach text 7
+./bin/postkauz search "Rechnung" -a demo --limit 5          # finds "Rechnungen", "Abrechnung"; "prüfen" = "pruefen"
+./bin/postkauz search 'from:anna has:attachment after:2026-01-01' --json   # NDJSON, one line per hit
+./bin/postkauz search '"Erdgeschoss links" -Keller' --explain               # shows how the query was translated
 ```
 
-Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and use `account add --password-from-env`. Configuration and paths: `docs/cli.md`, section 5. Text from PDF attachments needs `pdftotext` (Poppler) on the `PATH`; without it PDFs are skipped with a reason. Everything else is built in.
+Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and use `account add --password-from-env`. Configuration and paths: `docs/cli.md`, section 5; query language: `docs/cli.md`, section 2d. `sync` also extracts attachment text and builds the search index; `search` reads the local mirror only.
+
+### Optional: text from PDF attachments
+
+PostKauz has no PDF parser of its own (attack surface). If `pdftotext` from Poppler is on the `PATH`, it is used in a subprocess with time and size limits; without it PDF attachments are skipped with a reason and their text is not searchable (file names still are). `postkauz doctor` shows whether it was found (line `pdftotext`). Everything else is built in.
+
+| System | Install |
+|---|---|
+| Debian, Ubuntu | `sudo apt install poppler-utils` |
+| Fedora | `sudo dnf install poppler-utils` |
+| macOS (Homebrew) | `brew install poppler` |
+| Windows | install Poppler for Windows (for example `scoop install poppler`) and make sure its `bin` folder with `pdftotext.exe` is on the `PATH` |
+
+After installing, the next `sync` also extracts the PDFs that were skipped because the tool was missing, and adds their text to the search index.
 
 Planned (not implemented yet):
 
 ```sh
-postkauz search "from:anna has:attachment" --json
 postkauz mcp        # stdio MCP server for Claude Code and other clients
 ```
 
@@ -98,6 +113,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Pre-Alpha, Phase 0 (Gerüst, Architektur, Entscheidungen; Spike bestanden mit Auflagen, siehe `spike/s0/REPORT.md`). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: Pre-Alpha, Schnitt S1.7 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern; noch ohne MCP). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.

@@ -35,6 +35,7 @@ type Store interface {
 	FailJob(ctx context.Context, id int64, owner, errText string, maxAttempts int, retryAt time.Time) error
 	PendingExtractions(ctx context.Context, accountID int64, limit int) ([]store.ExtractItem, error)
 	SetExtraction(ctx context.Context, id int64, status, text, errText string, hidden bool) error
+	RequeueSkipped(ctx context.Context, accountID int64, reason string) (int, error)
 	IndexBatch(ctx context.Context, accountID int64, limit int, build func(search.Source) search.Doc) (int, error)
 	IndexPending(ctx context.Context, accountID int64) (int, error)
 }
@@ -138,6 +139,14 @@ func (r *Runner) RunAccount(ctx context.Context, accountID int64) (Report, error
 	}
 	var err error
 	if r.Extractor != nil {
+		// pdftotext inzwischen installiert: früher übersprungene PDFs nachholen.
+		if r.Extractor.PDFTool() != "" {
+			if n, err := r.Store.RequeueSkipped(ctx, accountID, extract.ReasonNoPDFTool); err != nil {
+				return rep, err
+			} else if n > 0 {
+				r.log().Info("pdftotext found; PDF attachments skipped earlier are extracted now", "count", n)
+			}
+		}
 		if rep.Extracted, err = r.runExtract(ctx, accountID); err != nil {
 			return rep, fmt.Errorf("extract: %w", err)
 		}

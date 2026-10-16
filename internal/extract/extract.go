@@ -132,6 +132,10 @@ type Result struct {
 	Hidden bool
 }
 
+// ReasonNoPDFTool ist der Grund übersprungener PDFs ohne pdftotext; ist
+// das Werkzeug später da, reiht der extract-Job sie wieder ein.
+const ReasonNoPDFTool = "pdftotext is not installed"
+
 // Extractor führt Extraktionen aus.
 type Extractor struct {
 	opts Options
@@ -175,7 +179,7 @@ func (x *Extractor) Extract(ctx context.Context, kind Kind, r io.Reader, size in
 	case KindPDF:
 		tool := x.PDFTool()
 		if tool == "" {
-			return Result{Status: StatusSkipped, Error: "pdftotext is not installed"}
+			return Result{Status: StatusSkipped, Error: ReasonNoPDFTool}
 		}
 		res, err = x.run(ctx, tool, x.opts.PDFArgs, nil, in)
 	case KindDOCX:

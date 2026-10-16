@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -19,21 +20,28 @@ import (
 // DoctorReport ist die Ausgabe von `doctor`. Sie enthält Pfade, Zustände und
 // Verweise, nie Geheimnisse.
 type DoctorReport struct {
-	Version        string          `json:"version"`
-	ConfigPath     string          `json:"config_path"`
-	ConfigExists   bool            `json:"config_exists"`
-	ConfigError    string          `json:"config_error,omitempty"`
-	DataDir        string          `json:"data_dir"`
-	DatabasePath   string          `json:"database_path"`
-	LogPath        string          `json:"log_path"`
-	Database       string          `json:"database"` // ok | missing | needs_migration | too_new | error
-	SchemaVersion  int             `json:"schema_version"`
-	SchemaKnown    int             `json:"schema_known"`
-	SecretsBackend string          `json:"secrets_backend"` // Konfiguration: auto | keyring | insecure-file
-	Keyring        string          `json:"keyring"`         // available | unavailable | insecure
-	KeyringDetail  string          `json:"keyring_detail,omitempty"`
-	Accounts       []DoctorAccount `json:"accounts"`
-	Warnings       []string        `json:"warnings"`
+	Version        string `json:"version"`
+	ConfigPath     string `json:"config_path"`
+	ConfigExists   bool   `json:"config_exists"`
+	ConfigError    string `json:"config_error,omitempty"`
+	DataDir        string `json:"data_dir"`
+	DatabasePath   string `json:"database_path"`
+	LogPath        string `json:"log_path"`
+	Database       string `json:"database"` // ok | missing | needs_migration | too_new | error
+	SchemaVersion  int    `json:"schema_version"`
+	SchemaKnown    int    `json:"schema_known"`
+	SecretsBackend string `json:"secrets_backend"` // Konfiguration: auto | keyring | insecure-file
+	Keyring        string `json:"keyring"`         // available | unavailable | insecure
+	KeyringDetail  string `json:"keyring_detail,omitempty"`
+	// PDFTool ist der Pfad zu pdftotext ("" = nicht gefunden; PDF-Anhänge
+	// bleiben dann ohne Text). Optional, siehe README.
+	PDFTool string `json:"pdftotext"`
+	// Suchindex (S1.7): wartende Nachrichten und Stand von Normalisierer
+	// und Stemmer (meta.fts_version).
+	IndexPending int             `json:"index_pending"`
+	FTSVersion   int             `json:"fts_version"`
+	Accounts     []DoctorAccount `json:"accounts"`
+	Warnings     []string        `json:"warnings"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
@@ -80,6 +88,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		rep.Database, rep.Keyring = "not_checked", "not_checked"
 		return rep
 	}
+	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
 	}
@@ -133,6 +142,8 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	default:
 		rep.Database = "ok"
 	}
+	rep.IndexPending, _ = db.IndexPending(ctx, 0)
+	rep.FTSVersion, _ = db.FTSVersion(ctx)
 	list, err := db.ListAccounts(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
@@ -171,6 +182,14 @@ func printDoctor(w io.Writer, r DoctorReport) {
 		kr += " (" + r.KeyringDetail + ")"
 	}
 	fmt.Fprintf(w, "keyring:   %s [secrets.backend = %s]\n", kr, r.SecretsBackend)
+	if r.PDFTool != "" {
+		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)
+	} else {
+		fmt.Fprintln(w, "pdftotext: not found (optional; without it PDF attachments get no text, see README)")
+	}
+	if r.Database == "ok" {
+		fmt.Fprintf(w, "search:    %d messages waiting for the index (index version %d)\n", r.IndexPending, r.FTSVersion)
+	}
 	if len(r.Accounts) > 0 {
 		fmt.Fprintln(w, "accounts:")
 		for _, a := range r.Accounts {

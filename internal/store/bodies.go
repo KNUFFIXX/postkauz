@@ -192,6 +192,20 @@ func (s *SQLite) PendingExtractions(ctx context.Context, accountID int64, limit 
 	return out, rows.Err()
 }
 
+// RequeueSkipped setzt übersprungene Anhänge des Kontos mit genau diesem
+// Grund wieder auf pending (z. B. „pdftotext is not installed", nachdem
+// das Werkzeug installiert wurde); der Trigger legt den extract-Job an.
+func (s *SQLite) RequeueSkipped(ctx context.Context, accountID int64, reason string) (int, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE attachments SET extract_status = 'pending', extract_error = NULL
+		WHERE extract_status = 'skipped' AND extract_error = ?
+		  AND message_id IN (SELECT id FROM messages WHERE account_id = ?)`, reason, accountID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // SetExtraction speichert das Ergebnis einer Extraktion.
 func (s *SQLite) SetExtraction(ctx context.Context, id int64, status, text, errText string, hidden bool) error {
 	var t any

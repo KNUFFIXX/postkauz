@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -179,5 +180,44 @@ func TestCancelReleasesJob(t *testing.T) {
 	r2.Extractor = nil
 	if rep, err := r2.RunAccount(context.Background(), f.acct); err != nil || rep.Indexed != 2 {
 		t.Fatalf("resume = %+v %v", rep, err)
+	}
+}
+
+// PDFs, die ohne pdftotext übersprungen wurden, kommen wieder dran, sobald
+// das Werkzeug gefunden wird.
+func TestSkippedPDFsAreRequeuedWhenToolAppears(t *testing.T) {
+	f := newFixture(t, 2)
+	ctx := context.Background()
+	if _, err := f.runner().RunAccount(ctx, f.acct); err != nil {
+		t.Fatal(err)
+	}
+	db := f.st.DBForTest()
+	if _, err := db.Exec(`UPDATE attachments SET extract_status = 'skipped', extract_error = ?, extracted_text = NULL,
+		content_type = 'application/pdf' WHERE id = (SELECT min(id) FROM attachments)`, extract.ReasonNoPDFTool); err != nil {
+		t.Fatal(err)
+	}
+	n, err := f.st.RequeueSkipped(ctx, f.acct, extract.ReasonNoPDFTool)
+	if err != nil || n != 1 {
+		t.Fatalf("requeue = %d %v", n, err)
+	}
+	jobs, _ := f.st.OpenJobs(ctx)
+	if !slices.ContainsFunc(jobs, func(j store.JobInfo) bool { return j.Type == store.JobExtract && j.State == "queued" }) {
+		t.Fatalf("no extract job after requeue: %+v", jobs)
+	}
+	if extract.New(extract.Options{}).PDFTool() == "" {
+		t.Skip("pdftotext not installed; the run itself is not tested here")
+	}
+	if _, err := db.Exec(`UPDATE attachments SET extract_status = 'skipped', extract_error = ? WHERE extract_status = 'pending'`,
+		extract.ReasonNoPDFTool); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := f.runner().RunAccount(ctx, f.acct)
+	if err != nil || rep.Extracted != 1 {
+		t.Fatalf("run = %+v %v", rep, err)
+	}
+	var status string
+	_ = db.QueryRow(`SELECT extract_status FROM attachments WHERE id = (SELECT min(id) FROM attachments)`).Scan(&status)
+	if status == "skipped" || status == "pending" {
+		t.Fatalf("status = %s", status)
 	}
 }
