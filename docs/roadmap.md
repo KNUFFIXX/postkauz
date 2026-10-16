@@ -48,7 +48,7 @@ Je Befund ein Commit mit Test (der ohne die Änderung scheitert), `make check` n
 13. Extraktor-Timeout-Test misst ab dem laufenden Kindprozess.
 14. `docs/abnahme_D2.md`: Schlüssel steht im Klartext in `%USERPROFILE%\.claude.json`, Aufräumen entfernt ihn.
 
-**Prüfläufe:** `make check`, `make race` (rund 13 min, siehe 5), `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` (keine Schwachstellen), `make cross` grün.
+**Prüfläufe:** `make check`, `make race` (rund 13 min, siehe 5), `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` (keine Schwachstellen), `make cross` grün (linux/amd64 23,9 MB, windows/amd64 23,6 MB, darwin/arm64 22,5 MB). Abnahme-Datenbank neu erzeugt: `dist/abnahme-d2-daten.zip`, 3.614.993 Bytes, SHA-256 `329f6d9e0c28cce98a387bf0f42dea81dc836995204939d9def362b43ac03ad4` (in [abnahme_D2.md](abnahme_D2.md) eingetragen; D2.1 bis D2.5 liefern dieselben Zahlen wie zuvor).
 
 **Offen bzw. neue Fragen an den Betreiber:**
 

@@ -8,7 +8,7 @@ Stand: 16.10.2026. Gehört zu `auftraege/A01_phase0.md`, Teil D, Abschnitt D2. D
 
 | Datei | Herkunft (Repository, von Claude bereitgestellt) | Ablage bei dir |
 |---|---|---|
-| `postkauz.exe` | `dist/postkauz-windows-amd64.exe` (Stand S1.9), umbenannt | `C:\PostKauz\postkauz.exe` |
+| `postkauz.exe` | `dist/postkauz-windows-amd64.exe` (Stand S1.9 mit Nachbesserung vom 16.10.2026), umbenannt | `C:\PostKauz\postkauz.exe` |
 | `abnahme-d2-daten.zip` | `dist/abnahme-d2-daten.zip` (3,6 MB) | `C:\PostKauz\abnahme-d2-daten.zip` |
 
 Für D2.7 und D2.8 zusätzlich **Claude Code** (Kommando `claude` in PowerShell) **oder** die **Claude-App** (Desktop). Beides ist bei dir vorhanden; eines genügt.
@@ -31,17 +31,18 @@ Expand-Archive .\abnahme-d2-daten.zip -DestinationPath $env:POSTKAUZ_DATA_DIR
 
 Erwartet:
 
-- `Hash : 5FE3B44C674612BA8BEEA956268443D7541D23CF2373CB474A46E4B340C17AAE` (die Datei ist unverändert angekommen).
+- `Hash : 329F6D9E0C28CCE98A387BF0F42DEA81DC836995204939D9DEF362B43AC03AD4` (die Datei ist unverändert angekommen).
 - `version` zeigt eine Zeile mit `postkauz`, Version und `go1.27.2 windows/amd64`.
 - `doctor` (Auszug; Pfade mit deinem Benutzernamen):
 
   ```text
   data dir:  C:\Users\…\AppData\Local\postkauz-abnahme-d2
   database:  ok (C:\Users\…\AppData\Local\postkauz-abnahme-d2\postkauz.db)
-  schema:    5 (program knows 5)
+  schema:    6 (program knows 6)
   keyring:   available (Windows Credential Manager)
   pdftotext: not found (optional; without it PDF attachments get no text, see README)
-  search:    0 messages waiting for the index (index version 1)
+  search:    0 messages waiting for the index (index version 2)
+  extract:   0 attachments waiting for text extraction
   accounts:
     demo: password missing, status new …
   ```
@@ -343,4 +344,4 @@ make testmail-up                      # Dovecot auf 127.0.0.1:11143
 sh scripts/abnahme-d2-db.sh           # Ergebnis: dist/abnahme-d2-daten.zip
 ```
 
-Das Skript baut das Programm, lädt den Standardkorpus (1.000 synthetische Nachrichten, Samen 42) für einen frischen Nutzer in den Dovecot-Testserver, legt das Konto `demo` **ohne gespeichertes Passwort** an (`--password-from-env`), synct vollständig (Ergebnis: `1000 messages mirrored`, `0 errors`, `search index: 1000 messages indexed`; INBOX 230, Archiv/2024 379, Archiv/2025 371, Drafts 20) und packt Datenbank und Blobs (ohne Log und Sperrdateien) zu einer Zip-Datei. Größe 3.603.174 Bytes, SHA-256 `5fe3b44c674612ba8beea956268443d7541d23cf2373cb474a46e4b340c17aae`. Ein erneuter Lauf erzeugt eine inhaltlich gleichwertige, aber nicht byte-gleiche Datei (Zeitstempel, Nutzername auf dem Testserver); dann den Hash in Abschnitt 0 anpassen.
+Das Skript baut das Programm, lädt den Standardkorpus (1.000 synthetische Nachrichten, Samen 42) für einen frischen Nutzer in den Dovecot-Testserver, legt das Konto `demo` **ohne gespeichertes Passwort** an (`--password-from-env`), synct vollständig (Ergebnis: `1000 messages mirrored`, `0 errors`, `search index: 1000 messages indexed`; INBOX 230, Archiv/2024 379, Archiv/2025 371, Drafts 20) und packt Datenbank und Blobs (ohne Log und Sperrdateien) zu einer Zip-Datei. Größe 3.614.993 Bytes, SHA-256 `329f6d9e0c28cce98a387bf0f42dea81dc836995204939d9def362b43ac03ad4` (neu erzeugt am 16.10.2026 nach der Nachbesserung: Schema 6, Indexversion 2, Aufbereitung 3; die Ergebnisse von D2.1 bis D2.5 sind unverändert nachgeprüft). Vor dem Packen prüft das Skript per `doctor --json`, dass Index und Extraktion fertig sind. Ein erneuter Lauf erzeugt eine inhaltlich gleichwertige, aber nicht byte-gleiche Datei (Zeitstempel, Nutzername auf dem Testserver); dann den Hash in Abschnitt 0 anpassen.
