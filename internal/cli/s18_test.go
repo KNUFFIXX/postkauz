@@ -217,7 +217,11 @@ func TestAuditExportVerify(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("files: %v", files)
 	}
-	if code, out, _ := run(t, "audit", "verify"); code != ExitOK || !strings.HasPrefix(out, "ok: 1 exported day checked") {
+	if _, err := os.Stat(filepath.Join(dir, "postkauz-audit-manifest.json")); err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	if code, out, _ := run(t, "audit", "verify"); code != ExitOK || !strings.HasPrefix(out, "ok: 1 exported day checked") ||
+		!strings.Contains(out, "chain head: ") {
 		t.Fatalf("verify: %d %s", code, out)
 	}
 	if code, out, _ := run(t, "audit", "export", "--to", dir); code != ExitOK || !strings.Contains(out, "updated") {
@@ -227,8 +231,8 @@ func TestAuditExportVerify(t *testing.T) {
 	_, _ = f.WriteString(`{"id":999}` + "\n")
 	_ = f.Close()
 	code, out, errs := run(t, "audit", "verify")
-	if code != ExitError || !strings.Contains(out, "mismatch") || !strings.Contains(out, "export file was changed") ||
-		!strings.Contains(errs, "audit export does not match") {
+	if code != ExitError || !strings.Contains(out, "mismatch") || !strings.Contains(out, "export file was changed (line ") ||
+		!strings.Contains(out, "hash chain is broken (line ") || !strings.Contains(errs, "audit export does not match") {
 		t.Fatalf("verify after change: %d %s %s", code, out, errs)
 	}
 	if code, _, errs := run(t, "audit", "export", "--to", dir, "--json"); code != ExitError || !strings.Contains(errs, `"mismatch"`) {

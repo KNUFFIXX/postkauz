@@ -260,6 +260,10 @@ func renderAuditExport(w io.Writer, out any) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	if !o.DryRun {
+		fmt.Fprintf(w, "manifest: %s\n", termLine(o.Manifest))
+	}
+	fmt.Fprintf(w, "chain head: %s\n", o.ChainHead)
 	_, err := fmt.Fprintf(w, "%s in %s; check with: audit verify\n", plural(len(o.Files), "day", "days"), termLine(o.Location))
 	return err
 }
@@ -273,15 +277,30 @@ func renderAuditVerify(w io.Writer, out any) error {
 		if o.DaysChecked == 0 {
 			fmt.Fprintln(w, "ok: nothing exported yet (run: audit export --to <dir>)")
 		} else {
-			fmt.Fprintf(w, "ok: %s checked; the export files match their checksums and the database\n", plural(o.DaysChecked, "exported day", "exported days"))
+			fmt.Fprintf(w, "ok: %s checked; the export files match their checksums, the hash chain, the manifest and the database\n", plural(o.DaysChecked, "exported day", "exported days"))
 		}
 	} else {
 		fmt.Fprintf(w, "mismatch: %s in %s\n", plural(len(o.Problems), "problem", "problems"), plural(o.DaysChecked, "exported day", "exported days"))
-		why := map[string]string{"file_missing": "export file is missing", "file_changed": "export file was changed",
-			"database_changed": "database rows differ from the export"}
+		why := map[string]string{ops.AuditFileMissing: "export file is missing", ops.AuditFileChanged: "export file was changed",
+			ops.AuditDatabaseChanged: "database rows differ from the export", ops.AuditChainBroken: "hash chain is broken",
+			ops.AuditManifestMissing: "manifest is missing", ops.AuditManifestChanged: "manifest does not match the recorded exports"}
 		for _, p := range o.Problems {
-			fmt.Fprintf(w, "  %s: %s: %s\n", p.Day, why[p.Problem], termLine(p.File))
+			msg := why[p.Problem]
+			if p.Line > 0 {
+				msg += fmt.Sprintf(" (line %d)", p.Line)
+			}
+			day := p.Day
+			if day == "" {
+				day = "all days"
+			}
+			fmt.Fprintf(w, "  %s: %s: %s\n", day, msg, termLine(p.File))
 		}
+	}
+	if o.LegacyDays > 0 {
+		fmt.Fprintf(w, "%s without hash chain (exported before 0.1.0); the next audit export rewrites them\n", plural(o.LegacyDays, "day", "days"))
+	}
+	if o.Status == "ok" && o.ChainHead != "" {
+		fmt.Fprintf(w, "chain head: %s\n", o.ChainHead)
 	}
 	if len(o.NotExported) > 0 {
 		_, err := fmt.Fprintf(w, "not exported yet (new entries): %s\n", strings.Join(o.NotExported, ", "))
