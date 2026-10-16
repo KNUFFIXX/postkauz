@@ -306,7 +306,9 @@ hint: the audit log or its export was changed; see audit verify
 1
 ```
 
-(Bei Prüfung am 16.10.2026 selbst steht `in 1 exported day`.) Wichtig: **`mismatch`**, die Zeile mit `export file was changed` und der Exit-Code **`1`**. Ein weiterer `audit export` überschreibt die veränderte Datei nicht (er endet ebenfalls mit `mismatch`), damit der Beleg erhalten bleibt.
+(Bei Prüfung am 16.10.2026 selbst steht `in 1 exported day`.)
+
+**Mit dem Programm 0.1.0-rc1 (ab S1.11)** sehen D2.9 und `audit export` etwas anders aus, beides richtig: `audit export` nennt zusätzlich `manifest: …\postkauz-audit-manifest.json` und `chain head: …` (der Export hat jetzt eine Hash-Kette und ein Manifest); `audit verify` meldet `ok: … the export files match their checksums, the hash chain, the manifest and the database` und `chain head: …`; nach der Veränderung steht `mismatch: 2 problems …` mit den Zeilen `export file was changed (line N)` und `hash chain is broken (line N)` (N ist die angehängte Zeile). Bei `search --json` (D2.4) endet jede Zeile zusätzlich mit `"untrusted":true,"source":"email"`; sie beginnt weiter mit `{"id":`. Wichtig: **`mismatch`**, die Zeile mit `export file was changed` und der Exit-Code **`1`**. Ein weiterer `audit export` überschreibt die veränderte Datei nicht (er endet ebenfalls mit `mismatch`), damit der Beleg erhalten bleibt.
 
 ## Aufräumen
 
