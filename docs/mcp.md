@@ -41,6 +41,8 @@ Umgesetzt in S1.9 (`internal/mcp/tools.go`, eine Zeile je Tool). Die Eingabefeld
 | `mail_audit_log` | Aktionen nachvollziehen | `since?`, `until?`, `actor?`, `key?`, `operation?`, `result?`, `limit?`, `after_id?` (Operation `audit.list`) | Ereignisse (ohne Inhalte) | R0 | `audit:read` |
 | `mail_get_policy` | Was darf dieser Schlüssel? | – | Scopes, Risikostufen, Limits, `dry_run_default` (auch als Resource; Operation `policy.get`) | R0 | jeder Schlüssel (Pseudo-Scope `any`) |
 
+**Cursor bei `mail_search`:** `next_cursor` ist kein Schnappschuss, sondern merkt sich Bewertung und ID des letzten Treffers und die Uhrzeit der ersten Seite. Läuft zwischen zwei Seiten ein Sync oder der Index-Job (neue Mails, Neuaufbereitung, Neuaufbau nach einer neuen Index-Version), verschieben sich die Relevanzwerte: Ein Treffer kann doppelt kommen oder fehlen, `total` kann sich ändern, neue Mails erscheinen erst bei einer neuen Suche. Agenten sollen doppelte `id`s übergehen und für vollständige Listen lieber enger suchen (Operatoren wie `after:`, `in:`) als lange blättern; Anfragen nur mit Operatoren (nach Datum sortiert) sind stabiler, weil neue Mails mit aktuellem Datum vor dem Cursor stehen.
+
 Nicht über MCP angeboten (bewusst, mit Grund in `internal/mcp/notbound.go`; der Vertragstest verlangt für jede Operation ein Tool oder einen Grund): `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, Zugangsdaten; nur der Mensch über die CLI), `keys.*` (Schlüsselverwaltung nur für Menschen), `audit.export`, `audit.verify` (Dateien am zweiten Ort; Aufgabe des Menschen), `sync.run` (siehe `mail_sync_now`).
 
 ### Entwürfe (S2, draft-only)
