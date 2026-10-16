@@ -6,9 +6,10 @@
 //     Bild-Alternativtexte) bleibt; Skripte, Styles, Formulare, Kopf,
 //     eingebettete Objekte und Kommentare fallen weg. Nichts wird
 //     nachgeladen (Tracking-Pixel und externe Bilder werden nur gezählt).
-//   - Versteckter Text (display:none, visibility:hidden, Schriftgröße 0,
-//     Farbe wie Hintergrund, Deckkraft 0, Höhe 0 mit overflow:hidden,
-//     mso-hide, weit aus dem Bild geschoben, hidden-Attribut; auch über
+//   - Versteckter Text (display:none, visibility:hidden, Schriftgröße bis
+//     2 px, Farbe wie Hintergrund auch in hsl(), Deckkraft 0, scale(0),
+//     Höhe 0 mit overflow:hidden, clip/clip-path ohne Fläche, mso-hide,
+//     weit aus dem Bild geschoben, hidden-Attribut; auch über
 //     einfache Klassen-/ID-Regeln aus <style>) wird entfernt und gemeldet
 //     (Result.Hidden), denn genau damit funktionieren Prompt-Injektionen in
 //     Zusammenfassungen.
@@ -216,8 +217,12 @@ func hiddenBy(d map[string]string) string {
 			}
 		}
 	}
-	if v, ok := d["font-size"]; ok && tinyLength(v, 1, 0.1, 10) {
+	// Höchstens 2 Pixel (bzw. 0,125 em, 12,5 %): unlesbar klein.
+	if v, ok := d["font-size"]; ok && tinyLength(v, 2, 0.125, 12.5) {
 		return "font-size:0"
+	}
+	if v, ok := d["transform"]; ok && scaledToZero(v) {
+		return "transform:scale(0)"
 	}
 	if d["mso-hide"] == "all" {
 		return "mso-hide:all"
@@ -238,15 +243,114 @@ func hiddenBy(d map[string]string) string {
 				return "position:" + k
 			}
 		}
-		if clip := strings.ReplaceAll(d["clip"], " ", ""); strings.HasPrefix(clip, "rect(0") && strings.Count(clip, "0") >= 4 &&
-			!strings.ContainsAny(strings.Trim(clip, "rect()0px,"), "123456789") {
+		if clipRectEmpty(d["clip"]) {
 			return "clip"
 		}
 	}
-	if cp := strings.ReplaceAll(d["clip-path"], " ", ""); cp == "inset(50%)" || cp == "inset(100%)" {
+	if v, ok := d["clip-path"]; ok && clipPathEmpty(v) {
 		return "clip-path"
 	}
 	return ""
+}
+
+// cssArgs liefert die Argumente der ersten Funktion name(…) in v (durch
+// Komma oder Leerraum getrennt, klein geschrieben); ok = gefunden.
+func cssArgs(v, name string) ([]string, bool) {
+	i := strings.Index(v, name+"(")
+	if i < 0 || (i > 0 && (v[i-1] >= 'a' && v[i-1] <= 'z' || v[i-1] == '-')) {
+		return nil, false
+	}
+	rest := v[i+len(name)+1:]
+	j := strings.IndexByte(rest, ')')
+	if j < 0 {
+		return nil, false
+	}
+	return strings.FieldsFunc(rest[:j], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }), true
+}
+
+// scaledToZero: transform mit scale(0), scaleX(0), scaleY(0) oder
+// scale3d(…0…) (Faktor höchstens 0,01): Das Element hat keine Fläche.
+func scaledToZero(v string) bool {
+	for _, fn := range []string{"scale", "scalex", "scaley", "scale3d"} {
+		args, ok := cssArgs(v, fn)
+		if !ok {
+			continue
+		}
+		for k, a := range args {
+			if fn == "scale3d" && k == 2 {
+				break // z-Achse ändert die sichtbare Fläche nicht
+			}
+			if f, err := strconv.ParseFloat(a, 64); err == nil && math.Abs(f) <= 0.01 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// clipRectEmpty: clip: rect(oben, rechts, unten, links) ohne Fläche
+// (unten ≤ oben oder rechts ≤ links), z. B. rect(0 0 0 0) oder
+// rect(1px, 1px, 1px, 1px). „auto" gilt als offen.
+func clipRectEmpty(v string) bool {
+	args, ok := cssArgs(strings.ToLower(v), "rect")
+	if !ok || len(args) != 4 {
+		return false
+	}
+	var n [4]float64
+	for i, a := range args {
+		f, unit := splitLength(a)
+		if math.IsNaN(f) || (unit != "" && unit != "px") {
+			return false
+		}
+		n[i] = f
+	}
+	return n[2] <= n[0] || n[1] <= n[3]
+}
+
+// clipPathEmpty: clip-path ohne sichtbare Fläche: inset(≥50 %) (von beiden
+// Seiten zusammen alles), circle(0 …), ellipse(0 …), polygon mit lauter
+// gleichen Punkten.
+func clipPathEmpty(v string) bool {
+	v = strings.ToLower(v)
+	if args, ok := cssArgs(v, "inset"); ok && len(args) > 0 {
+		// inset(oben rechts unten links) wie margin; je Achse zusammen ≥ 100 %
+		pct := func(i int) float64 {
+			if i >= len(args) || !strings.HasSuffix(args[i], "%") {
+				return math.NaN()
+			}
+			f, err := strconv.ParseFloat(strings.TrimSuffix(args[i], "%"), 64)
+			if err != nil {
+				return math.NaN()
+			}
+			return f
+		}
+		top, right, bottom, left := pct(0), pct(0), pct(0), pct(0)
+		if len(args) >= 2 {
+			right, left = pct(1), pct(1)
+		}
+		if len(args) >= 3 {
+			bottom = pct(2)
+		}
+		if len(args) >= 4 {
+			left = pct(3)
+		}
+		return top+bottom >= 100 || left+right >= 100
+	}
+	for _, fn := range []string{"circle", "ellipse"} {
+		if args, ok := cssArgs(v, fn); ok && len(args) > 0 {
+			f, _ := splitLength(args[0])
+			return f == 0
+		}
+	}
+	if args, ok := cssArgs(v, "polygon"); ok && len(args) >= 2 {
+		for i := 2; i < len(args); i++ {
+			if args[i] != args[i%2] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // tinyLength: Länge höchstens px Pixel/Punkt, em Em, pct Prozent.

@@ -1,6 +1,7 @@
 package sanitize
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -167,6 +168,8 @@ func parseColor(v string) (color, bool) {
 			}
 		}
 		return color{rgb: rgb{c[0], c[1], c[2]}}, true
+	case strings.HasPrefix(v, "hsl"):
+		return parseHSL(v)
 	}
 	if c, ok := named[v]; ok {
 		return color{rgb: c}, true
@@ -174,11 +177,47 @@ func parseColor(v string) (color, bool) {
 	return color{}, false
 }
 
+// parseHSL liest hsl()/hsla() (Farbton in Grad, Sättigung und Helligkeit
+// in Prozent, Alpha optional; mit Kommas oder Leerzeichen und „/").
+func parseHSL(v string) (color, bool) {
+	open, close := strings.Index(v, "("), strings.LastIndex(v, ")")
+	if open < 0 || close < open {
+		return color{}, false
+	}
+	parts := strings.FieldsFunc(v[open+1:close], func(r rune) bool { return r == ',' || r == ' ' || r == '/' })
+	if len(parts) < 3 {
+		return color{}, false
+	}
+	h, err1 := strconv.ParseFloat(strings.TrimSuffix(parts[0], "deg"), 64)
+	s, err2 := strconv.ParseFloat(strings.TrimSuffix(parts[1], "%"), 64)
+	l, err3 := strconv.ParseFloat(strings.TrimSuffix(parts[2], "%"), 64)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return color{}, false
+	}
+	if len(parts) >= 4 {
+		a, err := strconv.ParseFloat(strings.TrimSuffix(parts[3], "%"), 64)
+		if err == nil && a == 0 {
+			return color{transparent: true}, false
+		}
+	}
+	s, l = min(max(s, 0), 100)/100, min(max(l, 0), 100)/100
+	h = math.Mod(math.Mod(h, 360)+360, 360)
+	// CSS Color 4: f(n) = l - a·max(-1, min(k-3, 9-k, 1)), k = (n + h/30) mod 12
+	a := s * min(l, 1-l)
+	f := func(n float64) float64 {
+		k := math.Mod(n+h/30, 12)
+		return 255 * (l - a*max(-1, min(k-3, 9-k, 1)))
+	}
+	return color{rgb: rgb{f(0), f(8), f(4)}}, true
+}
+
 // firstColorWord holt aus einer background-Kurzschreibweise die Farbe.
 func firstColorWord(v string) string {
-	if i := strings.Index(v, "rgb"); i >= 0 {
-		if j := strings.Index(v[i:], ")"); j >= 0 {
-			return v[i : i+j+1]
+	for _, fn := range []string{"rgb", "hsl"} {
+		if i := strings.Index(v, fn); i >= 0 {
+			if j := strings.Index(v[i:], ")"); j >= 0 {
+				return v[i : i+j+1]
+			}
 		}
 	}
 	for _, w := range strings.Fields(v) {

@@ -49,6 +49,22 @@ func TestHTMLHiddenText(t *testing.T) {
 		"transparent":         `<span style="color: transparent">` + injection + `</span>`,
 		"rgba alpha 0":        `<span style="color: rgba(0,0,0,0)">` + injection + `</span>`,
 		"nested":              `<div style="display:none"><p>A <b>` + injection + `</b></p></div>`,
+		"transform scale 0":   `<div style="transform: scale(0)">` + injection + `</div>`,
+		"transform scaleY":    `<style>.s{transform:translateX(2px) scaleY(0.001)}</style><div class="s">` + injection + `</div>`,
+		"hsl white":           `<p style="color: hsl(0, 0%, 100%)">` + injection + `</p>`,
+		"hsla white":          `<p style="color: hsla(210 20% 99% / 0.9)">` + injection + `</p>`,
+		"hsl alpha 0":         `<p style="color: hsla(0, 0%, 0%, 0)">` + injection + `</p>`,
+		"hsl same as bg":      `<div style="background: hsl(120, 50%, 40%)"><span style="color:hsl(120,50%,41%)">` + injection + `</span></div>`,
+		"font-size 2px":       `<span style="font-size:2px">` + injection + `</span>`,
+		"font-size 0.1em":     `<span style="font-size:0.12em">` + injection + `</span>`,
+		"clip rect 1px":       `<span style="position:absolute; clip: rect(1px, 1px, 1px, 1px)">` + injection + `</span>`,
+		"clip rect 0 0 0 0":   `<span style="position:absolute;clip:rect(0 0 0 0)">` + injection + `</span>`,
+		"clip-path inset":     `<span style="clip-path: inset(50%)">` + injection + `</span>`,
+		"clip-path circle":    `<span style="clip-path:circle(0)">` + injection + `</span>`,
+		"clip-path polygon":   `<span style="clip-path:polygon(0 0, 0 0, 0 0)">` + injection + `</span>`,
+		"opacity 0.0":         `<span style="opacity: 0.0">` + injection + `</span>`,
+		"visibility class":    `<style>.v{visibility:hidden}</style><span class="v">` + injection + `</span>`,
+		"off screen left":     `<div style="position: absolute; left: -9999px; top: 0">` + injection + `</div>`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -78,6 +94,14 @@ func TestHTMLVisibleIsNotHidden(t *testing.T) {
 		"empty hidden":          `<div style="display:none">   </div><p>Text</p>`,
 		"aria-hidden is shown":  `<span aria-hidden="true">Symbol</span>`,
 		"zero-width in visible": "<p>A\u200bB</p>",
+		"scale 1.5":             `<div style="transform:scale(1.5)">Groß</div>`,
+		"scale3d z 0":           `<div style="transform:scale3d(1, 1, 0)">Flach</div>`,
+		"hsl dark":              `<p style="color:hsl(0, 0%, 20%)">Dunkelgrau</p>`,
+		"hsl white on dark":     `<div style="background-color:hsl(220,60%,15%)"><p style="color:hsl(0,0%,100%)">Weiß auf Dunkelblau</p></div>`,
+		"font-size 12px":        `<span style="font-size:12px">Klein, aber lesbar</span>`,
+		"clip rect visible":     `<span style="position:absolute;clip:rect(0px,100px,50px,0px)">Ausschnitt</span>`,
+		"clip-path inset 10%":   `<span style="clip-path:inset(10%)">Rand</span>`,
+		"clip-path circle 50%":  `<span style="clip-path:circle(50%)">Rund</span>`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
