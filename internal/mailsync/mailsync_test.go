@@ -815,3 +815,17 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 		t.Fatalf("lock not released: %v", err)
 	}
 }
+
+func TestSizeGroups(t *testing.T) {
+	hs := []provider.Header{{UID: 1, Size: 10}, {UID: 2, Size: 10}, {UID: 3, Size: 50}, {UID: 4, Size: 1}, {UID: 5, Size: 19}}
+	got := sizeGroups(hs, 20)
+	want := [][]provider.UID{{1, 2}, {3}, {4, 5}}
+	if len(got) != len(want) {
+		t.Fatalf("groups = %v", got)
+	}
+	for i := range want {
+		if !slices.Equal(got[i], want[i]) {
+			t.Fatalf("groups = %v, want %v", got, want)
+		}
+	}
+}

@@ -20,8 +20,22 @@
 //
 // Seit S1.4/S1.5: EXAMINE/SELECT, UID SEARCH, FETCH (Metadaten, Flags mit
 // CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND und STORE (mailbox.go)
-// sowie IDLE mit eigenem Neustart (idle.go). Der Watchdog misst Schweigen,
-// nicht Gesamtdauer: Er schlägt zu, wenn seit der Deadline kein Byte kam.
+// sowie IDLE mit eigenem Neustart (idle.go).
+//
+// Watchdog (ADR-007, Nachtrag 16.10.2026): Er misst Schweigen und hat eine
+// Obergrenze. Er schlägt zu, wenn der Server CommandTimeout lang kein Byte
+// geschickt hat (Zeit in einem Rückruf des Aufrufers, z. B. Blob schreiben
+// und parsen in FetchRaw, zählt nicht als Schweigen) oder wenn ein Kommando
+// insgesamt länger als CommandMaxDuration läuft (Standard 10 min; ein
+// Server, der ständig wenige Bytes schickt, hält ein Kommando so nicht
+// beliebig lange offen).
+//
+// Timer (A01 N1, Go 1.27: Timer-Kanäle sind immer synchron, asynctimerchan
+// gibt es nicht mehr): guard setzt seinen Timer nur nach einem Empfang aus
+// t.C zurück und stoppt ihn per defer; idle.go und sleepCtx nutzen je einen
+// Timer einmal und stoppen ihn per defer. Keine Stelle leert t.C von Hand
+// oder verlässt sich auf einen gepufferten Wert; Tests mit testing/synctest
+// belegen die Zeitpunkte (synctest_test.go).
 package imapx
 
 import (
@@ -29,6 +43,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	"sort"
@@ -59,6 +74,9 @@ const (
 const (
 	DefaultDialTimeout    = 15 * time.Second
 	DefaultCommandTimeout = 30 * time.Second
+	// DefaultCommandMaxDuration ist die Obergrenze je Kommando
+	// (ADR-007, Nachtrag 16.10.2026).
+	DefaultCommandMaxDuration = 10 * time.Minute
 )
 
 // Config beschreibt eine Verbindung.
@@ -70,13 +88,24 @@ type Config struct {
 	// für Hosts auf dem eigenen Rechner (wird hier erneut geprüft).
 	InsecureTestServer bool
 	DialTimeout        time.Duration
-	CommandTimeout     time.Duration
+	// CommandTimeout: so lange darf der Server während eines Kommandos
+	// schweigen (0 = 30 s).
+	CommandTimeout time.Duration
+	// CommandMaxDuration: so lange darf ein Kommando insgesamt dauern
+	// (0 = 10 min). Kleiner als CommandTimeout wird auf CommandTimeout
+	// angehoben.
+	CommandMaxDuration time.Duration
+
+	// dialContext ersetzt den TCP-Aufbau (Tests mit testing/synctest und
+	// net.Pipe); nil = net.Dialer mit Keepalive.
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // Client ist eine angemeldete oder anmeldebereite Verbindung.
 type Client struct {
 	c       *imapclient.Client
-	timeout time.Duration
+	timeout time.Duration // Schweigen (CommandTimeout)
+	maxDur  time.Duration // Obergrenze je Kommando (CommandMaxDuration)
 	stopCtx func() bool
 	act     *activityConn
 	// changed wird bei unaufgeforderten Serverdaten (EXISTS, EXPUNGE,
@@ -92,14 +121,51 @@ type Client struct {
 type activityConn struct {
 	net.Conn
 	last atomic.Int64 // UnixNano
+	// busy > 0: Ein Rückruf des Aufrufers läuft (FetchRaw); das Lesen ruht
+	// dann aus eigenem Grund und zählt nicht als Schweigen des Servers.
+	busy atomic.Int32
 }
 
 func (a *activityConn) Read(p []byte) (int, error) {
 	n, err := a.Conn.Read(p)
 	if n > 0 {
-		a.last.Store(time.Now().UnixNano())
+		a.touch()
 	}
 	return n, err
+}
+
+func (a *activityConn) touch() { a.last.Store(time.Now().UnixNano()) }
+
+func (a *activityConn) isBusy() bool { return a != nil && a.busy.Load() > 0 }
+
+// callback ruft f als Rückruf des Aufrufers mit dem Datenstrom r auf. Die
+// Zeit in f zählt nicht als Schweigen des Servers (wohl aber zur
+// Obergrenze des Kommandos), ausgenommen die Zeit, in der f aus r liest:
+// Dann wartet f auf den Server, und Schweigen zählt ab Beginn des Lesens.
+func (c *Client) callback(r io.Reader, f func(io.Reader) error) error {
+	a := c.act
+	if a == nil {
+		return f(r)
+	}
+	a.busy.Add(1)
+	defer func() {
+		a.touch()
+		a.busy.Add(-1)
+	}()
+	return f(serverReader{r: r, a: a})
+}
+
+// serverReader hebt während eines Lesevorgangs die Rückruf-Ausnahme auf.
+type serverReader struct {
+	r io.Reader
+	a *activityConn
+}
+
+func (s serverReader) Read(p []byte) (int, error) {
+	s.a.touch()
+	s.a.busy.Add(-1)
+	defer s.a.busy.Add(1)
+	return s.r.Read(p)
 }
 
 func (a *activityConn) lastRead() time.Time {
@@ -180,6 +246,12 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	if cfg.CommandTimeout <= 0 {
 		cfg.CommandTimeout = DefaultCommandTimeout
 	}
+	if cfg.CommandMaxDuration <= 0 {
+		cfg.CommandMaxDuration = DefaultCommandMaxDuration
+	}
+	if cfg.CommandMaxDuration < cfg.CommandTimeout {
+		cfg.CommandMaxDuration = cfg.CommandTimeout
+	}
 	if (cfg.TLS == TLSNone || cfg.InsecureTestServer) && !isLoopback(cfg.Host) {
 		return nil, fmt.Errorf("imapx: plain text or unverified TLS is only allowed for localhost test servers")
 	}
@@ -190,13 +262,17 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	}
 	dctx, cancel := context.WithTimeout(ctx, cfg.DialTimeout)
 	defer cancel()
-	raw, err := dialer.DialContext(dctx, "tcp", addr)
+	dialFn := dialer.DialContext
+	if cfg.dialContext != nil {
+		dialFn = cfg.dialContext
+	}
+	raw, err := dialFn(dctx, "tcp", addr)
 	if err != nil {
 		return nil, connErr(err)
 	}
 	tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12, NextProtos: []string{"imap"},
 		InsecureSkipVerify: cfg.InsecureTestServer} //nolint:gosec // nur localhost-Testserver, oben geprüft
-	cl := &Client{timeout: cfg.CommandTimeout, changed: make(chan struct{}, 1)}
+	cl := &Client{timeout: cfg.CommandTimeout, maxDur: cfg.CommandMaxDuration, changed: make(chan struct{}, 1)}
 	opts := &imapclient.Options{WordDecoder: WordDecoder(), TLSConfig: tlsCfg,
 		UnilateralDataHandler: cl.unilateralHandler()}
 
@@ -233,31 +309,66 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	return cl, nil
 }
 
-// guard ist der Watchdog: f läuft, bis es fertig ist; schweigt der Server
-// länger als die Deadline (kein gelesenes Byte seit Start bzw. seit dem
-// letzten Byte), wird die Verbindung über closeFn geschlossen und
+// Gründe, aus denen der Watchdog zuschlägt.
+const (
+	watchSilence = 1 // Server hat CommandTimeout lang geschwiegen
+	watchTotal   = 2 // Kommando lief länger als CommandMaxDuration
+)
+
+// watchdogDue liefert, wie lange der Watchdog bis zur nächsten Prüfung
+// warten darf, oder (0, Grund), wenn er jetzt zuschlagen muss.
+func (c *Client) watchdogDue(start, now time.Time) (time.Duration, int) {
+	totalLeft := c.maxDur - now.Sub(start)
+	if c.maxDur > 0 && totalLeft <= 0 {
+		return 0, watchTotal
+	}
+	if c.maxDur <= 0 {
+		totalLeft = c.timeout
+	}
+	if c.act.isBusy() {
+		// Rückruf läuft: kein Schweigen; später wieder prüfen.
+		return min(c.timeout, totalLeft), 0
+	}
+	last := start
+	if la := c.act.lastRead(); la.After(last) {
+		last = la
+	}
+	silentLeft := c.timeout - now.Sub(last)
+	if silentLeft <= 0 {
+		return 0, watchSilence
+	}
+	return min(silentLeft, totalLeft), 0
+}
+
+// guard ist der Watchdog: f läuft, bis es fertig ist. Schweigt der Server
+// länger als CommandTimeout (kein gelesenes Byte seit Start bzw. seit dem
+// letzten Byte; Rückrufe ausgenommen) oder dauert f insgesamt länger als
+// CommandMaxDuration, wird die Verbindung über closeFn geschlossen und
 // ErrConnection gemeldet.
+//
+// Timer-Modell (Go 1.27, synchrone Timer-Kanäle): Der Timer wird nur nach
+// einem Empfang aus t.C per Reset neu gestellt und per defer gestoppt; es
+// gibt kein Leeren des Kanals und keinen gepufferten Wert, auf den sich
+// der Code verlässt (Belege: synctest_test.go).
 func (c *Client) guard(f func() error, closeFn func()) error {
 	start := time.Now()
-	var timedOut atomic.Bool
+	var reason atomic.Int32
 	done := make(chan struct{})
+	first, _ := c.watchdogDue(start, start)
 	go func() {
-		t := time.NewTimer(c.timeout)
+		t := time.NewTimer(first)
 		defer t.Stop()
 		for {
 			select {
 			case <-done:
 				return
 			case <-t.C:
-				last := start
-				if la := c.act.lastRead(); la.After(last) {
-					last = la
-				}
-				if rem := c.timeout - time.Since(last); rem > 0 {
-					t.Reset(rem)
+				wait, why := c.watchdogDue(start, time.Now())
+				if why == 0 {
+					t.Reset(wait)
 					continue
 				}
-				timedOut.Store(true)
+				reason.Store(int32(why))
 				closeFn()
 				return
 			}
@@ -265,8 +376,11 @@ func (c *Client) guard(f func() error, closeFn func()) error {
 	}()
 	err := f()
 	close(done)
-	if timedOut.Load() {
+	switch reason.Load() {
+	case watchSilence:
 		return fmt.Errorf("%w: server did not answer within %s (watchdog closed the connection)", provider.ErrConnection, c.timeout)
+	case watchTotal:
+		return fmt.Errorf("%w: command did not finish within %s (watchdog closed the connection)", provider.ErrConnection, c.maxDur)
 	}
 	return err
 }

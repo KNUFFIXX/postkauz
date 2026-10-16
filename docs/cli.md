@@ -155,6 +155,9 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/cli_test.go`.
   log_level = "info"        # debug | info | warn | error
   [secrets]
   backend = "auto"          # auto | keyring | insecure-file (UNSICHER, nur Testserver)
+  [imap]                    # Watchdog (ADR-007, Nachtrag 16.10.2026); Dauer als Text
+  command_timeout = "30s"       # so lange darf der Server während eines Kommandos schweigen (ab 1s)
+  command_max_duration = "10m"  # Obergrenze je Kommando (nicht kleiner als command_timeout)
   ```
 
 - **Umgebung** schlägt Datei: `POSTKAUZ_DATA_DIR`, `POSTKAUZ_SECRETS_BACKEND`, `POSTKAUZ_PASSWORD_<NAME>` (Passwort eines Kontos, nur lesen).

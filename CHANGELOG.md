@@ -38,6 +38,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- **Watchdog mit Obergrenze je Kommando** (ADR-007 Nachtrag 1, Betreiber-Entscheid 16.10.2026): Neben dem Schweigen (Standard 30 s) gilt eine Obergrenze je Kommando (Standard 10 min); beides in der Konfiguration (`[imap] command_timeout`, `command_max_duration`). Zeit in Rückrufen (Blob schreiben, parsen) zählt nicht mehr als Schweigen des Servers. Der Sync holt Rohmails in Gruppen von höchstens 16 MiB angekündigter Größe je FETCH.
 - `golang.org/x/text` v0.14.0 → v0.43.0 (per `go get`, A01 N2); `go mod tidy` ohne weitere Änderung.
 - Testserver auf geprüfte Versionen festgelegt: Dovecot 2.4.5, GreenMail 2.1.14 (Stalwart bleibt 0.11.8).
 - `imapx`-Watchdog misst Schweigen statt Gesamtdauer (lange FETCHes über langsame Leitungen brechen nicht mehr ab); unlesbare Serverantworten sind `ErrProtocol` (Verbindung verwerfen, nicht wiederholen); der Sync grenzt betroffene Nachrichten durch Halbieren ein.

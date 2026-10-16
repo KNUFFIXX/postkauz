@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaultsWithoutFile(t *testing.T) {
@@ -58,6 +59,10 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"bad backend":   "[secrets]\nbackend = \"plaintext\"\n",
 		"bad log level": "log_level = \"loud\"\n",
 		"invalid toml":  "data_dir = \n",
+		"bare number":   "[imap]\ncommand_timeout = 30\n", // TOML-Zahl = Nanosekunden
+		"negative":      "[imap]\ncommand_max_duration = \"-1m\"\n",
+		"max < timeout": "[imap]\ncommand_timeout = \"2m\"\ncommand_max_duration = \"1m\"\n",
+		"bad duration":  "[imap]\ncommand_timeout = \"zehn\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".toml")
@@ -69,6 +74,24 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 				t.Error("expected error")
 			}
 		})
+	}
+}
+
+func TestLoadIMAPTimeouts(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(f, []byte("[imap]\ncommand_timeout = \"45s\"\ncommand_max_duration = \"20m\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvConfig, f)
+	t.Setenv(EnvDataDir, dir)
+	t.Setenv(EnvSecretsBackend, "")
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.IMAP.CommandTimeout != 45*time.Second || cfg.IMAP.CommandMaxDuration != 20*time.Minute {
+		t.Fatalf("imap = %+v", cfg.IMAP)
 	}
 }
 

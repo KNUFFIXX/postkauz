@@ -285,7 +285,8 @@ func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error)
 						continue
 					}
 					if uid != 0 && fnErr == nil {
-						fnErr = fn(uid, it.Literal)
+						u := uid
+						fnErr = c.callback(it.Literal, func(r io.Reader) error { return fn(u, r) })
 						delivered = true
 					} else {
 						b, err := io.ReadAll(it.Literal)
@@ -298,7 +299,8 @@ func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error)
 				}
 			}
 			if !delivered && pending != nil && uid != 0 && fnErr == nil {
-				fnErr = fn(uid, bytes.NewReader(pending))
+				u := uid
+				fnErr = c.callback(bytes.NewReader(pending), func(r io.Reader) error { return fn(u, r) })
 			}
 		}
 		return cmd.Close()

@@ -67,6 +67,10 @@ const (
 	// maxBatchBytes teilt ein Fenster mit großen Nachrichten in mehrere
 	// Transaktionen (der Cursor wandert erst mit der letzten).
 	maxBatchBytes = 32 << 20
+	// maxFetchBytes begrenzt die angekündigte Größe der Rohmails je FETCH
+	// (eine größere Nachricht kommt allein). Bei 10 min Obergrenze je
+	// Kommando reichen so rund 28 KB/s.
+	maxFetchBytes = 16 << 20
 	snippetLen    = 200
 )
 
@@ -356,13 +360,11 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 			continue
 		}
 		byUID := map[provider.UID]provider.Header{}
-		uids := make([]provider.UID, 0, len(need))
 		for _, h := range need {
 			byUID[h.UID] = h
-			uids = append(uids, h.UID)
 		}
 		got := map[provider.UID]bool{}
-		err = e.fetchRaw(ctx, mb.Path, uv, uids, got, rep, func(uid provider.UID, r io.Reader) error {
+		mirror := func(uid provider.UID, r io.Reader) error {
 			h, ok := byUID[uid]
 			if !ok || got[uid] {
 				_, _ = io.Copy(io.Discard, r)
@@ -386,9 +388,15 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 			pending.New = append(pending.New, nm)
 			pendingBytes += nm.Size
 			return nil
-		})
-		if err != nil {
-			return err
+		}
+		// Rohmails in Gruppen nach angekündigter Größe holen: Ein FETCH
+		// bleibt so klein genug für die Obergrenze je Kommando des
+		// Watchdogs (ADR-007, Nachtrag 16.10.2026), auch über langsame
+		// Leitungen.
+		for _, group := range sizeGroups(need, maxFetchBytes) {
+			if err := e.fetchRaw(ctx, mb.Path, uv, group, got, rep, mirror); err != nil {
+				return err
+			}
 		}
 		for _, h := range need {
 			if !got[h.UID] {
@@ -459,6 +467,26 @@ func (e *Engine) fetchRaw(ctx context.Context, path string, uv uint32, uids []pr
 		return err
 	}
 	return e.fetchRaw(ctx, path, uv, todo[mid:], got, rep, fn)
+}
+
+// sizeGroups teilt Köpfe in Gruppen, deren angekündigte Größe zusammen
+// höchstens max ist (eine größere Nachricht bildet eine eigene Gruppe).
+func sizeGroups(hs []provider.Header, max int64) [][]provider.UID {
+	var out [][]provider.UID
+	var cur []provider.UID
+	var sum int64
+	for _, h := range hs {
+		if len(cur) > 0 && sum+h.Size > max {
+			out = append(out, cur)
+			cur, sum = nil, 0
+		}
+		cur = append(cur, h.UID)
+		sum += h.Size
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
 }
 
 func (r *MailboxReport) problem(s string) {

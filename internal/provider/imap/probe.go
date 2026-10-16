@@ -21,8 +21,10 @@ import (
 
 // Prober implementiert ops.AccountProber.
 type Prober struct {
-	// CommandTimeout überschreibt den Watchdog (Tests).
-	CommandTimeout time.Duration
+	// CommandTimeout und CommandMaxDuration steuern den Watchdog
+	// (0 = Standard: 30 s Schweigen, 10 min je Kommando).
+	CommandTimeout     time.Duration
+	CommandMaxDuration time.Duration
 }
 
 var _ ops.AccountProber = Prober{}
@@ -33,7 +35,7 @@ var _ ops.AccountProber = Prober{}
 func (p Prober) Probe(ctx context.Context, a store.Account, pw secrets.Secret) (ops.ProbeResult, error) {
 	prov, err := Connect(ctx, Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
 		InsecureTestServer: a.InsecureTestServer, CommandTimeout: p.CommandTimeout,
-		Session: imapx.SessionOptions{MaxAttempts: 1}}, pw)
+		CommandMaxDuration: p.CommandMaxDuration, Session: imapx.SessionOptions{MaxAttempts: 1}}, pw)
 	if err != nil {
 		return ops.ProbeResult{}, err
 	}

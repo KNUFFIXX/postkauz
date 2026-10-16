@@ -20,11 +20,13 @@ import (
 var openSecrets = secrets.Open
 
 // newProber ist in Tests ersetzbar.
-var newProber = func() ops.AccountProber { return imapprov.Prober{} }
+var newProber = func(c config.IMAP) ops.AccountProber {
+	return imapprov.Prober{CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration}
+}
 
 // newSyncRunner ist in Tests ersetzbar.
-var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.SyncRunner {
-	return &mailsync.Runner{Store: st, Blobs: b, Log: log}
+var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c config.IMAP) ops.SyncRunner {
+	return &mailsync.Runner{Store: st, Blobs: b, Log: log, CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration}
 }
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,
@@ -103,8 +105,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(), Mailboxes: st,
-		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log)})
+	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP)})
 	if err != nil {
 		return nil, err
 	}

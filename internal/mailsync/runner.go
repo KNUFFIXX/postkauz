@@ -25,6 +25,10 @@ type Runner struct {
 	// LockDir ist der Ordner der Sperrdateien je Konto; leer = neben der
 	// Datenbank (bei :memory: ohne Sperre).
 	LockDir string
+	// CommandTimeout und CommandMaxDuration steuern den Watchdog des
+	// IMAP-Providers (0 = Standard; Konfiguration [imap]).
+	CommandTimeout     time.Duration
+	CommandMaxDuration time.Duration
 	// Connect ersetzt den Verbindungsaufbau (Tests); nil = IMAP-Provider.
 	Connect func(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error)
 }
@@ -44,9 +48,10 @@ type imapRemote struct{ *imapprov.Provider }
 
 func (r imapRemote) Strategy() string { return string(r.Provider.Strategy()) }
 
-func connectIMAP(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error) {
+func (r *Runner) connectIMAP(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error) {
 	p, err := imapprov.Connect(ctx, imapprov.Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
-		InsecureTestServer: a.InsecureTestServer, IdleRestart: idleRestart}, pw)
+		InsecureTestServer: a.InsecureTestServer, IdleRestart: idleRestart,
+		CommandTimeout: r.CommandTimeout, CommandMaxDuration: r.CommandMaxDuration}, pw)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +69,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	}
 	connect := r.Connect
 	if connect == nil {
-		connect = connectIMAP
+		connect = r.connectIMAP
 	}
 	idleRestart := imapx.DefaultIdleRestart
 	if o.IdleRestart > 0 {

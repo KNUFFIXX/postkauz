@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -47,6 +48,17 @@ type Config struct {
 	// LogLevel: debug, info (Standard), warn, error.
 	LogLevel string  `toml:"log_level"`
 	Secrets  Secrets `toml:"secrets"`
+	IMAP     IMAP    `toml:"imap"`
+}
+
+// IMAP steuert den Watchdog der IMAP-Verbindungen (ADR-007, Nachtrag
+// 16.10.2026). Werte als Dauer, z. B. "30s" oder "10m"; leer = Standard.
+type IMAP struct {
+	// CommandTimeout: so lange darf der Server während eines Kommandos
+	// schweigen (Standard 30s).
+	CommandTimeout time.Duration `toml:"command_timeout"`
+	// CommandMaxDuration: Obergrenze je Kommando (Standard 10m).
+	CommandMaxDuration time.Duration `toml:"command_max_duration"`
 }
 
 // Secrets wählt, wo Zugangsdaten liegen.
@@ -157,6 +169,16 @@ func Load() (Config, Paths, error) {
 	case "debug", "info", "warn", "error":
 	default:
 		return cfg, p, fmt.Errorf("config: log_level %q is invalid (expected debug, info, warn or error)", cfg.LogLevel)
+	}
+	if cfg.IMAP.CommandTimeout < 0 || cfg.IMAP.CommandMaxDuration < 0 {
+		return cfg, p, fmt.Errorf("config: imap timeouts must not be negative")
+	}
+	if cfg.IMAP.CommandTimeout != 0 && cfg.IMAP.CommandTimeout < time.Second {
+		return cfg, p, fmt.Errorf("config: imap.command_timeout %s is too short (at least 1s)", cfg.IMAP.CommandTimeout)
+	}
+	if cfg.IMAP.CommandMaxDuration != 0 && cfg.IMAP.CommandMaxDuration < cfg.IMAP.CommandTimeout {
+		return cfg, p, fmt.Errorf("config: imap.command_max_duration %s is shorter than imap.command_timeout %s",
+			cfg.IMAP.CommandMaxDuration, cfg.IMAP.CommandTimeout)
 	}
 	if cfg.DataDir == "" {
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {
