@@ -757,11 +757,11 @@ func TestMirrorRawHashesWholeUnreadableMessage(t *testing.T) {
 	hdr := "Message-ID: <x@example.org>\r\nX-Big: " + strings.Repeat("a", 2<<20) + "\r\n\r\n"
 	m1 := hdr + "body one " + strings.Repeat("1", 200000)
 	m2 := hdr + "body two " + strings.Repeat("2", 200000)
-	n1, err := e.mirrorRaw(strings.NewReader(m1), provider.Header{UID: 1, Size: int64(len(m1))})
+	n1, v1, err := e.mirrorRaw(strings.NewReader(m1), provider.Header{UID: 1, Size: int64(len(m1))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	n2, err := e.mirrorRaw(strings.NewReader(m2), provider.Header{UID: 2, Size: int64(len(m2))})
+	n2, _, err := e.mirrorRaw(strings.NewReader(m2), provider.Header{UID: 2, Size: int64(len(m2))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,8 +772,31 @@ func TestMirrorRawHashesWholeUnreadableMessage(t *testing.T) {
 		t.Fatalf("different messages share content_hash %s", n1.ContentHash)
 	}
 	want, _ := ContentHash(strings.NewReader(m1))
-	if n1.ContentHash != want {
-		t.Fatalf("content_hash = %s, want hash of whole message %s", n1.ContentHash, want)
+	if n1.ContentHash != want || len(v1) != 3 || v1[0] != want {
+		t.Fatalf("content_hash = %s (variants %v), want hash of whole message %s first", n1.ContentHash, v1, want)
+	}
+}
+
+// Varianten am Zeilenende (S1.10): exakter Wert zuerst, gleich ContentHash;
+// dazu 0, 1, 2 Zeilenenden am Schluss.
+func TestContentHasherVariants(t *testing.T) {
+	sum := func(s string) string {
+		h, _ := ContentHash(strings.NewReader(s))
+		return h
+	}
+	h := NewContentHasher()
+	for _, part := range []string{"Subject: x\r\n\r\nText\r", "\n", "\r\n"} {
+		_, _ = h.Write([]byte(part))
+	}
+	exact, variants := h.Sums()
+	if exact != sum("Subject: x\n\nText\n\n") || len(variants) != 3 || variants[0] != exact ||
+		!slices.Contains(variants, sum("Subject: x\n\nText")) || !slices.Contains(variants, sum("Subject: x\n\nText\n")) {
+		t.Fatalf("variants wrong: %v", variants)
+	}
+	h = NewContentHasher()
+	_, _ = h.Write([]byte("\n\n"))
+	if e, v := h.Sums(); e != sum("\n\n") || len(v) != 3 {
+		t.Fatalf("only line breaks: %s %v", e, v)
 	}
 }
 

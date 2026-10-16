@@ -14,6 +14,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/corpus"
+	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -255,7 +256,7 @@ func TestImportThunderbirdCorpus(t *testing.T) {
 	// content_hash: Nach dem Lösen aus dem mbox-Rahmen ist jede Nachricht des
 	// Korpus wieder das Original (bis auf Zeilenenden am Schluss).
 	for _, i := range exp.Included {
-		h := newVariantHasher()
+		h := mailsync.NewContentHasher()
 		_, _ = h.Write(c.Raw[i])
 		_, variants := h.Sums()
 		args := []any{e.acct}

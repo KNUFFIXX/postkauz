@@ -1,4 +1,4 @@
-package importer
+package mailsync
 
 import (
 	"crypto/sha256"
@@ -8,21 +8,25 @@ import (
 	"slices"
 )
 
-// variantHasher berechnet content_hash (SHA-256 ohne CR-Bytes, wie der
-// Sync) und dazu Varianten mit 0, 1 und 2 Zeilenenden am Schluss: Die
-// Kopie des Servers kann am Ende anders aussehen als die aus dem mbox-Rahmen
-// gelöste (reader.go).
-type variantHasher struct {
+// ContentHasher berechnet content_hash (SHA-256 über die Rohmail ohne
+// CR-Bytes) und dazu Varianten mit 0, 1 und 2 Zeilenenden am Schluss. Eine
+// Nachricht aus einem mbox-Import hat am Ende genau ein Zeilenende (die
+// Leerzeile vor der nächsten Trennzeile gehört zum Rahmen und ist nicht
+// eindeutig); die Kopie des Servers kann dort anders aussehen. Sync und
+// Import suchen deshalb mit allen Varianten (S1.10); gespeichert wird immer
+// der exakte Wert.
+type ContentHasher struct {
 	h       hash.Hash
 	pending int // zurückgehaltene "\n" am Ende
 	buf     []byte
 }
 
-func newVariantHasher() *variantHasher { return &variantHasher{h: sha256.New()} }
+// NewContentHasher legt einen leeren Hasher an.
+func NewContentHasher() *ContentHasher { return &ContentHasher{h: sha256.New()} }
 
 var newlines = []byte("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
 
-func (v *variantHasher) writeNL(n int) {
+func (v *ContentHasher) writeNL(n int) {
 	for n > 0 {
 		k := min(n, len(newlines))
 		v.h.Write(newlines[:k])
@@ -30,7 +34,7 @@ func (v *variantHasher) writeNL(n int) {
 	}
 }
 
-func (v *variantHasher) Write(p []byte) (int, error) {
+func (v *ContentHasher) Write(p []byte) (int, error) {
 	q := p
 	if slices.Contains(p, '\r') {
 		v.buf = v.buf[:0]
@@ -60,7 +64,7 @@ func (v *variantHasher) Write(p []byte) (int, error) {
 
 // Sums liefert den Hash des Geschriebenen (exact) und die Varianten mit
 // 0, 1 und 2 Zeilenenden am Schluss (ohne Dubletten, exact zuerst).
-func (v *variantHasher) Sums() (exact string, variants []string) {
+func (v *ContentHasher) Sums() (exact string, variants []string) {
 	state, err := v.h.(encoding.BinaryMarshaler).MarshalBinary()
 	if err != nil {
 		panic(err) // sha256 kann das immer

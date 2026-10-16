@@ -85,7 +85,7 @@ func (nopStore) CountPresentMessages(context.Context, int64) (int, error)  { ret
 func (nopStore) FindLinkCandidate(context.Context, int64, int64, string, int64) (int64, bool, error) {
 	return 0, false, nil
 }
-func (nopStore) FindByContentHash(context.Context, int64, int64, string) (int64, bool, error) {
+func (nopStore) FindByContentHash(context.Context, int64, int64, ...string) (int64, bool, error) {
 	return 0, false, nil
 }
 func (nopStore) ApplyBatch(context.Context, store.MirrorBatch) (store.BatchResult, error) {

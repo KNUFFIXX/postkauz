@@ -220,13 +220,23 @@ func (s *SQLite) FindLinkCandidate(ctx context.Context, accountID, mailboxID int
 }
 
 // FindByContentHash sucht wie FindLinkCandidate, aber über content_hash
-// (Nachrichten ohne oder mit abweichend gelesener Message-ID).
-func (s *SQLite) FindByContentHash(ctx context.Context, accountID, mailboxID int64, hash string) (int64, bool, error) {
+// (Nachrichten ohne oder mit abweichend gelesener Message-ID). hashes sind
+// der Wert und seine Varianten am Zeilenende (mailsync.ContentHasher; seit
+// S1.10, damit importierte Nachrichten gefunden werden).
+func (s *SQLite) FindByContentHash(ctx context.Context, accountID, mailboxID int64, hashes ...string) (int64, bool, error) {
+	if len(hashes) == 0 {
+		return 0, false, nil
+	}
+	args := []any{accountID}
+	for _, h := range hashes {
+		args = append(args, h)
+	}
+	args = append(args, mailboxID)
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m
-		WHERE m.account_id = ? AND m.content_hash = ?
+		WHERE m.account_id = ? AND m.content_hash IN (`+placeholders(len(hashes))+`)
 		  AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id AND mm.mailbox_id = ?)
-		ORDER BY m.id LIMIT 1`, accountID, hash, mailboxID).Scan(&id)
+		ORDER BY m.id LIMIT 1`, args...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}

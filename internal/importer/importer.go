@@ -236,7 +236,7 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 			return err
 		}
 	}
-	h := newVariantHasher()
+	h := mailsync.NewContentHasher()
 	content := io.MultiReader(bytes.NewReader(it.header), it.body)
 	var info blob.Info
 	if src.Mode == store.ImportLabels || r.o.DryRun {

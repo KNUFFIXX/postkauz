@@ -89,28 +89,6 @@ func TestMboxNotMboxAndLongLines(t *testing.T) {
 	}
 }
 
-func TestVariantHasher(t *testing.T) {
-	sum := func(s string) string {
-		h := newVariantHasher()
-		_, _ = h.Write([]byte(s))
-		e, _ := h.Sums()
-		return e
-	}
-	h := newVariantHasher()
-	for _, part := range []string{"Subject: x\r\n\r\nText\r", "\n", "\r\n"} {
-		_, _ = h.Write([]byte(part))
-	}
-	exact, variants := h.Sums()
-	if exact != sum("Subject: x\n\nText\n\n") || len(variants) != 3 || variants[0] != exact ||
-		!slices.Contains(variants, sum("Subject: x\n\nText")) || !slices.Contains(variants, sum("Subject: x\n\nText\n")) {
-		t.Fatalf("variants wrong: %v", variants)
-	}
-	// Gleich dem content_hash des Syncs (SHA-256 ohne CR).
-	if sum("a\r\nb\r\n") != sum("a\nb\n") {
-		t.Fatal("CR must not count")
-	}
-}
-
 func TestDecodeFolderName(t *testing.T) {
 	for in, want := range map[string]string{
 		"Entw&APw-rfe":          "Entwürfe",

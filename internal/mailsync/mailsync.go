@@ -59,7 +59,7 @@ type Store interface {
 	LinkCount(ctx context.Context, mailboxID int64) (int, error)
 	CountPresentMessages(ctx context.Context, accountID int64) (int, error)
 	FindLinkCandidate(ctx context.Context, accountID, mailboxID int64, messageID string, size int64) (int64, bool, error)
-	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hash string) (int64, bool, error)
+	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hashes ...string) (int64, bool, error)
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
 	ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]store.ReprocessItem, error)
@@ -434,7 +434,7 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				_, _ = io.Copy(io.Discard, r)
 				return nil
 			}
-			nm, err := e.mirrorRaw(r, h)
+			nm, variants, err := e.mirrorRaw(r, h)
 			if err != nil {
 				rep.Errors++
 				rep.problem(fmt.Sprintf("uid %d: %v", uid, err))
@@ -443,7 +443,7 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				return nil
 			}
 			got[uid] = true
-			if id, ok, err := e.Store.FindByContentHash(ctx, e.AccountID, mb.ID, nm.ContentHash); err != nil {
+			if id, ok, err := e.Store.FindByContentHash(ctx, e.AccountID, mb.ID, variants...); err != nil {
 				return err
 			} else if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: nm.Link})
@@ -636,19 +636,21 @@ func ContentHash(r io.Reader) (string, error) {
 }
 
 // mirrorRaw schreibt die Rohmail in den Blob-Store und parst sie aus der
-// gespeicherten Datei (der Inhalt liegt so nie ganz im Speicher).
-func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (store.NewMessage, error) {
+// gespeicherten Datei (der Inhalt liegt so nie ganz im Speicher). variants
+// sind content_hash und seine Varianten am Zeilenende (ContentHasher) für
+// den Abgleich, z. B. mit importierten Nachrichten.
+func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (nm store.NewMessage, variants []string, err error) {
 	info, err := e.Blobs.Put(r)
 	if err != nil {
-		return store.NewMessage{}, err
+		return store.NewMessage{}, nil, err
 	}
 	if info.Size == 0 && h.Size > 0 {
 		// Server meldet eine Größe, liefert aber nichts (Serverfehler, z. B.
 		// der go-imap-Testserver bei kaputten Kopfzeilen): nicht spiegeln,
 		// der nächste Lauf versucht es erneut.
-		return store.NewMessage{}, fmt.Errorf("server returned an empty body for a message of %d bytes", h.Size)
+		return store.NewMessage{}, nil, fmt.Errorf("server returned an empty body for a message of %d bytes", h.Size)
 	}
-	nm := store.NewMessage{Link: linkFlags(h.UID, h.ModSeq, h.Flags), BlobSHA256: info.SHA256, BlobSize: info.Size,
+	nm = store.NewMessage{Link: linkFlags(h.UID, h.ModSeq, h.Flags), BlobSHA256: info.SHA256, BlobSize: info.Size,
 		BlobCompressed: info.Compressed, Size: info.Size, InternalDate: h.InternalDate.UTC(), MessageID: h.MessageID}
 	if info.Existed {
 		// Vorhandene Datei: Form (komprimiert oder nicht) von dort übernehmen.
@@ -658,29 +660,29 @@ func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (store.NewMessage, er
 	}
 	rc, err := e.Blobs.Get(info.SHA256)
 	if err != nil {
-		return nm, err
+		return nm, nil, err
 	}
 	defer rc.Close()
-	hr := sha256.New()
-	tee := io.TeeReader(rc, crStripper{hr})
+	hr := NewContentHasher()
+	tee := io.TeeReader(rc, hr)
 	m, atts, perr := e.analyze(tee, h.InternalDate)
 	// Parse hört bei unlesbarem Kopf oder an seinen Grenzen vorzeitig auf;
 	// content_hash muss aber die ganze Rohmail abdecken, sonst bekommen zwei
 	// verschiedene Mails mit gleichem Anfang denselben Hash.
 	if _, err := io.Copy(io.Discard, tee); err != nil {
-		return nm, fmt.Errorf("hash message: %w", err)
+		return nm, nil, fmt.Errorf("hash message: %w", err)
 	}
-	nm.ContentHash = hex.EncodeToString(hr.Sum(nil))
+	nm.ContentHash, variants = hr.Sums()
 	nm.CleanVersion = CleanVersion
 	nm.Links = json.RawMessage("[]")
 	if perr != nil {
 		// Unlesbarer Kopf: Nachricht trotzdem spiegeln (Blob, Größe, Datum).
 		e.log().Info("message header unreadable; mirrored without parsed fields", "uid", h.UID)
-		return nm, nil
+		return nm, variants, nil
 	}
 	fillParsed(&nm, m)
 	fillClean(&nm, m, atts)
-	return nm, nil
+	return nm, variants, nil
 }
 
 func fillParsed(nm *store.NewMessage, m *mimeparse.Message) {
