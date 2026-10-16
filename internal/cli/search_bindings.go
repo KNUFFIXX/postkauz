@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -21,7 +22,8 @@ func searchFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.Int("limit", ops.DefaultSearchLimit, fmt.Sprintf("hits per page (1-%d)", ops.MaxSearchLimit))
 	f.String("cursor", "", "continue after this position (next_cursor or a hit's cursor of the same query)")
-	f.Bool("explain", false, "show how the query was translated (terms, filters, SQL)")
+	f.String("mailbox", "", "only this mailbox: path (with subfolders) or role (same as in:)")
+	f.String("fields", "", "with --json: only these fields per hit, e.g. id,subject,date")
 }
 
 // searchInput: Mehrere Argumente bilden zusammen die Anfrage
@@ -39,6 +41,14 @@ func searchInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	if c, _ := f.GetString("cursor"); c != "" {
 		in["cursor"] = c
 	}
+	if m, _ := f.GetString("mailbox"); m != "" {
+		in["mailbox"] = m
+	}
+	if fl, _ := f.GetString("fields"); fl != "" {
+		if _, err := hitFields(fl); err != nil {
+			return nil, "", err
+		}
+	}
 	if x, _ := f.GetBool("explain"); x {
 		in["explain"] = true
 	}
@@ -46,12 +56,38 @@ func searchInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	return b, "", err
 }
 
-// searchJSON: NDJSON, eine Zeile je Treffer (jeder mit seinem Cursor). Mit
-// --explain steht davor eine Zeile {"explain":…, "total":…, …}.
-func searchJSON(w io.Writer, out any) error {
+// hitFieldNames sind die Felder eines Treffers (SearchHitOutput).
+var hitFieldNames = []string{"id", "account", "thread_id", "date", "from", "subject", "snippet", "flags", "has_attachments",
+	"deleted_remote", "score", "cursor"}
+
+// hitFields liest --fields (kommagetrennt) und prüft die Namen.
+func hitFields(s string) ([]string, error) {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !slices.Contains(hitFieldNames, f) {
+			return nil, usageError{fmt.Errorf("unknown field %q for --fields (known: %s)", f, strings.Join(hitFieldNames, ","))}
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// searchJSON: NDJSON, eine Zeile je Treffer (jeder mit seinem Cursor; mit
+// --fields nur die genannten Felder). Mit --explain steht davor eine Zeile
+// {"explain":…, "total":…, …}.
+func searchJSON(cmd *cobra.Command, w io.Writer, out any) error {
 	o, ok := out.(ops.SearchOutput)
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	fl, _ := cmd.Flags().GetString("fields")
+	fields, err := hitFields(fl)
+	if err != nil {
+		return err
 	}
 	enc := json.NewEncoder(w)
 	if o.Explain != nil {
@@ -67,7 +103,25 @@ func searchJSON(w io.Writer, out any) error {
 		}
 	}
 	for _, h := range o.Hits {
-		if err := enc.Encode(h); err != nil {
+		var v any = h
+		if len(fields) > 0 {
+			b, err := json.Marshal(h)
+			if err != nil {
+				return err
+			}
+			var all map[string]json.RawMessage
+			if err := json.Unmarshal(b, &all); err != nil {
+				return err
+			}
+			sel := map[string]json.RawMessage{}
+			for _, f := range fields {
+				if raw, ok := all[f]; ok {
+					sel[f] = raw
+				}
+			}
+			v = sel
+		}
+		if err := enc.Encode(v); err != nil {
 			return err
 		}
 	}

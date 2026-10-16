@@ -107,7 +107,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
-		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Search: st, Extractor: extract.New(extract.Options{})})
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Search: st, Extractor: extract.New(extract.Options{}),
+		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir})
 	if err != nil {
 		return nil, err
 	}

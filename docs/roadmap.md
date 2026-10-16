@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.8 (CLI lesend vollständig). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.9 (MCP stdio lesend), danach Abnahme D2. Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 und S1.7 erledigt 16.10.2026**; S1.8 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.8 erledigt 16.10.2026**; S1.9 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,32 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.8 (Abnahme D1 bestanden 16.10.2026; D2 nach S1.9). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.9 (Abnahme D1 bestanden 16.10.2026; D2 nach S1.9). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.8 (16.10.2026, erledigt): CLI lesend vollständig
+
+**Akzeptanz S1.8 erfüllt** (alles in `make check`, ohne Docker):
+
+- **Je Kommando ein Test:** bestehende Tests für `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show`, `thread`, `attach list/text`, `search`; neu `TestKeyCreateListRevoke` (Klartext genau einmal, in keiner Datei des Datenverzeichnisses, `key list` ohne Klartext und Hash, Widerruf), `TestKeyFlagExplainAndAudit` (`--key`, `--explain` mit Audit-ID, `policy show`, `audit` ohne Suchbegriffe und Mailtext), `TestShowFull` (Absenderprüfung, Text, Warnzeile, Links, Anhangsliste, `--max-chars`, Hülle in `--json`, `thread --max-messages`, `search --fields/--mailbox`), `TestAuditExportVerify` (Export, `ok`, veränderte Datei → `mismatch` und Exit 1, kein Überschreiben), `TestProfileAndQuiet`.
+- **Vertragstest Register ↔ CLI:** `TestBindingsCoverCatalogAndSchemas` (jede Operation des Katalogs hat genau ein Kommando und umgekehrt; die Felder, die ein Kommando setzen kann, sind genau die Eigenschaften des `InputSchema`) und `TestCLIContractRegistry` (22 echte Aufrufe gegen einen Testserver im Prozess: jede gebaute Eingabe gegen das `InputSchema`, jede `--json`-Ausgabe bzw. NDJSON-Zeile gegen das `OutputSchema`, jedes Feld mindestens einmal gesetzt).
+- **Exit-Codes wie `docs/cli.md`:** `TestExitCodesMatchDocs` liest die Tabelle und die Liste der Fehlercodes aus der Doku und vergleicht mit dem Code (19 Fehlerarten); `TestExitCodesEndToEnd` löst 0, 1, 2, 3 und 5 mit echten Aufrufen aus (4 erst mit Freigaben in S2).
+
+**Umsetzung:**
+
+- Operationen `keys.create/list/revoke` (Scope `admin`), `audit.list` (`audit:read`), `audit.export` (`admin`, R1), `audit.verify` (`audit:read`), `policy.get` (Pseudo-Scope `any`); alle im Vertragstest über alle Rollen und Trockenlauf-Varianten.
+- Executor: Eingabe gegen das `InputSchema` (über `github.com/google/jsonschema-go` v0.4.3, MIT, dieselbe Version wie im MCP-SDK) nach dem Audit-Eintrag und vor dem Handler; Audit-ID im Ergebnis; `Call.Key` für `policy.get`.
+- Untrusted-Hülle (`untrusted`, `source`, `notice`) und Budgets (`max_chars` …, `truncated`) in den Ausgaben mit Mailinhalt; `messages.get` mit `auth` und `attachments`; `messages.search` mit `mailbox`.
+- CLI: globale Optionen `--key`, `--quiet`, `--profile`, `--explain`; `show` voll; `key`, `audit`, `policy show`; `search --fields`.
+
+**Befunde:**
+
+- Ein Agent, der die CLI statt MCP nutzt, handelt als Mensch mit allen Rechten (es gibt dort keine Anmeldung per Schlüssel; `--key` ist eine Probe des Menschen). Agenten gehören an MCP mit `POSTKAUZ_KEY` (S1.9).
+- `audit verify` erzeugt selbst einen Eintrag; der laufende Tag erscheint deshalb nach jedem `verify` unter „not exported yet". Das ist gewollt (das Audit bleibt vollständig) und kein Fehler.
+- Schlüsselbund-Einträge hängen am Kontonamen, nicht am Profil (offene Frage 7); `--profile` teilt sie deshalb bei gleichem Kontonamen.
+
+**Nicht in S1.8 (bewusst verschoben):** Audit-Export als tägliche Aufgabe und Kanarientest über alle Kanäle (S1.11); `--yes` (S2); `--fields` für andere Kommandos als `search`.
 
 ### Stand S1.7 (16.10.2026, erledigt): Volltextsuche
 

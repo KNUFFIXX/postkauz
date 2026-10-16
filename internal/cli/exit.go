@@ -54,6 +54,15 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "not_found", Message: "thread not found", Hint: "the thread id is shown by show <message-id>; or use thread --message <message-id>"}
 	case errors.Is(err, store.ErrAttachmentNotFound):
 		return ExitError, ErrorInfo{Code: "not_found", Message: "attachment not found", Hint: "list attachment ids with: attach list <message-id>"}
+	case errors.Is(err, store.ErrKeyExists):
+		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
+	case errors.Is(err, store.ErrKeyNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list keys with: key list"}
+	case errors.Is(err, ops.ErrKeyMissing), errors.Is(err, ops.ErrKeyInvalid), errors.Is(err, ops.ErrKeyRevoked),
+		errors.Is(err, ops.ErrKeyExpired):
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "create a key with: key create --name <name> --role reader"}
+	case errors.Is(err, errAuditMismatch), errors.Is(err, ops.ErrAuditExportChanged):
+		return ExitError, ErrorInfo{Code: "mismatch", Message: err.Error(), Hint: "the audit log or its export was changed; see audit verify"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, secrets.ErrUnavailable):

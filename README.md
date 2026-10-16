@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha, slice S1.7.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess) and German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging) work. There is no MCP server yet. The name "PostKauz" is a working title and will still change.
+**Status: pre-alpha, slice S1.8.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), API keys with roles and scopes, and an audit log you can query, export with checksums and verify work. There is no MCP server yet. The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -53,6 +53,10 @@ make build                       # builds bin/postkauz (and the alias bin/pk)
 ./bin/postkauz search "Rechnung" -a demo --limit 5          # finds "Rechnungen", "Abrechnung"; "prüfen" = "pruefen"
 ./bin/postkauz search 'from:anna has:attachment after:2026-01-01' --json   # NDJSON, one line per hit
 ./bin/postkauz search '"Erdgeschoss links" -Keller' --explain               # shows how the query was translated
+./bin/postkauz key create --name assistant-1 --role reader  # API key for an agent; shown once, only its hash is stored
+./bin/postkauz policy show --key assistant-1                # what that key may do
+./bin/postkauz audit --since 1h                             # who called what, never message content
+./bin/postkauz audit export --to /mnt/backup/audit && ./bin/postkauz audit verify
 ```
 
 Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and use `account add --password-from-env`. Configuration and paths: `docs/cli.md`, section 5; query language: `docs/cli.md`, section 2d. `sync` also extracts attachment text and builds the search index; `search` reads the local mirror only.
@@ -113,6 +117,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Pre-Alpha, Schnitt S1.7 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern; noch ohne MCP). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: Pre-Alpha, Schnitt S1.8 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung; noch ohne MCP). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.

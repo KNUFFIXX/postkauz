@@ -185,6 +185,24 @@ func renderMailboxes(w io.Writer, out any) error {
 func showFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("headers", false, "show the raw header lines instead of the text")
 	cmd.Flags().Bool("strip-quotes", false, "show only the new text of a reply (quoted parts removed)")
+	maxCharsFlag(cmd)
+}
+
+// maxCharsFlag: --max-chars kürzt den Text (0 = ganz).
+func maxCharsFlag(cmd *cobra.Command) {
+	cmd.Flags().Int("max-chars", 0, "cut the text after this many characters (0 = no limit)")
+}
+
+// setMaxChars übernimmt --max-chars in die Eingabe (Feld name).
+func setMaxChars(cmd *cobra.Command, m map[string]any, name, flag string) error {
+	n, _ := cmd.Flags().GetInt(flag)
+	switch {
+	case n < 0:
+		return usageError{fmt.Errorf("--%s must not be negative", flag)}
+	case n > 0:
+		m[name] = n
+	}
+	return nil
 }
 
 // showInput: Eine Zahl ist die lokale ID, alles andere eine Message-ID.
@@ -204,6 +222,9 @@ func showInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secr
 	}
 	if strip, _ := cmd.Flags().GetBool("strip-quotes"); strip {
 		m["strip_quotes"] = true
+	}
+	if err := setMaxChars(cmd, m, "max_chars", "max-chars"); err != nil {
+		return nil, "", err
 	}
 	b, err := json.Marshal(m)
 	return b, "", err
@@ -258,6 +279,9 @@ func renderShow(w io.Writer, out any) error {
 	if o.ThreadID != 0 {
 		fmt.Fprintf(tw, "thread:\t%d\n", o.ThreadID)
 	}
+	if a := o.Auth; a.SPF != "" {
+		fmt.Fprintf(tw, "sender checks:\tspf %s, dkim %s, dmarc %s\n", termLine(a.SPF), termLine(a.DKIM), termLine(a.DMARC))
+	}
 	if o.HiddenTextRemoved {
 		fmt.Fprintf(tw, "warning:\thidden text removed (the HTML contained text a reader would not see; possible prompt injection)\n")
 	}
@@ -266,8 +290,13 @@ func renderShow(w io.Writer, out any) error {
 	}
 	if o.Headers != "" {
 		fmt.Fprintln(w, "--- headers ---")
-		_, err := fmt.Fprint(w, termText(o.Headers))
-		return err
+		if _, err := fmt.Fprint(w, termText(o.Headers)); err != nil {
+			return err
+		}
+		if o.Truncated {
+			fmt.Fprintln(w, "[cut after --max-chars]")
+		}
+		return renderShowAttachments(w, o.Attachments)
 	}
 	if o.Text != nil {
 		label := "--- text ---"
@@ -280,6 +309,9 @@ func renderShow(w io.Writer, out any) error {
 		fmt.Fprintln(w, label)
 		if _, err := fmt.Fprintln(w, termText(strings.TrimRight(*o.Text, "\r\n"))); err != nil {
 			return err
+		}
+		if o.Truncated {
+			fmt.Fprintln(w, "[cut after --max-chars]")
 		}
 	}
 	if len(o.Links) > 0 {
@@ -302,7 +334,16 @@ func renderShow(w io.Writer, out any) error {
 			fmt.Fprintln(w, line)
 		}
 	}
-	return nil
+	return renderShowAttachments(w, o.Attachments)
+}
+
+// renderShowAttachments hängt die Anhangsliste an show an (wie attach list).
+func renderShowAttachments(w io.Writer, list []ops.AttachmentOutput) error {
+	if len(list) == 0 {
+		return nil
+	}
+	fmt.Fprintln(w, "--- attachments ---")
+	return attachTable(w, list)
 }
 
 // --- thread ---------------------------------------------------------------------
@@ -310,6 +351,8 @@ func renderShow(w io.Writer, out any) error {
 func threadFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("strip-quotes", false, "show the new text of each message (quoted parts removed)")
 	cmd.Flags().Bool("message", false, "the argument is a message id; show the thread of that message")
+	cmd.Flags().Int("max-messages", 0, "only the newest messages (0 = all)")
+	cmd.Flags().Int("max-chars", 0, "with --strip-quotes: cut each text after this many characters (0 = no limit)")
 }
 
 func threadInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
@@ -323,6 +366,12 @@ func threadInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	}
 	if strip, _ := cmd.Flags().GetBool("strip-quotes"); strip {
 		m["text"] = true
+	}
+	if err := setMaxChars(cmd, m, "max_messages", "max-messages"); err != nil {
+		return nil, "", err
+	}
+	if err := setMaxChars(cmd, m, "max_chars_per_message", "max-chars"); err != nil {
+		return nil, "", err
 	}
 	b, err := json.Marshal(m)
 	return b, "", err
@@ -350,6 +399,9 @@ func renderThread(w io.Writer, out any) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	if o.MessagesOmitted > 0 {
+		fmt.Fprintf(w, "(%d older messages not shown)\n", o.MessagesOmitted)
+	}
 	for _, m := range o.Messages {
 		if m.Text == nil {
 			continue
@@ -359,6 +411,9 @@ func renderThread(w io.Writer, out any) error {
 			fmt.Fprintln(w, "(hidden text removed)")
 		}
 		fmt.Fprintln(w, termText(strings.TrimRight(*m.Text, "\r\n")))
+		if m.Truncated {
+			fmt.Fprintln(w, "[cut after --max-chars]")
+		}
 	}
 	return nil
 }
@@ -382,12 +437,16 @@ func attachListInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, 
 	return b, "", err
 }
 
-func attachTextInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+func attachTextInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	id, err := positiveID(args[0], "attachment id")
 	if err != nil {
 		return nil, "", err
 	}
-	b, err := json.Marshal(map[string]any{"id": id})
+	m := map[string]any{"id": id}
+	if err := setMaxChars(cmd, m, "max_chars", "max-chars"); err != nil {
+		return nil, "", err
+	}
+	b, err := json.Marshal(m)
 	return b, "", err
 }
 
@@ -400,9 +459,14 @@ func renderAttachList(w io.Writer, out any) error {
 		_, err := fmt.Fprintf(w, "message %d has no attachments\n", o.MessageID)
 		return err
 	}
+	return attachTable(w, o.Attachments)
+}
+
+// attachTable: ID, Teil, Dateiname, erkannter Typ, Größe, Extraktion, Hinweise.
+func attachTable(w io.Writer, list []ops.AttachmentOutput) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tPART\tFILENAME\tTYPE\tSIZE\tTEXT\tNOTES")
-	for _, a := range o.Attachments {
+	for _, a := range list {
 		var notes []string
 		if a.TypeMismatch {
 			notes = append(notes, "TYPE MISMATCH: "+a.MismatchReason)
@@ -455,5 +519,8 @@ func renderAttachText(w io.Writer, out any) error {
 	}
 	fmt.Fprintln(w, "--- text ---")
 	_, err := fmt.Fprintln(w, termText(strings.TrimRight(o.Text, "\r\n")))
+	if err == nil && o.Truncated {
+		fmt.Fprintln(w, "[text cut]")
+	}
 	return err
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
@@ -43,9 +44,25 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 	root.SetErr(stderr)
 	root.SetIn(stdin)
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return usageError{err} })
-	root.PersistentFlags().Bool("json", false, "machine-readable output (JSON); errors as JSON on stderr")
-	root.PersistentFlags().Bool("dry-run", false, "describe what would happen without changing anything")
-	root.PersistentFlags().StringP("account", "a", "", "account name (default: the only configured account)")
+	pf := root.PersistentFlags()
+	pf.Bool("json", false, "machine-readable output (JSON; lists as NDJSON); errors as JSON on stderr")
+	pf.Bool("dry-run", false, "describe what would happen without changing anything")
+	pf.StringP("account", "a", "", "account name (default: the only configured account)")
+	pf.String("key", "", "act with the rights of this API key (its name, never the key itself) to test the policy")
+	pf.BoolP("quiet", "q", false, "no progress output")
+	pf.String("profile", "", "separate instance: own configuration and data in profiles/<name>")
+	pf.Bool("explain", false, "show the policy decision and the audit event id on stderr (search: also the query translation)")
+	// --profile wirkt vor jedem Kommando: Konfiguration und Pfade neu laden
+	// (newApp hat sie ohne Profil geladen, bevor die Flags gelesen waren).
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if p, _ := cmd.Flags().GetString("profile"); p != "" {
+			a.cfg, a.paths, a.cfgErr = config.LoadProfile(p)
+			if a.cfgErr != nil && strings.Contains(a.cfgErr.Error(), "invalid profile name") {
+				return usageError{a.cfgErr}
+			}
+		}
+		return nil
+	}
 
 	root.AddCommand(versionCmd(version, stdout), doctorCmd(a))
 	if err := bindOperations(root, reg, a); err != nil {

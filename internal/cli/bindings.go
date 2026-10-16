@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -31,47 +32,79 @@ type binding struct {
 	use   string   // Argumente in der Hilfe, z. B. "<name>"
 	args  cobra.PositionalArgs
 	flags func(cmd *cobra.Command)
+	// covers nennt die Felder der Eingabe (InputSchema.properties), die
+	// dieses Kommando setzen kann. Der Vertragstest verlangt, dass sie genau
+	// den Eigenschaften des Schemas entsprechen: Was die Operation kann,
+	// kann auch die CLI.
+	covers []string
 	// input baut die Eingabe; Geheimnisse gehen getrennt zurück (nie in Input).
 	input func(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error)
 	human func(w io.Writer, out any) error
 	// jsonOut ersetzt die JSON-Ausgabe (ein Objekt) für Listen, die als
-	// NDJSON gestreamt werden (search); nil = ein Objekt.
-	jsonOut func(w io.Writer, out any) error
+	// NDJSON gestreamt werden (search, audit); nil = ein Objekt.
+	jsonOut func(cmd *cobra.Command, w io.Writer, out any) error
 	// progress liefert optional einen Empfänger für Fortschrittsmeldungen.
 	progress func(cmd *cobra.Command, a *app) func(ops.Progress)
+	// check prüft die Ausgabe nach dem Schreiben und kann so einen
+	// Exit-Code ≠ 0 erzwingen (audit verify: mismatch → Exit 1).
+	check func(out any) error
 }
 
 var bindings = []binding{
 	{op: "accounts.list", path: []string{"accounts", "list"}, args: cobra.NoArgs, human: renderAccounts},
 	{op: "accounts.add", path: []string{"account", "add"}, use: "<name>", args: cobra.ExactArgs(1),
-		flags: accountAddFlags, input: accountAddInput, human: renderAccountAdd},
+		flags: accountAddFlags, input: accountAddInput, human: renderAccountAdd,
+		covers: []string{"name", "email", "host", "port", "tls", "username", "auth_type", "insecure_test_server", "password_from_env"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
-		input: nameInput, human: renderAccountTest},
+		input: nameInput, human: renderAccountTest, covers: []string{"name"}},
 	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
-		input: nameInput, human: renderAccountRemove},
+		input: nameInput, human: renderAccountRemove, covers: []string{"name"}},
 	{op: "sync.run", path: []string{"sync"}, args: cobra.NoArgs, flags: syncFlags, input: syncInput,
-		human: renderSync, progress: syncProgress},
+		human: renderSync, progress: syncProgress,
+		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "mailboxes"}},
 	{op: "mailboxes.list", path: []string{"mailbox", "list"}, args: cobra.NoArgs, input: accountOnlyInput,
-		human: renderMailboxes},
+		human: renderMailboxes, covers: []string{"account"}},
 	{op: "messages.get", path: []string{"show"}, use: "<id>", args: cobra.ExactArgs(1), flags: showFlags,
-		input: showInput, human: renderShow},
+		input: showInput, human: renderShow,
+		covers: []string{"id", "message_id", "account", "headers", "strip_quotes", "max_chars"}},
 	{op: "messages.search", path: []string{"search"}, use: `"<query>"`, args: cobra.MinimumNArgs(1), flags: searchFlags,
-		input: searchInput, human: renderSearch, jsonOut: searchJSON},
+		input: searchInput, human: renderSearch, jsonOut: searchJSON,
+		covers: []string{"query", "account", "mailbox", "limit", "cursor", "explain"}},
 	{op: "threads.get", path: []string{"thread"}, use: "<thread-id>", args: cobra.ExactArgs(1), flags: threadFlags,
-		input: threadInput, human: renderThread},
+		input: threadInput, human: renderThread,
+		covers: []string{"id", "message", "text", "max_messages", "max_chars_per_message"}},
 	{op: "attachments.list", path: []string{"attach", "list"}, use: "<message-id>", args: cobra.ExactArgs(1),
-		input: attachListInput, human: renderAttachList},
+		input: attachListInput, human: renderAttachList, covers: []string{"message"}},
 	{op: "attachments.text", path: []string{"attach", "text"}, use: "<attachment-id>", args: cobra.ExactArgs(1),
-		input: attachTextInput, human: renderAttachText},
+		flags: maxCharsFlag, input: attachTextInput, human: renderAttachText, covers: []string{"id", "max_chars"}},
+	{op: "keys.create", path: []string{"key", "create"}, args: cobra.NoArgs, flags: keyCreateFlags,
+		input: keyCreateInput, human: renderKeyCreate,
+		covers: []string{"name", "role", "scopes", "expires_in_days", "dry_run_default"}},
+	{op: "keys.list", path: []string{"key", "list"}, args: cobra.NoArgs, human: renderKeyList},
+	{op: "keys.revoke", path: []string{"key", "revoke"}, use: "<name>", args: cobra.ExactArgs(1),
+		input: nameInput, human: renderKeyRevoke, covers: []string{"name"}},
+	{op: "audit.list", path: []string{"audit"}, args: cobra.NoArgs, flags: auditFlags, input: auditInput,
+		human: renderAudit, jsonOut: auditJSON,
+		covers: []string{"since", "until", "actor", "key", "operation", "result", "limit", "after_id"}},
+	{op: "audit.export", path: []string{"audit", "export"}, args: cobra.NoArgs, flags: auditExportFlags,
+		input: auditExportInput, human: renderAuditExport, covers: []string{"to"}},
+	{op: "audit.verify", path: []string{"audit", "verify"}, args: cobra.NoArgs, human: renderAuditVerify,
+		check: checkAuditVerify},
+	{op: "policy.get", path: []string{"policy", "show"}, args: cobra.NoArgs, human: renderPolicy},
 }
 
-// humanKey ist der Schlüssel, unter dem die CLI handelt: der Mensch am
-// Terminal mit allen Rechten. Agenten-Schlüssel (--key) folgen mit S1.8.
-var humanKey = policy.Key{ID: "cli", Name: "cli (human)", Scopes: policy.Roles["admin"]}
+// humanKey ist der Schlüssel, unter dem die CLI ohne --key handelt: der
+// Mensch am Terminal mit allen Rechten.
+var humanKey = policy.Key{ID: "cli", Name: "cli (human)", Role: "admin", Scopes: policy.Roles["admin"]}
+
+// observeRequest sieht jeden Aufruf vor dem Executor (nur Tests:
+// Vertragstest Register ↔ CLI prüft die gebaute Eingabe gegen das Schema;
+// ein Fehler bricht den Aufruf vor dem Executor ab).
+var observeRequest func(ops.Request) error
 
 // bindOperations hängt alle Bindungen unter root.
 func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
-	groups := map[string]*cobra.Command{}
+	top := map[string]*cobra.Command{}
 	for _, b := range bindings {
 		op, err := reg.Get(b.op)
 		if err != nil {
@@ -82,10 +115,10 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 		}
 		parent := root
 		if len(b.path) == 2 {
-			group, ok := groups[b.path[0]]
+			group, ok := top[b.path[0]]
 			if !ok {
 				group = &cobra.Command{Use: b.path[0], Short: "Commands for " + b.path[0]}
-				groups[b.path[0]] = group
+				top[b.path[0]] = group
 				root.AddCommand(group)
 			}
 			parent = group
@@ -99,47 +132,141 @@ func bindOperations(root *cobra.Command, reg *ops.Registry, a *app) error {
 			Use:   use,
 			Short: op.Summary,
 			Args:  b.args,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				input, secret := json.RawMessage(`{}`), secrets.Secret("")
-				if b.input != nil {
-					var err error
-					if input, secret, err = b.input(cmd, args, a); err != nil {
-						return err
-					}
-				}
-				x, err := a.open(cmd.Context())
-				if err != nil {
-					return err
-				}
-				req := ops.Request{Key: humanKey, Actor: audit.ActorHuman, Operation: b.op, Input: input, Secret: secret}
-				if b.progress != nil {
-					req.Progress = b.progress(cmd, a)
-				}
-				if cmd.Flags().Changed("dry-run") {
-					v, _ := cmd.Flags().GetBool("dry-run")
-					req.DryRun = &v
-				}
-				res, err := x.Execute(cmd.Context(), req)
-				if err != nil {
-					a.log.Warn("operation failed", "op", b.op, "error", err.Error())
-					return err
-				}
-				a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)
-				if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
-					if b.jsonOut != nil {
-						return b.jsonOut(a.stdout, res.Output)
-					}
-					return json.NewEncoder(a.stdout).Encode(res.Output)
-				}
-				return b.human(a.stdout, res.Output)
-			},
+			RunE:  func(cmd *cobra.Command, args []string) error { return a.runBinding(cmd, args, b, op) },
 		}
 		if b.flags != nil {
 			b.flags(cmd)
 		}
+		if len(b.path) == 1 {
+			if _, dup := top[b.path[0]]; dup {
+				return fmt.Errorf("cli: binding %s: command %q defined twice", b.op, b.path[0])
+			}
+			top[b.path[0]] = cmd
+		}
 		parent.AddCommand(cmd)
 	}
 	return nil
+}
+
+// runBinding führt eine Bindung aus: Eingabe bauen, Schlüssel wählen,
+// Executor, Ausgabe (Text, JSON oder NDJSON), Erklärung (--explain).
+func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Operation) error {
+	input, secret := json.RawMessage(`{}`), secrets.Secret("")
+	if b.input != nil {
+		var err error
+		if input, secret, err = b.input(cmd, args, a); err != nil {
+			return err
+		}
+	}
+	x, err := a.open(cmd.Context())
+	if err != nil {
+		return err
+	}
+	key, err := a.key(cmd)
+	if err != nil {
+		return err
+	}
+	req := ops.Request{Key: key, Actor: audit.ActorHuman, Operation: b.op, Input: input, Secret: secret}
+	if b.progress != nil && !a.quiet(cmd) {
+		req.Progress = b.progress(cmd, a)
+	}
+	if cmd.Flags().Changed("dry-run") {
+		v, _ := cmd.Flags().GetBool("dry-run")
+		req.DryRun = &v
+	}
+	if observeRequest != nil {
+		if err := observeRequest(req); err != nil {
+			return err
+		}
+	}
+	res, err := x.Execute(cmd.Context(), req)
+	if explain, _ := cmd.Flags().GetBool("explain"); explain {
+		a.explain(cmd, op, key, res, err)
+	}
+	if err != nil {
+		a.log.Warn("operation failed", "op", b.op, "error", err.Error())
+		return err
+	}
+	a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)
+	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+		if b.jsonOut != nil {
+			err = b.jsonOut(cmd, a.stdout, res.Output)
+		} else {
+			err = json.NewEncoder(a.stdout).Encode(res.Output)
+		}
+	} else {
+		err = b.human(a.stdout, res.Output)
+	}
+	if err == nil && b.check != nil {
+		err = b.check(res.Output)
+	}
+	return err
+}
+
+// key wählt den Schlüssel: ohne --key der Mensch mit allen Rechten, mit
+// --key <name> die Rechte dieses API-Schlüssels (Probe der Policy; der
+// Klartext eines Schlüssels wird nie als Argument angenommen).
+func (a *app) key(cmd *cobra.Command) (policy.Key, error) {
+	name, _ := cmd.Flags().GetString("key")
+	if name == "" {
+		return humanKey, nil
+	}
+	if strings.HasPrefix(name, ops.KeyPrefix) {
+		return policy.Key{}, usageError{errors.New("--key takes the name of a key, never the key itself (see: key list)")}
+	}
+	return ops.KeyByName(cmd.Context(), a.st, name, time.Now())
+}
+
+func (a *app) quiet(cmd *cobra.Command) bool {
+	q, _ := cmd.Flags().GetBool("quiet")
+	return q
+}
+
+// explainInfo ist die Erklärung eines Aufrufs (--explain): Policy-Entscheid
+// und Audit-ID, nie Inhalte.
+type explainInfo struct {
+	Operation string `json:"operation"`
+	Scope     string `json:"scope"`
+	Risk      string `json:"risk"`
+	Key       string `json:"key"`
+	Actor     string `json:"actor"`
+	Decision  string `json:"decision"`
+	Reason    string `json:"reason"`
+	DryRun    bool   `json:"dry_run"`
+	AuditID   int64  `json:"audit_id,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// explain schreibt die Erklärung auf stderr (stdout bleibt die Ausgabe der
+// Operation): als Textzeile oder mit --json als {"explain":{…}}.
+func (a *app) explain(cmd *cobra.Command, op ops.Operation, key policy.Key, res ops.Result, err error) {
+	dec, id := res.Decision, res.AuditID
+	var pe *ops.PolicyError
+	if errors.As(err, &pe) {
+		dec, id = pe.Decision, pe.AuditID
+	}
+	if dec.Outcome == "" {
+		return // vor der Policy gescheitert (z. B. Datenbank); nichts zu erklären
+	}
+	info := explainInfo{Operation: op.Name, Scope: string(op.Scope), Risk: op.Risk.String(), Key: key.ID,
+		Actor: string(audit.ActorHuman), Decision: string(dec.Outcome), Reason: dec.Reason, DryRun: dec.DryRun, AuditID: id}
+	if err != nil && pe == nil {
+		info.Error = "handler failed"
+	}
+	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+		_ = json.NewEncoder(a.stderr).Encode(map[string]explainInfo{"explain": info})
+		return
+	}
+	yn := map[bool]string{true: "yes", false: "no"}
+	line := fmt.Sprintf("explain: %s (scope %s, risk %s) as key %s: %s (%s), dry run %s", info.Operation, info.Scope, info.Risk,
+		info.Key, info.Decision, info.Reason, yn[info.DryRun])
+	if id > 0 {
+		line += fmt.Sprintf("; audit event %d", id)
+	}
+	if info.Error != "" {
+		line += "; " + info.Error
+	}
+	fmt.Fprintln(a.stderr, line)
 }
 
 func nameInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
