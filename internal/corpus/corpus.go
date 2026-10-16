@@ -61,7 +61,7 @@ func (o Options) withDefaults() Options {
 // Entry ist ein Manifest-Eintrag mit den erwarteten Ergebnissen.
 type Entry struct {
 	File         string   `json:"file"`
-	Kind         string   `json:"kind"` // single|thread|newsletter|broken|zipbomb
+	Kind         string   `json:"kind"` // single|thread|newsletter|broken|zipbomb|hidden|links|quote|mismatch|extract
 	Folder       string   `json:"folder"`
 	Flags        []string `json:"flags"`
 	InternalDate string   `json:"internal_date"` // RFC 3339, für APPEND und als Date-Ersatz
@@ -87,6 +87,16 @@ type Entry struct {
 	BodyContains    string   `json:"body_contains,omitempty"` // Satz, der im Text stehen muss
 	Broken          string   `json:"broken,omitempty"`
 	ZipBomb         bool     `json:"zip_bomb,omitempty"`
+	// S1.6 (Manifest-Version 2): Body-Bereinigung, Links, Zitate, Anhangstypen.
+	HiddenText       bool               `json:"hidden_text,omitempty"`       // HTML enthält versteckten Text
+	HiddenContains   string             `json:"hidden_contains,omitempty"`   // darf im bereinigten Text nicht stehen
+	HTMLContains     string             `json:"html_contains,omitempty"`     // muss im Text aus dem HTML stehen
+	Links            []ExpectLink       `json:"links,omitempty"`             // http(s)-Links in Reihenfolge
+	RemovedLinks     int                `json:"removed_links,omitempty"`     // entfernte Ziele (javascript:, mailto:)
+	TrackingPixels   int                `json:"tracking_pixels,omitempty"`   // 1×1-Bilder
+	UnquotedContains string             `json:"unquoted_contains,omitempty"` // steht im Text ohne Zitate
+	QuotedContains   string             `json:"quoted_contains,omitempty"`   // zitiert: fehlt im Text ohne Zitate
+	AttachmentTypes  []ExpectAttachment `json:"attachment_types,omitempty"`  // Typprüfung und Extraktion
 	// Unchecked nennt Felder, die bei dieser kaputten Nachricht nicht
 	// geprüft werden (z. B. Anhänge einer abgeschnittenen Nachricht).
 	Unchecked []string `json:"unchecked,omitempty"`
@@ -176,7 +186,7 @@ var attachmentKinds = []attKind{
 	{"Übergabeprotokoll Wohnung 3.pdf", "application/pdf", fakePDF},
 	{"Zählerstände_März.pdf", "application/pdf", fakePDF},
 	{"Mietvertrag Änderung.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fakeDOCX},
-	{"Kostenaufstellung 2025.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fakeDOCX},
+	{"Kostenaufstellung 2025.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fakeXLSX},
 	{"Schadensfoto Küche.jpg", "image/jpeg", fakeJPG},
 	{"Grundriss Erdgeschoß.png", "image/png", fakePNG},
 	{"Kostenübersicht 2025 – Grundsteuer und Müllgebühren für das gesamte Gebäude.pdf", "application/pdf", fakePDF},
@@ -288,6 +298,7 @@ type plan struct {
 	dropped   bool // fehlendes Zwischenglied: Nachricht wird nicht geschrieben
 	orphan    bool // Antwort ohne References/In-Reply-To (Betreff-Rückfall)
 	tzVariant int
+	s16       string // Sonderfall S1.6 (s16.go)
 }
 
 // spec beschreibt eine normale Nachricht vor dem Schreiben.
@@ -359,6 +370,17 @@ func Generate(opt Options) (*Corpus, error) {
 	for written(plans) < n {
 		plans = append(plans, plan{kind: "single", date: g.date()})
 	}
+	// Sonderfälle S1.6 ersetzen die letzten Einzelnachrichten (gleiche
+	// Zufallszüge beim Planen, Ausgabe am Ende: Alles davor bleibt gleich).
+	if n >= 500 {
+		k := 0
+		for i := len(plans) - len(s16Kinds); i < len(plans); i++ {
+			if plans[i].kind == "single" {
+				plans[i].kind, plans[i].s16, plans[i].nlNo = "s16", s16Kinds[k], k
+				k++
+			}
+		}
+	}
 
 	c := &Corpus{Manifest: Manifest{Version: Version, Seed: opt.Seed, Summary: map[string]int{}}}
 	chains := map[string][]string{}
@@ -408,11 +430,16 @@ func Generate(opt Options) (*Corpus, error) {
 			s.subject = "Belege als Archiv (bitte nicht entpacken)"
 			s.attachments = nil
 			raw, e = g.renderZipBomb(s)
+		case "s16":
+			raw, e = g.s16(p.s16, p.nlNo, p.date)
 		default:
 			s := g.normalSpec(people[g.pick(len(people))], me, p.date)
 			raw, e = g.render(s)
 		}
 		e.Kind = p.kind
+		if p.kind == "s16" {
+			e.Kind = p.s16
+		}
 		if e.Broken != "" {
 			e.Kind = "broken"
 		}

@@ -59,6 +59,15 @@ func fakeDOCX(r *rand.Rand) []byte {
 	}, []string{"[Content_Types].xml", "word/document.xml"})
 }
 
+// fakeXLSX: wie fakeDOCX (gleicher Zufallszug), aber mit Arbeitsmappe,
+// damit die Typprüfung (Magic Bytes, S1.6) eine XLSX-Datei erkennt.
+func fakeXLSX(r *rand.Rand) []byte {
+	return zipOf(map[string]string{
+		"[Content_Types].xml": `<?xml version="1.0"?><Types/>`,
+		"xl/workbook.xml":     "<workbook>" + sentences[r.IntN(len(sentences))] + "</workbook>",
+	}, []string{"[Content_Types].xml", "xl/workbook.xml"})
+}
+
 func fakeZIP(r *rand.Rand) []byte {
 	return zipOf(map[string]string{
 		"beleg1.txt": sentences[r.IntN(len(sentences))],

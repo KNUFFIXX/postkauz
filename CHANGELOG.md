@@ -34,6 +34,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Werkzeug `corpusload` (`make corpus-load`): Korpus per APPEND in einen lokalen Testserver laden; `-mark-seen` für die Abnahme D1.6.
 - Integrationstests des Syncs gegen Dovecot, Stalwart, GreenMail (Absturz und Wiederaufnahme, Änderungen von außen, UIDVALIDITY, IDLE); Unit-Test mit echtem `kill -9` eines Kindprozesses.
 - P2: Messung mit 50.000 Nachrichten als Nachtrag in `spike/s0/REPORT.md`; `docs/abnahme_D1.md` mit den Abnahme-Kommandos für Windows.
+- **Body-Bereinigung** (S1.6) `internal/sanitize`: HTML → Text mit Allowlist (Struktur, Links, Bild-Alternativtexte; ohne Skripte, Styles, Formulare, Kommentare; nichts wird nachgeladen), versteckter Text (display:none, visibility, Schriftgröße 0, Farbe wie Hintergrund, Deckkraft, Höhe 0, mso-hide, aus dem Bild geschoben, hidden-Attribut, einfache Klassen-/ID-Regeln aus `<style>`) wird entfernt und gemeldet, Links sichtbar mit Ziel, Domain und Warnungen (Punycode, gemischte Schriften, IP, Zugangsdaten, sichtbarer Text nennt andere Domain), nur http(s); unsichtbare Formatzeichen (Nullbreite, Bidi) entfernt; Quote-Stripper für Antworten (Zitatzeilen, „Am … schrieb …:", Outlook-Kopfblock; Weiterleitungen bleiben). Neue Abhängigkeit `golang.org/x/net` v0.61.0 (BSD-3, per `go get`; HTML-Parser und IDNA). Korpus: neun Sonderfälle S1.6, Manifest-Version 2.
 - `make vuln` (govulncheck v1.9.0, per `go list -m golang.org/x/vuln@latest` aufgelöst) und CI-Job `vuln` (A01 N2); Ergebnis 16.10.2026: keine Schwachstellen.
 
 ### Changed
