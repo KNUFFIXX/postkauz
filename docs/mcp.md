@@ -1,6 +1,6 @@
 # MCP-Schnittstelle
 
-Stand: S1.9 (16.10.2026). Der stdio-Server ist umgesetzt (`internal/mcp`, Kommando `postkauz mcp`, offizielles Go-SDK `github.com/modelcontextprotocol/go-sdk` v1.8.0): die lesenden Tools, Resources und Prompts des Abschnitts „S1" unten, Scope-Filter, Untrusted-Hülle, Audit je Aufruf. Einrichtung in Claude Code und der Claude-App: README, Abschnitt „Set up MCP in Claude Code". Alles für S2 und später ist **Entwurf**.
+Stand: S1.11 (16.10.2026; seit S1.11 Fehlercode `internal` bei abgefangenen Abstürzen, Kanarientest auch über MCP). Der stdio-Server ist umgesetzt (`internal/mcp`, Kommando `postkauz mcp`, offizielles Go-SDK `github.com/modelcontextprotocol/go-sdk` v1.8.0): die lesenden Tools, Resources und Prompts des Abschnitts „S1" unten, Scope-Filter, Untrusted-Hülle, Audit je Aufruf. Einrichtung in Claude Code und der Claude-App: README, Abschnitt „Set up MCP in Claude Code". Alles für S2 und später ist **Entwurf**.
 
 ## 1. Grundsätze
 

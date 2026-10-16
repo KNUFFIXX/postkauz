@@ -119,6 +119,8 @@ Ausführliche Anleitung für Windows ohne Docker und ohne Go (nur `postkauz.exe`
 
 ### D3: Gesamtabnahme S1
 
+Ausführliche Anleitung für Windows ohne Docker und ohne Go (nur `postkauz.exe`), mit den Protokollen der Container-Läufe für D3.1 und D3.2: [`docs/abnahme_D3.md`](../docs/abnahme_D3.md).
+
 1. Alle Punkte D0–D2 erneut auf einem zweiten Server (Stalwart 0.11.8, nur IMAPS Port 12993, Konto laut `deploy/testmail/README.md`) und auf GreenMail (Port 13143).
 2. `make check && make cross` → grün; im Ordner `dist/` liegen drei Programme (linux, windows, darwin).
 3. Installation: `dist/postkauz-windows-amd64.exe` auf einen Windows-Rechner kopieren, `postkauz.exe doctor` → läuft ohne Installation weiterer Software.

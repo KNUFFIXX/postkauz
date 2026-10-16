@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.10 erledigt** (16.10.2026: Import aus mbox und Maildir mit Abgleich per Message-ID und `content_hash`, Thunderbird-Profile, Gmail-Labels, Wiederaufnahme, Trockenlauf; Abschnitt „Stand S1.10" unten). **Nachbesserung nach der Gegenprüfung von S1.9 erledigt** (16.10.2026, 14 Befunde; Abnahme-Datenbank für D2 neu erzeugt). **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio, Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.6 bis S1.8 erledigt** (16.10.2026), **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten; S1.10 lief auf Auftrag parallel), danach S1.11 (Audit-Export täglich, Kanarientest über alle Kanäle, Installationsanleitung) und die Gesamtabnahme D3 (darin D3.4 Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **Schnitt 1 komplett, Abnahmen D2/D3 offen** (16.10.2026). **S1.11 erledigt** (Abschluss Schnitt 1: täglicher Audit-Export mit SHA-256-Kette und Manifest als Windows-Aufgabe und systemd-Timer, `doctor --secrets`, Panics ohne Inhalte, Kanarientest über alle Ausgabekanäle, Installationsanleitung im README, `make release`; Abschnitt „Stand S1.11" unten). Release-Kandidat **0.1.0-rc1** liegt in `dist/` (Git-Tag setzt der Betreiber nach D3). **S1.1 bis S1.10 erledigt** (15./16.10.2026); **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2** ([abnahme_D2.md](abnahme_D2.md)) und **Gesamtabnahme D3** ([abnahme_D3.md](abnahme_D3.md)) durch den Betreiber, dann seine Entscheidung (D3.5: S1 angenommen / Nachbesserung / S2 starten). Offene Fragen gesammelt und neu nummeriert: Abschnitt „Offene Fragen". Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.10 erledigt 16.10.2026**, Abnahme D2 offen; S1.11 offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **komplett (S1.1 bis S1.11) 16.10.2026**, Release-Kandidat 0.1.0-rc1; D0/D1 bestanden 16.10.2026; **Abnahmen D2 und D3 offen** |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,57 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** Abnahme D2 (vorbereitet, [abnahme_D2.md](abnahme_D2.md)), S1.11 und die Gesamtabnahme D3 (Abnahme D1 bestanden 16.10.2026; S1.10 erledigt 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** Abnahme D2 ([abnahme_D2.md](abnahme_D2.md)) und Gesamtabnahme D3 ([abnahme_D3.md](abnahme_D3.md)) durch den Betreiber; alle Schritte S1.1 bis S1.11 sind erledigt (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.11 (16.10.2026, erledigt): Abschluss Schnitt 1
+
+**Akzeptanz S1.11 erfüllt** („`audit verify` erkennt eine geänderte Zeile; Kanarientest grün; Installation in unter 15 Minuten nach README; Release-Binärdateien"):
+
+- **`audit verify` erkennt eine geänderte Zeile:** `TestAuditExportChainAndManifest` (Zeile 2 von Tag 1 geändert → `file_changed` und `chain_broken` je mit Zeile 2; passend nachgerechnete Kette → `file_changed`; fehlendes und verändertes Manifest; geänderte Datenbankzeile → `database_changed` nur für ihren Tag), `TestAuditVerifyLegacyFormat` (Exporte aus S1.8 bis S1.10), `TestAuditExportVerify` (CLI) und im Kanarientest über die gebaute Programmdatei: unverändert `ok`, Exit 0; eine Zeile verändert → `mismatch`, Exit 1; wiederhergestellt → `ok`.
+- **Täglicher Export:** Operation `audit.export` (R1, `admin`, im Register seit S1.8) schreibt jetzt Format 2 (JSONL mit `prev`/`chain` über alle Tage, dazu `postkauz-audit-manifest.json`); `deploy/windows/Register-AuditExport.ps1` (Aufgabenplanung, täglich 12:30, `StartWhenAvailable`, angemeldete Sitzung wegen Google-Drive-Laufwerk, `conhost.exe --headless`, Selbstprüfung über `doctor --json`; PowerShell 5.1, UTF-8 mit BOM, nur ASCII, keine Aliase; geprüft mit PSScriptAnalyzer 1.23 einschließlich Syntax-Kompatibilität 5.1, **auf Windows nicht ausgeführt**: Abnahme D3.3c) und `deploy/systemd/postkauz-audit-export.{service,timer}` (`systemd-analyze verify`); Ziel `[audit] export_dir` oder `--to`. `doctor` meldet den letzten Export und warnt bei Tagen älter als zwei Tage ohne Export.
+- **Kanarientest über alle Ausgabekanäle grün:** `internal/cli/canary_test.go` baut `cmd/postkauz` und ruft die Programmdatei auf (rund 50 Aufrufe und zwei MCP-Sitzungen über stdio): Kanarien-Passwort, ein zweites (falsches) Passwort, der echte API-Schlüssel, ein falscher Schlüssel und ein Kanarien-Mailtext (Text und Anhang) gegen Audit, Log, `--json` der Admin-Kommandos (`account add/test`, `accounts list`, `sync`, `mailbox list`, `key create/list`, `policy show`, `import`, `audit`, `audit export/verify`, `doctor`, `version`), Fehlermeldungen (falsches Passwort, abgelehnte Eingaben, unbekannter/falscher Schlüssel), Absturzausgaben (sieben eingeschleuste Panics mit Inhalt im Panic-Wert, in CLI und Handlern), Audit-Export, `doctor --secrets` und das Datenverzeichnis. Mailtext erscheint nur in `show`, `search`, `thread`, `attach text`, `mailbox overview` und in MCP-Ergebnissen in der Hülle (dort auch positiv geprüft). Gegenprobe: Ohne die Erlaubnis für lesende Kommandos meldet der Test fünf Funde.
+- **`doctor --secrets` und `doctor --json`:** Dateirechte und Suche nach Passwörtern, `POSTKAUZ_KEY` und Schlüsselmustern in Log, Konfiguration, Tabellen ohne Mailinhalt und Audit-Exporten (`TestDoctorSecrets`, `internal/secretscan`); `doctor --json` mit den neuen Feldern (`TestDoctorReportsAuditExport`).
+- **Installation in unter 15 Minuten nach README:** Abschnitt „Install in under 15 minutes" (Windows nur mit der exe, Linux, macOS: Download und Prüfsumme, `doctor`, `account add`, `sync --full`, `search`, Claude Code), Fehlersuche, Abschnitt „Security". Die Zeitmessung mit einem echten Postfach macht der Betreiber (Kriterium 10, optional in D3).
+- **Release:** `make release VERSION=0.1.0-rc1` (`-trimpath -ldflags "-s -w"`, `dist/VERSION`, `dist/SHA256SUMS`); Größen und Hashes in [abnahme_D3.md](abnahme_D3.md), Abschnitt D3.2. `CHANGELOG.md`: Abschnitt `[0.1.0-rc1]`.
+- **Abnahme D3 vorbereitet:** [abnahme_D3.md](abnahme_D3.md) für Windows ohne Docker und Go; Protokolle der Container-Läufe in `docs/protokolle/` (D3.1 Stalwart und GreenMail mit `scripts/abnahme-d3-server.sh`, D3.2 `make check && make cross`, D3.4 Import mit `scripts/abnahme-d3-import.sh`); Testbestand `dist/abnahme-d3-import.zip` (Thunderbird-Profil, reproduzierbar).
+
+**Umsetzung:**
+
+- `internal/ops/auditexport.go`: Export und Prüfung neu gefasst (Format 2, Kette, Manifest ohne Zeitangabe und daher aus den Nachweisen reproduzierbar, Zeilennummern, Format 1 weiter prüfbar, keine Folgefehler nach einer geänderten Datenbankzeile).
+- `internal/crash` (bereinigter Panic-Bericht), Executor mit `recover` um den Handler (`ops.ErrInternal`, `PanicError`, `OnPanic`, Audit-Grund `panic`), CLI mit `recover` im Hauptablauf, Fehlercode `internal` (CLI und MCP); Testschalter `POSTKAUZ_INTERNAL_TEST_PANIC`.
+- `internal/secretscan`, `store.TableText`/`store.ScanTables`, `doctor --secrets`.
+- Kanarientest-Fund behoben: `search --json` trug das Snippet ohne Kennzeichnung der Hülle; jede NDJSON-Zeile endet jetzt mit `untrusted`/`source`.
+- `make guard` prüft Kodierung (BOM) und Zeichensatz (ASCII) der PowerShell-Skripte; `.gitattributes` (`*.ps1` CRLF), `.editorconfig`.
+
+**Befunde:**
+
+- **Panics in Nebengoroutinen** (Hilfsgoroutinen des Syncs, des MCP-SDK) fängt weder der Executor noch die CLI ab; sie enden weiter mit der Standardausgabe von Go (Panic-Wert und Stack mit Argumenten). Handler, in denen Mailinhalt verarbeitet wird, sind abgedeckt (Frage 15 unten).
+- **Windows-Aufgabe:** Das Skript ist geprüft (Parser, PSScriptAnalyzer, 5.1-Kompatibilität), aber nicht auf Windows gelaufen; ob `conhost.exe --headless` den Exit-Code durchreicht, ist offen. Deshalb prüft das Skript den Erfolg über `doctor --json` (letzter Export) statt über das Ergebnis der Aufgabe, und es gibt `-ShowWindow` als Rückfall.
+- Die Aufgabe läuft nur in der angemeldeten Sitzung (Laufwerksbuchstaben von Google Drive und Netzlaufwerken gibt es nur dort); verpasste Läufe holt Windows nach (`StartWhenAvailable`).
+- `doctor --secrets` sucht Passwörter unter 8 Zeichen nicht (z. B. `pass` der Testserver), sie stünden zufällig überall; es meldet das als `warn`.
+- Eine Datenbankdatei mit zu weiten Rechten setzt `store.Open` selbst auf 0600; Datenverzeichnis und Log nicht (Frage 6 c unten), `doctor --secrets` meldet sie als `fail`.
+- Testserver: Nach `docker compose up --force-recreate` fehlt Stalwarts Verwaltungspasswort in den Logs (das benannte Volume bleibt); frisch nur mit `make testmail-down testmail-up testmail-setup`.
+
+**Prüfläufe (16.10.2026, Stand S1.11):** `make check` nach jedem Commit grün; die Abschlussläufe (`make race`, `make integration`, `make vuln`, `make cross`, `make release`) trägt der letzte Commit dieser Sitzung ein.
+
+**Nicht in S1.11 (bewusst verschoben):** Code-Signatur der Programme (Frage 13), Aufbewahrung und Rotation des Audits (Frage 14), `launchd`-Vorlage für macOS (README nennt `cron`/`launchd`), `doctor --blobs` (Prüfung des Blob-Stores gegen die Datenbank, aus S1.2; Blob-Store hat `Verify`, ein Kommando fehlt noch).
+
+**Erfüllung der Akzeptanzkriterien S1** (Abschnitt „S1" unten), Stand 0.1.0-rc1:
+
+| # | Kriterium | Nachweis | Stand |
+|---|---|---|---|
+| 1 | Zwei Serverfamilien in der Testmatrix; dritter Anbieter manuell | `make integration` (Dovecot, Stalwart, GreenMail); D3.1-Protokolle | erfüllt; echter Anbieter: Betreiber (P1/P9) |
+| 2 | Erstsync 50.000 in unter 60 min, Leerlauf unter 5 s, `kill -9` ohne Doppelte | P2 (78 s lokal), `TestKill9DuringInitialSync` | erfüllt lokal; WAN-Messung Betreiber (P2) |
+| 3 | Änderungen von außen, IDLE, UIDVALIDITY | S1.5-Tests, Integrationstests, D1 | erfüllt (D1 bestanden) |
+| 4 | Suche unter 300 ms bei 100.000; Wortformen, Umlaute, Teilwörter | [suche_messung.md](suche_messung.md), Suchtestsatz | erfüllt (Median); Windows-Nachmessung offen (Frage 7) |
+| 5 | Import mit Überlappung ohne Doppelte, Zählung | S1.10-Tests, D3.4 | erfüllt; Abnahme D3.4 offen |
+| 6 | MCP: Tool-Liste nach Scopes, Hülle, versteckter Text | S1.9-Tests, D2.7/D2.8 | erfüllt; Abnahme D2 offen; zweiter MCP-Client: SDK-Client im Test und JSON-RPC in D3.1 |
+| 7 | Audit ohne Inhalt, append-only, täglicher Export mit Prüfsumme, `verify` erkennt Änderung | S1.8/S1.11-Tests, D2.9, D3.3c | erfüllt; Windows-Aufgabe: Abnahme D3.3c |
+| 8 | Kanarienwerte in keinem Kanal | Kanarientest S1.11 | erfüllt |
+| 9 | Jede Operation getestet, vet/test/cross grün | Vertragstests, `make check`, `make cross` | erfüllt |
+| 10 | Installation in unter 15 Minuten nach README (Windows 11, Linux) | README, D3.3 | Anleitung fertig; Zeitmessung mit echtem Postfach: Betreiber |
 
 ### Stand S1.10 (16.10.2026, erledigt): Import aus mbox und Maildir
 
@@ -360,25 +408,25 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 14. **Versteckter Vorschautext in Newslettern** (16.10.2026, vorher offene Frage 8): bleibt als `hidden_text` markiert (Hinweis, kein Urteil).
 15. **Extraktion als Warteschlange** (16.10.2026, vorher offene Frage 9): mit S1.7 über die Tabelle `jobs` zusammen mit dem Index (umgesetzt).
 16. **PDF unter Windows** (16.10.2026, vorher offene Frage 10): nur über das optionale `pdftotext`, Installation im README (umgesetzt; übersprungene PDFs werden nachgeholt, sobald das Werkzeug da ist).
+17. **Teilweise geladene Thunderbird-Nachrichten** (16.10.2026, vorher offene Frage 15): werden mit Hinweis importiert, nicht übersprungen; kommt die vollständige Fassung später per Sync, stehen beide im Archiv (umgesetzt S1.10).
+18. **Täglicher Audit-Export** (16.10.2026, Auftrag S1.11): als Windows-Aufgabe (PowerShell-Registrierungsskript, Windows PowerShell 5.1, UTF-8 mit BOM, ASCII, keine Aliase) und als systemd-Timer; Ziel konfigurierbar (`[audit] export_dir`, z. B. ein Google-Drive-Ordner); JSONL mit SHA-256-Kette je Datei und Manifest (umgesetzt S1.11).
 
 ## Offene Fragen
 
-1. **Name:** Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8.
-2. **Mehrere Menschen an einem Postfach:** Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen (getrennte Logins/Delegation beim Anbieter)? Relevant ab S2.
-3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1` (P1, manuell), WAN-Latenz (P2, Betreiber), COMPRESS/BINARY (P6, später), QRESYNC per Beitrag oder Fork (P8, nach S1; nach P2 für 50.000 Nachrichten nicht nötig). Erledigt bzw. als Entwurf: P2 lokal (50.000 Nachrichten, S1.5), P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen), P5 (UIDVALIDITY-Wechsel, S1.5), P7 (Race-Detector: `make race` und CI-Job, S1.3).
-4. **Kopien als eine Nachricht** (S1.5): Liegt dieselbe Nachricht in mehreren Ordnern (Kopie, Gmail-Label), ist sie lokal eine Nachricht mit mehreren Ordnern; ein Flag gilt als gesetzt, wenn eine Kopie es trägt. Vorschlag: so lassen.
-5. **Dauerläufer für mehrere Konten** (S1.5): `sync --watch` beobachtet ein Konto; für mehrere Konten je ein Prozess. Vorschlag: ein gemeinsamer Dauerläufer erst mit dem Betriebskonzept (S3).
-6. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 12 und ADR-007 Nachtrag 1)*
-7. **Weitere Befunde der Gegenprüfung (15.10.2026), bewusst noch nicht geändert:**
-   - **Löschungen** werden inkrementell nur erkannt, wenn die Zahl der Nachrichten nicht passt (`internal/provider/imap/sync.go`, `KnownCount + neu != EXISTS`). Löscht jemand eine Nachricht und kommt gleichzeitig eine neue hinzu, fällt die Löschung erst beim nächsten Lauf mit Abweichung oder bei `sync --full` auf. Vorschlag: `--full` im Dauerbetrieb periodisch (z. B. stündlich) oder UID-Abgleich bei jedem n-ten Lauf.
-   - **Schlüsselbund-Verweis** `account/<name>` (`internal/ops/accounts.go`) hängt nur am Kontonamen, nicht am Datenverzeichnis: Zwei Datenverzeichnisse (z. B. Abnahme und Alltag) mit gleichem Kontonamen teilen und überschreiben denselben Eintrag; `account remove` im einen löscht das Passwort des anderen. Vorschlag: Verweis um eine Kennung des Datenverzeichnisses ergänzen (Migration bestehender Einträge).
-   - **Vorhandenes Datenverzeichnis** wird nicht auf 0700 verschärft (`config.EnsureDataDir` setzt die Rechte nur beim Anlegen). Vorschlag: beim Öffnen prüfen, verschärfen und in `doctor` melden.
-   - **`io.ReadAll` ohne Grenze** in `internal/imapx/mailbox.go` (FETCH-Literal, das vor seiner UID ankommt): Ein Server kann so beliebig viel Speicher belegen. Vorschlag: auf die Grenze des Blob-Stores (256 MiB) begrenzen bzw. in eine temporäre Datei puffern.
-8. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 14)*
-9. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 15)*
-10. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 16)*
-11. **Suchlatenz bei sehr häufigen Wörtern** (S1.7): Im synthetischen Korpus steht jedes Wort in 25–50 % aller Nachrichten; dafür liegt der Median knapp unter 300 ms, einzelne Läufe und zwei solche Wörter über die CLI darüber (bis rund 390 ms auf 2 Kernen). Vorschlag: so lassen; die Messung auf dem Windows-PC des Betreibers wiederholen (mehr Kerne, Kommandos in [suche_messung.md](suche_messung.md)) und erst weiter optimieren (Vollscan-Pfad, Bleve laut ADR-005 als Option), wenn im Alltag Anfragen spürbar über 300 ms liegen.
-12. *(entschieden 16.10.2026: Teilwortsuche ab 3 Zeichen bleibt immer an; Worst-Case-Suchwörter (Frage 11) erst auf Windows nachmessen; mmap bleibt)*
-13. **`mail_sync_now`** (S1.9): Der MCP-Server synct nicht selbst; ein Agent kann also keinen Sync anstoßen. Vorschlag: mit dem Job-Typ `sync` nachrüsten (MCP reiht ein, `sync --watch` führt aus), zusammen mit dem Dauerbetrieb für mehrere Konten (Frage 5); bis dahin hält `sync --watch` die Daten aktuell.
-14. **Import-Durchsatz** (S1.10): rund 23 MB/s im Container, das Gmail-Archiv (20,7 GB) bräuchte rund 15 Minuten. Vorschlag: so lassen und auf dem Windows-PC nachmessen (Kommandos in [import_messung.md](import_messung.md)); Aufbereitung auf mehrere Kerne verteilen erst, wenn es im Alltag stört.
-15. **Teilweise geladene Thunderbird-Nachrichten** (S1.10): Vorschlag: wie jetzt importieren (mit Hinweis), statt sie zu überspringen; kommt die vollständige Fassung später per Sync, stehen beide im Archiv.
+Stand nach S1.11 (16.10.2026): alle offenen Fragen gesammelt und **neu nummeriert**; in Klammern die frühere Nummer bzw. Herkunft (die Abschnitte „Stand S1.x" weiter oben verweisen mit „Frage N" noch auf die früheren Nummern). Zu jeder ein Vorschlag als Standardantwort. Entschiedene stehen oben unter „Entschiedene Fragen".
+
+1. **Name** (früher 1): Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8. Vorschlag: Prüfung durch den Betreiber vor dem ersten öffentlichen Release (spätestens vor 0.1.0).
+2. **Mehrere Menschen an einem Postfach** (früher 2): Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen? Vorschlag: zu Beginn von S2 klären (relevant erst mit Freigaben).
+3. **Spike-Lücken** (früher 3, Prüfliste A01): Gmail `X-GM-EXT-1` (P1), WAN-Messung des Erstsyncs (P2), Schlüsselbund unter macOS (P4; Windows in D0/D1 bestanden), COMPRESS/BINARY (P6), QRESYNC per Beitrag oder Fork (P8). Vorschlag: P1 und P2 misst der Betreiber nach D3 mit seinem Gmail-Konto (nur lesend: `account test`, `sync`); P6 und P8 bleiben zurückgestellt (für 50.000 Nachrichten nicht nötig, P2 lokal).
+4. **Kopien als eine Nachricht** (früher 4): Liegt dieselbe Nachricht in mehreren Ordnern, ist sie lokal eine Nachricht mit mehreren Ordnern; ein Flag gilt, wenn eine Kopie es trägt. Vorschlag: so lassen.
+5. **Dauerläufer für mehrere Konten und `mail_sync_now`** (früher 5 und 13): `sync --watch` beobachtet ein Konto; der MCP-Server kann keinen Sync anstoßen. Vorschlag: gemeinsamer Dauerläufer mit Job-Typ `sync` (MCP reiht ein) zusammen mit dem Betriebskonzept in S3; bis dahin je Konto ein `sync --watch`.
+6. **Befunde der Gegenprüfung vom 15.10.2026** (früher 7), bewusst noch nicht geändert: (a) Löschungen werden inkrementell nur bei unpassender Zahl erkannt (Löschung plus neue Nachricht fällt erst später auf); (b) der Schlüsselbund-Verweis `account/<name>` hängt nicht am Datenverzeichnis (zwei Datenverzeichnisse mit gleichem Kontonamen teilen den Eintrag); (c) ein vorhandenes Datenverzeichnis wird nicht auf 0700 verschärft (seit S1.11 meldet `doctor --secrets` es als `fail`); (d) `io.ReadAll` ohne Grenze in `internal/imapx/mailbox.go`. Vorschlag: alle vier als Nachbesserung am Anfang von S2 (a: im Dauerbetrieb stündlich voller UID-Abgleich; b: Verweis um eine Kennung des Datenverzeichnisses ergänzen, Migration; c: beim Öffnen verschärfen; d: auf 256 MiB begrenzen).
+7. **Suchlatenz bei sehr häufigen Wörtern** (früher 11): Median knapp unter 300 ms, einzelne Läufe darüber (2 Kerne). Vorschlag: auf dem Windows-PC nachmessen ([suche_messung.md](suche_messung.md)), erst bei spürbaren Wartezeiten optimieren.
+8. **Import-Durchsatz** (früher 14): rund 23 MB/s im Container (Gmail-Archiv 20,7 GB rund 15 min). Vorschlag: auf dem Windows-PC nachmessen ([import_messung.md](import_messung.md)), Parallelisierung erst bei Bedarf.
+9. **Emoji-Sequenzen** (Nachbesserung 16.10.): Das Entfernen unsichtbarer Zeichen zerlegt zusammengesetzte Emoji. Vorschlag: so lassen (Sicherheit vor Darstellung).
+10. **Weitere eigene Adressen (Aliasse)** (Nachbesserung 16.10.): Aliasse, die nicht im Konto stehen, zählen beim Betreff-Rückfall der Threads als gemeinsamer Beteiligter. Vorschlag: Feld „weitere eigene Adressen" am Konto in S2.
+11. **Teilwortsuche ohne Umlaut** (Nachbesserung 16.10.): „pruf" findet „Prüfung" nur als Wort/Präfix, nicht mitten im Kompositum. Vorschlag: hinnehmen.
+12. **Grenzen von `alternative_mismatch`** (Nachbesserung 16.10.): Wortmengen übersehen umgestellte Sätze und ein vertauschtes „nicht". Vorschlag: hinnehmen (Hinweis, kein Urteil); genauer erst, wenn es im Alltag stört.
+13. **Code-Signatur** (neu, S1.11): Die Programme sind nicht signiert; Windows (SmartScreen) und macOS (Gatekeeper) warnen, das README erklärt den Weg (`Unblock-File`, `xattr`) und die Prüfsummen. Vorschlag: bis 1.0 unsigniert mit `SHA256SUMS`; Signatur (Authenticode, Apple-Notarisierung, kostet Zertifikate) vor einer breiteren Veröffentlichung entscheiden.
+14. **Aufbewahrung und Rotation des Audits** (neu, S1.11; [sicherheit.md](sicherheit.md) nennt „Standard ein Jahr"): Es gibt noch keine Rotation; Tabelle und Exporte wachsen. Vorschlag: mit dem Löschkonzept in S3 (Rotation nur per Export, nie durch Löschen einzelner Zeilen).
+15. **Panics in Nebengoroutinen** (neu, S1.11): Nur Handler und Hauptablauf fangen Panics bereinigt ab. Vorschlag: in S2 die eigenen Hilfsgoroutinen (Sync, IDLE, Import) mit demselben `recover` versehen; Goroutinen des MCP-SDK bleiben außen vor.

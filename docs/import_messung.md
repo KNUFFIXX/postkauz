@@ -20,7 +20,7 @@ Stand: 16.10.2026. Gemessen wird `import mbox` mit einer synthetischen Thunderbi
 
 **Speicher:** Der Heap wächst beim Import um rund 5 MB, unabhängig von der Dateigröße (200 MB und 1 GB gleich): Im Speicher liegen höchstens ein Kopf (bis 1 MiB), eine Zeile (bis 256 KiB je Stück) und die Metadaten eines Stapels (200 Nachrichten bzw. 32 MiB Inhalt in Dateien). Inhalt und Anhänge gehen direkt in den Blob-Store.
 
-**Woher die Zeit kommt** (CPU-Profil, 210-MB-Lauf): SHA-256 rund 27 % (Rohmail im Blob-Store, `content_hash`, jeder Anhang einzeln), base64-Dekodierung und MIME-Parser rund 25 %, Schreiben der Dateien rund 12 %, Bereinigung und Zitate rund 7 %. Der Import arbeitet eine Nachricht nach der anderen auf einem Kern; der Trockenlauf zeigt, dass Lesen und Abgleichen nicht der Engpass sind. Möglich, wenn es im Alltag stört: Aufbereitung mehrerer Nachrichten nebeneinander (Frage 14 in [roadmap.md](roadmap.md)).
+**Woher die Zeit kommt** (CPU-Profil, 210-MB-Lauf): SHA-256 rund 27 % (Rohmail im Blob-Store, `content_hash`, jeder Anhang einzeln), base64-Dekodierung und MIME-Parser rund 25 %, Schreiben der Dateien rund 12 %, Bereinigung und Zitate rund 7 %. Der Import arbeitet eine Nachricht nach der anderen auf einem Kern; der Trockenlauf zeigt, dass Lesen und Abgleichen nicht der Engpass sind. Möglich, wenn es im Alltag stört: Aufbereitung mehrerer Nachrichten nebeneinander (offene Frage 8 in [roadmap.md](roadmap.md)).
 
 ## Umgebung
 

@@ -1,6 +1,6 @@
 # Datenmodell
 
-Stand: S1.10 (16.10.2026). Das Schema steht als ausführbares SQL in [`internal/store/migrations/`](../internal/store/migrations/) (`0001_init.sql` bis `0007_import.sql`) und wird von `internal/store/store_test.go` gegen `modernc.org/sqlite` geprüft (Tabellen vorhanden, Fremdschlüssel, CHECKs, Audit-Sperre, FTS5). Dieses Dokument nennt je Tabelle die Felder und **warum** sie so sind.
+Stand: S1.11 (16.10.2026; S1.11 ohne neue Migration, der Audit-Export mit Kette steht in den Dateien, nicht im Schema). Das Schema steht als ausführbares SQL in [`internal/store/migrations/`](../internal/store/migrations/) (`0001_init.sql` bis `0007_import.sql`) und wird von `internal/store/store_test.go` gegen `modernc.org/sqlite` geprüft (Tabellen vorhanden, Fremdschlüssel, CHECKs, Audit-Sperre, FTS5). Dieses Dokument nennt je Tabelle die Felder und **warum** sie so sind.
 
 ## Leitlinien
 
