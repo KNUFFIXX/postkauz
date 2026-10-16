@@ -198,6 +198,8 @@ func classify(err error) ToolError {
 		return ToolError{Status: "error", Code: "not_found", Message: "thread not found"}
 	case errors.Is(err, store.ErrAttachmentNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "attachment not found; use an id from mail_list_attachments"}
+	case errors.Is(err, store.ErrMailboxNotFound):
+		return ToolError{Status: "error", Code: "not_found", Message: "mailbox not found; see mail_list_mailboxes"}
 	case errors.Is(err, store.ErrAccountNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "account not found; see mail_list_accounts"}
 	}

@@ -367,6 +367,9 @@ func threadInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	if byMsg, _ := cmd.Flags().GetBool("message"); byMsg {
 		m = map[string]any{"message": id}
 	}
+	if acct := accountFlag(cmd); acct != "" {
+		m["account"] = acct // nur, wenn der Thread zu diesem Konto gehört
+	}
 	if strip, _ := cmd.Flags().GetBool("strip-quotes"); strip {
 		m["text"] = true
 	}
@@ -443,12 +446,26 @@ func attachListInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, 
 	return b, "", err
 }
 
+func attachTextFlags(cmd *cobra.Command) {
+	maxCharsFlag(cmd)
+	cmd.Flags().Int64("message", 0, "only if the attachment belongs to this message id")
+}
+
 func attachTextInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	id, err := positiveID(args[0], "attachment id")
 	if err != nil {
 		return nil, "", err
 	}
 	m := map[string]any{"id": id}
+	if msg, _ := cmd.Flags().GetInt64("message"); msg != 0 {
+		if msg < 0 {
+			return nil, "", usageError{fmt.Errorf("--message must be a positive number")}
+		}
+		m["message"] = msg
+	}
+	if acct := accountFlag(cmd); acct != "" {
+		m["account"] = acct
+	}
 	if err := setMaxChars(cmd, m, "max_chars", "max-chars"); err != nil {
 		return nil, "", err
 	}
@@ -529,4 +546,43 @@ func renderAttachText(w io.Writer, out any) error {
 		fmt.Fprintln(w, "[text cut]")
 	}
 	return err
+}
+
+// --- mailbox overview -----------------------------------------------------------
+
+func overviewFlags(cmd *cobra.Command) {
+	cmd.Flags().String("since", "", "only messages since: duration (24h, 7d), date (2026-10-01) or RFC 3339")
+	cmd.Flags().Int("limit", 0, fmt.Sprintf("headers per part, unread and read (default %d, at most %d)", ops.DefaultOverviewLimit, ops.MaxOverviewLimit))
+}
+
+func overviewInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := positiveID(args[0], "mailbox id")
+	if err != nil {
+		return nil, "", err
+	}
+	m := map[string]any{"mailbox": id}
+	if acct := accountFlag(cmd); acct != "" {
+		m["account"] = acct
+	}
+	if v, _ := cmd.Flags().GetString("since"); v != "" {
+		m["since"] = v
+	}
+	if err := setMaxChars(cmd, m, "limit", "limit"); err != nil {
+		return nil, "", err
+	}
+	b, err := json.Marshal(m)
+	return b, "", err
+}
+
+func renderOverview(w io.Writer, out any) error {
+	o, ok := out.(ops.MailboxOverviewOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	fmt.Fprintf(w, "mailbox %s (account %s)\n\n--- unread ---\n", termLine(o.Mailbox), termLine(o.Account))
+	if err := renderSearch(w, o.Unread); err != nil {
+		return err
+	}
+	fmt.Fprintln(w, "\n--- read ---")
+	return renderSearch(w, o.Read)
 }

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -68,6 +69,7 @@ func ThreadsGet(msgs MessageRepo) Operation {
   "properties": {
     "id": {"type": "integer", "minimum": 1, "description": "thread id"},
     "message": {"type": "integer", "minimum": 1, "description": "local message id; shows the thread of this message"},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the thread belongs to this account (else not found)"},
     "text": {"type": "boolean", "description": "include each message's text without quotes"},
     "max_messages": {"type": "integer", "minimum": 1, "description": "only the newest messages (older ones are counted in messages_omitted)"},
     "max_chars_per_message": {"type": "integer", "minimum": 1, "description": "cut each text after this many characters"}
@@ -110,11 +112,12 @@ func ThreadsGet(msgs MessageRepo) Operation {
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				ID          int64 `json:"id,omitempty"`
-				Message     int64 `json:"message,omitempty"`
-				Text        bool  `json:"text,omitempty"`
-				MaxMessages int   `json:"max_messages,omitempty"`
-				MaxChars    int   `json:"max_chars_per_message,omitempty"`
+				ID          int64  `json:"id,omitempty"`
+				Message     int64  `json:"message,omitempty"`
+				Account     string `json:"account,omitempty"`
+				Text        bool   `json:"text,omitempty"`
+				MaxMessages int    `json:"max_messages,omitempty"`
+				MaxChars    int    `json:"max_chars_per_message,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -136,6 +139,10 @@ func ThreadsGet(msgs MessageRepo) Operation {
 			th, list, err := msgs.ThreadByID(ctx, id)
 			if err != nil {
 				return nil, err
+			}
+			// Ein Thread gehört zu genau einem Konto.
+			if in.Account != "" && th.Account != in.Account {
+				return nil, fmt.Errorf("%w: id %d in account %s", store.ErrThreadNotFound, id, in.Account)
 			}
 			out := ThreadOutput{Envelope: emailEnvelope(), ID: th.ID, Account: th.Account, MessageCount: th.MessageCount, FirstDate: rfc3339(th.FirstDate),
 				LastDate: rfc3339(th.LastDate), Participants: th.Participants, Messages: []ThreadMessageOutput{}}
@@ -301,7 +308,11 @@ type AttachmentTextOutput struct {
 // AttachmentsText zeigt den extrahierten Text eines Anhangs. Steht die
 // Extraktion noch aus, extrahiert sie jetzt (Subprozess mit Grenzen) ohne
 // zu speichern; lesend (R0).
-func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) Operation {
+//
+// message und account prüfen die Zugehörigkeit: Gehört der Anhang nicht zu
+// dieser Nachricht bzw. zu diesem Konto, gilt er als nicht gefunden (MCP
+// mail://{account}/message/{id}/attachment/{n}).
+func AttachmentsText(accounts AccountRepo, msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) Operation {
 	return Operation{
 		Name:       "attachments.text",
 		Scope:      policy.ScopeMailRead,
@@ -312,6 +323,8 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
   "type": "object",
   "properties": {
     "id": {"type": "integer", "minimum": 1, "description": "attachment id from attachments.list"},
+    "message": {"type": "integer", "minimum": 1, "description": "only if the attachment belongs to this message (else not found)"},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the attachment belongs to this account (else not found)"},
     "max_chars": {"type": "integer", "minimum": 1, "description": "cut the text after this many characters (text_truncated=true)"}
   },
   "required": ["id"],
@@ -343,8 +356,10 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				ID       int64 `json:"id"`
-				MaxChars int   `json:"max_chars,omitempty"`
+				ID       int64  `json:"id"`
+				Message  int64  `json:"message,omitempty"`
+				Account  string `json:"account,omitempty"`
+				MaxChars int    `json:"max_chars,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -355,6 +370,22 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 			a, text, err := msgs.AttachmentByID(ctx, in.ID)
 			if err != nil {
 				return nil, err
+			}
+			if in.Message > 0 && a.MessageID != in.Message {
+				return nil, fmt.Errorf("%w: id %d in message %d", store.ErrAttachmentNotFound, in.ID, in.Message)
+			}
+			if in.Account != "" {
+				acc, err := ResolveAccount(ctx, accounts, in.Account)
+				if err != nil {
+					return nil, err
+				}
+				m, err := msgs.MessageByID(ctx, a.MessageID)
+				if err != nil {
+					return nil, err
+				}
+				if m.AccountID != acc.ID {
+					return nil, fmt.Errorf("%w: id %d in account %s", store.ErrAttachmentNotFound, in.ID, acc.Name)
+				}
 			}
 			out := AttachmentTextOutput{Envelope: emailEnvelope(), AttachmentOutput: attachmentOut(a), MessageID: a.MessageID, Text: text}
 			if a.ExtractStatus != extract.StatusOK {

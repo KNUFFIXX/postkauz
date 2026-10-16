@@ -118,14 +118,15 @@ var cliSamples = []cliSample{
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m"}, true},
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},
+	{"mailboxes.overview", []string{"mailbox", "overview", "{mailbox}", "-a", "demo", "--since", "3650d", "--limit", "5"}, false},
 	{"messages.get", []string{"show", "{html}", "--strip-quotes", "--max-chars", "10"}, false},
 	{"messages.get", []string{"show", "html@example.org", "-a", "demo", "--headers"}, false},
 	{"messages.search", []string{"search", "Rechnung", "-a", "demo", "--mailbox", "INBOX", "--limit", "5", "--explain"}, false},
 	{"messages.search", []string{"search", "Heizung", "--cursor", "{cursor}"}, false},
 	{"threads.get", []string{"thread", "{thread}", "--strip-quotes", "--max-messages", "1", "--max-chars", "5"}, false},
-	{"threads.get", []string{"thread", "{answer}", "--message"}, false},
+	{"threads.get", []string{"thread", "{answer}", "--message", "-a", "demo"}, false},
 	{"attachments.list", []string{"attach", "list", "{html}"}, false},
-	{"attachments.text", []string{"attach", "text", "{att}", "--max-chars", "5"}, false},
+	{"attachments.text", []string{"attach", "text", "{att}", "--max-chars", "5", "--message", "{html}", "-a", "demo"}, false},
 	{"keys.create", []string{"key", "create", "--name", "k1", "--role", "reader", "--scopes", "mail:search", "--expires", "30d",
 		"--dry-run-default=false"}, false},
 	{"keys.list", []string{"key", "list"}, false},
@@ -158,6 +159,10 @@ func seedS16(t *testing.T) map[string]string {
 		return m
 	}
 	html, answer := show("html@example.org"), show("antwort@example.org")
+	var boxes ops.MailboxesListOutput
+	if _, out, _ := run(t, "mailbox", "list", "-a", "demo", "--json"); json.Unmarshal([]byte(out), &boxes) != nil || len(boxes.Mailboxes) == 0 {
+		t.Fatalf("seed: mailbox list %s", out)
+	}
 	_, out, _ := run(t, "search", "Heizung", "--json", "--limit", "1")
 	var hit ops.SearchHitOutput
 	_ = json.Unmarshal([]byte(strings.SplitN(out, "\n", 2)[0]), &hit)
@@ -165,7 +170,7 @@ func seedS16(t *testing.T) map[string]string {
 		t.Fatalf("seed: html=%+v answer=%+v hit=%+v", html.Attachments, answer.ThreadID, hit)
 	}
 	return map[string]string{"html": fmt.Sprint(html.ID), "answer": fmt.Sprint(answer.ID), "thread": fmt.Sprint(answer.ThreadID),
-		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "exportdir": filepath.Join(t.TempDir(), "audit")}
+		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "mailbox": fmt.Sprint(boxes.Mailboxes[0].ID), "exportdir": filepath.Join(t.TempDir(), "audit")}
 }
 
 var errCaptureOnly = errors.New("captured")

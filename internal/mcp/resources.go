@@ -7,12 +7,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
-	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // Resources (docs/mcp.md, Abschnitt 3): Lesequellen für @-Verweise. Jede
@@ -40,7 +38,7 @@ var resources = []resourceBinding{
 	{uri: "mail://{account}/mailboxes", template: true, name: "mailboxes", ops: []string{"mailboxes.list"},
 		desc: "Mailboxes of an account with roles and counters."},
 	{uri: "mail://{account}/mailbox/{id}/overview{?since}", template: true, name: "mailbox-overview",
-		ops:  []string{"mailboxes.list", "messages.search"},
+		ops:  []string{"mailboxes.overview"},
 		desc: "Newest headers of a mailbox (id from the mailboxes resource): unread first, then read; optional since (date or duration)."},
 	{uri: "mail://{account}/message/{id}", template: true, name: "message", ops: []string{"messages.get"},
 		desc: "One message: headers, sender checks, cleaned text without quotes (untrusted), links, attachments."},
@@ -75,8 +73,10 @@ func (h *handler) addResources(s *sdk.Server) error {
 	return nil
 }
 
-// readResource übersetzt eine mail://-URI in Operationen (eine Tabelle von
-// Fällen, keine Fachlogik) und liefert deren Ausgabe als JSON.
+// readResource übersetzt eine mail://-URI in genau eine Operation (eine
+// Tabelle von Fällen, keine Fachlogik; Zugehörigkeit zu Konto und
+// Nachricht prüfen die Operationen selbst) und liefert deren Ausgabe als
+// JSON.
 func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
 	uri := req.Params.URI
 	u, err := url.Parse(uri)
@@ -90,7 +90,6 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 	q := u.Query()
 	in := map[string]any{}
 	var op string
-	var out any
 	switch {
 	case u.Host == "accounts" && len(seg) == 0:
 		op = "accounts.list"
@@ -104,9 +103,13 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 	case len(seg) == 1 && seg[0] == "mailboxes":
 		op, in["account"] = "mailboxes.list", u.Host
 	case len(seg) == 3 && seg[0] == "mailbox" && seg[2] == "overview":
-		out, err = h.overview(ctx, u.Host, seg[1], q.Get("since"))
-		if err != nil {
-			return nil, resourceErr(uri, err)
+		id, ok := positive(seg[1])
+		if !ok {
+			return nil, sdk.ResourceNotFoundError(uri)
+		}
+		op, in = "mailboxes.overview", map[string]any{"account": u.Host, "mailbox": id}
+		if v := q.Get("since"); v != "" {
+			in["since"] = v
 		}
 	case len(seg) == 2 && seg[0] == "message":
 		id, ok := positive(seg[1])
@@ -119,38 +122,23 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if !ok {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "threads.get", map[string]any{"id": id, "text": true, "max_messages": threadMaxMessages, "max_chars_per_message": threadMaxChars}
+		op, in = "threads.get", map[string]any{"id": id, "account": u.Host, "text": true, "max_messages": threadMaxMessages,
+			"max_chars_per_message": threadMaxChars}
 	case len(seg) == 4 && seg[0] == "message" && seg[2] == "attachment":
 		msg, ok1 := positive(seg[1])
 		att, ok2 := positive(seg[3])
 		if !ok1 || !ok2 {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "attachments.text", map[string]any{"id": att, "max_chars": ops.DefaultMaxChars}
-		res, err := h.callMap(ctx, op, in)
-		if err != nil {
-			return nil, resourceErr(uri, err)
-		}
-		// Der Anhang muss zu Nachricht und Konto der URI gehören.
-		if o, ok := res.Output.(ops.AttachmentTextOutput); !ok || o.MessageID != msg || !h.inAccount(ctx, msg, u.Host) {
-			return nil, sdk.ResourceNotFoundError(uri)
-		}
-		out = res.Output
+		op, in = "attachments.text", map[string]any{"id": att, "message": msg, "account": u.Host, "max_chars": ops.DefaultMaxChars}
 	default:
 		return nil, sdk.ResourceNotFoundError(uri)
 	}
-	if out == nil {
-		res, err := h.callMap(ctx, op, in)
-		if err != nil {
-			return nil, resourceErr(uri, err)
-		}
-		out = res.Output
-		// Ein Thread gehört zu genau einem Konto: Er muss das der URI sein.
-		if t, ok := out.(ops.ThreadOutput); ok && t.Account != u.Host {
-			return nil, sdk.ResourceNotFoundError(uri)
-		}
+	res, err := h.callMap(ctx, op, in)
+	if err != nil {
+		return nil, resourceErr(uri, err)
 	}
-	_, text, err := outputValue(out)
+	_, text, err := outputValue(res.Output)
 	if err != nil {
 		return nil, err
 	}
@@ -163,62 +151,6 @@ func (h *handler) callMap(ctx context.Context, op string, in map[string]any) (op
 		return ops.Result{}, err
 	}
 	return h.call(ctx, op, b)
-}
-
-// inAccount prüft über messages.get, ob die Nachricht zum Konto gehört.
-func (h *handler) inAccount(ctx context.Context, id int64, account string) bool {
-	_, err := h.callMap(ctx, "messages.get", map[string]any{"id": id, "account": account, "headers": true, "max_chars": 1})
-	return err == nil
-}
-
-// overviewOutput: neueste Köpfe eines Ordners, ungelesene zuerst. Beide
-// Teile sind unveränderte Ausgaben von messages.search.
-type overviewOutput struct {
-	Account string           `json:"account"`
-	Mailbox string           `json:"mailbox"`
-	Unread  ops.SearchOutput `json:"unread"`
-	Read    ops.SearchOutput `json:"read"`
-}
-
-func (h *handler) overview(ctx context.Context, account, idStr, since string) (any, error) {
-	id, ok := positive(idStr)
-	if !ok {
-		return nil, store.ErrMessageNotFound
-	}
-	res, err := h.callMap(ctx, "mailboxes.list", map[string]any{"account": account})
-	if err != nil {
-		return nil, err
-	}
-	path := ""
-	for _, m := range res.Output.(ops.MailboxesListOutput).Mailboxes {
-		if m.ID == id {
-			path = m.Path
-		}
-	}
-	if path == "" {
-		return nil, store.ErrMessageNotFound
-	}
-	query := "is:unread"
-	if since != "" {
-		t, err := ops.ParseSince(since, time.Now())
-		if err != nil {
-			return nil, err
-		}
-		query += " after:" + t.Local().Format("2006-01-02")
-	}
-	out := overviewOutput{Account: account, Mailbox: path}
-	for i, q := range []string{query, strings.Replace(query, "is:unread", "is:read", 1)} {
-		r, err := h.callMap(ctx, "messages.search", map[string]any{"query": q, "account": account, "mailbox": path, "limit": 25})
-		if err != nil {
-			return nil, err
-		}
-		if i == 0 {
-			out.Unread = r.Output.(ops.SearchOutput)
-		} else {
-			out.Read = r.Output.(ops.SearchOutput)
-		}
-	}
-	return out, nil
 }
 
 func positive(s string) (int64, bool) {

@@ -13,4 +13,6 @@ var notOverMCP = map[string]string{
 	"keys.revoke":     "admin: key management is for humans only",
 	"audit.export":    "admin: writes files to a second location, human only",
 	"audit.verify":    "checks export files on disk; a human task (CLI audit verify)",
+	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
+	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
 }
