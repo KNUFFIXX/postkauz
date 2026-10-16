@@ -34,13 +34,14 @@ func TestGroupByHeaders(t *testing.T) {
 // Betreff-Rückfall: Eine Antwort ohne Verweise hängt am Thread gleichen
 // Betreffs im Zeitfenster, unabhängig von der Reihenfolge der Ankunft.
 func TestSubjectFallbackIsOrderIndependent(t *testing.T) {
+	anna, bert := []string{"anna@example.org"}, []string{"bert@example.org"}
 	msgs := []Message{
-		{MessageID: "o@example.invalid", Subject: "Wasserschaden Bad", Date: day(0)},
-		{MessageID: "r1@example.invalid", InReplyTo: []string{"o@example.invalid"}, Subject: "AW: Wasserschaden Bad", Date: day(2)},
-		{MessageID: "r2@example.invalid", Subject: "Re: Wasserschaden Bad", Date: day(5)},      // Waise
-		{MessageID: "r3@example.invalid", Subject: "WG: AW: wasserschaden  bad", Date: day(6)}, // Waise
-		{MessageID: "late@example.invalid", Subject: "AW: Wasserschaden Bad", Date: day(80)},   // außerhalb des Fensters
-		{MessageID: "other@example.invalid", Subject: "Re: Anderes Thema", Date: day(1)},
+		{MessageID: "o@example.invalid", Subject: "Wasserschaden Bad", Date: day(0), Participants: anna},
+		{MessageID: "r1@example.invalid", InReplyTo: []string{"o@example.invalid"}, Subject: "AW: Wasserschaden Bad", Date: day(2), Participants: anna},
+		{MessageID: "r2@example.invalid", Subject: "Re: Wasserschaden Bad", Date: day(5), Participants: anna},                       // Waise
+		{MessageID: "r3@example.invalid", Subject: "WG: AW: wasserschaden  bad", Date: day(6), Participants: append(anna, bert...)}, // Waise
+		{MessageID: "late@example.invalid", Subject: "AW: Wasserschaden Bad", Date: day(80), Participants: anna},                    // außerhalb des Fensters
+		{MessageID: "other@example.invalid", Subject: "Re: Anderes Thema", Date: day(1), Participants: anna},
 	}
 	base := msgs
 	want := []bool{true, true, true, true, false, false} // im Thread des Originals?
@@ -59,6 +60,53 @@ func TestSubjectFallbackIsOrderIndependent(t *testing.T) {
 			if (pos[k] == pos[0]) != w {
 				t.Errorf("order %v: message %d in thread of the original = %v, want %v (groups %v)", p, k, pos[k] == pos[0], w, g)
 			}
+		}
+	}
+}
+
+// Gleichlautende Antworten fremder Absender laufen nicht zusammen: Der
+// Betreff-Rückfall verlangt gemeinsame Beteiligte, in jeder Reihenfolge.
+func TestSubjectFallbackNeedsSharedParticipants(t *testing.T) {
+	msgs := []Message{
+		{MessageID: "a1@example.invalid", Subject: "Rechnung", Date: day(0), Participants: []string{"anna@example.org"}},
+		// Waise von Anna (Antwort ohne Verweise): gehört dazu
+		{MessageID: "a2@example.invalid", Subject: "AW: Rechnung", Date: day(1), Participants: []string{"anna@example.org"}},
+		// fremde Absender mit demselben Betreff: je eigener Thread
+		{MessageID: "x1@example.invalid", Subject: "Re: Rechnung", Date: day(2), Participants: []string{"xaver@example.net"}},
+		{MessageID: "y1@example.invalid", Subject: "AW: Rechnung", Date: day(3), Participants: []string{"yvonne@example.com"}},
+		// Waise ohne Beteiligte (nur an das eigene Konto): kein Rückfall
+		{MessageID: "n1@example.invalid", Subject: "AW: Rechnung", Date: day(4)},
+		// Antwort an Anna in Kopie von Carl: gehört dazu
+		{MessageID: "c1@example.invalid", Subject: "Re: Rechnung", Date: day(5), Participants: []string{"carl@example.org", "anna@example.org"}},
+	}
+	want := []bool{true, true, false, false, false, true}
+	perms := [][]int{{0, 1, 2, 3, 4, 5}, {5, 4, 3, 2, 1, 0}, {2, 1, 3, 5, 0, 4}, {1, 2, 3, 4, 5, 0}}
+	for _, p := range perms {
+		in := make([]Message, len(p))
+		for i, k := range p {
+			in[i] = msgs[k]
+		}
+		g := Group(in)
+		pos := map[int]int{}
+		for i, k := range p {
+			pos[k] = g[i]
+		}
+		for k, w := range want {
+			if (pos[k] == pos[0]) != w {
+				t.Errorf("order %v: message %d in thread of the original = %v, want %v (groups %v)", p, k, pos[k] == pos[0], w, g)
+			}
+		}
+		if pos[2] == pos[3] {
+			t.Errorf("order %v: the two foreign senders share a thread (groups %v)", p, g)
+		}
+	}
+}
+
+func TestNormalizeAddress(t *testing.T) {
+	for in, want := range map[string]string{"Anna B <Anna@Example.ORG>": "anna@example.org", " b@example.org ": "b@example.org",
+		"ohne Adresse": "", `"X <y>" <z@example.net>`: "z@example.net"} {
+		if got := NormalizeAddress(in); got != want {
+			t.Errorf("NormalizeAddress(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

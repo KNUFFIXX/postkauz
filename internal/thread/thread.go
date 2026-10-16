@@ -10,12 +10,15 @@
 //  2. Rückfall Betreff: Eine Antwort ohne References und In-Reply-To
 //     („Waise", Betreff mit Re:/AW:/WG:/Fwd: …) kommt in den Thread mit
 //     gleichem normalisierten Betreff, dessen Zeitspanne höchstens 30 Tage
-//     entfernt ist. Umgekehrt sammelt ein Thread Waisen-Threads gleichen
-//     Betreffs im Zeitfenster ein, wenn er wächst; so ist auch dieser
+//     entfernt ist und mit dem sie mindestens einen Beteiligten (From, To,
+//     Cc; ohne die eigenen Adressen des Kontos) teilt. Umgekehrt sammelt
+//     ein Thread Waisen-Threads gleichen Betreffs im Zeitfenster mit
+//     gemeinsamen Beteiligten ein, wenn er wächst; so ist auch dieser
 //     Rückfall unabhängig davon, ob die Waise vor oder nach dem Rest
 //     ankommt. Nachrichten ohne Antwort-Präfix werden nie allein über den
 //     Betreff verbunden (sonst landeten gleichlautende Rundschreiben in
-//     einem Thread).
+//     einem Thread); ohne gemeinsame Beteiligte auch Antworten nicht
+//     („AW: Rechnung" zweier fremder Absender bleibt getrennt).
 //
 // Assign arbeitet gegen eine Index-Schnittstelle: im Speicher (Group, Tests)
 // und in SQLite (internal/store, beim Sync). Beide nutzen dieselbe
@@ -43,6 +46,34 @@ type Message struct {
 	// Date ist das Datum der Nachricht (Kopfzeile, sonst INTERNALDATE);
 	// Nullzeit = unbekannt (dann kein Betreff-Rückfall).
 	Date time.Time
+	// Participants: Adressen aus From, To und Cc (NormalizeAddress), ohne
+	// die eigenen Adressen des Kontos. Leer = kein Betreff-Rückfall.
+	Participants []string
+}
+
+// NormalizeAddress liefert die Adresse aus „Name <adresse>" oder
+// „adresse", klein geschrieben, ohne Leerraum; "" ohne „@".
+func NormalizeAddress(s string) string {
+	if i := strings.LastIndexByte(s, '<'); i >= 0 {
+		if j := strings.IndexByte(s[i:], '>'); j > 0 {
+			s = s[i+1 : i+j]
+		}
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+	if !strings.Contains(s, "@") {
+		return ""
+	}
+	return s
+}
+
+// Overlap meldet, ob a und b mindestens eine Adresse gemeinsam haben.
+func Overlap(a, b []string) bool {
+	for _, x := range a {
+		if x != "" && slices.Contains(b, x) {
+			return true
+		}
+	}
+	return false
 }
 
 // refs liefert die Verweise ohne die eigene ID, ohne Dubletten.
@@ -141,6 +172,9 @@ type Index interface {
 	Candidates(subjectNorm string) ([]Info, error)
 	// Info liefert die aktuelle Beschreibung eines Threads.
 	Info(id int64) (Info, error)
+	// Participants liefert die Beteiligten aller Nachrichten des Threads
+	// (wie Message.Participants: ohne die eigenen Adressen des Kontos).
+	Participants(id int64) ([]string, error)
 	// Create legt einen leeren Thread an.
 	Create(subjectNorm string) (int64, error)
 	// Merge vereinigt die Threads from in into (Nachrichten und IDs).
@@ -167,7 +201,16 @@ func Assign(ix Index, m Message) (int64, error) {
 		best, bestGap := int64(0), time.Duration(-1)
 		for _, c := range cands {
 			gap, ok := c.near(m.Date)
-			if ok && (bestGap < 0 || gap < bestGap || (gap == bestGap && c.ID < best)) {
+			if !ok || (bestGap >= 0 && (gap > bestGap || (gap == bestGap && c.ID > best))) {
+				continue
+			}
+			// Nur bei gemeinsamen Beteiligten: Gleicher Betreff allein
+			// verbindet fremde Gespräche nicht.
+			parts, err := ix.Participants(c.ID)
+			if err != nil {
+				return 0, err
+			}
+			if Overlap(m.Participants, parts) {
 				best, bestGap = c.ID, gap
 			}
 		}
@@ -205,8 +248,21 @@ func Assign(ix Index, m Message) (int64, error) {
 		return 0, err
 	}
 	var merge []int64
+	var own []string
 	for _, c := range cands {
-		if c.ID != t && c.OrphanRoot && spansClose(c, ti) {
+		if c.ID == t || !c.OrphanRoot || !spansClose(c, ti) {
+			continue
+		}
+		if own == nil {
+			if own, err = ix.Participants(t); err != nil {
+				return 0, err
+			}
+		}
+		parts, err := ix.Participants(c.ID)
+		if err != nil {
+			return 0, err
+		}
+		if Overlap(parts, own) {
 			merge = append(merge, c.ID)
 		}
 	}
@@ -261,6 +317,18 @@ func (x *Memory) Candidates(norm string) ([]Info, error) {
 }
 
 func (x *Memory) Info(id int64) (Info, error) { return x.info(id), nil }
+
+func (x *Memory) Participants(id int64) ([]string, error) {
+	var out []string
+	for _, m := range x.threads[id].msgs {
+		for _, p := range m.Participants {
+			if !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}
 
 func (x *Memory) info(id int64) Info {
 	th := x.threads[id]

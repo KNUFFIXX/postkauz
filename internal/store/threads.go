@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,7 +30,8 @@ type txIndex struct {
 	ctx     context.Context
 	q       querier
 	account int64
-	msgID   int64 // Nachricht, die Add gerade zuordnet
+	msgID   int64    // Nachricht, die Add gerade zuordnet
+	self    []string // eigene Adressen des Kontos (E-Mail, Benutzername)
 }
 
 var _ thread.Index = (*txIndex)(nil)
@@ -100,6 +102,68 @@ func (x *txIndex) Candidates(norm string) ([]thread.Info, error) {
 
 func (x *txIndex) Info(id int64) (thread.Info, error) {
 	return scanInfo(x.q.QueryRowContext(x.ctx, `SELECT id, first_date, last_date, root_orphan FROM threads WHERE id = ?`, id))
+}
+
+// Participants liefert die Adressen aus From, To und Cc aller Nachrichten
+// des Threads ohne die eigenen des Kontos.
+func (x *txIndex) Participants(id int64) ([]string, error) {
+	rows, err := x.q.QueryContext(x.ctx, `SELECT from_addr, to_addrs, cc_addrs FROM messages WHERE thread_id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var from, to, cc string
+		if err := rows.Scan(&from, &to, &cc); err != nil {
+			return nil, err
+		}
+		for _, p := range participants(from, json.RawMessage(to), json.RawMessage(cc), x.self) {
+			if !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+// participants: Adressen aus From, To und Cc (thread.NormalizeAddress)
+// ohne Dubletten und ohne self.
+func participants(from string, to, cc json.RawMessage, self []string) []string {
+	var out []string
+	add := func(s string) {
+		if a := thread.NormalizeAddress(s); a != "" && !slices.Contains(self, a) && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	add(from)
+	for _, raw := range []json.RawMessage{to, cc} {
+		var as []struct {
+			Address string `json:"address"`
+		}
+		_ = json.Unmarshal(raw, &as)
+		for _, a := range as {
+			add(a.Address)
+		}
+	}
+	return out
+}
+
+// selfAddresses liefert die eigenen Adressen des Kontos (E-Mail und
+// Benutzername, wenn er eine Adresse ist).
+func selfAddresses(ctx context.Context, q querier, account int64) ([]string, error) {
+	var email, user string
+	err := q.QueryRowContext(ctx, `SELECT email, username FROM accounts WHERE id = ?`, account).Scan(&email, &user)
+	if err != nil {
+		return nil, fmt.Errorf("store: account %d: %w", account, err)
+	}
+	var out []string
+	for _, s := range []string{email, user} {
+		if a := thread.NormalizeAddress(s); a != "" && !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (x *txIndex) Create(norm string) (int64, error) {
@@ -179,7 +243,8 @@ func refreshThread(ctx context.Context, q querier, id int64) error {
 
 // threadMessage baut die Sicht des Threadings auf eine neue Nachricht.
 func threadMessage(n NewMessage) thread.Message {
-	m := thread.Message{MessageID: n.MessageID, References: n.References, Subject: n.Subject, Date: n.DateHeader}
+	m := thread.Message{MessageID: n.MessageID, References: n.References, Subject: n.Subject, Date: n.DateHeader,
+		Participants: participants(n.From, n.To, n.Cc, nil)}
 	if n.InReplyTo != "" {
 		m.InReplyTo = []string{n.InReplyTo}
 	}
@@ -190,9 +255,16 @@ func threadMessage(n NewMessage) thread.Message {
 }
 
 // assignThread ordnet die Nachricht mid einem Thread zu.
+// Die eigenen Adressen des Kontos fallen aus den Beteiligten heraus (sie
+// stehen in fast jeder Nachricht und verbänden sonst alles).
 func assignThread(ctx context.Context, q querier, account, mid int64, m thread.Message) error {
-	ix := &txIndex{ctx: ctx, q: q, account: account, msgID: mid}
-	_, err := thread.Assign(ix, m)
+	self, err := selfAddresses(ctx, q, account)
+	if err != nil {
+		return err
+	}
+	m.Participants = slices.DeleteFunc(slices.Clone(m.Participants), func(a string) bool { return slices.Contains(self, a) })
+	ix := &txIndex{ctx: ctx, q: q, account: account, msgID: mid, self: self}
+	_, err = thread.Assign(ix, m)
 	return err
 }
 
@@ -210,7 +282,7 @@ func (s *SQLite) ThreadUnassigned(ctx context.Context, accountID int64, limit in
 		}
 	}()
 	rows, err := tx.QueryContext(ctx, `SELECT id, COALESCE(message_id_header, ''), subject, refs, COALESCE(in_reply_to, ''),
-		date_header, internal_date FROM messages WHERE account_id = ? AND thread_id IS NULL
+		date_header, internal_date, from_addr, to_addrs, cc_addrs FROM messages WHERE account_id = ? AND thread_id IS NULL
 		ORDER BY `+msgDate+`, id LIMIT ?`, accountID, limit)
 	if err != nil {
 		return 0, err
@@ -222,13 +294,14 @@ func (s *SQLite) ThreadUnassigned(ctx context.Context, accountID int64, limit in
 	var items []item
 	for rows.Next() {
 		var it item
-		var refs, irt string
+		var refs, irt, from, to, cc string
 		var dh, idate sql.NullInt64
-		if err := rows.Scan(&it.id, &it.m.MessageID, &it.m.Subject, &refs, &irt, &dh, &idate); err != nil {
+		if err := rows.Scan(&it.id, &it.m.MessageID, &it.m.Subject, &refs, &irt, &dh, &idate, &from, &to, &cc); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
 		_ = json.Unmarshal([]byte(refs), &it.m.References)
+		it.m.Participants = participants(from, json.RawMessage(to), json.RawMessage(cc), nil)
 		if irt != "" {
 			it.m.InReplyTo = []string{irt}
 		}

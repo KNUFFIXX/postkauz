@@ -53,6 +53,14 @@ func TestThreadsAssignedOnApply(t *testing.T) {
 	apply(msg(4, "d@example.org", "AW: Heizung", "Anna <a@example.org>", 7))
 	// Gleicher Betreff ohne Präfix: eigener Thread.
 	apply(msg(5, "e@example.org", "Heizung", "Carl <c@example.org>", 8))
+	// Antwort ohne Verweise von einem Fremden an das eigene Konto: Das
+	// eigene Konto zählt nicht als gemeinsamer Beteiligter, eigener Thread.
+	stranger := msg(6, "f@example.org", "AW: Heizung", "Xaver <x@example.net>", 7)
+	stranger.To = []byte(`[{"address":"Demo@Example.org"}]`)
+	apply(stranger)
+	if tid("f@example.org") == tid("a@example.org") {
+		t.Fatal("orphan reply of a stranger joined by subject")
+	}
 	want := tid("a@example.org")
 	for _, mid := range []string{"b@example.org", "c@example.org", "d@example.org"} {
 		if tid(mid) != want {
@@ -70,8 +78,8 @@ func TestThreadsAssignedOnApply(t *testing.T) {
 		len(th.Participants) != 2 || msgs[0].Subject != "Heizung" || msgs[3].Subject != "AW: Heizung" {
 		t.Fatalf("thread = %+v, messages = %+v", th, msgs)
 	}
-	if n, _ := s.QueryIntForTest(`SELECT count(*) FROM threads`); n != 2 {
-		t.Fatalf("threads = %d, want 2 (merged thread removed)", n)
+	if n, _ := s.QueryIntForTest(`SELECT count(*) FROM threads`); n != 3 {
+		t.Fatalf("threads = %d, want 3 (merged thread removed)", n)
 	}
 	if _, _, err := s.ThreadByID(ctx, 9999); err == nil {
 		t.Fatal("unknown thread found")

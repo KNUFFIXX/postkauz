@@ -153,8 +153,14 @@ func checkThreads(t *testing.T, c *corpus.Corpus, parsed []*mimeparse.Message) {
 		msgs := make([]thread.Message, n)
 		for k, i := range order {
 			m := parsed[i]
+			var parts []string
+			for _, as := range [][]mimeparse.Address{m.From, m.To, m.Cc} {
+				for _, a := range as {
+					parts = append(parts, thread.NormalizeAddress(a.Address))
+				}
+			}
 			msgs[k] = thread.Message{MessageID: m.MessageID, InReplyTo: m.InReplyTo, References: m.References,
-				Subject: m.Subject, Date: m.Date}
+				Subject: m.Subject, Date: m.Date, Participants: parts}
 		}
 		g := thread.Group(msgs)
 		groups := make([]int, n)
