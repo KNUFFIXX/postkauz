@@ -28,8 +28,9 @@ import (
 	"time"
 )
 
-// Version des Manifest-Formats.
-const Version = 1
+// Version des Manifest-Formats (2: S1.6, thread_by_subject und Felder
+// für Body-Bereinigung und Anhangstypen).
+const Version = 2
 
 // Options steuert die Erzeugung.
 type Options struct {
@@ -65,24 +66,27 @@ type Entry struct {
 	Flags        []string `json:"flags"`
 	InternalDate string   `json:"internal_date"` // RFC 3339, für APPEND und als Date-Ersatz
 
-	MessageID      string   `json:"message_id"` // erwartet, ohne <>; "" = keine
-	Subject        string   `json:"subject"`    // erwartet, dekodiert
-	FromName       string   `json:"from_name"`
-	FromAddr       string   `json:"from_addr"`
-	ToAddr         string   `json:"to_addr"`
-	Charset        string   `json:"charset"`
-	HeaderEncoding string   `json:"header_encoding"` // B|Q|raw|ascii
-	Date           string   `json:"date"`            // erwartet, RFC 3339 UTC
-	DateSource     string   `json:"date_source"`     // header|internal
-	Thread         string   `json:"thread,omitempty"`
-	Attachments    []string `json:"attachments"`  // Dateinamen der Anhänge (nicht inline), in Reihenfolge
-	InlineParts    int      `json:"inline_parts"` // Inline-Teile ohne Body-Text (z. B. eingebettete Bilder)
-	HTML           bool     `json:"html"`
-	Newsletter     bool     `json:"newsletter,omitempty"`
-	ListID         string   `json:"list_id,omitempty"`
-	BodyContains   string   `json:"body_contains,omitempty"` // Satz, der im Text stehen muss
-	Broken         string   `json:"broken,omitempty"`
-	ZipBomb        bool     `json:"zip_bomb,omitempty"`
+	MessageID      string `json:"message_id"` // erwartet, ohne <>; "" = keine
+	Subject        string `json:"subject"`    // erwartet, dekodiert
+	FromName       string `json:"from_name"`
+	FromAddr       string `json:"from_addr"`
+	ToAddr         string `json:"to_addr"`
+	Charset        string `json:"charset"`
+	HeaderEncoding string `json:"header_encoding"` // B|Q|raw|ascii
+	Date           string `json:"date"`            // erwartet, RFC 3339 UTC
+	DateSource     string `json:"date_source"`     // header|internal
+	Thread         string `json:"thread,omitempty"`
+	// ThreadBySubject: Antwort ohne References/In-Reply-To; sie gehört nur
+	// über den Betreff-Rückfall (Präfix, Zeitfenster) zum Thread.
+	ThreadBySubject bool     `json:"thread_by_subject,omitempty"`
+	Attachments     []string `json:"attachments"`  // Dateinamen der Anhänge (nicht inline), in Reihenfolge
+	InlineParts     int      `json:"inline_parts"` // Inline-Teile ohne Body-Text (z. B. eingebettete Bilder)
+	HTML            bool     `json:"html"`
+	Newsletter      bool     `json:"newsletter,omitempty"`
+	ListID          string   `json:"list_id,omitempty"`
+	BodyContains    string   `json:"body_contains,omitempty"` // Satz, der im Text stehen muss
+	Broken          string   `json:"broken,omitempty"`
+	ZipBomb         bool     `json:"zip_bomb,omitempty"`
 	// Unchecked nennt Felder, die bei dieser kaputten Nachricht nicht
 	// geprüft werden (z. B. Anhänge einer abgeschnittenen Nachricht).
 	Unchecked []string `json:"unchecked,omitempty"`
@@ -282,6 +286,7 @@ type plan struct {
 	nlNo      int
 	broken    string
 	dropped   bool // fehlendes Zwischenglied: Nachricht wird nicht geschrieben
+	orphan    bool // Antwort ohne References/In-Reply-To (Betreff-Rückfall)
 	tzVariant int
 }
 
@@ -326,8 +331,12 @@ func Generate(opt Options) (*Corpus, error) {
 			dropAt = 1
 		}
 		for k := 0; k < size; k++ {
+			// Jeder sechste Thread ab drei Nachrichten endet mit einer Antwort
+			// ohne Verweise (Rückfall über Betreff und Zeitfenster, S1.6).
+			// Ohne zusätzlichen Zufall, damit alle übrigen Bytes gleich bleiben.
 			p := plan{kind: "thread", thread: fmt.Sprintf("T%03d", t+1), pos: k, subject: subj,
-				date: start.Add(time.Duration(g.pick(48)+1) * time.Hour * time.Duration(k+1)), dropped: k == dropAt}
+				date: start.Add(time.Duration(g.pick(48)+1) * time.Hour * time.Duration(k+1)), dropped: k == dropAt,
+				orphan: k == size-1 && size >= 3 && t%6 == 2}
 			if k%2 == 0 {
 				p.sender, p.to = a, me
 			} else {
@@ -373,6 +382,9 @@ func Generate(opt Options) (*Corpus, error) {
 				if g.chance(0.85) {
 					s.inReplyTo = chain[len(chain)-1]
 				}
+				if p.orphan {
+					s.refs, s.inReplyTo = nil, ""
+				}
 			}
 			chains[p.thread] = append(chain, s.msgID)
 			if p.dropped {
@@ -380,6 +392,7 @@ func Generate(opt Options) (*Corpus, error) {
 			}
 			raw, e = g.render(s)
 			e.Thread = p.thread
+			e.ThreadBySubject = p.orphan
 		case "newsletter":
 			s := g.normalSpec(person{p.nl.name, "news@" + p.nl.domain}, me, p.date)
 			s.subject = fmt.Sprintf(p.nl.subject, p.nlNo)
@@ -429,6 +442,9 @@ func Generate(opt Options) (*Corpus, error) {
 		}
 		if len(e.Attachments) > 0 {
 			c.Manifest.Summary["with_attachments"]++
+		}
+		if e.ThreadBySubject {
+			c.Manifest.Summary["thread_by_subject"]++
 		}
 	}
 	c.Manifest.Count = len(c.Raw)

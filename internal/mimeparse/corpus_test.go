@@ -117,14 +117,55 @@ func TestParserAgainstCorpusManifest(t *testing.T) {
 }
 
 // checkThreads: Jeder Thread des Manifests ist genau eine Gruppe; alle
-// anderen Nachrichten stehen allein.
+// anderen Nachrichten stehen allein. Geprüft in drei Reihenfolgen
+// (Manifest, umgekehrt, wie der Sync: INBOX zuerst, dann nach Ordner), weil
+// das Ergebnis nicht von der Reihenfolge der Ankunft abhängen darf.
 func checkThreads(t *testing.T, c *corpus.Corpus, parsed []*mimeparse.Message) {
 	t.Helper()
-	nodes := make([]thread.Node, len(parsed))
-	for i, m := range parsed {
-		nodes[i] = thread.Node{MessageID: m.MessageID, InReplyTo: m.InReplyTo, References: m.References}
+	n := len(parsed)
+	manifest := make([]int, n)
+	reverse := make([]int, n)
+	for i := range n {
+		manifest[i], reverse[i] = i, n-1-i
 	}
-	groups := thread.Group(nodes)
+	syncOrder := slices.Clone(manifest)
+	slices.SortStableFunc(syncOrder, func(a, b int) int {
+		fa, fb := c.Manifest.Messages[a].Folder, c.Manifest.Messages[b].Folder
+		if (fa == "INBOX") != (fb == "INBOX") {
+			if fa == "INBOX" {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(fa, fb)
+	})
+	orders := map[string][]int{"manifest": manifest, "reverse": reverse, "sync": syncOrder}
+	bySubject := 0
+	for _, e := range c.Manifest.Messages {
+		if e.ThreadBySubject {
+			bySubject++
+		}
+	}
+	if bySubject == 0 {
+		t.Fatal("corpus has no reply without References (subject fallback)")
+	}
+	for name, order := range orders {
+		msgs := make([]thread.Message, n)
+		for k, i := range order {
+			m := parsed[i]
+			msgs[k] = thread.Message{MessageID: m.MessageID, InReplyTo: m.InReplyTo, References: m.References,
+				Subject: m.Subject, Date: m.Date}
+		}
+		g := thread.Group(msgs)
+		groups := make([]int, n)
+		for k, i := range order {
+			groups[i] = g[k]
+		}
+		t.Run(name, func(t *testing.T) { checkGroups(t, c, groups) })
+	}
+}
+
+func checkGroups(t *testing.T, c *corpus.Corpus, groups []int) {
 	byThread := map[string]map[int]bool{}
 	members := map[int]int{}
 	for i, g := range groups {
