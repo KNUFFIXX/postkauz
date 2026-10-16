@@ -20,7 +20,12 @@ import (
 // versteckter Text, Anhänge mit Typprüfung). Nachrichten mit kleinerem
 // Stand (z. B. vor S1.6 gespiegelt) bereitet der nächste Sync aus der
 // Rohmail neu auf. Erhöhen, wenn sich die Aufbereitung ändert.
-const CleanVersion = 1
+//
+//	1  S1.6: Text, Links, versteckter Text, Anhänge
+//	2  Betreff, Absender-/Empfängernamen und Dateinamen ohne unsichtbare
+//	   Zeichen (sanitize.Text); die Kopffelder in messages werden mit
+//	   nachgezogen
+const CleanVersion = 2
 
 // storedPart ist ein beim Parsen gespeicherter Anhang.
 type storedPart struct {
@@ -51,7 +56,7 @@ func (e *Engine) analyze(r io.Reader, internal time.Time) (*mimeparse.Message, [
 	for _, a := range m.Attachments {
 		p := parts[a.PartID]
 		chk := magic.Check(a.ContentType, a.Filename, p.detected)
-		na := store.NewAttachment{PartID: a.PartID, Filename: a.Filename, ContentType: p.detected.MIME,
+		na := store.NewAttachment{PartID: a.PartID, Filename: sanitize.Text(a.Filename), ContentType: p.detected.MIME,
 			DeclaredType: a.ContentType, Size: a.Size, Inline: a.Inline, ContentID: a.ContentID, Truncated: a.Truncated,
 			TypeMismatch: chk.Mismatch, MismatchReason: chk.Reason, Executable: chk.Executable}
 		if na.ContentType == "" {
@@ -152,6 +157,7 @@ func (e *Engine) reprocessOne(it store.ReprocessItem) store.Reprocessed {
 		return keep
 	}
 	var nm store.NewMessage
+	fillParsed(&nm, m)
 	fillClean(&nm, m, atts)
-	return store.Reprocessed{MessageID: it.ID, Body: nm}
+	return store.Reprocessed{MessageID: it.ID, Body: nm, Headers: true}
 }

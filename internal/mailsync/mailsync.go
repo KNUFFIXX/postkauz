@@ -37,6 +37,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -686,7 +687,9 @@ func fillParsed(nm *store.NewMessage, m *mimeparse.Message) {
 	if m.MessageID != "" {
 		nm.MessageID = m.MessageID
 	}
-	nm.Subject = m.Subject
+	// Kopffelder ohne unsichtbare Zeichen (sanitize.Invisible): Sie stehen
+	// in Suche, Listen und MCP-Ausgaben und dürfen dort nichts verbergen.
+	nm.Subject = sanitize.Text(m.Subject)
 	if len(m.From) > 0 {
 		nm.From = formatAddr(m.From[0])
 	}
@@ -710,17 +713,27 @@ func fillParsed(nm *store.NewMessage, m *mimeparse.Message) {
 }
 
 func formatAddr(a mimeparse.Address) string {
+	a = cleanAddr(a)
 	if a.Name == "" {
 		return a.Address
 	}
 	return a.Name + " <" + a.Address + ">"
 }
 
+// cleanAddr entfernt unsichtbare Zeichen aus Name und Adresse.
+func cleanAddr(a mimeparse.Address) mimeparse.Address {
+	return mimeparse.Address{Name: sanitize.Text(a.Name), Address: sanitize.Text(a.Address)}
+}
+
 func addrJSON(as []mimeparse.Address) json.RawMessage {
 	if len(as) == 0 {
 		return json.RawMessage("[]")
 	}
-	b, err := json.Marshal(as)
+	clean := make([]mimeparse.Address, len(as))
+	for i, a := range as {
+		clean[i] = cleanAddr(a)
+	}
+	b, err := json.Marshal(clean)
 	if err != nil {
 		return json.RawMessage("[]")
 	}

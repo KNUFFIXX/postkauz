@@ -113,10 +113,14 @@ func (s *SQLite) ReprocessCandidates(ctx context.Context, accountID int64, versi
 // Reprocessed ist eine neu aufbereitete Nachricht. Body enthält die
 // Textfelder und Anhänge (TextPlain … Attachments, CleanVersion); ist
 // KeepBody gesetzt (Rohmail unlesbar), wird nur clean_version gesetzt.
+// Headers: zusätzlich Betreff, Absender, Empfänger und Reply-To aus Body
+// übernehmen (nur geänderte Felder; der Trigger reiht dann neu in den
+// Index ein).
 type Reprocessed struct {
 	MessageID int64
 	Body      NewMessage
 	KeepBody  bool
+	Headers   bool
 }
 
 // SaveReprocessed schreibt neu aufbereitete Nachrichten in einer
@@ -149,6 +153,15 @@ func (s *SQLite) SaveReprocessed(ctx context.Context, items []Reprocessed) (err 
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET has_attachments = ?, snippet = ? WHERE id = ?`,
 			b2i(hasRealAttachments(it.Body.Attachments)), it.Body.Snippet, it.MessageID); err != nil {
 			return err
+		}
+		if it.Headers {
+			b := it.Body
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET subject = ?, from_addr = ?, to_addrs = ?, cc_addrs = ?, reply_to = ?
+				WHERE id = ? AND (subject IS NOT ? OR from_addr IS NOT ? OR to_addrs IS NOT ? OR cc_addrs IS NOT ? OR reply_to IS NOT ?)`,
+				b.Subject, b.From, jsonOr(b.To, "[]"), jsonOr(b.Cc, "[]"), nullStr(b.ReplyTo), it.MessageID,
+				b.Subject, b.From, jsonOr(b.To, "[]"), jsonOr(b.Cc, "[]"), nullStr(b.ReplyTo)); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
