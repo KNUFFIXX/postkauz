@@ -1,6 +1,6 @@
 # Testkorpus
 
-Stand: S1.7 (16.10.2026). Der Generator für den synthetischen Korpus existiert (`internal/corpus`, `make corpus`, Abschnitt 1a); dieses Dokument legt die Anforderungen fest und nennt, was davon schon abgedeckt ist. Regeln für das Verzeichnis: [`testdata/README.md`](../testdata/README.md).
+Stand: S1.10 (16.10.2026). Der Generator für den synthetischen Korpus existiert (`internal/corpus`, `make corpus`, Abschnitt 1a); dieses Dokument legt die Anforderungen fest und nennt, was davon schon abgedeckt ist. Regeln für das Verzeichnis: [`testdata/README.md`](../testdata/README.md).
 
 **Grundregel:** Entwickelt und getestet wird **nie gegen ein echtes Postfach**. Es gibt zwei Korpora: einen **synthetischen** (liegt im Repository bzw. wird deterministisch erzeugt) und einen **anonymisierten** aus echten Mails (liegt **außerhalb** des Repositorys, bis ein Mensch ihn freigegeben hat).
 
@@ -41,6 +41,14 @@ Zweck: Korrektheit von MIME-Parser, Threading, Sync, Suche und Import reproduzie
 - **Suchtestsatz** (Manifest-Version 3, Feld `search`): 22 Fälle mit `query`, `note`, `want` (Dateien, die Treffer sein müssen), `not` (Dateien, die keine Treffer sein dürfen), `same_as` (Anfrage mit genau derselben Treffermenge) und `all_have_attachments`. Abgedeckt: Flexion in beide Richtungen („Rechnung" ↔ „Rechnungen", aber „Rechnungen" nicht ↔ „Abrechnung"), „prüfen" = „pruefen" = „prufen", „Erdgeschoss" = „Erdgeschoß", Teilwörter („Vollstreck", „steuer", „Abrechnung"), Phrasen über ß/ss und Wortstamm hinweg, Ausschluss, `from:`, `subject:`, `after:`/`before:`, `in:`, `has:attachment`, Text aus einem Anhang und **versteckter Text** (die Anweisung aus den S1.6-Sonderfällen darf nicht gefunden werden). Weil die übrigen Nachrichten dieselben Wörter teils auch enthalten, prüft der Test „enthält"/„enthält nicht" statt der genauen Menge. Ausgeführt in `make check` nach einem Erstsync mit Jobs (`internal/mailsync/s17_test.go`).
 - **Noch nicht abgedeckt** (folgt mit dem Schritt, der es braucht): UTF-16-Anhänge, falsch deklarierte Body-Charsets, doppelte `Message-ID`, Kommentare in Adressen und Gruppenadressen, `Authentication-Results`, riesige HTML-Mails.
 - **Prüfung:** `internal/mimeparse` besteht den Korpus gegen das Manifest (Betreff, Absender, Empfänger, Message-ID, Datum, Anhänge, Inline-Teile, Textprobe, List-Id, Threads über `internal/thread`); saubere Nachrichten dürfen keine `Problems` melden.
+
+## 1b. Ablagen für den Import (Stand S1.10)
+
+`internal/corpus/mbox.go` schreibt den Korpus so, wie ihn ein Mailclient auf der Platte ablegt; die erwarteten Zählungen liefert `ImportExpect` (neu, weitere Kopien, gelöscht markiert, Ordner mit Message-IDs, Flags, Schlagwörter).
+
+- **Thunderbird-Profil** (`WriteThunderbird`, mbox wie `berkeleystore`): je Ordner eine Datei, Unterordner in `<ordner>.sbd/`, daneben `.msf` (Füllbytes) und `msgFilterRules.dat` (beides muss ignoriert werden), ein leerer Elternordner und ein leerer Ordner (leere Dateien); Trennzeile `From - <asctime>`; `X-Mozilla-Status` mit allen Bits (gelesen, beantwortet, markiert aus den Flags des Korpus, dazu Bits ohne Bedeutung für den Import wie 0x0010, 0x0100, 0x2000), `X-Mozilla-Status2`, `X-Mozilla-Keys` (80 Leerzeichen bzw. `$label1 todo`); `>From`-Quoting; Ordnername in IMAP-UTF-7 (`Entw&APw-rfe` für „Entwürfe"); Gmail-artiges Label „Wichtig" mit Kopien jeder zehnten Nachricht (Dubletten über zwei Ordner, andere Flags); drei gelöscht markierte Nachrichten (0x0008); Sonderfälle: `From `-Zeilen im Text (eine sieht wie eine Trennzeile aus), Nachricht nur aus Kopf, überlange Zeile (300 KiB), letzte Nachricht der Datei ohne Zeilenende. Zeilenenden CRLF (Thunderbird unter Windows), wahlweise LF. `Only` wählt einen Teil des Korpus (Überlappung mit einem gesyncten Konto).
+- **Maildir++** (`WriteMaildir`): Wurzel = INBOX mit `cur/`, `new/`, `tmp/`, Unterordner `.Archiv.2024` usw.; gelesene Nachrichten in `cur/` mit `:2,<Flags>` (S, R, F, D), ungelesene in `new/`, zum Löschen markierte mit `T`, eine halbe Zustellung in `tmp/`; Änderungszeit = INTERNALDATE.
+- **Geprüft:** `internal/importer` importiert beide Ablagen in ein leeres Konto und gegen ein gesynctes Konto (30 % Überlappung, auch gegen Dovecot im Integrationstest) und vergleicht mit `ImportExpect`; der Inhalt jeder Korpus-Nachricht ist nach dem Lösen aus dem mbox-Rahmen wieder das Original (`content_hash`).
 
 ## 2. Anonymisierter Korpus aus echten Mails
 

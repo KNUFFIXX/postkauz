@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -88,5 +89,56 @@ func TestWrite(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(dir, m.Messages[0].File))
 	if err != nil || !bytes.Equal(raw, c.Raw[0]) {
 		t.Fatalf("eml: %v", err)
+	}
+}
+
+// Ablagen für den Import (S1.10): Thunderbird-Profil und Maildir.
+func TestWriteThunderbirdAndMaildir(t *testing.T) {
+	c, err := Generate(Options{Count: 120, Threads: 10, ZipBombBytes: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	exp, err := c.WriteThunderbird(dir, ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exp.Deleted != 3 || exp.Copies == 0 || exp.New != len(exp.Included)+5 || exp.Sources < 4 {
+		t.Fatalf("expect = new %d copies %d deleted %d sources %d", exp.New, exp.Copies, exp.Deleted, exp.Sources)
+	}
+	drafts, err := os.ReadFile(filepath.Join(dir, "Entw&APw-rfe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"From - Wed Mar  4 10:00:00 2026\r\nX-Mozilla-Status: ", "\r\n>From the desk of the caretaker",
+		"\r\n>From - Mon Jan  5", "X-Mozilla-Keys: $label1 todo\r\n"} {
+		if !strings.Contains(string(drafts), want) {
+			t.Errorf("Entwürfe lacks %q", want)
+		}
+	}
+	if strings.HasSuffix(string(drafts), "\n") {
+		t.Error("the last message of Entwürfe must end without a line break")
+	}
+	for _, p := range []string{"INBOX.msf", "Archiv", "Archiv.sbd/2024", "msgFilterRules.dat", "Wichtig"} {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("%s missing: %v", p, err)
+		}
+	}
+	md := t.TempDir()
+	mexp, err := c.WriteMaildir(md, ImportOptions{LF: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mexp.New != exp.New || mexp.Deleted != exp.Deleted+1 {
+		t.Fatalf("maildir expect = %+v", mexp)
+	}
+	for _, p := range []string{"cur", "new", "tmp", ".Archiv.2024/cur", ".Entw&APw-rfe/cur", ".Wichtig/cur"} {
+		if fi, err := os.Stat(filepath.Join(md, p)); err != nil || !fi.IsDir() {
+			t.Errorf("maildir %s missing", p)
+		}
+	}
+	trashed, _ := filepath.Glob(filepath.Join(md, "cur", "*:2,ST"))
+	if len(trashed) != 3 {
+		t.Errorf("trashed files = %d, want 3", len(trashed))
 	}
 }
