@@ -45,9 +45,16 @@ func childMain(mode string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// docxHiddenMarker steht vor dem Text, wenn versteckter Text ausgelassen
+// wurde. NUL kommt in XML-Text nie vor (XML 1.0), die Marke ist eindeutig.
+const docxHiddenMarker = "\x00hidden\n"
+
 // docxText liest den Text aus word/document.xml: Inhalt von <w:t>,
 // Absätze (<w:p>) als Zeilen, <w:tab> und <w:br> als Tab bzw. Umbruch.
-// Ohne <w:t> (vereinfachte Dateien) zählt aller Zeichentext.
+// Ohne <w:t> (vereinfachte Dateien) zählt aller Zeichentext. Text in
+// Läufen mit <w:vanish/> (in Word ausgeblendet) fehlt; dann steht
+// docxHiddenMarker vor dem Text. Nicht ausgewertet: Ausblenden über
+// Formatvorlagen (styles.xml) und Feldfunktionen.
 func docxText(stdin io.Reader, stdout io.Writer) error {
 	data, err := io.ReadAll(io.LimitReader(stdin, childMaxInput+1))
 	if err != nil {
@@ -83,6 +90,10 @@ func docxText(stdin io.Reader, stdout io.Writer) error {
 	dec.Strict = false
 	var out, all strings.Builder
 	inT, sawT := false, false
+	// inPPr: Absatzeigenschaften (dort blendet vanish nur die
+	// Absatzmarke aus, nicht den Text); runHidden: aktueller Lauf ist
+	// ausgeblendet; hidden: es wurde Text ausgelassen.
+	inPPr, runHidden, hidden := false, false, false
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -99,20 +110,40 @@ func docxText(stdin io.Reader, stdout io.Writer) error {
 			switch t.Name.Local {
 			case "t":
 				inT, sawT = true, true
+			case "r":
+				runHidden = false
+			case "pPr":
+				inPPr = true
+			case "vanish":
+				if !inPPr && onOff(t) {
+					runHidden = true
+				}
 			case "tab":
-				out.WriteByte('\t')
+				if !runHidden {
+					out.WriteByte('\t')
+				}
 			case "br", "cr":
-				out.WriteByte('\n')
+				if !runHidden {
+					out.WriteByte('\n')
+				}
 			}
 		case xml.EndElement:
 			switch t.Name.Local {
 			case "t":
 				inT = false
+			case "r":
+				runHidden = false
+			case "pPr":
+				inPPr = false
 			case "p":
 				out.WriteByte('\n')
 			}
 		case xml.CharData:
-			if inT {
+			if inT && runHidden {
+				if len(bytes.TrimSpace(t)) > 0 {
+					hidden = true
+				}
+			} else if inT {
 				out.Write(t)
 			}
 			if all.Len() < childMaxTextOut {
@@ -127,6 +158,25 @@ func docxText(stdin io.Reader, stdout io.Writer) error {
 	if !sawT {
 		text = all.String()
 	}
+	if hidden {
+		if _, err := io.WriteString(stdout, docxHiddenMarker); err != nil {
+			return err
+		}
+	}
 	_, err = io.WriteString(stdout, strings.TrimSpace(text)+"\n")
 	return err
+}
+
+// onOff liest einen OOXML-Schalter wie <w:vanish/> oder
+// <w:vanish w:val="false"/>: ohne val an, sonst je nach Wert.
+func onOff(t xml.StartElement) bool {
+	for _, a := range t.Attr {
+		if a.Name.Local == "val" {
+			switch strings.ToLower(strings.TrimSpace(a.Value)) {
+			case "0", "false", "off":
+				return false
+			}
+		}
+	}
+	return true
 }

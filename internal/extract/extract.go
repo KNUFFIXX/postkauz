@@ -127,8 +127,8 @@ type Result struct {
 	Text      string
 	Error     string
 	Truncated bool
-	// Hidden: Der Anhang (HTML, Mail) enthielt versteckten Text, der
-	// entfernt wurde.
+	// Hidden: Der Anhang (HTML, Mail, DOCX mit <w:vanish/>) enthielt
+	// versteckten Text, der entfernt wurde.
 	Hidden bool
 }
 
@@ -192,6 +192,9 @@ func (x *Extractor) Extract(ctx context.Context, kind Kind, r io.Reader, size in
 			self = []string{exe}
 		}
 		res, err = x.run(ctx, self[0], self[1:], []string{childEnv + "=" + string(KindDOCX)}, in)
+		if rest, ok := strings.CutPrefix(res.Text, docxHiddenMarker); ok {
+			res.Text, res.Hidden = rest, true
+		}
 	case KindText, KindHTML, KindMail:
 		res, err = x.inProcess(kind, in)
 	default:
