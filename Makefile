@@ -13,7 +13,7 @@ export CGO_ENABLED ?= 0
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross corpus corpus-load testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -92,6 +92,30 @@ cross:
 	  GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$(BINARY)-$$os-$$arch$$ext ./cmd/postkauz; \
 	done
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %6.1f MB\n", $$NF, $$5/1048576}'
+
+# Release (S1.11): dist/ mit den drei Programmen ohne Symboltabelle und
+# Debug-Informationen (-s -w), dazu VERSION und SHA256SUMS. Beispiel:
+#   make release VERSION=0.1.0-rc1
+# Den Git-Tag setzt der Betreiber erst nach der Abnahme (D3). Andere Dateien
+# in dist/ (Abnahme-Zips) bleiben liegen.
+RELEASE_LDFLAGS = -s -w -X main.version=$(VERSION)
+SHA256 = $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo "shasum -a 256")
+release:
+	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release: give a version, e.g. make release VERSION=0.1.0-rc1 (got $(VERSION))"; exit 1;; esac
+	@mkdir -p dist
+	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION
+	@set -e; for p in $(PLATFORMS); do \
+	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
+	  echo "build $$os/$$arch ($(VERSION))"; \
+	  GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o dist/$(BINARY)-$$os-$$arch$$ext ./cmd/postkauz; \
+	done
+	@{ echo "$(BINARY) $(VERSION)"; \
+	  echo "commit $$(git rev-parse HEAD 2>/dev/null || echo unknown)$$(git diff --quiet HEAD 2>/dev/null || echo ' (uncommitted changes)')"; \
+	  echo "$$(go env GOVERSION), CGO_ENABLED=$(CGO_ENABLED), -trimpath, -ldflags \"-s -w\""; \
+	  echo "built $$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } > dist/VERSION
+	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* VERSION > SHA256SUMS
+	@cat dist/VERSION; echo; cat dist/SHA256SUMS; echo
+	@ls -l dist/ | awk 'NR>1 {printf "%-32s %10d bytes %6.1f MB\n", $$NF, $$5, $$5/1048576}'
 
 # Synthetischer Testkorpus (docs/testkorpus.md): *.eml + corpus.json.
 # Lasttest: make corpus CORPUS_DIR=testdata/corpus-large CORPUS_COUNT=50000

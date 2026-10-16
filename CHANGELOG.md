@@ -4,7 +4,21 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+Noch nichts seit 0.1.0-rc1.
+
+## [0.1.0-rc1] – 2026-10-16
+
+**Schnitt 1, Release-Kandidat.** Lesender agenten-first Mailclient: Konten, IMAP-Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, deutsche Volltextsuche, Import aus mbox/Maildir (Thunderbird), CLI mit `--json`, lesender MCP-Server über stdio, API-Schlüssel mit Scopes, Audit mit täglichem Export (Hash-Kette, Manifest) und Prüfung. Draft-only, kein Versand (ADR-002). Programme: `make release VERSION=0.1.0-rc1` (`dist/`, `SHA256SUMS`, `VERSION`). Den Git-Tag `v0.1.0-rc1` setzt der Betreiber nach der Abnahme D3 (`docs/abnahme_D3.md`).
+
 ### Added
+
+- **Audit-Export mit Hash-Kette und Manifest** (S1.11): Jede Zeile der Tagesdatei trägt `prev` und `chain = SHA-256(prev + "\n" + event)`, fortlaufend über alle Tage; daneben `postkauz-audit-manifest.json` mit Prüfsumme und Kettenende je Datei. `audit verify` nennt die erste veränderte Zeile, meldet gebrochene Kette, fehlendes oder verändertes Manifest und eine geänderte Datenbankzeile ohne Folgefehler; Exporte im alten Format werden weiter geprüft und beim nächsten Export neu geschrieben.
+- **Täglicher Audit-Export:** `deploy/windows/Register-AuditExport.ps1` (Windows-Aufgabenplanung, täglich 12:30, Nachholen verpasster Läufe, ohne Konsolenfenster, Selbstprüfung nach dem Anlegen; Windows PowerShell 5.1, UTF-8 mit BOM, nur ASCII) und `deploy/systemd/postkauz-audit-export.{service,timer}` (Benutzer-Timer, `Persistent=true`). `make guard` prüft Kodierung und Zeichensatz des Skripts.
+- `doctor`: Zeile `audit:` (letzter Export, Ort, nicht exportierte Tage, `[audit] export_dir`), Warnung bei Tagen älter als zwei Tage ohne Export; `--json` mit `audit_export_dir`, `audit_last_export`, `audit_export_location`, `audit_days_not_exported`.
+- **`doctor --secrets`** (`internal/secretscan`): Dateirechte (Datenverzeichnis, Datenbank, Log, `insecure-file`-Speicher, Schlüsseldatei) und Suche nach den gespeicherten Passwörtern, einem gesetzten `POSTKAUZ_KEY` und jedem API-Schlüssel-Muster in Log, Konfiguration, Tabellen ohne Mailinhalt und Audit-Exporten; Funde nennen Datei und Zeile, nie den Wert (Exit 1).
+- **Abstürze ohne Inhalte** (`internal/crash`): Der Executor fängt Panics im Handler ab (Code `internal`, Audit `panic`, ein MCP-Server läuft weiter), die CLI die übrigen; ausgegeben werden nur Laufzeitmeldung oder Typ des Panic-Werts und Funktion mit Datei:Zeile. Testschalter `POSTKAUZ_INTERNAL_TEST_PANIC`.
+- **Kanarientest über alle Ausgabekanäle** (`internal/cli/canary_test.go`): baut das Programm und prüft Kanarien-Passwörter, -Schlüssel und -Mailtext gegen Audit, Log, `--json` der Admin-Kommandos, Fehlermeldungen, Absturzausgaben, Audit-Export, `doctor` und MCP; Mailtext nur in den lesenden Kommandos und der MCP-Hülle.
+- `make release VERSION=…`: `dist/` mit `-trimpath -ldflags "-s -w"`, `VERSION` (Version, Commit, Go-Version, Zeit) und `SHA256SUMS`.
 
 - Repository-Gerüst: Apache-2.0-Lizenz, `NOTICE`, `.gitignore`, `.editorconfig`, `Makefile`, CI (vet, test, Cross-Compile), PII-Gate (`scripts/pii-check.sh`).
 - Dokumentation (Deutsch) unter `docs/`: Architektur, Datenmodell, MCP, CLI, Sicherheit, Roadmap, Entscheidungen (ADR-001 bis ADR-006), Testkorpus; `README.md` (Englisch, mit deutscher Kurzfassung), `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `SECURITY.md`.
@@ -101,6 +115,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- `search --json`: Jede NDJSON-Zeile trägt am Ende `untrusted`/`source` (auch mit `--fields`); vorher stand das Snippet ohne Kennzeichnung der Untrusted-Hülle (Fund des Kanarientests).
 - Unsichtbare Zeichen: zentral `sanitize.Invisible` (ganze Kategorie Cf, Tag-Zeichen U+E0000–E007F, Variantenwähler, U+FFF9–FFFB) in Sync, CLI-Textausgabe und MCP; Betreff, Absender-/Empfängernamen und Dateinamen werden schon beim Sync bereinigt (Suche findet „Neben‹ZWSP›kosten").
 - Threads: Der Betreff-Rückfall verlangt gemeinsame Beteiligte (From/To/Cc ohne eigene Adressen des Kontos); gleichlautende Antworten fremder Absender laufen nicht mehr zusammen.
 - Versteckter Text in HTML zusätzlich: `transform: scale(0)`, `hsl()`/`hsla()`-Farben, Schrift ≤ 2 px, `clip: rect(…)` und `clip-path` ohne Fläche; in DOCX `<w:vanish/>` (Text fehlt, `hidden_text` gesetzt).
