@@ -29,8 +29,8 @@ import (
 )
 
 // Version des Manifest-Formats (2: S1.6, thread_by_subject und Felder
-// für Body-Bereinigung und Anhangstypen).
-const Version = 2
+// für Body-Bereinigung und Anhangstypen; 3: S1.7, Suchtestsatz search).
+const Version = 3
 
 // Options steuert die Erzeugung.
 type Options struct {
@@ -61,7 +61,7 @@ func (o Options) withDefaults() Options {
 // Entry ist ein Manifest-Eintrag mit den erwarteten Ergebnissen.
 type Entry struct {
 	File         string   `json:"file"`
-	Kind         string   `json:"kind"` // single|thread|newsletter|broken|zipbomb|hidden|links|quote|mismatch|extract
+	Kind         string   `json:"kind"` // single|thread|newsletter|broken|zipbomb|hidden|links|quote|mismatch|extract|search
 	Folder       string   `json:"folder"`
 	Flags        []string `json:"flags"`
 	InternalDate string   `json:"internal_date"` // RFC 3339, für APPEND und als Date-Ersatz
@@ -109,6 +109,8 @@ type Manifest struct {
 	Count    int            `json:"count"`
 	Summary  map[string]int `json:"summary"`
 	Messages []Entry        `json:"messages"`
+	// Search ist der Suchtestsatz (S1.7, Manifest-Version 3; s17.go).
+	Search []SearchCase `json:"search,omitempty"`
 }
 
 // Corpus ist ein erzeugter Korpus.
@@ -299,6 +301,7 @@ type plan struct {
 	orphan    bool // Antwort ohne References/In-Reply-To (Betreff-Rückfall)
 	tzVariant int
 	s16       string // Sonderfall S1.6 (s16.go)
+	s17       int    // Sonderfall S1.7 (s17.go), Index in s17Specs
 }
 
 // spec beschreibt eine normale Nachricht vor dem Schreiben.
@@ -380,9 +383,19 @@ func Generate(opt Options) (*Corpus, error) {
 				k++
 			}
 		}
+		// Sonderfälle S1.7 direkt davor (ihr Datum steht fest, damit
+		// Ordner und Datumsfilter planbar sind).
+		k = 0
+		for i := len(plans) - len(s16Kinds) - len(s17Specs); i < len(plans)-len(s16Kinds); i++ {
+			if plans[i].kind == "single" {
+				plans[i].kind, plans[i].s17, plans[i].date = "s17", k, s17Specs[k].date
+				k++
+			}
+		}
 	}
 
 	c := &Corpus{Manifest: Manifest{Version: Version, Seed: opt.Seed, Summary: map[string]int{}}}
+	s17Files := map[string]string{}
 	chains := map[string][]string{}
 	drafts := 20 * n / 1000
 	for _, p := range plans {
@@ -432,6 +445,8 @@ func Generate(opt Options) (*Corpus, error) {
 			raw, e = g.renderZipBomb(s)
 		case "s16":
 			raw, e = g.s16(p.s16, p.nlNo, p.date)
+		case "s17":
+			raw, e = g.s17(p.s17)
 		default:
 			s := g.normalSpec(people[g.pick(len(people))], me, p.date)
 			raw, e = g.render(s)
@@ -440,10 +455,16 @@ func Generate(opt Options) (*Corpus, error) {
 		if p.kind == "s16" {
 			e.Kind = p.s16
 		}
+		if p.kind == "s17" {
+			e.Kind = "search"
+		}
 		if e.Broken != "" {
 			e.Kind = "broken"
 		}
 		e.File = fmt.Sprintf("%05d.eml", len(c.Raw)+1)
+		if p.kind == "s17" {
+			s17Files[s17Specs[p.s17].key] = e.File
+		}
 		e.Folder = folderFor(p.date)
 		if e.Folder == "INBOX" && p.kind == "single" && drafts > 0 {
 			e.Folder, drafts = "Drafts", drafts-1
@@ -476,6 +497,17 @@ func Generate(opt Options) (*Corpus, error) {
 	}
 	c.Manifest.Count = len(c.Raw)
 	c.Manifest.Summary["threads"] = len(chains)
+	if len(s17Files) == len(s17Specs) {
+		c.Manifest.Search = searchCases(func(key string) string { return s17Files[key] }, func(k string) []string {
+			var out []string
+			for _, m := range c.Manifest.Messages {
+				if m.Kind == k {
+					out = append(out, m.File)
+				}
+			}
+			return out
+		})
+	}
 	return c, nil
 }
 
