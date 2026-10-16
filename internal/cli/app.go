@@ -9,6 +9,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/importer"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
@@ -118,7 +119,10 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st}}
+	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st},
+		OnPanic: func(op string, r crash.Report) {
+			a.log.Error("panic in operation", "op", op, "message", r.Message, "stack", r.Stack)
+		}}
 	return a.exec, nil
 }
 

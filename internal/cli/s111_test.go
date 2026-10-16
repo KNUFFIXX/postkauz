@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,5 +58,40 @@ func TestDoctorReportsAuditExport(t *testing.T) {
 	}
 	if _, out, _ := run(t, "doctor"); !strings.Contains(out, "audit:     last export ") {
 		t.Fatalf("doctor text:\n%s", out)
+	}
+}
+
+// S1.11: Panic in der CLI (vor der Ausgabe) und im Handler: Exit 1, Code
+// internal, bereinigter Stack auf stderr bzw. im Log, kein Mailtext.
+func TestPanicReportWithoutContent(t *testing.T) {
+	dataDir, _ := setupEnv(t)
+	seedS16(t)
+	const mailText = "Ihre Rechnung" // steht im Text der Mail html@example.org
+	if _, out, _ := run(t, "show", "html@example.org"); !strings.Contains(out, mailText) {
+		t.Fatalf("show without panic:\n%s", out)
+	}
+	t.Setenv("POSTKAUZ_INTERNAL_TEST_PANIC", "cli:messages.get")
+	code, out, errs := run(t, "show", "html@example.org")
+	if code != ExitError || out != "" || strings.Contains(errs, mailText) ||
+		!strings.Contains(errs, "error: internal error: panic value withheld (string)") ||
+		!strings.Contains(errs, "internal/cli.(*app).runBinding (internal/cli/bindings.go:") || strings.Contains(errs, "0x") {
+		t.Fatalf("cli panic: %d out=%q\n%s", code, out, errs)
+	}
+	code, _, errs = run(t, "show", "html@example.org", "--json")
+	if code != ExitError || !strings.Contains(errs, `"code":"internal"`) || strings.Contains(errs, mailText) {
+		t.Fatalf("cli panic --json: %d %s", code, errs)
+	}
+	t.Setenv("POSTKAUZ_INTERNAL_TEST_PANIC", "handler:messages.get")
+	code, _, errs = run(t, "show", "html@example.org")
+	if code != ExitError || strings.Contains(errs, mailText) || !strings.Contains(errs, "internal error in messages.get: panic value withheld (string)") {
+		t.Fatalf("handler panic: %d %s", code, errs)
+	}
+	t.Setenv("POSTKAUZ_INTERNAL_TEST_PANIC", "")
+	if _, out, _ := run(t, "audit", "--json", "--operation", "messages.get", "--result", "error"); !strings.Contains(out, `"reason":"panic"`) {
+		t.Fatalf("audit: %s", out)
+	}
+	logb, _ := os.ReadFile(filepath.Join(dataDir, "postkauz.log"))
+	if strings.Contains(string(logb), mailText) || strings.Count(string(logb), `"msg":"panic`) != 3 || !strings.Contains(string(logb), `"stack":[`) {
+		t.Fatalf("log:\n%s", logb)
 	}
 }

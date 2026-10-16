@@ -338,6 +338,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{ops.ErrKeyRevoked, ExitDenied, "denied"},
 		{ops.ErrKeyInvalid, ExitDenied, "denied"},
 		{ops.ErrUnknownOperation, ExitError, "unknown_operation"},
+		{&ops.PanicError{Operation: "x"}, ExitError, "internal"},
 		{store.ErrAccountExists, ExitError, "exists"},
 		{store.ErrKeyExists, ExitError, "exists"},
 		{store.ErrMessageNotFound, ExitError, "not_found"},

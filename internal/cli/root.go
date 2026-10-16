@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
@@ -77,13 +79,33 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 }
 
 // RunWithInput ist Run mit eigener Standardeingabe (Tests, --password-stdin).
-func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, version string) int {
+func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, version string) (code int) {
 	root, a, err := newRoot(version, stdin, stdout, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "error:", err)
 		return ExitError
 	}
 	defer a.close()
+	// Ein Panic außerhalb eines Handlers (den fängt der Executor): bereinigt
+	// melden (ohne Panic-Wert, ohne Argumente im Stack), ins Log schreiben,
+	// Exit 1. Läuft vor a.close, das Log ist noch offen.
+	defer func() {
+		if v := recover(); v != nil {
+			rep := crash.FromPanic(v, debug.Stack())
+			a.log.Error("panic", "message", rep.Message, "stack", rep.Stack)
+			code = ExitError
+			info := ErrorInfo{Code: "internal", Message: "internal error: " + rep.Message, Hint: internalHint}
+			if slices.Contains(args, "--json") {
+				_ = json.NewEncoder(stderr).Encode(map[string]ErrorInfo{"error": info})
+				return
+			}
+			fmt.Fprintln(stderr, "error:", info.Message)
+			for _, f := range rep.Stack {
+				fmt.Fprintln(stderr, "    "+f)
+			}
+			fmt.Fprintln(stderr, "hint:", info.Hint)
+		}
+	}()
 	root.SetArgs(args)
 	// Strg+C beendet laufende Operationen geordnet (Sync: das laufende
 	// Fenster wird verworfen, der gespeicherte Stand bleibt).

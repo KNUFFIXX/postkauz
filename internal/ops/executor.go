@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -31,6 +34,53 @@ type Executor struct {
 	Keys *KeyGuard
 	// Now ist für Tests ersetzbar.
 	Now func() time.Time
+	// OnPanic erfährt von einem abgefangenen Panic im Handler (bereinigt:
+	// ohne Panic-Wert, ohne Argumente im Stack); die CLI schreibt ihn ins
+	// Log. nil = nur der Fehler an den Aufrufer.
+	OnPanic func(op string, r crash.Report)
+}
+
+// ErrInternal: Der Handler ist abgestürzt (Panic). Der Aufruf scheitert,
+// der Prozess (z. B. der MCP-Server) läuft weiter.
+var ErrInternal = errors.New("internal error")
+
+// PanicError trägt den bereinigten Bericht eines Panics im Handler.
+type PanicError struct {
+	Operation string
+	Report    crash.Report
+}
+
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("internal error in %s: %s", e.Operation, e.Report.Message)
+}
+
+func (e *PanicError) Is(target error) bool { return target == ErrInternal }
+
+// EnvTestPanic löst zu Testzwecken einen Panic mit Inhalt aus (Kanarientest,
+// S1.11): "handler:<operation>" im Executor nach dem Handler, mit dessen
+// Ausgabe im Panic-Wert; "cli:<operation>" in der CLI vor der Ausgabe. Wer
+// die Umgebung eines Prozesses setzt, kann ihn ohnehin beenden; mehr kann
+// der Schalter nicht.
+const EnvTestPanic = "POSTKAUZ_INTERNAL_TEST_PANIC"
+
+// callHandler ruft den Handler und fängt einen Panic ab: Ein Fehler in
+// einer Operation darf weder Inhalte (Panic-Wert, Argumente im Stack)
+// ausgeben noch einen langlebigen Prozess beenden.
+func (x *Executor) callHandler(ctx context.Context, op Operation, call Call) (out any, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			rep := crash.FromPanic(v, debug.Stack())
+			if x.OnPanic != nil {
+				x.OnPanic(op.Name, rep)
+			}
+			out, err = nil, &PanicError{Operation: op.Name, Report: rep}
+		}
+	}()
+	out, err = op.Handler(ctx, call)
+	if err == nil && os.Getenv(EnvTestPanic) == "handler:"+op.Name {
+		panic(fmt.Sprintf("injected test panic with output %+v", out))
+	}
+	return out, err
 }
 
 // Request ist ein Aufruf einer Oberfläche.
@@ -179,11 +229,14 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	if herr != nil {
 		reason = "invalid_input"
 	} else {
-		out, herr = op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress, Key: req.Key})
+		out, herr = x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress, Key: req.Key})
 	}
 	if herr != nil {
 		ev.Result = audit.ResultError
 		ev.Reason = reason
+		if errors.Is(herr, ErrInternal) {
+			ev.Reason = "panic"
+		}
 		ev.Duration = now().Sub(start)
 		// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann
 		// schon beendet. Das Nachtragen läuft deshalb ohne dessen Abbruch,

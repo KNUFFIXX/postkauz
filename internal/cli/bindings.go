@@ -193,6 +193,9 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 		return err
 	}
 	a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)
+	if os.Getenv(ops.EnvTestPanic) == "cli:"+b.op {
+		panic(fmt.Sprintf("injected test panic with output %+v", res.Output))
+	}
 	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 		if b.jsonOut != nil {
 			err = b.jsonOut(cmd, a.stdout, res.Output)

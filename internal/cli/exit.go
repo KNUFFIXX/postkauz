@@ -35,6 +35,9 @@ type ErrorInfo struct {
 	Hint    string `json:"hint,omitempty"`
 }
 
+// internalHint steht bei jedem abgefangenen Panic (Code internal).
+const internalHint = "this is a bug in postkauz; the log (see doctor) has a cleaned stack trace without message content; please report it"
+
 // classify bildet einen Fehler auf Exit-Code und ErrorInfo ab.
 func classify(err error) (int, ErrorInfo) {
 	var ue usageError
@@ -81,6 +84,8 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "the key lacks the required scope or the policy forbids this"}
 	case errors.Is(err, ops.ErrNeedsApproval):
 		return ExitNeedsApproval, ErrorInfo{Code: "needs_approval", Message: err.Error(), Hint: "a human must approve this action"}
+	case errors.Is(err, ops.ErrInternal):
+		return ExitError, ErrorInfo{Code: "internal", Message: err.Error(), Hint: internalHint}
 	case errors.Is(err, ops.ErrUnknownOperation):
 		return ExitError, ErrorInfo{Code: "unknown_operation", Message: err.Error()}
 	default:

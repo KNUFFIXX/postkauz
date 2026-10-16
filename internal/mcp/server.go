@@ -192,6 +192,9 @@ func classify(err error) ToolError {
 		return ToolError{Status: "denied", Code: "key_expired", Message: "the API key of this server has expired; ask the user for a new key"}
 	case errors.Is(err, ops.ErrKeyInvalid):
 		return ToolError{Status: "denied", Code: "key_invalid", Message: "the API key of this server is no longer known"}
+	case errors.Is(err, ops.ErrInternal):
+		// Bereinigt (ohne Panic-Wert); den Stack hat das Log des Servers.
+		return ToolError{Status: "error", Code: "internal", Message: "internal error in the mail server; the user finds a cleaned report in its log"}
 	case errors.Is(err, store.ErrMessageNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "message not found; use an id from mail_search"}
 	case errors.Is(err, store.ErrThreadNotFound):
