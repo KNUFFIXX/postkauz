@@ -267,8 +267,8 @@ func TestInitialSyncMirrorsCorpus(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM mailboxes WHERE sync_phase != 'ready'`); n != 0 {
 		t.Errorf("%d mailboxes not ready", n)
 	}
-	if n := e.count(t, `SELECT count(*) FROM blobs`); n != memCount {
-		t.Errorf("blobs = %d", n)
+	if n := e.count(t, `SELECT count(*) FROM blobs WHERE sha256 IN (SELECT blob_sha256 FROM messages)`); n != memCount {
+		t.Errorf("message blobs = %d", n)
 	}
 	// Akzeptanz S1.6: Threads des Korpus stimmen mit dem Manifest.
 	e.checkThreads(t, c)

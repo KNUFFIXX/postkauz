@@ -92,6 +92,14 @@ func (nopStore) ApplyBatch(context.Context, store.MirrorBatch) (store.BatchResul
 	return store.BatchResult{}, nil
 }
 func (nopStore) ThreadUnassigned(context.Context, int64, int) (int, error) { return 0, nil }
+func (nopStore) ReprocessCandidates(context.Context, int64, int, int) ([]store.ReprocessItem, error) {
+	return nil, nil
+}
+func (nopStore) SaveReprocessed(context.Context, []store.Reprocessed) error { return nil }
+func (nopStore) PendingExtractions(context.Context, int64, int) ([]store.ExtractItem, error) {
+	return nil, nil
+}
+func (nopStore) SetExtraction(context.Context, int64, string, string, string, bool) error { return nil }
 
 func durations(ds ...string) []time.Duration {
 	out := make([]time.Duration, len(ds))

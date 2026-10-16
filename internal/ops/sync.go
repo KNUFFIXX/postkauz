@@ -48,9 +48,12 @@ type SyncOutput struct {
 	Removed          int           `json:"removed"`
 	Errors           int           `json:"errors"`
 	MessagesMirrored int           `json:"messages_mirrored"`
-	Rounds           int           `json:"rounds,omitempty"`
-	DurationMS       int64         `json:"duration_ms"`
-	DryRun           bool          `json:"dry_run"`
+	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
+	// extrahiert hat (S1.6).
+	AttachmentsExtracted int   `json:"attachments_extracted,omitempty"`
+	Rounds               int   `json:"rounds,omitempty"`
+	DurationMS           int64 `json:"duration_ms"`
+	DryRun               bool  `json:"dry_run"`
 }
 
 // SyncRunner führt den Sync eines Kontos aus (internal/mailsync). Im
@@ -146,6 +149,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
       "required": ["path", "role", "new", "updated", "removed", "errors", "total", "mirrored"]}},
     "new": {"type": "integer"}, "updated": {"type": "integer"}, "removed": {"type": "integer"},
     "errors": {"type": "integer"}, "messages_mirrored": {"type": "integer"},
+    "attachments_extracted": {"type": "integer"},
     "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
   },
   "required": ["account", "mode", "mailboxes", "new", "updated", "removed", "errors", "messages_mirrored", "duration_ms", "dry_run"]

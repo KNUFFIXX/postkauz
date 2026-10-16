@@ -34,6 +34,7 @@ import (
 	"unicode"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -60,6 +61,10 @@ type Store interface {
 	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hash string) (int64, bool, error)
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
+	ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]store.ReprocessItem, error)
+	SaveReprocessed(ctx context.Context, items []store.Reprocessed) error
+	PendingExtractions(ctx context.Context, accountID int64, limit int) ([]store.ExtractItem, error)
+	SetExtraction(ctx context.Context, id int64, status, text, errText string, hidden bool) error
 }
 
 // Standardwerte.
@@ -118,8 +123,11 @@ type Report struct {
 	Errors    int             `json:"errors"`
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
-	Mirrored int           `json:"messages_mirrored"`
-	Duration time.Duration `json:"-"`
+	Mirrored int `json:"messages_mirrored"`
+	// Extracted zählt Anhänge, deren Text in diesem Lauf extrahiert wurde
+	// (oder deren Extraktion endgültig scheiterte).
+	Extracted int           `json:"attachments_extracted"`
+	Duration  time.Duration `json:"-"`
 }
 
 func (r *Report) add(m MailboxReport) {
@@ -142,6 +150,11 @@ type Engine struct {
 	// AfterBatch wird nach jedem gespeicherten Fenster aufgerufen; ein Fehler
 	// bricht den Lauf hart ab (Tests simulieren damit einen Absturz).
 	AfterBatch func(mailbox string, mirrored int) error
+	// Extractor gewinnt Text aus Anhängen am Ende jedes Laufs (nil = keine
+	// Extraktion; die Anhänge bleiben pending). ExtractBudget begrenzt die
+	// Zeit dafür je Lauf (0 = 60 s).
+	Extractor     *extract.Extractor
+	ExtractBudget time.Duration
 }
 
 func (e *Engine) log() *slog.Logger {
@@ -205,6 +218,10 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		rep.Duration = time.Since(start)
 		return rep, err
 	}
+	if rep.Extracted, err = e.extractPending(ctx); err != nil {
+		rep.Duration = time.Since(start)
+		return rep, fmt.Errorf("extract: %w", err)
+	}
 	if rep.Mirrored, err = e.Store.CountPresentMessages(ctx, e.AccountID); err != nil {
 		return rep, err
 	}
@@ -213,8 +230,9 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 }
 
 // backlog zieht den Bestand nach, der vor S1.6 gespiegelt wurde: Threads
-// für Nachrichten ohne Zuordnung. Neue Nachrichten bekommen ihren Thread
-// schon beim Speichern; hier bleibt dann nichts zu tun.
+// für Nachrichten ohne Zuordnung und die Aufbereitung (Text, Links,
+// versteckter Text, Anhänge) aus der Rohmail. Neue Nachrichten bekommen
+// beides schon beim Speichern; hier bleibt dann nichts zu tun.
 func (e *Engine) backlog(ctx context.Context) error {
 	total := 0
 	for {
@@ -230,6 +248,13 @@ func (e *Engine) backlog(ctx context.Context) error {
 	}
 	if total > 0 {
 		e.log().Info("threaded messages mirrored before threading existed", "count", total)
+	}
+	n, err := e.reprocess(ctx)
+	if err != nil {
+		return fmt.Errorf("cleanup: %w", err)
+	}
+	if n > 0 {
+		e.log().Info("cleaned up messages mirrored with an older version", "count", n)
 	}
 	return nil
 }
@@ -626,7 +651,7 @@ func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (store.NewMessage, er
 	defer rc.Close()
 	hr := sha256.New()
 	tee := io.TeeReader(rc, crStripper{hr})
-	m, perr := mimeparse.Parse(tee, mimeparse.Options{InternalDate: h.InternalDate})
+	m, atts, perr := e.analyze(tee, h.InternalDate)
 	// Parse hört bei unlesbarem Kopf oder an seinen Grenzen vorzeitig auf;
 	// content_hash muss aber die ganze Rohmail abdecken, sonst bekommen zwei
 	// verschiedene Mails mit gleichem Anfang denselben Hash.
@@ -634,12 +659,15 @@ func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (store.NewMessage, er
 		return nm, fmt.Errorf("hash message: %w", err)
 	}
 	nm.ContentHash = hex.EncodeToString(hr.Sum(nil))
+	nm.CleanVersion = CleanVersion
+	nm.Links = json.RawMessage("[]")
 	if perr != nil {
 		// Unlesbarer Kopf: Nachricht trotzdem spiegeln (Blob, Größe, Datum).
 		e.log().Info("message header unreadable; mirrored without parsed fields", "uid", h.UID)
 		return nm, nil
 	}
 	fillParsed(&nm, m)
+	fillClean(&nm, m, atts)
 	return nm, nil
 }
 
@@ -660,7 +688,6 @@ func fillParsed(nm *store.NewMessage, m *mimeparse.Message) {
 		nm.DateHeader = m.Date
 	}
 	nm.HasAttachments = m.HasAttachments()
-	nm.Snippet = snippet(m.Text)
 	if len(m.InReplyTo) > 0 {
 		nm.InReplyTo = m.InReplyTo[0]
 	}

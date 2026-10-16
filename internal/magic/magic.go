@@ -24,6 +24,7 @@ const (
 // Typen, die Detect liefert (über net/http.DetectContentType hinaus).
 const (
 	OctetStream = "application/octet-stream"
+	Empty       = "application/x-empty" // Teil ohne Inhalt
 	PDF         = "application/pdf"
 	ZIP         = "application/zip"
 	DOCX        = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -105,7 +106,7 @@ func (s *Sniffer) Detect() Type {
 // Bytes; darf leer sein oder sich mit head überschneiden).
 func Detect(head, tail []byte, size int64) Type {
 	if size == 0 || len(head) == 0 {
-		return Type{MIME: OctetStream}
+		return Type{MIME: Empty}
 	}
 	has := func(prefix string) bool { return bytes.HasPrefix(head, []byte(prefix)) }
 	switch {

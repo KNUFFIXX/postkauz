@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
@@ -29,6 +30,9 @@ type Runner struct {
 	// IMAP-Providers (0 = Standard; Konfiguration [imap]).
 	CommandTimeout     time.Duration
 	CommandMaxDuration time.Duration
+	// Extractor gewinnt Text aus Anhängen (nil = Standard: pdftotext wenn
+	// vorhanden, eigener Kindprozess für DOCX).
+	Extractor *extract.Extractor
 	// Connect ersetzt den Verbindungsaufbau (Tests); nil = IMAP-Provider.
 	Connect func(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error)
 }
@@ -96,7 +100,11 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	if o.DryRun {
 		return r.dryRun(ctx, a, remote, out)
 	}
-	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log}
+	ex := r.Extractor
+	if ex == nil {
+		ex = extract.New(extract.Options{})
+	}
+	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log, Extractor: ex}
 	if progress != nil {
 		eng.Progress = func(ev Event) {
 			progress(ops.Progress{Event: ev.Kind, Mailbox: ev.Mailbox, Done: ev.Done, Total: ev.Total, Message: ev.Message})
@@ -119,6 +127,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		out.Removed += round.Removed
 		out.Errors += round.Errors
 		out.MessagesMirrored = round.MessagesMirrored
+		out.AttachmentsExtracted += round.AttachmentsExtracted
 		if err != nil {
 			out.Errors++
 		}
@@ -156,6 +165,7 @@ func fill(out *ops.SyncOutput, rep Report) {
 			Removed: m.Removed, Errors: m.Errors, Reset: m.Reset, Total: m.Total, Mirrored: m.Mirrored, Problems: m.Problems})
 	}
 	out.New, out.Updated, out.Removed, out.Errors, out.MessagesMirrored = rep.New, rep.Updated, rep.Removed, rep.Errors, rep.Mirrored
+	out.AttachmentsExtracted = rep.Extracted
 }
 
 // dryRun meldet Ordner des Servers und den lokalen Stand, ohne zu schreiben.

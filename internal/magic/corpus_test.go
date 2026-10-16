@@ -30,9 +30,7 @@ func TestCorpusAttachmentTypes(t *testing.T) {
 		_, err := mimeparse.Parse(bytes.NewReader(raw), mimeparse.Options{InternalDate: internal,
 			OnAttachment: func(a mimeparse.Attachment, r io.Reader) error {
 				var s Sniffer
-				if _, err := io.Copy(&s, r); err != nil {
-					return err
-				}
+				_, _ = io.Copy(&s, r) // auch bei Lesefehler (abgeschnitten) prüfen, wie der Sync
 				res := Check(a.ContentType, a.Filename, s.Detect())
 				seen++
 				if res.Mismatch {

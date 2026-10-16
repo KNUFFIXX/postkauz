@@ -135,6 +135,9 @@ func Check(declared, filename string, d Type) Result {
 	}
 	for _, c := range claims {
 		switch {
+		case d.MIME == Empty:
+			// leerer Teil (z. B. abgeschnittene Nachricht): nichts zu prüfen
+			continue
 		case compatible(c.mime, d):
 			continue
 		case d.Executable:

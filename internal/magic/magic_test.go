@@ -73,7 +73,7 @@ func TestDetect(t *testing.T) {
 		"mail":      {[]byte("From: a@example.org\r\nTo: b@example.org\r\nSubject: x\r\nDate: Mon\r\n\r\nText"), RFC822, false},
 		"lnk":       {[]byte("L\x00\x00\x00\x01\x14\x02\x00\x00\x00"), Shortcut, true},
 		"binary":    {[]byte{0x00, 0x01, 0x02, 0x03, 0xfe, 0xff, 0x10, 0x11}, OctetStream, false},
-		"empty":     {nil, OctetStream, false},
+		"empty":     {nil, Empty, false},
 	}
 	for name, c := range cases {
 		got := detect(c.data)
@@ -112,6 +112,7 @@ func TestCheck(t *testing.T) {
 		{"bat is executable", "text/plain", "start.bat", txt, false, true},
 		{"js is executable", "application/javascript", "rechnung.js", txt, false, true},
 		{"text claimed pdf", "application/pdf", "x.pdf", txt, true, false},
+		{"empty part", "application/pdf", "x.pdf", Type{MIME: Empty}, false, false},
 	}
 	for _, c := range cases {
 		r := Check(c.declared, c.file, c.d)

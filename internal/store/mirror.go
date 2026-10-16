@@ -266,6 +266,35 @@ type NewMessage struct {
 	ContentHash    string
 	TextPlain      string
 	TextCharset    string
+	// Seit S1.6: bereinigter Text (Body-Bereinigung, internal/sanitize).
+	TextHTML     string          // Text aus dem HTML-Teil (nie HTML selbst)
+	TextUnquoted string          // neuer Text ohne Zitate
+	Links        json.RawMessage // JSON-Array der Links aus dem HTML
+	HiddenText   bool            // versteckter Text entfernt
+	CleanVersion int             // Stand der Aufbereitung
+	Attachments  []NewAttachment
+}
+
+// NewAttachment ist ein Anhang einer neu gespiegelten Nachricht.
+type NewAttachment struct {
+	PartID       string
+	Filename     string
+	ContentType  string // aus Magic Bytes
+	DeclaredType string
+	Size         int64
+	// SHA256 ist der dekodierte Inhalt im Blob-Store; "" = nicht gespeichert
+	// (abgeschnitten oder Fehler beim Speichern).
+	SHA256         string
+	BlobSize       int64
+	BlobCompressed bool
+	Inline         bool
+	ContentID      string
+	Truncated      bool
+	TypeMismatch   bool
+	MismatchReason string
+	Executable     bool
+	ExtractStatus  string // pending | skipped (ok/failed setzt erst die Extraktion)
+	ExtractError   string
 }
 
 // Link ordnet eine vorhandene Nachricht einer UID dieses Ordners zu.
@@ -416,9 +445,11 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		if err != nil {
 			return res, fmt.Errorf("store: insert message: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO bodies(message_id, text_plain, charset) VALUES (?,?,?)`,
-			mid, n.TextPlain, nullStr(n.TextCharset)); err != nil {
-			return res, fmt.Errorf("store: insert body: %w", err)
+		if err := upsertBody(ctx, tx, mid, n); err != nil {
+			return res, err
+		}
+		if err := upsertAttachments(ctx, tx, mid, n.Attachments, now, false); err != nil {
+			return res, err
 		}
 		if err := insertLink(mid, n.Link); err != nil {
 			return res, fmt.Errorf("store: insert link: %w", err)
