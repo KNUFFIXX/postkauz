@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.6 erledigt** (16.10.2026: Threading mit Betreff-Rückfall, Body-Bereinigung mit verstecktem Text, Links und Quote-Stripper, Anhänge mit Magic Bytes, Textextraktion im Subprozess, `thread` und `attach list/text` minimal; davor Schritt 0 mit den Auflagen N1–N3 und dem Watchdog nach ADR-007 Nachtrag 1). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.7 (Volltextsuche). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.8 (CLI lesend vollständig). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 erledigt 16.10.2026** (mit Schritt 0); S1.7 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 und S1.7 erledigt 16.10.2026**; S1.8 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,34 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.7 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.8 (Abnahme D1 bestanden 16.10.2026; D2 nach S1.9). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.7 (16.10.2026, erledigt): Volltextsuche
+
+**Akzeptanz S1.7 erfüllt** (Suchtestsatz in `make check`, ohne Docker):
+
+- **Suchtestsatz aus dem Korpus grün:** 22 Fälle im Manifest (Version 3, Feld `search`), geprüft nach einem Erstsync mit Jobs (`TestCorpusSearchSet`): „Rechnung" findet „Rechnungen" und umgekehrt (aber „Rechnungen" nicht „Abrechnung"), „prüfen" = „pruefen" = „prufen" (gleiche Treffermenge), „Vollstreck" findet „Zwangsvollstreckung", „Erdgeschoss" = „Erdgeschoß" (gleiche Treffermenge), „steuer" in Grundsteuer/Kfz-Steuer/Umsatzsteuer, Phrasen über ß/ss, Ausschluss, `from:`, `subject:`, `after:`/`before:`, `in:`, `has:attachment` (alle Treffer mit Anhang), Text aus einem Anhang, versteckter Text nie auffindbar. Dazu Einzeltests für Normalisierer, Stemmer, Parser (FTS5-Syntax in der Eingabe bleibt Suchtext), Store (Index, Änderungen, Löschen, Neuaufbau, Cursor-Seiten), Jobs (Budget, Abbruch, Übernahme nach Absturz) und CLI (NDJSON, Cursor, `--explain`, Exit-Codes).
+- **Messung mit 100.000 Nachrichten dokumentiert** ([suche_messung.md](suche_messung.md)): Index 104 s (959 Nachrichten/s); Median aller 18 Anfrage-Typen unter 300 ms (schlechtester 291 ms), einzelne Läufe bei Wörtern in 25–50 % aller Nachrichten bis 345 ms; über die CLI (neuer Prozess je Anfrage) typische Anfragen 30–120 ms, häufige Einzelwörter 260–310 ms, zwei häufige Wörter 290–390 ms. Der synthetische Korpus ist dafür ein Extremfall (Frage 11 unten).
+
+**Umsetzung:**
+
+- `internal/search`: Normalisierer `Fold` (NFKD, Diakritika, ß → ss, ae/oe/ue wie Snowball „german2"), deutscher Stemmer über `github.com/blevesearch/snowballstem` v0.9.0 (BSD-3; Entscheidung in [datenmodell.md](datenmodell.md), „Stemmer"), Index-Spalten, Abfragesprache nach [cli.md](cli.md) Abschnitt 2d, Cursor.
+- Migration 0004: FTS-Tabellen neu (gleiche fünf Spalten), `index_queue` mit Triggern, ein offener Job je Art und Konto, Bestand eingereiht; Migration 0005: zwei schmale Indizes für die Suche. Snapshot per `VACUUM INTO` wie bisher (500-MB-Datenbank: 3,5 s).
+- `internal/jobs`: `extract` (60 s je Lauf, mindestens ein Anhang) und `index` (200 Nachrichten je Transaktion) über die Tabelle `jobs`, am Ende jedes Syncs; Sperre mit Ablauf, Übernahme nach Abbruch, Wiederholung nach Fehlern, Neuaufbau bei neuer `FTSVersion`; PDFs, die ohne `pdftotext` übersprungen wurden, kommen wieder dran, sobald es gefunden wird (Betreiber-Entscheid zu Frage 10: PDF nur über das optionale Werkzeug, README).
+- Ausführung der Suche: FTS-Abfragen je Begriff nebeneinander, Mengenarbeit in Go, Kandidaten über den schmalen Index, Memory-Mapped I/O (`mmap_size` 1 GiB) für alle Datenbankdateien.
+- Operation `messages.search` (R0, `mail:search`; Audit ohne Suchtext) und CLI `search` mit `--limit`, `--cursor`, `--explain`, `--json` (NDJSON); `sync` meldet den Index, `doctor` meldet `pdftotext` und wartende Nachrichten.
+- `make check`, `make race`, `make integration` (Dovecot, Stalwart, GreenMail), `make vuln` und `make cross` grün (Werte im Abschlussbericht der Sitzung); Binärgrößen siehe `make cross`.
+
+**Befunde:**
+
+- Teilwortsuche heißt auch: „Rechnung" findet „Abrechnung", „steuer" findet „Grundsteuer". Treffer als ganzes Wort stehen vorn, reine Teilwort-Treffer dahinter (nach Datum).
+- Ein Teilwort, das mitten im Wort mit „ue" beginnt (z. B. „uer" aus „Steuer"), wird anders gefaltet als das Wort und findet es nicht (Folge der ue-Regel; selten).
+- Dovecot nahm im Container per APPEND ab rund 30.000 Nachrichten nur noch etwa 10 Nachrichten/s an; die 100.000er-Datenbank entstand deshalb über den Testserver im Prozess.
+- Ein CLI-Test wählte bei einem zufälligen Port auf …993 TLS (Standardregel von `account add`) und scheiterte selten; die Tests legen `--tls none` jetzt fest.
+
+**Nicht in S1.7 (bewusst verschoben):** `OR` und Klammern in der Abfragesprache; Snippets mit hervorgehobenen Treffern (die FTS-Tabellen speichern keinen Text; angezeigt wird das gespeicherte `snippet`); Suche über mehrere Konten mit eigener Gewichtung; Text aus XLSX/PPTX/ODT und OCR (wie S1.6); `optimize` der FTS-Tabellen; Konfiguration von Budget und Grenzen.
 
 ### Stand S1.6 (16.10.2026, erledigt): Threads, Body-Bereinigung, Anhänge
 
@@ -214,6 +239,9 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 11. **Snapshot vor Migrationen** (15.10.2026): `VACUUM INTO` mit Migration 0002 umgesetzt.
 12. **Watchdog** (16.10.2026, vorher offene Frage 6): Schweigen messen bleibt, dazu Obergrenze je Kommando, konfigurierbar, Standard 10 min (ADR-007 Nachtrag 1, umgesetzt).
 13. **Testkorpus im Repository** (16.10.2026): bleibt synthetisch (Commit-Sprache Englisch bestätigt, siehe 6).
+14. **Versteckter Vorschautext in Newslettern** (16.10.2026, vorher offene Frage 8): bleibt als `hidden_text` markiert (Hinweis, kein Urteil).
+15. **Extraktion als Warteschlange** (16.10.2026, vorher offene Frage 9): mit S1.7 über die Tabelle `jobs` zusammen mit dem Index (umgesetzt).
+16. **PDF unter Windows** (16.10.2026, vorher offene Frage 10): nur über das optionale `pdftotext`, Installation im README (umgesetzt; übersprungene PDFs werden nachgeholt, sobald das Werkzeug da ist).
 
 ## Offene Fragen
 
@@ -228,6 +256,8 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
    - **Schlüsselbund-Verweis** `account/<name>` (`internal/ops/accounts.go`) hängt nur am Kontonamen, nicht am Datenverzeichnis: Zwei Datenverzeichnisse (z. B. Abnahme und Alltag) mit gleichem Kontonamen teilen und überschreiben denselben Eintrag; `account remove` im einen löscht das Passwort des anderen. Vorschlag: Verweis um eine Kennung des Datenverzeichnisses ergänzen (Migration bestehender Einträge).
    - **Vorhandenes Datenverzeichnis** wird nicht auf 0700 verschärft (`config.EnsureDataDir` setzt die Rechte nur beim Anlegen). Vorschlag: beim Öffnen prüfen, verschärfen und in `doctor` melden.
    - **`io.ReadAll` ohne Grenze** in `internal/imapx/mailbox.go` (FETCH-Literal, das vor seiner UID ankommt): Ein Server kann so beliebig viel Speicher belegen. Vorschlag: auf die Grenze des Blob-Stores (256 MiB) begrenzen bzw. in eine temporäre Datei puffern.
-8. **Versteckter Vorschautext in Newslettern** (S1.6): Newsletter verstecken oft eine Vorschauzeile mit `display:none`; auch sie werden als `hidden_text` markiert. Vorschlag: so lassen (Hinweis, kein Urteil; ein Agent soll versteckten Text nie sehen, egal woher).
-9. **Extraktion im Sync** (S1.6): Anhangstext wird am Ende jedes Sync-Laufs extrahiert (60 s je Lauf, Rest im nächsten Lauf), nicht in einer eigenen Warteschlange. Vorschlag: so lassen bis S1.7, dann zusammen mit dem Index über die Tabelle `jobs`.
-10. **PDF unter Windows** (S1.6): Ohne installiertes Poppler (`pdftotext`) bleiben PDF-Anhänge ohne Text. Vorschlag: im README als optionale Installation nennen; kein eigener PDF-Parser im Programm (Sicherheitsrisiko, Aufwand).
+8. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 14)*
+9. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 15)*
+10. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 16)*
+11. **Suchlatenz bei sehr häufigen Wörtern** (S1.7): Im synthetischen Korpus steht jedes Wort in 25–50 % aller Nachrichten; dafür liegt der Median knapp unter 300 ms, einzelne Läufe und zwei solche Wörter über die CLI darüber (bis rund 390 ms auf 2 Kernen). Vorschlag: so lassen; die Messung auf dem Windows-PC des Betreibers wiederholen (mehr Kerne, Kommandos in [suche_messung.md](suche_messung.md)) und erst weiter optimieren (Vollscan-Pfad, Bleve laut ADR-005 als Option), wenn im Alltag Anfragen spürbar über 300 ms liegen.
+12. **Teilwörter immer an** (S1.7): Jeder Suchbegriff ab 3 Zeichen findet auch Teilwörter („Rechnung" findet „Abrechnung"). Vorschlag: so lassen (Treffer als ganzes Wort stehen vorn); ein Schalter für „nur ganze Wörter" (z. B. `=Rechnung`) erst bei Bedarf.
