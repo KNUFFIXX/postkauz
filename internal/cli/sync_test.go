@@ -79,7 +79,7 @@ func TestSyncMailboxListShow(t *testing.T) {
 		}
 		return out
 	}
-	step(ExitOK, "account", "add", "demo", "--imap", addr, "--user", "tester@example.invalid", "--insecure-test-server", "--password-stdin")
+	step(ExitOK, "account", "add", "demo", "--imap", addr, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-stdin")
 
 	out := step(ExitOK, "sync", "--dry-run", "-a", "demo")
 	if !strings.Contains(out, "dry run: would sync 3 mailboxes") || !strings.Contains(out, "0 messages mirrored so far") {

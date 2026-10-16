@@ -268,7 +268,7 @@ func TestAccountLifecycleWithCanary(t *testing.T) {
 				return out
 			}
 
-			out := step(canary+"\n", ExitOK, "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--insecure-test-server", "--password-stdin")
+			out := step(canary+"\n", ExitOK, "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-stdin")
 			if !strings.Contains(out, "account demo added") {
 				t.Fatalf("add: %q", out)
 			}
@@ -277,7 +277,7 @@ func TestAccountLifecycleWithCanary(t *testing.T) {
 					t.Fatal("password not in keyring")
 				}
 			}
-			step(canary+"\n", ExitError, "account", "add", "demo", "--imap", host+":"+port, "--user", "x", "--insecure-test-server", "--password-stdin")
+			step(canary+"\n", ExitError, "account", "add", "demo", "--imap", host+":"+port, "--user", "x", "--tls", "none", "--insecure-test-server", "--password-stdin")
 
 			out = step("", ExitOK, "accounts", "list", "--json")
 			var list struct{ Accounts []map[string]any }
@@ -353,7 +353,7 @@ func TestNoKeyringFallback(t *testing.T) {
 		return secrets.WithEnv(secrets.Unavailable{Reason: "keyring unavailable: no D-Bus session (test)"}), nil
 	}
 	host, port := fakeIMAP(t, canary)
-	code, _, errs := runIn(t, canary+"\n", "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--insecure-test-server", "--password-stdin", "--json")
+	code, _, errs := runIn(t, canary+"\n", "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-stdin", "--json")
 	var e map[string]ErrorInfo
 	if code != ExitError || json.Unmarshal([]byte(errs), &e) != nil || e["error"].Code != "secret_store_unavailable" || !strings.Contains(e["error"].Message, "insecure-file") {
 		t.Fatalf("code=%d stderr=%q", code, errs)
@@ -365,7 +365,7 @@ func TestNoKeyringFallback(t *testing.T) {
 	}
 
 	t.Setenv("POSTKAUZ_PASSWORD_DEMO", canary)
-	code, out, errs = run(t, "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--insecure-test-server", "--password-from-env")
+	code, out, errs = run(t, "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-from-env")
 	if code != ExitOK || !strings.Contains(out, "POSTKAUZ_PASSWORD_DEMO") {
 		t.Fatalf("env add: code=%d out=%q err=%q", code, out, errs)
 	}
@@ -380,7 +380,7 @@ func TestNoKeyringFallback(t *testing.T) {
 func TestAccountTestErrors(t *testing.T) {
 	setupEnv(t)
 	host, port := fakeIMAP(t, "right-password")
-	if code, _, errs := runIn(t, "wrong-password\n", "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--insecure-test-server", "--password-stdin"); code != ExitOK {
+	if code, _, errs := runIn(t, "wrong-password\n", "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-stdin"); code != ExitOK {
 		t.Fatalf("add: %d %s", code, errs)
 	}
 	code, _, errs := run(t, "account", "test", "demo", "--json")
@@ -392,7 +392,7 @@ func TestAccountTestErrors(t *testing.T) {
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	closed := ln.Addr().String()
 	ln.Close()
-	if code, _, errs := runIn(t, "pw\n", "account", "add", "gone", "--imap", closed, "--user", "u", "--insecure-test-server", "--password-stdin"); code != ExitOK {
+	if code, _, errs := runIn(t, "pw\n", "account", "add", "gone", "--imap", closed, "--user", "u", "--tls", "none", "--insecure-test-server", "--password-stdin"); code != ExitOK {
 		t.Fatalf("add gone: %d %s", code, errs)
 	}
 	if code, _, errs := run(t, "account", "test", "gone"); code != ExitConnection {

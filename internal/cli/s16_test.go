@@ -79,7 +79,7 @@ func TestShowThreadAttach(t *testing.T) {
 		}
 		return out + errs
 	}
-	run(ExitOK, "account", "add", "demo", "--imap", addr, "--user", "tester@example.invalid", "--insecure-test-server", "--password-stdin")
+	run(ExitOK, "account", "add", "demo", "--imap", addr, "--user", "tester@example.invalid", "--tls", "none", "--insecure-test-server", "--password-stdin")
 	run(ExitOK, "sync", "-a", "demo")
 
 	idOf := func(mid string) string {
