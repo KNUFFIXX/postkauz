@@ -138,7 +138,11 @@ func TestImportLargeFileStreams(t *testing.T) {
 	skipShort(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Alle Nachrichten")
-	count := largeMbox(t, path, 200<<20, true)
+	size := int64(200 << 20)
+	if raceEnabled {
+		size = 40 << 20 // Race-Detector: rund zehnmal langsamer
+	}
+	count := largeMbox(t, path, size, true)
 	fi, _ := os.Stat(path)
 	e := newEnv(t)
 	runtime.GC()
