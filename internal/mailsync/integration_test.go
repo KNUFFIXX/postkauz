@@ -15,9 +15,12 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/corpus/imapload"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
+	"github.com/KNUFFIXX/postkauz/internal/search"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // Integrationstests des Syncs gegen die Docker-Testserver (deploy/testmail;
@@ -170,6 +173,31 @@ func TestIntegrationSync(t *testing.T) {
 		}
 		t.Logf("%s: crashed after %d, resumed %d in %s", srv.name, partial, rep.New, time.Since(start).Round(time.Millisecond))
 		e.noDuplicates(t, 1000)
+		// S1.7: Index-Job über die vom Server gelieferten Nachrichten, zwei
+		// Fälle des Suchtestsatzes (Teilwort, ß/ss gleich).
+		start = time.Now()
+		jr, err := (&jobs.Runner{Store: e.st, Blobs: e.blobs, TakeOver: true}).RunAccount(context.Background(), e.acct)
+		if err != nil || jr.Indexed != 1000 || jr.IndexPending != 0 {
+			t.Fatalf("index job = %+v %v", jr, err)
+		}
+		t.Logf("%s: indexed %d messages in %s", srv.name, jr.Indexed, time.Since(start).Round(time.Millisecond))
+		hits := func(q string) int {
+			parsed, err := search.Parse(q, time.UTC)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := e.st.Search(context.Background(), store.SearchParams{Query: parsed, AccountID: e.acct, Limit: 1, Now: time.Now()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return res.Total
+		}
+		if a, b := hits("Erdgeschoss"), hits("Erdgeschoß"); a == 0 || a != b {
+			t.Errorf("Erdgeschoss %d, Erdgeschoß %d", a, b)
+		}
+		if n := hits("Vollstreck"); n == 0 {
+			t.Error("Vollstreck: no hits")
+		}
 		for _, m := range rep.Mailboxes {
 			if m.Mirrored != folders[m.Path] {
 				t.Errorf("%s: mirrored %d, want %d", m.Path, m.Mirrored, folders[m.Path])
@@ -292,7 +320,14 @@ func TestIntegrationIdle(t *testing.T) {
 		go func() {
 			done <- eng.Watch(ctx, WatchOptions{Options: Options{Mailboxes: []string{inbox}}, Interval: time.Hour, IdleMailbox: inbox})
 		}()
-		waitFor(t, 60*time.Second, func() bool { return e.count(t, `SELECT count(*) FROM messages`) == 221 })
+		// Nachrichten der INBOX laut Manifest (echte Server liefern alle aus).
+		want := 0
+		for _, m := range standardCorpus(t).Manifest.Messages {
+			if m.Folder == "INBOX" {
+				want++
+			}
+		}
+		waitFor(t, 60*time.Second, func() bool { return e.count(t, `SELECT count(*) FROM messages`) == want })
 		time.Sleep(500 * time.Millisecond)
 		out := itClient(t, srv, user)
 		start := time.Now()
@@ -302,7 +337,7 @@ func TestIntegrationIdle(t *testing.T) {
 		if _, err := cmd.Wait(); err != nil {
 			t.Fatal(err)
 		}
-		waitFor(t, 15*time.Second, func() bool { return e.count(t, `SELECT count(*) FROM messages`) == 222 })
+		waitFor(t, 15*time.Second, func() bool { return e.count(t, `SELECT count(*) FROM messages`) == want+1 })
 		t.Logf("%s: new message visible after %s via IDLE", srv.name, time.Since(start).Round(time.Millisecond))
 		cancel()
 		if err := <-done; err != nil {
