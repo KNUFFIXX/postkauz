@@ -30,9 +30,12 @@ go run ./internal/corpus/cmd/gencorpus -out "$WORK/corpus" >/dev/null || exit 1
 export POSTKAUZ_DATA_DIR="$WORK/data" POSTKAUZ_CONFIG="$WORK/keine-config.toml" POSTKAUZ_SECRETS_BACKEND=insecure-file \
 	POSTKAUZ_PASSWORD_DEMO=pass
 
-# Ausgabe ohne Pfade des Containers und ohne Schlüssel im Klartext.
+# Ausgabe ohne Pfade des Containers, ohne Schlüssel im Klartext und ohne
+# abgeschnittene Adressen (die Tabelle kürzt sie; das PII-Gate erkennt eine
+# gekürzte Testdomain nicht mehr als solche).
 clean() {
-	sed -e "s#$WORK#<tmp>#g" -e 's/pk_key_[A-Za-z0-9_-]\{43\}/pk_key_<43 characters, shown once>/g'
+	sed -e "s#$WORK#<tmp>#g" -e 's/pk_key_[A-Za-z0-9_-]\{43\}/pk_key_<43 characters, shown once>/g' \
+		-e 's/<[^<> ]*@[^<> ]*…/<…/g'
 }
 # step NAME CMD...: Kommando zeigen, ausführen, Exit-Code zeigen.
 step() {
