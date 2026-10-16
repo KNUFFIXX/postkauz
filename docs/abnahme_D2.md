@@ -206,6 +206,8 @@ claude mcp list
 
 Erwartet: `Added stdio MCP server postkauz-abnahme …`, danach in `claude mcp list` eine Zeile `postkauz-abnahme: C:\PostKauz\postkauz.exe mcp - ✓ Connected`.
 
+Gut zu wissen: `claude mcp add --env` speichert den Schlüssel **im Klartext** in der Datei `%USERPROFILE%\.claude.json` (Abschnitt `mcpServers`, Eintrag `postkauz-abnahme`). Er gilt nur für die Abnahme-Datenbank; die Schritte unter „Aufräumen" (`claude mcp remove …` und das Löschen der Abnahme-Datenbank) entfernen ihn wieder. Variante B legt ihn ebenso im Klartext in `claude_desktop_config.json` ab; dort entfernt ihn das Zurückkopieren der Sicherung.
+
 Jetzt Claude Code starten (`claude`) und dort eingeben: `/mcp`, dann `postkauz-abnahme` auswählen und „View tools".
 
 ### Variante B: Claude-App
