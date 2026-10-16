@@ -45,6 +45,8 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 - `mailsync.ContentHasher`: `content_hash` plus Varianten mit 0, 1, 2 Zeilenenden am Schluss; der Sync sucht seit S1.10 ebenfalls mit allen Varianten (sonst lud er importierte Nachrichten mit anderem Zeilenende doppelt).
 - CLI `import mbox|maildir` mit `--mailbox`, `--labels-from`, `--rescan`, `--dry-run`, Fortschritt je Datei; Doku [cli.md](cli.md) Abschnitt 2i. Korpus-Generator: [testkorpus.md](testkorpus.md) Abschnitt 1b.
 
+**Prüfläufe (16.10.2026, Stand S1.10):** `make check` (rund 2,5 min; `internal/importer` rund 80 s), `make race` (rund 26 min ohne Cache; `internal/importer` 12 min, `internal/ops` 11,5 min, nebeneinander; Grenze 30 min je Paket), `make integration` (Dovecot, Stalwart, GreenMail; neu: Import gegen Dovecot), `make vuln` (keine Schwachstellen) und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 24,1 MB, windows/amd64 23,9 MB, darwin/arm64 22,7 MB.
+
 **Befunde:**
 
 - **Thunderbird quotet nach mboxo:** Eine Zeile, die im Original mit `>From ` beginnt, steht in der Datei genauso da wie eine gequotete `From `-Zeile; nach dem Import heißt sie `From `. Der Inhalt weicht dann vom Server ab, der Abgleich läuft über die Message-ID. Selten (Zitate von Zitaten).
