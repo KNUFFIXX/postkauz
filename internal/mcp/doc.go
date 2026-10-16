@@ -1,26 +1,25 @@
-// Package mcp wird der MCP-Server (stdio zuerst, HTTP ab Schnitt 3).
+// Package mcp ist der MCP-Server von PostKauz (stdio seit S1.9, HTTP ab
+// Schnitt 3). Maßgeblich ist docs/mcp.md.
 //
-// Stand Phase 0: nur der Plan, kein Code. Maßgeblich ist docs/mcp.md.
+//   - SDK: das offizielle github.com/modelcontextprotocol/go-sdk (Version in
+//     go.mod, per `go get` aufgelöst).
+//   - Der Schlüssel kommt aus der Umgebung (POSTKAUZ_KEY) oder einer Datei
+//     mit Rechten 600 (POSTKAUZ_KEY_FILE), nie als Argument; die Anmeldung
+//     (ops.AuthenticateKey) macht der Aufrufer (internal/cli, Kommando mcp).
+//   - Tools, Resources und Prompts stehen in ausdrücklichen Tabellen
+//     (tools.go, resources.go, prompts.go): Operation → Tool-Name, keine
+//     Reflection, kein Generator (ADR-004). Die Liste folgt den Scopes des
+//     Schlüssels: Was er nicht darf, sieht er nicht.
+//   - Jeder Aufruf läuft über ops.Executor.Execute (Scope → Policy → Audit →
+//     Eingabeprüfung → Handler) mit Akteur „agent" und dem Schlüssel; dieses
+//     Paket enthält keine Fachlogik und keine Policy.
+//   - Ausgaben mit Mailinhalt tragen die Untrusted-Hülle der Operation
+//     (untrusted, source, notice); zusätzlich entfernt der Adapter aus allen
+//     Zeichenketten Steuer- und unsichtbare Formatzeichen (clean.go).
+//   - Es gibt im MVP kein Tool zum Senden, Löschen oder Entwerfen.
 //
-// Plan (Schnitt 1, lesend):
-//
-//   - Server auf Basis des offiziellen github.com/modelcontextprotocol/go-sdk
-//     (aktuelle Version per `go get` auflösen, nicht hier festschreiben).
-//   - Transport stdio; der API-Schlüssel kommt aus der Umgebung
-//     (POSTKAUZ_KEY) oder einer Datei mit Rechten 600, nie als Argument.
-//   - Tools werden aus dem Operationsregister (internal/ops) gebunden, per
-//     ausdrücklicher Tabelle „Operation → Tool-Name" (accounts.list →
-//     mail_list_accounts), nicht per Reflection. Die Tool-Liste folgt den
-//     Scopes des Schlüssels: Was er nicht darf, sieht er nicht.
-//   - Jede Antwort mit Mailinhalt wird in die Untrusted-Hülle verpackt
-//     ({"untrusted": true, "source": "email", ...}); Quote-Stripper und
-//     HTML→Text laufen davor. Links stehen getrennt mit Domain.
-//   - Aufrufe laufen ausschließlich über ops.Executor.Execute; dieses Paket
-//     enthält keine Fachlogik und keine Policy.
-//   - Resources (mail://...) und Prompts folgen in Schnitt 1 bzw. 2.
-//   - Es gibt im MVP kein Versand-Tool; mail_request_send ist „ab Schnitt 4".
-//
-// Vertragstest (ab dem ersten Tool): Schema des Tools == Schema der
-// Operation im Register; jede Operation durchläuft die Kette
-// Scope → Policy → Freigabe → Audit → Handler.
+// Vertragstest (server_test.go): Schema jedes Tools == Schema der Operation
+// (Ausnahme: dokumentierte engere Grenzen), jede gebundene Operation steht
+// im Katalog, die Tool-Liste folgt den Scopes, jede Ausgabe mit Mailinhalt
+// ist in der Hülle.
 package mcp

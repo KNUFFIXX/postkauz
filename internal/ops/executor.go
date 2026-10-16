@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -40,6 +42,10 @@ type Request struct {
 	Secret secrets.Secret
 	// Progress wird an den Handler gereicht (Call.Progress); nil = keine Meldungen.
 	Progress func(Progress)
+	// Narrow ist ein zusätzliches, strengeres Eingabeschema der Oberfläche
+	// (MCP: limit ≤ 100 statt 500). Es wird wie das InputSchema der
+	// Operation geprüft und nie statt dessen; nil = keins.
+	Narrow *jsonschema.Resolved
 }
 
 // Result ist das Ergebnis eines erfolgreichen Aufrufs.
@@ -148,6 +154,9 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	reason := "handler_error"
 	var out any
 	herr := op.validateInput(req.Input)
+	if herr == nil && req.Narrow != nil {
+		herr = validateAgainst(req.Narrow, req.Input)
+	}
 	if herr != nil {
 		reason = "invalid_input"
 	} else {

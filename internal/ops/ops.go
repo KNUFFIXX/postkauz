@@ -145,6 +145,13 @@ func (o Operation) validateInput(raw json.RawMessage) error {
 			return err
 		}
 	}
+	return validateAgainst(rs, raw)
+}
+
+// ResolveSchema bereitet ein JSON-Schema für Request.Narrow vor.
+func ResolveSchema(raw json.RawMessage) (*jsonschema.Resolved, error) { return resolveSchema(raw) }
+
+func validateAgainst(rs *jsonschema.Resolved, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		raw = json.RawMessage(`{}`)
 	}

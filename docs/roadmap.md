@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.9 (MCP stdio lesend), danach Abnahme D2. Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.9 erledigt** (16.10.2026: lesender MCP-Server über stdio mit dem offiziellen Go-SDK v1.8.0, Tools/Resources/Prompts nach Scopes, Untrusted-Hülle, Audit je Aufruf; Abnahme D2 vorbereitet in [abnahme_D2.md](abnahme_D2.md)). **S1.8 erledigt** (16.10.2026: CLI lesend vollständig mit API-Schlüsseln, Audit-Abfrage/-Export/-Prüfung, `--key`, `--quiet`, `--profile`, `--explain`, Untrusted-Hülle in den Ausgaben, Eingabeprüfung im Executor, Vertragstest Register ↔ CLI). **S1.7 erledigt** (16.10.2026: Volltextsuche mit app-seitigem Normalisierer und deutschem Stemmer, Komposita über Trigram, Abfragesprache, Ranking aus BM25 und Datum, Cursor, `search` im CLI; Index und Anhangstext als Jobs über die Tabelle `jobs`; Messung mit 100.000 Nachrichten). **S1.6 erledigt** (16.10.2026) mit Schritt 0 (N1–N3, Watchdog). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: **Abnahme D2 durch den Betreiber** (A01: nach S1.9 anhalten), danach S1.10 (Import). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.8 erledigt 16.10.2026**; S1.9 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 bis S1.9 erledigt 16.10.2026**, Abnahme D2 offen; S1.10 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,35 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.9 (Abnahme D1 bestanden 16.10.2026; D2 nach S1.9). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** Abnahme D2 (vorbereitet, [abnahme_D2.md](abnahme_D2.md)), danach S1.10 und S1.11 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.9 (16.10.2026, erledigt): MCP über stdio, lesend
+
+**Akzeptanz S1.9 erfüllt** (alles in `make check`, ohne Docker; Abnahme D2.7/D2.8 in Claude Code durch den Betreiber steht aus):
+
+- **Tool-Liste folgt den Scopes:** `TestToolListFollowsScopes` (über eine echte MCP-Sitzung: `reader` 9 Tools, 9 Resources, 4 Prompts; verengt auf `mail:search` nur `mail_search` und `mail_get_policy`, keine Message-Resource; ohne Scopes nur `mail_get_policy`; auch `admin` kein schreibendes Tool) und `TestMCPSearchOnlyKey` (verstecktes Tool nicht aufrufbar, Message-Resource verweigert).
+- **Vertragstest Register ↔ MCP:** `TestEveryOperationIsBoundOrExcluded`, `TestToolSchemasMatchRegistry` (Schemas wie im Register; einzige Abweichung `mail_search.limit` ≤ 100, im Executor geprüft).
+- **Ausgabe jeder Mail in der Hülle:** `TestMCPReaderSession` ruft jedes Tool und jede Resource mit Mailinhalt auf und prüft `untrusted`, `source`, `notice`; versteckter Text fehlt; Steuer- und Formatzeichen werden entfernt (`TestCleanStringRemovesControls`).
+- **Smoke-Test über stdio:** `TestMCPStdioSmoke` startet das Programm als Kindprozess (`CommandTransport` des SDK): initialize, tools/list (9 Tools), tools/call (`mail_get_message` in der Hülle).
+- **Audit je Aufruf mit Schlüsselname, ohne Mailtext:** `TestMCPReaderSession` prüft danach `audit --key-id key:leser` (Akteur `agent`; keine Suchbegriffe, kein Mailtext, kein Schlüssel).
+- **README-Abschnitt** „Set up MCP in Claude Code" (Schlüssel, `claude mcp add`, `.mcp.json`, Claude-App).
+
+**Umsetzung:**
+
+- SDK `github.com/modelcontextprotocol/go-sdk` **v1.8.0** (per `go get` aufgelöst, gepinnt; Lizenz Apache-2.0 bzw. MIT für ältere Beiträge; mitgezogen: `segmentio/encoding` und `segmentio/asm` (MIT), `yosida95/uritemplate/v3` (BSD-3), `golang.org/x/oauth2`, `x/time`, `x/sync` (BSD)). Kein neuer UUID-Import (A01 N4; die Standardbibliothek von Go 1.27 hätte ein Paket `uuid`, gebraucht wurde keins). N5 (HTTP, Spezifikation 2026-07-28) betrifft erst Schnitt 3.
+- `internal/mcp`: Tabellen für Tools (9), Resources (2 fest, 1 Audit fest, 6 Vorlagen) und Prompts (4); Standardwerte für Budgets und Quote-Stripper; engeres Schema für `mail_search.limit` (über `Request.Narrow` im Executor geprüft, also auch abgelehnt auditiert); Bereinigung aller Zeichenketten; Fehler als Ergebnis mit `status`/`code`/`reason`, `_meta.audit_id` bei Erfolg.
+- `postkauz mcp`: Schlüssel aus `POSTKAUZ_KEY` oder `POSTKAUZ_KEY_FILE`, Anmeldung mit `last_used_at`, ohne gültigen Schlüssel kein Server (Exit 3), `--key` verboten.
+
+**Befunde:**
+
+- **`mail_sync_now` fehlt bewusst** (docs/mcp.md listet es unter S1): Laut Architektur synct der MCP-Prozess nicht selbst, sondern reiht Jobs ein; den Job-Typ `sync` gibt es noch nicht. Bis dahin hält `sync --watch` die Daten aktuell (Frage 13 unten).
+- `audit export`/`audit verify` (geplant für S1.11) sind mit S1.8 vorgezogen, weil die Abnahme D2.9 sie braucht; offen bleibt der tägliche Export als Aufgabe.
+- Die Untrusted-Felder stehen einmal oben in der Ausgabe statt je Nachricht (Planung in mcp.md); Inhalt bleibt Feld für Feld getrennt.
+- Claude Code und die Claude-App speichern den Schlüssel im Klartext in ihrer Konfiguration (Nutzerprofil). Empfehlung im README: kurze Laufzeit, engste Rolle, widerrufen, wenn nicht gebraucht.
+
+**Nicht in S1.9 (bewusst verschoben):** `mail_sync_now` (Job-Typ `sync`), `fields`/`include_links`/`page_range`/`format: html_sanitized` der Planung, Resource-Abos und Änderungsmeldungen, HTTP-Transport (S3), Kanarientest über alle Kanäle (S1.11).
 
 ### Stand S1.8 (16.10.2026, erledigt): CLI lesend vollständig
 
@@ -283,4 +309,5 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 9. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 15)*
 10. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 16)*
 11. **Suchlatenz bei sehr häufigen Wörtern** (S1.7): Im synthetischen Korpus steht jedes Wort in 25–50 % aller Nachrichten; dafür liegt der Median knapp unter 300 ms, einzelne Läufe und zwei solche Wörter über die CLI darüber (bis rund 390 ms auf 2 Kernen). Vorschlag: so lassen; die Messung auf dem Windows-PC des Betreibers wiederholen (mehr Kerne, Kommandos in [suche_messung.md](suche_messung.md)) und erst weiter optimieren (Vollscan-Pfad, Bleve laut ADR-005 als Option), wenn im Alltag Anfragen spürbar über 300 ms liegen.
-12. **Teilwörter immer an** (S1.7): Jeder Suchbegriff ab 3 Zeichen findet auch Teilwörter („Rechnung" findet „Abrechnung"). Vorschlag: so lassen (Treffer als ganzes Wort stehen vorn); ein Schalter für „nur ganze Wörter" (z. B. `=Rechnung`) erst bei Bedarf.
+12. *(entschieden 16.10.2026: Teilwortsuche ab 3 Zeichen bleibt immer an; Worst-Case-Suchwörter (Frage 11) erst auf Windows nachmessen; mmap bleibt)*
+13. **`mail_sync_now`** (S1.9): Der MCP-Server synct nicht selbst; ein Agent kann also keinen Sync anstoßen. Vorschlag: mit dem Job-Typ `sync` nachrüsten (MCP reiht ein, `sync --watch` führt aus), zusammen mit dem Dauerbetrieb für mehrere Konten (Frage 5); bis dahin hält `sync --watch` die Daten aktuell.

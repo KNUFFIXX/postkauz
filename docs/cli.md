@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S1.8 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.9 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain`; seit S1.9 `mcp` (Abschnitt 2h). Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -41,7 +41,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.8 ✓ | `key create`, `key list`, `key revoke` (Abschnitt 2e) | `keys.create` (R1), `keys.list` (R0), `keys.revoke` (R1); Scope `admin`, nur Mensch, nicht über MCP |
 | S1.8 ✓ | `audit [--since …]`, `audit export --to <ordner>`, `audit verify` (Abschnitt 2f) | `audit.list` (R0, `audit:read`), `audit.export` (R1, `admin`), `audit.verify` (R0, `audit:read`) |
 | S1.8 ✓ | `policy show` (Abschnitt 2e) | `policy.get` (R0, jeder Schlüssel) |
-| S1.9 | `mcp` | startet den stdio-MCP-Server (kein Registerbefehl) |
+| S1.9 ✓ | `mcp` (Abschnitt 2h) | startet den stdio-MCP-Server (kein Registerbefehl; jeder Tool-Aufruf läuft einzeln durch den Executor) |
 | S1 | `import mbox`, `import maildir` | `import.run` |
 | S2 | `draft new`, `draft reply`, `draft forward`, `draft list`, `draft show`, `draft edit` | `drafts.*` |
 | S2 | `approve <id>`, `reject <id>` | `approvals.decide` |
@@ -197,6 +197,17 @@ Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehr
 - **`--explain`** (global) schreibt nach jedem Aufruf eine Zeile auf **stderr**: Operation, Scope, Risiko, Schlüssel, Entscheidung der Policy mit Grund, Trockenlauf und die **Audit-ID** des Eintrags, z. B. `explain: messages.search (scope mail:search, risk R0) as key key:leser: allow (ok), dry run no; audit event 42`. Mit `--json` als Zeile `{"explain":{"operation":…,"scope":…,"risk":…,"key":…,"actor":…,"decision":…,"reason":…,"dry_run":…,"audit_id":…}}`. Auch verweigerte Aufrufe werden erklärt. Inhalte stehen nie darin; stdout bleibt die Ausgabe der Operation.
 - **`--quiet`**, `-q`: keine Fortschrittszeilen (Sync, Suchindex) auf stderr; Ergebnis und Fehler bleiben.
 - **`--profile <name>`**: getrennte Instanz mit eigener Konfiguration und eigenen Daten (Abschnitt 5). Gedacht für Probe- und Abnahmedaten neben dem Alltag.
+
+## 2h. MCP-Server (S1.9)
+
+`postkauz mcp` startet den lesenden MCP-Server über stdin/stdout für einen Agenten (Claude Code, Claude-App, andere MCP-Clients). Tools, Resources, Prompts und Hülle: [mcp.md](mcp.md); Einrichtung: README, „Set up MCP in Claude Code".
+
+- **Schlüssel** nur aus der Umgebung: `POSTKAUZ_KEY` (der Schlüssel aus `key create`) oder `POSTKAUZ_KEY_FILE` (Pfad zu einer Datei mit dem Schlüssel; unter Linux/macOS nur für den Nutzer lesbar, sonst Exit 1). Nie als Argument; `--key` ist bei `mcp` ein Eingabefehler (Exit 2).
+- Fehlt der Schlüssel oder ist er unbekannt, widerrufen oder abgelaufen, startet kein Server: Exit 3 (`denied`), Grund auf stderr, nichts auf stdout.
+- Die Tool-Liste folgt den Scopes des Schlüssels (`reader`: 9 Tools; verengt auf `mail:search`: nur Suche und Richtlinie). Es gibt kein Tool zum Senden, Löschen, Verschieben oder Entwerfen.
+- Jeder Tool-Aufruf und jedes Lesen einer Resource steht im Audit mit `key:<name>` und Akteur `agent`, ohne Mailtext (`postkauz audit --key-id key:<name>`).
+- `--profile` und `POSTKAUZ_DATA_DIR` wählen die Datenbank wie bei jedem Kommando. Der Server synct nicht; aktuell hält die Daten `sync` bzw. `sync --watch`.
+- Log: Start, Ende und je Aufruf Tool, Schlüssel und Audit-ID in `postkauz.log` (ohne Inhalte); stdout gehört allein dem Protokoll.
 
 ## 3. Maschinenlesbarkeit (`--json`)
 

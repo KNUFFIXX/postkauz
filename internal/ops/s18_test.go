@@ -287,3 +287,26 @@ func TestParseAuthResults(t *testing.T) {
 		t.Fatalf("empty = %+v", got)
 	}
 }
+
+// Ein engeres Schema der Oberfläche (MCP: limit ≤ 100) prüft der Executor
+// wie das Schema der Operation: abgelehnt, aber auditiert.
+func TestExecutorNarrowSchema(t *testing.T) {
+	e := newMirrorEnv(t)
+	narrow, err := ResolveSchema(json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer","maximum":1}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"query": "Hallo", "limit": 2})
+	_, err = e.x.Execute(context.Background(), Request{Key: adminKey, Actor: audit.ActorAgent, Operation: "messages.search", Input: b, Narrow: narrow})
+	var ie *InputError
+	if !errors.As(err, &ie) {
+		t.Fatalf("narrow schema not applied: %v", err)
+	}
+	if ev := e.au.Events(); ev[len(ev)-1].Reason != "invalid_input" {
+		t.Fatalf("not audited: %+v", ev[len(ev)-1])
+	}
+	b, _ = json.Marshal(map[string]any{"query": "Hallo", "limit": 1})
+	if _, err := e.x.Execute(context.Background(), Request{Key: adminKey, Actor: audit.ActorAgent, Operation: "messages.search", Input: b, Narrow: narrow}); err != nil {
+		t.Fatal(err)
+	}
+}

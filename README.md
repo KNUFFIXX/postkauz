@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha, slice S1.8.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), API keys with roles and scopes, and an audit log you can query, export with checksums and verify work. There is no MCP server yet. The name "PostKauz" is a working title and will still change.
+**Status: pre-alpha, slice S1.9.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), API keys with roles and scopes, and an audit log you can query, export with checksums and verify work. A read-only stdio MCP server (`postkauz mcp`) serves agents such as Claude Code (S1.9). The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -74,11 +74,51 @@ PostKauz has no PDF parser of its own (attack surface). If `pdftotext` from Popp
 
 After installing, the next `sync` also extracts the PDFs that were skipped because the tool was missing, and adds their text to the search index.
 
-Planned (not implemented yet):
+## Set up MCP in Claude Code
+
+`postkauz mcp` is a read-only MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. Nothing can be sent, deleted, moved or drafted.
+
+**1. Create a key** (shown exactly once; only its hash is stored):
 
 ```sh
-postkauz mcp        # stdio MCP server for Claude Code and other clients
+postkauz key create --name claude-code --role reader --expires 30d
 ```
+
+`reader` may read and search mail and the audit log. For a triage agent without message bodies: `--role reader --scopes mail:search`. Check what a key may do with `postkauz policy show --key claude-code`.
+
+**2. Register the server.** The key goes into the environment variable `POSTKAUZ_KEY`, never on the command line of the server. With the Claude Code CLI (all options before the server name `postkauz`, the program after `--`):
+
+```sh
+claude mcp add --env POSTKAUZ_KEY=pk_key_... --scope user --transport stdio postkauz -- /usr/local/bin/postkauz mcp
+```
+
+On Windows (PowerShell), with the full path to the program:
+
+```powershell
+claude mcp add --env POSTKAUZ_KEY=pk_key_... --scope user --transport stdio postkauz -- C:\PostKauz\postkauz.exe mcp
+```
+
+Or as JSON, for example in a project's `.mcp.json` (keep that file out of version control, it contains the key):
+
+```json
+{
+  "mcpServers": {
+    "postkauz": {
+      "command": "C:\\PostKauz\\postkauz.exe",
+      "args": ["mcp"],
+      "env": { "POSTKAUZ_KEY": "pk_key_..." }
+    }
+  }
+}
+```
+
+The Claude desktop app uses the same `mcpServers` block in `claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`, macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; open it via Settings, Developer, Edit Config) and needs a restart afterwards.
+
+Optional entries in `env`: `POSTKAUZ_DATA_DIR` to use another data directory (for example a test database), `POSTKAUZ_KEY_FILE` instead of `POSTKAUZ_KEY` (path to a file holding the key; on Linux and macOS it must be readable only by you).
+
+**3. Check it.** In Claude Code, `/mcp` lists the server and its tools: `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_list_accounts`, `mail_list_mailboxes`, `mail_list_attachments`, `mail_get_attachment_text`, `mail_audit_log`, `mail_get_policy`. Ask something like "Search my mail for invoices and summarise them"; afterwards `postkauz audit --since 10m --key-id key:claude-code` shows each call with the key name and without any mail text.
+
+The server only reads the local mirror; keep it current with `postkauz sync` (or `sync --watch`). Revoke a key you no longer need: `postkauz key revoke claude-code`. Note that the client configuration stores the key in plain text in your user profile; use a short expiry and the narrowest role that works. Details: `docs/mcp.md`, `docs/sicherheit.md`.
 
 Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`. Never develop against a real mailbox.
 
@@ -117,6 +157,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Pre-Alpha, Schnitt S1.8 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung; noch ohne MCP). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: Pre-Alpha, Schnitt S1.9 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, lesender MCP-Server über stdio; Einrichtung in Claude Code siehe „Set up MCP in Claude Code"). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.
