@@ -1,11 +1,11 @@
 # Roadmap
 
-Stand: **S1.6 Schritt 0 erledigt** (16.10.2026: Auflagen N1–N3 aus dem Nachtrag zu A01, Watchdog mit Obergrenze je Kommando nach ADR-007 Nachtrag 1, `make vuln`). Davor **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). In Arbeit: S1.6 (Threading, Body-Bereinigung, Anhänge). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+Stand: **S1.6 erledigt** (16.10.2026: Threading mit Betreff-Rückfall, Body-Bereinigung mit verstecktem Text, Links und Quote-Stripper, Anhänge mit Magic Bytes, Textextraktion im Subprozess, `thread` und `attach list/text` minimal; davor Schritt 0 mit den Auflagen N1–N3 und dem Watchdog nach ADR-007 Nachtrag 1). **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). Als Nächstes: S1.7 (Volltextsuche). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; S1.6 Schritt 0 erledigt 16.10.2026; S1.6 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; **S1.6 erledigt 16.10.2026** (mit Schritt 0); S1.7 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -20,9 +20,38 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.6 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.7 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
+
+### Stand S1.6 (16.10.2026, erledigt): Threads, Body-Bereinigung, Anhänge
+
+**Akzeptanz S1.6 erfüllt** (alles in `make check`, ohne Docker):
+
+- **Threads des Korpus stimmen mit dem Manifest:** 60 Threads exakt, keine Einzelnachricht angehängt, in drei Reihenfolgen (Manifest, umgekehrt, wie der Sync) über `thread.Group` (Korpus-Test in `internal/mimeparse`) und nach einem Erstsync gegen den Testserver im Prozess in der Datenbank, dazu nach Löschen aller Threads über das Nachziehen des Bestands (`TestInitialSyncMirrorsCorpus`). Der Korpus enthält dafür sieben Antworten ganz ohne `References`/`In-Reply-To` (Betreff-Rückfall).
+- **Mail mit verstecktem Text liefert `hidden_text`:** Die drei Korpus-Mails (`display:none`, weiß auf weiß, `font-size:0` über eine Klassenregel) tragen `bodies.hidden_text = 1` und verlieren die Anweisung; keine der übrigen rund 330 HTML-Mails wird markiert. `show` meldet `warning: hidden text removed`, `--json` `hidden_text_removed: true`. 17 Verstecktechniken und 10 Fehlalarm-Fälle einzeln getestet; Fuzz-Test ohne Absturz.
+- **Extraktor-Timeout wird gehalten:** Ein hängender Fake-Extraktor wird nach 0,5 s beendet, der Aufruf kehrt zurück, der Prozess lebt nicht mehr (`TestTimeoutKillsHangingExtractor`, PID-Prüfung unter Unix); Ausgabegrenze und Umgebung ohne Geheimnisse ebenfalls getestet.
+- **Magic-Bytes-Mismatch im Test:** Programm (`MZ`) als `Rechnung_2026-031.pdf` und PNG als `.jpg` werden erkannt (`type_mismatch` mit Grund, `executable`); keiner der übrigen rund 200 Korpus-Anhänge (PDF, DOCX, XLSX, Bilder, ZIP, Zip-Bombe, Text, weitergeleitete Mails, ohne Namen) gilt als Widerspruch; dazu eine Tabelle mit Erkennungs- und Vergleichsfällen.
+
+**Umsetzung:**
+
+- `internal/thread`: Zuordnung je Nachricht gegen einen Index (`Assign`; im Speicher und in SQLite): Verweise verbinden und vereinigen Threads, Antworten ohne Verweise kommen über den normalisierten Betreff (Präfixe Re/AW/WG/Fwd …, Listenmarken, nur Buchstaben und Ziffern) in den Thread im 30-Tage-Fenster; wachsende Threads sammeln solche Waisen ein (reihenfolgeunabhängig). Migration 0003: `thread_refs`, `threads.root_orphan`; der Sync ordnet in derselben Transaktion zu, Bestand ohne Thread wird nachgezogen.
+- `internal/sanitize`: HTML → Text mit Allowlist, versteckter Text, Links sichtbar mit Warnungen, unsichtbare Formatzeichen, Quote-Stripper. Neue Abhängigkeit `golang.org/x/net` v0.61.0 (HTML-Parser, IDNA).
+- `internal/magic`: Typ aus Magic Bytes (ZIP-Formate nur über Eintragsnamen), Vergleich mit Content-Type und Endung.
+- `internal/extract`: PDF über `pdftotext` (wenn installiert), DOCX im eigenen Kindprozess, Text/HTML/Mail im Prozess; Grenzen für Zeit, Ein- und Ausgabe, weiches Speicherlimit, knappe Umgebung.
+- `internal/mailsync`: speichert je Nachricht bereinigten Text, Links, `hidden_text`, Text ohne Zitate (auch für das `snippet`) und jeden Anhang dekodiert im Blob-Store mit Typprüfung; extrahiert am Ende jedes Laufs wartende Anhänge (Zeitbudget 60 s); bereitet Bestand mit älterer `clean_version` aus der Rohmail neu auf (die Datenbank der Abnahme D1 bekommt so beim nächsten Sync Threads, Texte und Anhänge).
+- Operationen `threads.get`, `attachments.list`, `attachments.text` (R0, `mail:read`) und CLI `thread`, `attach list`, `attach text` (minimal), `show` mit bereinigtem Text, Links, Warnzeile und `--strip-quotes`.
+- Von Hand gegen Dovecot (Korpus mit `corpusload`, frisches Konto): `sync --full` spiegelt 1.000 Nachrichten mit 0 Fehlern in rund 6 s einschließlich Aufbereitung und Extraktion; `show` der versteckten Mail, `attach list` (alle vier Extraktionen `ok`, HTML-Anhang mit `hidden text removed`) und `thread --message` wie erwartet.
+- `make check`, `make race` (rund 5 min, der Sync-Test mit Extraktion im Kindprozess dominiert), `make integration` (Dovecot, Stalwart, GreenMail) und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 20,6 MB, windows/amd64 20,4 MB, darwin/arm64 19,3 MB.
+
+**Befunde:**
+
+- Im Korpus liegen Thread-Nachrichten zeitlich nicht immer in Antwortreihenfolge (eine Antwort kann vor dem Original datiert sein); Threading und Anzeige kommen damit zurecht, `thread` sortiert nach Datum.
+- Newsletter mit verstecktem Vorschautext (`display:none`) werden ebenfalls als `hidden_text` markiert. Die Markierung ist ein Hinweis, kein Urteil (Frage 8 unten).
+- `pdftotext` ist nicht Teil des Programms: Ohne Poppler (typisch unter Windows) bleiben PDFs `skipped` mit Grund; der PDF-Test wird dann übersprungen (Frage 10 unten).
+- Der Speicher von Kindprozessen ist nur weich begrenzt (`GOMEMLIMIT`); für `pdftotext` gelten nur Zeit- und Eingabegrenze.
+
+**Nicht in S1.6 (bewusst verschoben):** Text aus XLSX, PPTX, ODT und Bildern (OCR); Anhänge innerhalb weitergeleiteter Mails (deren Text wird extrahiert, ihre Anhänge nicht); Tabelle `jobs` (Extraktion läuft im Sync mit Zeitbudget; mit dem Index in S1.7); Zeitbudget und Grenzen der Extraktion in der Konfiguration; CSS mit verschachtelten Selektoren und `@media`; Untrusted-Hülle und MCP-Tools (S1.8/S1.9); `attach save` (S3).
 
 ### Stand S1.6 Schritt 0 (16.10.2026, erledigt): Auflagen N1–N3 und Watchdog
 
@@ -199,3 +228,6 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
    - **Schlüsselbund-Verweis** `account/<name>` (`internal/ops/accounts.go`) hängt nur am Kontonamen, nicht am Datenverzeichnis: Zwei Datenverzeichnisse (z. B. Abnahme und Alltag) mit gleichem Kontonamen teilen und überschreiben denselben Eintrag; `account remove` im einen löscht das Passwort des anderen. Vorschlag: Verweis um eine Kennung des Datenverzeichnisses ergänzen (Migration bestehender Einträge).
    - **Vorhandenes Datenverzeichnis** wird nicht auf 0700 verschärft (`config.EnsureDataDir` setzt die Rechte nur beim Anlegen). Vorschlag: beim Öffnen prüfen, verschärfen und in `doctor` melden.
    - **`io.ReadAll` ohne Grenze** in `internal/imapx/mailbox.go` (FETCH-Literal, das vor seiner UID ankommt): Ein Server kann so beliebig viel Speicher belegen. Vorschlag: auf die Grenze des Blob-Stores (256 MiB) begrenzen bzw. in eine temporäre Datei puffern.
+8. **Versteckter Vorschautext in Newslettern** (S1.6): Newsletter verstecken oft eine Vorschauzeile mit `display:none`; auch sie werden als `hidden_text` markiert. Vorschlag: so lassen (Hinweis, kein Urteil; ein Agent soll versteckten Text nie sehen, egal woher).
+9. **Extraktion im Sync** (S1.6): Anhangstext wird am Ende jedes Sync-Laufs extrahiert (60 s je Lauf, Rest im nächsten Lauf), nicht in einer eigenen Warteschlange. Vorschlag: so lassen bis S1.7, dann zusammen mit dem Index über die Tabelle `jobs`.
+10. **PDF unter Windows** (S1.6): Ohne installiertes Poppler (`pdftotext`) bleiben PDF-Anhänge ohne Text. Vorschlag: im README als optionale Installation nennen; kein eigener PDF-Parser im Programm (Sicherheitsrisiko, Aufwand).

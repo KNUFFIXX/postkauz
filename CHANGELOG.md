@@ -43,6 +43,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- Dokumentation S1.6: `docs/roadmap.md` (Stand, Akzeptanz, Befunde, offene Fragen 8–10), `docs/architektur.md` (Pakete), `docs/datenmodell.md` (Threads, Texte, Anhänge, Migration 0003), `docs/sicherheit.md` (Abschnitt 7: umgesetzte Erkennung, Grenzen), `docs/cli.md` (Abschnitt 2c), `docs/testkorpus.md`, README (Stand S1.6, `pdftotext` optional).
 - **Threading mit Betreff-Rückfall** (S1.6): `internal/thread` ordnet über Message-ID, In-Reply-To und References zu (wie bisher, jetzt als schrittweise Zuordnung gegen einen Index) und hängt Antworten ganz ohne Verweise über den normalisierten Betreff (Präfixe Re/AW/WG/Fwd …, nur Buchstaben und Ziffern) im Zeitfenster von 30 Tagen an; das Ergebnis hängt nicht von der Reihenfolge der Ankunft ab (Test in drei Reihenfolgen gegen das Manifest). Korpus: sieben Antworten ohne Verweise, Manifest-Version 2 mit `thread_by_subject`.
 - **Watchdog mit Obergrenze je Kommando** (ADR-007 Nachtrag 1, Betreiber-Entscheid 16.10.2026): Neben dem Schweigen (Standard 30 s) gilt eine Obergrenze je Kommando (Standard 10 min); beides in der Konfiguration (`[imap] command_timeout`, `command_max_duration`). Zeit in Rückrufen (Blob schreiben, parsen) zählt nicht mehr als Schweigen des Servers. Der Sync holt Rohmails in Gruppen von höchstens 16 MiB angekündigter Größe je FETCH.
 - `golang.org/x/text` v0.14.0 → v0.43.0 (per `go get`, A01 N2); `go mod tidy` ohne weitere Änderung.

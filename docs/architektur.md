@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: S1.5 (15.10.2026). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
+Stand: S1.6 (16.10.2026). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
 
 „PostKauz" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
 
@@ -62,7 +62,7 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 |---|---|---|
 | `cmd/postkauz` | `main`, ruft `cli.Run` | fertig |
 | `internal/brand` | Name, Alias, Präfixe an einer Stelle | fertig |
-| `internal/ops` | Register, Executor (mit Schwärzung je Operation, Fortschrittsmeldungen), `accounts.list/add/test/remove`, `sync.run`, `mailboxes.list`, `messages.get` | S1.5 + Tests |
+| `internal/ops` | Register, Executor (mit Schwärzung je Operation, Fortschrittsmeldungen), `accounts.list/add/test/remove`, `sync.run`, `mailboxes.list`, `messages.get`, `threads.get`, `attachments.list`, `attachments.text` | S1.6 + Tests |
 | `internal/policy` | Scope, Risiko R0–R3, `Check` | Stub + Tests |
 | `internal/audit` | Event-Typ, Writer-Schnittstelle | Typ + Stubs (SQLite-Writer im Store) |
 | `internal/store` | Migrationen mit Schema-Schutz und Snapshot (`VACUUM INTO`), Konten, SQLite-Audit-Writer, Spiegel (Ordner, Nachrichten, Zuordnungen, Fenster als Transaktion) | S1.5 + Tests |
@@ -71,13 +71,16 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/imapx` | dünne Schicht über go-imap (ADR-007, v2.0.0-beta.8 gepinnt): Dial mit Watchdog (misst Schweigen, Rückrufe ausgenommen, plus Obergrenze je Kommando; ADR-007 Nachtrag 1) und TCP-Keepalive, `Session` mit Reconnect und Backoff, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST mit SPECIAL-USE/LIST-STATUS, CREATE, NOOP, EXAMINE/SELECT (CONDSTORE), UID SEARCH (ESEARCH), FETCH (Metadaten, Flags mit CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND, STORE (nur Testwerkzeuge/S3, kein `\Deleted`), IDLE mit eigenem Neustart | S1.5 + Tests |
 | `internal/oauth` | Token-Quelle mit Refresh und Sperrzeit (Entwurf P3) | Entwurf + Tests |
 | `internal/blob` | Blob-Store: atomar, SHA-256, optional zstd, Größenlimit | S1.2 + Tests |
-| `internal/mimeparse` | MIME-Parser auf `go-message` mit Charset-Reader: Kopf, Adressen, tolerantes Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`), Text/HTML, Anhänge mit SHA-256; Limits für Kopf, Teile, Tiefe, Teilgröße; entpackt nie Archive | S1.2 + Korpus-Test |
-| `internal/thread` | Threading per Union-Find über Message-ID/In-Reply-To/References (Betreff-Rückfall S1.6) | S1.2 + Tests |
+| `internal/mimeparse` | MIME-Parser auf `go-message` mit Charset-Reader: Kopf, Adressen, tolerantes Datum (Zone ohne Vorzeichen, Ersatz `INTERNALDATE`), Text/HTML, Anhänge mit SHA-256 und Rückruf für den dekodierten Inhalt (`OnAttachment`); Limits für Kopf, Teile, Tiefe, Teilgröße; entpackt nie Archive | S1.2/S1.6 + Korpus-Test |
+| `internal/sanitize` | Body-Bereinigung: HTML → Text mit Allowlist, versteckter Text erkennen und entfernen, Links sichtbar mit Warnungen, unsichtbare Formatzeichen entfernen, Quote-Stripper | S1.6 + Korpus-Test, Fuzz-Test |
+| `internal/magic` | Typ eines Anhangs aus Magic Bytes (ZIP-Formate nur über Eintragsnamen, nie entpackt), Vergleich mit Content-Type und Endung, ausführbare Typen | S1.6 + Korpus-Test |
+| `internal/extract` | Textextraktion: PDF über `pdftotext`, DOCX im eigenen Kindprozess, Text/HTML/Mail im Prozess; Zeit-, Ein-/Ausgabe- und Speichergrenzen, knappe Umgebung | S1.6 + Tests (hängender Fake-Extraktor) |
+| `internal/thread` | Threading: Zuordnung über Message-ID/In-Reply-To/References (vereinigt Threads), Rückfall normalisierter Betreff im 30-Tage-Fenster für Antworten ohne Verweise; Index im Speicher und in SQLite (`internal/store`) | S1.6 + Korpus-Test |
 | `internal/corpus` | Generator des synthetischen Testkorpus mit Manifest (`make corpus`); `imapload` und `cmd/corpusload` legen ihn per APPEND in einem lokalen Testserver ab (`make corpus-load`) | S1.2/S1.4 + Tests |
 | `internal/provider` | `MailProvider`, `Submission` | Schnittstellen |
 | `internal/provider/imap` | IMAP-Provider über `imapx`: `Connect`, Fähigkeiten, Strategie, `ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen) und Zustand, `Changes` (Fenster, CONDSTORE bzw. UID-Scan, UID-SEARCH-Abgleich), `FetchHeaders`, `FetchRaw`, `Idle` (eigene Verbindung); Verbindungsprüfung für `account test` | S1.5 + Tests, Integrationstest (Docker) |
-| `internal/mailsync` | Sync-Engine gegen eine schmale Provider-Schnittstelle: Ordnerabgleich, Fenster, Abgleich per Message-ID/Größe bzw. `content_hash`, Blob-Store, Parser, Transaktion je Fenster; `Watch` (IDLE + Intervall); `Runner` für `sync.run` | S1.5 + Tests, Integrationstest (Docker) |
-| `internal/cli` | cobra-Adapter, Exit-Codes, `doctor`, Strg+C-Behandlung | `version`, `doctor`, `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show` (minimal) |
+| `internal/mailsync` | Sync-Engine gegen eine schmale Provider-Schnittstelle: Ordnerabgleich, Fenster, Abgleich per Message-ID/Größe bzw. `content_hash`, Blob-Store, Parser, Aufbereitung (Text, Links, versteckter Text, Anhänge mit Typprüfung), Threads, Transaktion je Fenster; Nachziehen älterer Bestände und Textextraktion am Ende jedes Laufs; `Watch` (IDLE + Intervall); `Runner` für `sync.run` | S1.6 + Tests, Leck-Tests, Integrationstest (Docker) |
+| `internal/cli` | cobra-Adapter, Exit-Codes, `doctor`, Strg+C-Behandlung | `version`, `doctor`, `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show`, `thread`, `attach list/text` (minimal) |
 | `internal/mcp` | MCP-Adapter | nur Plan (`doc.go`) |
 
 Spätere Pakete (nicht angelegt): `internal/search`, `internal/importer`. Der Sync heißt `internal/mailsync` (nicht `internal/sync`, das kollidierte mit dem Standardpaket `sync`).
@@ -227,8 +230,8 @@ Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `j
 | Job-Typ | Auslöser | Inhalt |
 |---|---|---|
 | `sync` | Intervall, IDLE-Signal, `postkauz sync`, `mail_sync_now` | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben |
-| `index` | nach `sync`/`import` | Body bereinigen, FTS-Zeilen und Wortstamm schreiben |
-| `extract` | nach `sync` | Anhangstext in Subprozess mit Zeit- und Speicherlimit |
+| `index` | nach `sync`/`import` | FTS-Zeilen und Wortstamm schreiben (die Body-Bereinigung macht seit S1.6 der Sync beim Speichern) |
+| `extract` | nach `sync` | Anhangstext in Subprozess mit Zeit- und Speicherlimit (S1.6: noch ohne Tabelle `jobs`, am Ende jedes Sync-Laufs mit Zeitbudget 60 s; Rest im nächsten Lauf) |
 | `import` | `postkauz import mbox/maildir` | Einlesen mit Message-ID-/Hash-Abgleich |
 | `export` | `postkauz export`, täglich (Audit) | mbox/EML-Verzeichnis, Audit-JSONL mit Prüfsumme |
 
