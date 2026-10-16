@@ -44,7 +44,7 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	}
 	want := []string{"accounts", "identities", "mailboxes", "messages", "message_mailboxes", "threads",
 		"attachments", "bodies", "blobs", "tags", "message_tags", "drafts", "approvals", "jobs",
-		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram", "thread_refs"}
+		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram", "thread_refs", "index_queue"}
 	for _, name := range want {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name=?`, name).Scan(&n); err != nil || n != 1 {
@@ -98,17 +98,18 @@ func TestForeignKeysAndChecks(t *testing.T) {
 	}
 }
 
-// Die FTS5-Strategie aus docs/datenmodell.md: contentless-Tabellen mit
-// Löschen, deutsche Umlaute (unicode61 remove_diacritics) und Teilwörter
-// (Trigram).
+// Die FTS5-Tabellen aus docs/datenmodell.md (Migration 0004): contentless
+// mit Löschen, Wortindex mit Präfixen, Trigram für Teilwörter, dieselben
+// Spalten in beiden Tabellen. Die Spalten befüllt internal/search
+// (gefaltet und gestemmt); Ende-zu-Ende-Tests in search_test.go.
 func TestFTS5Strategy(t *testing.T) {
 	s := openMem(t)
-	if _, err := s.db.Exec(`INSERT INTO fts_messages(rowid, subject, sender, recipients, body, attachments_text, body_stem)
-		VALUES (1, 'Nebenkostenabrechnung 2025', 'a@example.invalid', 'b@example.invalid', 'Bitte prüfen Sie die Zwangsvollstreckung', '', 'bitt prüf zwangsvollstreck')`); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO fts_messages(rowid, subject, sender, recipients, body, attachments)
+		VALUES (1, 'nebenkostenabrechn 2025', 'a exampl invalid', 'b exampl invalid', 'bitt pruf sie die zwangsvollstreck', '')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO fts_trigram(rowid, subject, sender, body)
-		VALUES (1, 'Nebenkostenabrechnung 2025', 'a@example.invalid', 'Bitte prüfen Sie die Zwangsvollstreckung')`); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO fts_trigram(rowid, subject, sender, recipients, body, attachments)
+		VALUES (1, 'nebenkostenabrechnung 2025', 'a@example.invalid', 'b@example.invalid', 'bitte prufen sie die zwangsvollstreckung', '')`); err != nil {
 		t.Fatal(err)
 	}
 	count := func(q string, arg string) int {
@@ -118,19 +119,22 @@ func TestFTS5Strategy(t *testing.T) {
 		}
 		return n
 	}
-	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `body: pruefen OR body: prüfen`); n != 1 {
-		t.Errorf("umlaut match = %d", n)
+	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `{body} : "pruf"`); n != 1 {
+		t.Errorf("stem match = %d", n)
 	}
-	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `body_stem: zwangsvollstreck*`); n != 1 {
-		t.Errorf("stem prefix match = %d", n)
+	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `"zw"*`); n != 1 {
+		t.Errorf("prefix match = %d", n)
 	}
 	if n := count(`SELECT count(*) FROM fts_trigram WHERE fts_trigram MATCH ?`, `"vollstreck"`); n != 1 {
 		t.Errorf("trigram infix match = %d", n)
 	}
+	if n := count(`SELECT count(*) FROM fts_trigram WHERE fts_trigram MATCH ?`, `{sender} : "example.invalid"`); n != 1 {
+		t.Errorf("trigram column filter = %d", n)
+	}
 	if _, err := s.db.Exec(`DELETE FROM fts_messages WHERE rowid = 1`); err != nil {
 		t.Fatalf("contentless_delete must allow DELETE: %v", err)
 	}
-	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `body: prüfen`); n != 0 {
+	if n := count(`SELECT count(*) FROM fts_messages WHERE fts_messages MATCH ?`, `"pruf"`); n != 0 {
 		t.Errorf("row still indexed after delete: %d", n)
 	}
 }

@@ -1,6 +1,6 @@
 # Datenmodell
 
-Stand: S1.6 (16.10.2026). Das Schema steht als ausführbares SQL in [`internal/store/migrations/`](../internal/store/migrations/) (`0001_init.sql`, `0002_sync_state.sql`, `0003_threads_bodies_attachments.sql`) und wird von `internal/store/store_test.go` gegen `modernc.org/sqlite` geprüft (Tabellen vorhanden, Fremdschlüssel, CHECKs, Audit-Sperre, FTS5). Dieses Dokument nennt je Tabelle die Felder und **warum** sie so sind.
+Stand: S1.7 (16.10.2026). Das Schema steht als ausführbares SQL in [`internal/store/migrations/`](../internal/store/migrations/) (`0001_init.sql`, `0002_sync_state.sql`, `0003_threads_bodies_attachments.sql`, `0004_search_index.sql`) und wird von `internal/store/store_test.go` gegen `modernc.org/sqlite` geprüft (Tabellen vorhanden, Fremdschlüssel, CHECKs, Audit-Sperre, FTS5). Dieses Dokument nennt je Tabelle die Felder und **warum** sie so sind.
 
 ## Leitlinien
 
@@ -49,10 +49,11 @@ Stand: S1.6 (16.10.2026). Das Schema steht als ausführbares SQL in [`internal/s
 
 | Tabelle | Wichtige Felder | Begründung |
 |---|---|---|
-| `jobs` | `type`, `payload` (JSON), `state`, `run_at`, `attempts`, `last_error`, `locked_by`, `locked_at` | Warteschlange in SQLite statt Broker. Index auf `(state, run_at)`. |
+| `jobs` | `type`, `payload` (JSON), `state`, `run_at`, `attempts`, `last_error`, `locked_by`, `locked_at` | Warteschlange in SQLite statt Broker. Index auf `(state, run_at)`. Seit S1.7 (Migration 0004) genutzt für `extract` und `index`: ein Job je Art und Konto (`payload` `{"account_id": N}`), höchstens einer offen (`queued`/`running`; partieller Unique-Index `jobs_open`). Trigger legen ihn an, sobald Arbeit entsteht (Anhang wartet auf Extraktion, Nachricht in `index_queue`); der eigentliche Stand liegt in `attachments.extract_status` bzw. `index_queue`. Sperre über `locked_by`/`locked_at` mit Ablauf (Arbeiter hält sie nach jedem Schritt frisch); `attempts`/`last_error` zählen Fehler des Jobs (nicht einzelner Anhänge), nach 5 Fehlern `failed`; erledigte und gescheiterte Jobs werden nach 7 Tagen gelöscht. |
+| `index_queue` | `message_id`, `reindex`, `queued_at` | Seit S1.7: Nachrichten, deren Indexzeilen fehlen oder veraltet sind. Trigger reihen ein, wenn eine Nachricht, ihr Text (`bodies`) oder ein Anhang (Name, extrahierter Text) entsteht oder sich ändert; Flags und Ordner reihen nicht ein. `reindex = 0`: nie indiziert (der Job muss nichts löschen). Gelöschte Nachrichten verlieren ihre Indexzeilen per Trigger, ihre Zeile hier per `ON DELETE CASCADE`. |
 | `audit_events` | `ts`, `actor_type`, `api_key_id`, `scope`, `operation`, `params_redacted` (JSON), `targets` (JSON), `result`, `reason`, `dry_run`, `duration_ms` | **Append-only:** Trigger blockieren `UPDATE` und `DELETE` (getestet). Nie Mailinhalte oder Geheimnisse; Parameter nur als IDs, Feldnamen, Zähler, Hashes. |
 | `audit_exports` | `day`, `first_event_id`, `last_event_id`, `sha256`, `location`, `exported_at` | Nachweis des täglichen Exports (JSONL-Datei, Prüfsumme, zweiter Ort). Ersetzt eine Hash-Kette je Zeile. |
-| `meta` | `key`, `value` | Standinformationen (z. B. `fts_version`). Keine Fachdaten. |
+| `meta` | `key`, `value` | Standinformationen (`fts_version` seit S1.7). Keine Fachdaten. |
 | `schema_migrations` | `version`, `name`, `applied_at` | Wird vom Migrationsläufer angelegt. |
 
 ### Bewusst nicht angelegt
@@ -73,24 +74,36 @@ Rohmails (`.eml`) und Anhänge liegen **als Dateien** unter `<datenverzeichnis>/
 
 ## Volltextsuche (FTS5-Strategie)
 
-Ziele: Umlaute und deutsche Flexionen finden („Rechnung" ↔ „Rechnungen"), Teilwörter in Komposita finden („Vollstreck" ↔ „Zwangsvollstreckung"), Antwort unter 300 ms bei 100.000 Nachrichten.
+Ziele: Umlaute und deutsche Flexionen finden („Rechnung" ↔ „Rechnungen"), Teilwörter in Komposita finden („Vollstreck" ↔ „Zwangsvollstreckung"), Antwort unter 300 ms bei 100.000 Nachrichten. Umgesetzt mit S1.7 (Migration 0004, `internal/search`, `internal/store/search.go`, `internal/store/index.go`, `internal/jobs`).
 
-Zwei **contentless** FTS5-Tabellen (sie speichern nur den Index, nicht den Text; `contentless_delete=1` erlaubt Löschen). `rowid` = `messages.id`.
+Zwei **contentless** FTS5-Tabellen (sie speichern nur den Index, nicht den Text; `contentless_delete=1` erlaubt Löschen). `rowid` = `messages.id`. Beide haben **dieselben Spalten**, damit Feldfilter (`from:` …) in beiden gleich wirken:
 
-| Tabelle | Tokenizer | Spalten | Zweck |
+| Tabelle | Tokenizer | Inhalt der Spalten `subject, sender, recipients, body, attachments` | Zweck |
 |---|---|---|---|
-| `fts_messages` | `unicode61 remove_diacritics 2` | `subject, sender, recipients, body, attachments_text, body_stem` | Wortsuche; ä/ö/ü/ß-Normalisierung; `body_stem` trägt den **app-seitig** berechneten deutschen Wortstamm |
-| `fts_trigram` | `trigram` | `subject, sender, body` | Teilwort-/Infixsuche (ab 3 Zeichen) |
+| `fts_messages` | `unicode61 remove_diacritics 2`, `prefix='1 2'` | gefaltete und **gestemmte** Wörter (app-seitig, `internal/search`) | Wortsuche mit Flexionen, Phrasen, Präfix für kurze Anfragen; BM25 |
+| `fts_trigram` | `trigram` | gefalteter Text, Leerraum zusammengefasst | Teilwörter und Komposita (ab 3 Zeichen) |
 
-- **Warum app-seitig stemmen:** FTS5 bringt nur `unicode61` und einen englischen Porter-Stemmer mit. Der deutsche Wortstamm (Snowball-German) wird beim Indizieren berechnet und in `body_stem` geschrieben; dieselbe Funktion stemmt die Suchbegriffe. Welche Go-Bibliothek dafür dient, wird in S1 entschieden (Anforderung: reines Go, permissive Lizenz, Snowball-German-konform; andernfalls Portierung des Algorithmus). Bleve bleibt als Option, falls FTS5 die Qualitätsziele verfehlt.
-- **Normalisierer (Befund Spike S0):** `unicode61` faltet ä/ö/ü, aber **nicht ß/ss** (Erdgeschoss und Erdgeschoß sind verschiedene Wörter) und findet keine Teilwörter. Ein app-seitiger Normalisierer faltet ß zu ss, in Indexierung und Anfrage gleichermaßen; Komposita bleiben Aufgabe des Trigram-Index.
-- **Komposita:** Der Stemmer zerlegt sie nicht; dafür ist `fts_trigram` da. Die Suche kombiniert beide: Wortstamm-Treffer zuerst (Ranking), Trigram-Treffer ergänzend.
-- **Indexpflege durch die Anwendung**, nicht durch Trigger (der Stamm ist app-seitig). Ein `index`-Job schreibt bzw. ersetzt die Zeilen einer Nachricht; Löschen per `DELETE … WHERE rowid = ?`.
-- **Ranking:** `bm25()` mit Spaltengewichten (Betreff vor Absender vor Body); Cursor-Paginierung über `(rank, rowid)`.
-- **Abfragesprache** (nach Gmail-Vorbild) wird in einen FTS-Ausdruck plus SQL-Filter übersetzt: `from:`, `to:`, `subject:`, `after:`, `before:`, `has:attachment`, `in:`, `tag:`, `is:unread`. Das Ergebnis des Übersetzers ist über `--explain` sichtbar. Nutzereingaben werden **nie** unmaskiert in `MATCH` gegeben (Syntaxfehler und Injektionen im Ausdruck).
-- **Messbar machen:** ein Testsatz mit Suchbegriffen, Flexionen und erwarteten Treffern liegt im Korpus (siehe [testkorpus.md](testkorpus.md)); er wird mit jeder Änderung am Tokenizer oder Stemmer ausgeführt.
-- **Versionierung:** Ändern sich Tokenizer oder Stemmer, erhöht sich `meta.fts_version`; ein `index`-Job baut den Index neu. Der Index ist jederzeit aus Datenbank und Blobs rekonstruierbar.
-- Getestet im Gerüst: Einfügen, Umlaut-Treffer, Wortstamm-Präfix, Trigram-Infix, Löschen (`TestFTS5Strategy`).
+Spalteninhalt: `subject` Betreff, `sender` Absender („Name <adresse>"), `recipients` An und Cc („Name adresse"), `body` bereinigter Text (Klartextteil, sonst Text aus dem HTML-Teil; versteckter Text ist dort schon entfernt, S1.6), `attachments` Dateinamen aller Anhänge und extrahierter Text (nur `extract_status = ok`). Je Nachricht gehen höchstens 256 KiB Text und 256 KiB Anhangstext in den Index (`search.MaxBodyBytes`, `MaxAttachmentsBytes`); Wörter über 64 Bytes (Base64-Reste, Hashes) nur in den Trigram-Index.
+
+- **Normalisierer** (`search.Fold`, Befund Spike S0: `unicode61` faltet ä/ö/ü, aber **nicht ß/ss**): Kompatibilitätszerlegung (NFKD), diakritische Zeichen weg, Kleinschreibung, ß (auch ẞ) → ss, dann die deutschen Umschreibungen wie in Snowball „german2": ae → a, oe → o, ue → u, außer „ue" nach q (Quelle) und wenn das u zwischen Vokalen steht (Steuer, Bauer, neue). So sind „prüfen", „pruefen" und „prufen" dasselbe Wort, ebenso „Erdgeschoß"/„Erdgeschoss" und „Zählerstände"/„Zaehlerstaende". **Index und Anfrage laufen durch dieselbe Funktion.** Grenze: Ein Teilwort, das mitten im Wort mit „ue" beginnt („uer" aus „Steuer"), wird anders gefaltet als das ganze Wort und findet es nicht.
+- **Stemmer** (siehe unten): berechnet beim Indizieren den Stamm jedes Wortes; dieselbe Funktion stemmt die Suchbegriffe.
+- **Komposita:** Der Stemmer zerlegt sie nicht; dafür ist `fts_trigram` da. Jeder Suchbegriff ab 3 Zeichen trifft, wenn er als Wortstamm **oder** als Teilwort vorkommt; kürzere Begriffe nur über den Wortindex mit Präfix (`"ab"*`). Folge: „Rechnung" findet auch „Abrechnung" (Teilwort), „Rechnungen" findet „Rechnung" (Stamm), aber nicht „Abrechnung".
+- **Indexpflege durch die Anwendung**, nicht durch Trigger (der Stamm ist app-seitig): Trigger reihen nur ein (`index_queue`) und löschen Zeilen gelöschter Nachrichten. Der `index`-Job (`internal/jobs`) arbeitet die Warteschlange in Transaktionen zu 200 Nachrichten ab (Text lesen, Spalten berechnen, Zeilen ersetzen, austragen; Lesen und Schreiben in einer Transaktion); ein Abbruch verliert höchstens die laufende Transaktion, der nächste Lauf macht dort weiter.
+- **Ranking:** Je Suchbegriff der beste Wert aus Wortindex (`bm25` mit Spaltengewichten Betreff 3, Absender 2, Empfänger 1, Text 1, Anhänge 0,5) und Trigram-Index (halbes Gewicht); die Summe über alle Begriffe ist die Relevanz. Dazu das Datum: Relevanz × (1 + 1 / (1 + Alter / 90 Tage)); eine neue Nachricht zählt bis zu doppelt, eine 90 Tage alte 1,5-fach, eine ein Jahr alte rund 1,2-fach. Ohne Suchbegriffe (nur Operatoren) neueste zuerst.
+- **Cursor-Paginierung** (Keyset) über `(Sortierwert, id)`; der Cursor ist undurchsichtig (Base64-JSON), an die Anfrage gebunden (Fingerabdruck) und hält den Bezugszeitpunkt der ersten Seite fest, damit der Datumsanteil auf allen Seiten gleich gerechnet wird. Ändert sich der Index zwischen zwei Seiten, können Treffer fehlen oder doppelt erscheinen (wie bei jeder Keyset-Paginierung über einen veränderlichen Bestand).
+- **Abfragesprache** (nach Gmail-Vorbild, [cli.md](cli.md) Abschnitt 2d) wird in FTS-Ausdrücke plus SQL-Filter übersetzt: Freitext, `"Phrase"`, `-Ausschluss`, `from:`, `to:`, `subject:`, `has:attachment`, `is:unread|read|flagged|answered|draft`, `in:`/`mailbox:`, `thread:`, `tag:`, `after:`, `before:`. Alle Teile sind mit UND verknüpft (kein `OR`). Das Ergebnis des Übersetzers ist über `--explain` sichtbar. Nutzereingaben werden **nie** unmaskiert in `MATCH` gegeben: Jedes Wort und jede Phrase steht als FTS5-Zeichenkette in Anführungszeichen (innere verdoppelt), Filterwerte sind SQL-Parameter (Test mit FTS5-Syntax in der Eingabe).
+- **Messbar:** Der Suchtestsatz liegt im Korpus (Manifest-Feld `search`, [testkorpus.md](testkorpus.md)) und läuft in `make check` nach einem Erstsync (`internal/mailsync/s17_test.go`); dazu Einzeltests in `internal/search` und `internal/store/search_test.go`. Messung mit 100.000 Nachrichten: [suche_messung.md](suche_messung.md).
+- **Versionierung:** Ändern sich Normalisierer, Stemmer oder Spalten, erhöht sich `search.FTSVersion`; der nächste Job-Lauf leert beide Tabellen (`delete-all`), reiht alle Nachrichten ein und setzt `meta.fts_version` (`EnsureFTSVersion`). Der Index ist jederzeit aus Datenbank (und Blobs) rekonstruierbar.
+
+### Stemmer: Entscheidung (S1.7)
+
+**Gewählt: `github.com/blevesearch/snowballstem` v0.9.0, Paket `german`** (per `go get` aufgelöst; Lizenz BSD-3-Clause; reines Go, keine weiteren Abhängigkeiten, verlangt `go 1.13`).
+
+- **Warum:** Der Code ist vom Snowball-Compiler aus der Referenzbeschreibung erzeugt, nicht von Hand portiert; damit ist er „Snowball-German-konform" per Konstruktion. Bleve (die Go-Suchmaschine, ADR-005 nennt sie als Option) nutzt dieselben Stemmer; das Modul ist dafür aus Bleve herausgelöst. Klein (eine Datei je Sprache), keine CGO-, Netz- oder Dateizugriffe.
+- **Geprüfte Alternativen:** `github.com/kljensen/snowball` (MIT) hat keinen deutschen Stemmer (Englisch, Spanisch, Französisch, Russisch, Schwedisch, Norwegisch, Ungarisch); `github.com/dchest/stemmer` hat keine Versionen (nur Pseudo-Versionen) und wäre ebenfalls eine Hand-Portierung. Ein eigener Port (Rückfall laut Auftrag) war nicht nötig.
+- **Variante:** Das Modul enthält das klassische „german" (ß → ss, Umlaute am Ende zu a/o/u). Die Umschreibungen ae/oe/ue der Variante „german2" erledigt der Normalisierer vorher, für Index und Anfrage gleich.
+- **Beispiele** (Test `TestStemmerGerman`): Rechnungen → rechnung, prüfen/pruefen → pruf, Häuser → haus, Erdgeschosses → erdgeschoss. Der Stemmer trennt keine Vorsilben ab („geprüft" bleibt „gepruft") und keine Komposita (dafür Trigram).
+- Getestet zusätzlich: Einfügen, Löschen per Trigger, Präfix, Trigram mit Spaltenfilter (`TestFTS5Strategy`), Warteschlange und Änderungen (`TestIndexFollowsChangesAndDeletes`), Neuaufbau (`TestEnsureFTSVersionRebuilds`).
 
 ## Migrationen
 
