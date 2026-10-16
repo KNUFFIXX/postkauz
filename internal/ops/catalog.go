@@ -15,7 +15,9 @@ type Deps struct {
 	Messages  MessageRepo
 	Blobs     BlobReader
 	Runner    SyncRunner
-	Search    SearchRepo
+	// Importer liest mbox/Maildir ein (import.run, S1.10).
+	Importer ImportRunner
+	Search   SearchRepo
 	// Extractor extrahiert Anhangstext bei Bedarf (attachments.text);
 	// nil = nur gespeicherte Ergebnisse zeigen.
 	Extractor *extract.Extractor
@@ -37,6 +39,7 @@ func Catalog(d Deps) []Operation {
 		AccountsRemove(d.Accounts, d.Secrets),
 		AccountsTest(d.Accounts, d.Secrets, d.Prober),
 		SyncRun(d.Accounts, d.Secrets, d.Runner),
+		ImportRun(d.Accounts, d.Importer),
 		MailboxesList(d.Accounts, d.Mailboxes),
 		MailboxesOverview(d.Accounts, d.Mailboxes, d.Search),
 		MessagesGet(d.Accounts, d.Messages, d.Blobs),

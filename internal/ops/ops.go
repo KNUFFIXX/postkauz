@@ -43,11 +43,15 @@ type Call struct {
 // Progress ist eine Fortschrittsmeldung einer langen Operation. Sie enthält
 // nie Mailinhalte, nur Ordnernamen und Zähler.
 type Progress struct {
-	Event   string `json:"event"` // mailbox_start | window | mailbox_done | round | error | info
+	Event   string `json:"event"` // mailbox_start | window | mailbox_done | round | error | info | import_*
 	Mailbox string `json:"mailbox,omitempty"`
 	Done    int    `json:"done,omitempty"`
 	Total   int    `json:"total,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Source und Unit: Quelle eines Imports (Pfad relativ zum angegebenen
+	// Ordner) und Einheit von Done/Total (bytes | files; S1.10).
+	Source string `json:"source,omitempty"`
+	Unit   string `json:"unit,omitempty"`
 	// Round ist das Ergebnis eines Laufs im Dauerbetrieb (sync --watch).
 	Round *SyncOutput `json:"round,omitempty"`
 }

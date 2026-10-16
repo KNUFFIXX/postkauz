@@ -28,7 +28,7 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 | `mail:sync` | Sync anstoßen | R1 |
 | `mail:export` | Anhänge in das Exportverzeichnis schreiben | R1 |
 | `audit:read` | Audit-Log lesen | R0 |
-| `admin` | Konten, Schlüssel, Policy verwalten. **Ersetzt keine Mail-Scopes.** | – |
+| `admin` | Konten, Schlüssel, Policy verwalten; seit S1.10 Import aus lokalen Dateien (`import.run`: liest beliebige mbox-/Maildir-Pfade, deshalb nur Mensch, kein MCP-Tool). **Ersetzt keine Mail-Scopes.** | – |
 
 **Rollen** bündeln Scopes (`policy.Roles`, getestet): `reader` (read, search, audit:read) · `assistant` (reader + draft, tag, sync) · `operator` (assistant + move, trash, export) · `admin` (operator + admin). Agenten bekommen standardmäßig `assistant`; `operator` nur bewusst. Ein Schlüssel kann seine Rolle mit `--scopes` nur **verengen** (z. B. `reader` nur mit `mail:search`).
 

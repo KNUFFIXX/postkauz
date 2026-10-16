@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S1.9 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain`; seit S1.9 `mcp` (Abschnitt 2h). Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.10 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain`; seit S1.9 `mcp` (Abschnitt 2h), seit S1.10 `import mbox` und `import maildir` (Abschnitt 2i). Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -43,7 +43,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.8 ✓ | `audit [--since …]`, `audit export --to <ordner>`, `audit verify` (Abschnitt 2f) | `audit.list` (R0, `audit:read`), `audit.export` (R1, `admin`), `audit.verify` (R0, `audit:read`) |
 | S1.8 ✓ | `policy show` (Abschnitt 2e) | `policy.get` (R0, jeder Schlüssel) |
 | S1.9 ✓ | `mcp` (Abschnitt 2h) | startet den stdio-MCP-Server (kein Registerbefehl; jeder Tool-Aufruf läuft einzeln durch den Executor) |
-| S1 | `import mbox`, `import maildir` | `import.run` |
+| S1.10 ✓ | `import mbox <datei\|ordner>`, `import maildir <ordner>` (Abschnitt 2i) | `import.run` (Scope `admin`, R1; nicht über MCP) |
 | S2 | `draft new`, `draft reply`, `draft forward`, `draft list`, `draft show`, `draft edit` | `drafts.*` |
 | S2 | `approve <id>`, `reject <id>` | `approvals.decide` |
 | S3 | `tag`, `mark`, `move`, `trash`, `attach save` | `messages.*`, `attachments.save` |
@@ -79,8 +79,8 @@ postkauz audit --since 24h --actor agent --json                             # S1
 postkauz audit export --to D:\audit-export                                  # S1.8 ✓
 postkauz audit verify                                                       # S1.8 ✓, Export-Prüfsummen gegen die Datenbank
 
-# S1 (Entwurf)
-postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024
+postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024   # S1.10 ✓
+postkauz import mbox "%APPDATA%\Thunderbird\Profiles\x.default\ImapMail\imap.example.org" -a demo --dry-run   # S1.10 ✓
 
 # S2 (Entwurf)
 postkauz draft reply 18233 --all --body-file antwort.md --quote             # legt den Entwurf in den Entwürfe-Ordner
@@ -212,6 +212,45 @@ Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehr
 - Jeder Tool-Aufruf und jedes Lesen einer Resource steht im Audit mit `key:<name>` und Akteur `agent`, ohne Mailtext (`postkauz audit --key-id key:<name>`).
 - `--profile` und `POSTKAUZ_DATA_DIR` wählen die Datenbank wie bei jedem Kommando. Der Server synct nicht; aktuell hält die Daten `sync` bzw. `sync --watch`.
 - Log: Start, Ende und je Aufruf Tool, Schlüssel und Audit-ID in `postkauz.log` (ohne Inhalte); stdout gehört allein dem Protokoll.
+
+## 2i. Import aus mbox und Maildir (S1.10)
+
+```
+postkauz import mbox <datei|ordner> [-a KONTO] [--mailbox ZIEL] [--labels-from ORDNER]... [--rescan] [--dry-run]
+postkauz import maildir <ordner>    [-a KONTO] [--mailbox ZIEL] [--labels-from ORDNER]... [--rescan] [--dry-run]
+```
+
+Liest einen Bestand in ein Konto ein, ohne den Server zu berühren (Operation `import.run`, Scope `admin`, R1; nur der Mensch an der CLI, kein MCP-Tool, weil sie beliebige lokale Dateien liest).
+
+- **Abgleich über Identität, nicht über Datum** (ADR-003): Gibt es die Nachricht im Konto schon (gleiche Message-ID, sonst gleicher `content_hash`; dabei zählen auch Varianten mit einem Zeilenende mehr oder weniger am Schluss), wird sie nicht doppelt gespeichert; sie bekommt nur den Ordner des Imports zugeordnet (`existing`). Ihre Flags bleiben die des Servers. Sonst wird sie neu angelegt (`new`) und läuft durch dieselbe Aufbereitung wie beim Sync (Parser, Bereinigung, Anhänge mit Typprüfung, Threads); am Ende laufen Extraktion und Suchindex wie nach einem Sync. Eine nur importierte Nachricht zeigt `show` mit „deleted on server: not on the server (imported only)".
+- **Ordner:** Importierte Ordner sind eigene, lokale Ordner neben denen des Servers (der Sync löscht sie nie). `show` nennt sie mit „(imported)", die Suche findet sie mit `in:<pfad>` (auch Unterordner) und `in:import` (alles Importierte). `mailbox list` zeigt nur die Ordner des Servers.
+- **Zielordner:** Bei einer einzelnen Datei bzw. der Wurzel eines Maildirs ist `--mailbox` der Ordner (ohne Angabe: Dateiname bzw. `INBOX`); bei einem Verzeichnis ist es das Präfix der Ordner darunter (ohne Angabe: Pfade relativ zum Verzeichnis).
+- **Thunderbird** (Profilordner `ImapMail/<server>` oder `Mail/Local Folders`, Ablage „mbox"): Jede Datei, die mit einer Trennzeile `From ` beginnt, ist ein Ordner; Unterordner liegen in `<ordner>.sbd/` und werden zu `<ordner>/<unterordner>`; Ordnernamen in Thunderbirds IMAP-UTF-7 werden dekodiert (`Entw&APw-rfe` → `Entwürfe`); `.msf`-Index- und andere Dateien werden übersprungen (`files ignored`). Aus `X-Mozilla-Status` werden Flags (gelesen, beantwortet, markiert), aus `X-Mozilla-Keys` Schlagwörter; **gelöscht markierte Nachrichten (Bit 0x0008) werden übersprungen** (`skipped`); die `X-Mozilla-*`-Zeilen und das `>From`-Quoting werden entfernt, damit die Nachricht der Kopie des Servers gleicht. Nur teilweise heruntergeladene Nachrichten (Bit 0x0400) werden mit Hinweis importiert. Andere mbox-Dateien (z. B. Gmail-Export) werden als mboxrd gelesen.
+- **Maildir:** `cur/` und `new/`; Flags aus dem Dateinamen hinter `:2,` (unter Windows auch `!2,`/`;2,`): S, R, F, D; mit T markierte Dateien und Dateien in `tmp/` (laufende Zustellung) werden übersprungen. Unterordner im Maildir++-Stil (`.Archiv.2024` → `Archiv/2024`) und im Thunderbird-Stil (`<ordner>.sbd/`).
+- **Labels (`--labels-from`)**: Nachrichten dieser Ordner werden **nur zugeordnet**, nie gespeichert; was dort nicht schon vorhanden ist, zählt als `skipped`. Gedacht für Gmail, wo „Alle Nachrichten" alles enthält und INBOX, Gesendet, Wichtig und jedes Label Kopien derselben Mails sind. Dateien, die schon als Inhalt gelesen werden, werden dabei übergangen. Beispiel (PowerShell, Thunderbird-Profil):
+
+  ```powershell
+  $tb = "$env:APPDATA\Thunderbird\Profiles\<profil>\ImapMail\imap.gmail.com"
+  postkauz import mbox "$tb\[Gmail].sbd\Alle Nachrichten" -a gmail --mailbox "[Gmail]/Alle Nachrichten" --labels-from $tb --dry-run
+  ```
+
+- **Große Dateien, Wiederaufnahme:** Dateien werden gestreamt (im Speicher höchstens ein Kopf von 1 MiB und ein Stapel Metadaten; gemessen in [import_messung.md](import_messung.md)). Je Stapel (200 Nachrichten bzw. 32 MiB) wird die Position in der Datei mit den Nachrichten gespeichert; nach einem Abbruch (Strg+C, Absturz, `kill -9`) setzt derselbe Aufruf dort fort (`(resumed)`). Eine fertig importierte Quelle mit gleicher Größe wird beim nächsten Lauf nicht wieder gelesen (`unchanged`); eine gewachsene mbox-Datei wird ab der gespeicherten Position weitergelesen. `--rescan` liest alles neu (findet nichts doppelt, kostet nur Zeit).
+- **Fortschritt** je Datei auf stderr (Prozent, Größe, MB/s; bei Maildir Dateien), höchstens einmal je Sekunde; `--quiet` schaltet ihn ab.
+- **`--dry-run`** liest alles und zählt, schreibt aber nichts (keine Nachricht, keine Datei im Blob-Store, kein Stand).
+- **Sperre:** Ein Import sperrt das Konto wie ein Sync; läuft `sync --watch` für dasselbe Konto, endet der Import mit `sync_running` (Exit 1), und umgekehrt.
+- **Ausgabe:** je Quelle eine Zeile, danach Hinweise und als letzte Zeile die Zählung, z. B.
+
+  ```
+  import maildir into account demo (2.1s, 4.9 MB, 2.3 MB/s)
+  SOURCE    FOLDER           MODE     NEW  EXISTING  SKIPPED  ERRORS
+  Mail      Archive          content  700  300       3        0
+  1 files ignored (not mbox, e.g. Thunderbird .msf index files)
+  search index: 700 messages indexed
+  new: 700, existing: 300, skipped: 3, errors: 0
+  ```
+
+  Ein zweiter Lauf zeigt `new: 0`. Mit `--json` ein Objekt nach dem `OutputSchema` von `import.run` (je Quelle `new`, `existing`, `skipped`, `errors`, `linked`, `bytes`, `resumed_at`, `unchanged`, `problems`; gesamt zusätzlich `linked`, `sources_unchanged`, `files_ignored`). `errors` zählt Nachrichten, die nicht gelesen oder gespeichert werden konnten (z. B. über 256 MiB); der Lauf geht weiter (Exit 0).
+- **Eingabefehler** (unbekanntes Format, Pfad fehlt, kein mbox/Maildir gefunden): Exit 2. Im Audit stehen Konto und Feldnamen, nie Pfade.
 
 ## 3. Maschinenlesbarkeit (`--json`)
 

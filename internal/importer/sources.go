@@ -105,6 +105,10 @@ func Discover(path, format, mailbox, mode string) (srcs []Source, ignored int, e
 				return nil
 			}
 			rel, _ := filepath.Rel(abs, p)
+			shown := rel
+			if rel == "." {
+				shown = filepath.Base(abs)
+			}
 			folder := mailbox
 			if rel != "." {
 				folder = folderPath(mailbox, rel)
@@ -113,7 +117,7 @@ func Discover(path, format, mailbox, mode string) (srcs []Source, ignored int, e
 				// die INBOX; Unterordner ".Archiv" heißen "Archiv".
 				folder = "INBOX"
 			}
-			srcs = append(srcs, Source{Path: p, Rel: filepath.ToSlash(rel), Format: format, Folder: folder, Mode: mode})
+			srcs = append(srcs, Source{Path: p, Rel: filepath.ToSlash(shown), Format: format, Folder: folder, Mode: mode})
 			return nil
 		})
 	default:

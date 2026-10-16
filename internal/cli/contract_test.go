@@ -117,6 +117,7 @@ var cliSamples = []cliSample{
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m"}, true},
+	{"import.run", []string{"import", "mbox", "{mbox}", "-a", "demo", "--mailbox", "Archiv", "--labels-from", "{labels}", "--rescan"}, false},
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},
 	{"mailboxes.overview", []string{"mailbox", "overview", "{mailbox}", "-a", "demo", "--since", "3650d", "--limit", "5"}, false},
 	{"messages.get", []string{"show", "{html}", "--strip-quotes", "--max-chars", "10"}, false},
@@ -169,7 +170,21 @@ func seedS16(t *testing.T) map[string]string {
 	if len(html.Attachments) != 1 || answer.ThreadID == 0 || hit.Cursor == "" {
 		t.Fatalf("seed: html=%+v answer=%+v hit=%+v", html.Attachments, answer.ThreadID, hit)
 	}
-	return map[string]string{"html": fmt.Sprint(html.ID), "answer": fmt.Sprint(answer.ID), "thread": fmt.Sprint(answer.ThreadID),
+	// mbox mit einer neuen und einer vorhandenen Nachricht; Label-Ordner.
+	dir := t.TempDir()
+	mbox := filepath.Join(dir, "Archiv")
+	labels := filepath.Join(dir, "labels")
+	if err := os.WriteFile(mbox, []byte("From - Thu Oct 15 10:00:00 2026\nX-Mozilla-Status: 0001\nSubject: neu\nMessage-ID: <neu@example.org>\n\nneu\n\n"+
+		"From - Thu Oct 15 10:00:00 2026\nSubject: x\nMessage-ID: <html@example.org>\n\nx\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(labels, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(labels, "Wichtig"), []byte("From - Thu Oct 15 10:00:00 2026\nSubject: x\nMessage-ID: <neu@example.org>\n\nx\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"mbox": mbox, "labels": labels, "html": fmt.Sprint(html.ID), "answer": fmt.Sprint(answer.ID), "thread": fmt.Sprint(answer.ThreadID),
 		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "mailbox": fmt.Sprint(boxes.Mailboxes[0].ID), "exportdir": filepath.Join(t.TempDir(), "audit")}
 }
 

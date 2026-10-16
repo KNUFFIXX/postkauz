@@ -177,6 +177,7 @@ var contractInputs = map[string]struct {
 	"accounts.remove":    {input: `{"name":"leer"}`},
 	"accounts.test":      {input: `{"name":"demo"}`},
 	"sync.run":           {input: `{"account":"demo"}`},
+	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true}`},
 	"mailboxes.list":     {input: `{"account":"demo"}`},
 	"mailboxes.overview": {input: `{"account":"demo","mailbox":1,"since":"3650d","limit":5}`},
 	"messages.get":       {input: `{"message_id":"a@example.org","account":"demo","headers":true}`},
@@ -193,6 +194,9 @@ var contractInputs = map[string]struct {
 	"policy.get":         {input: `{}`},
 }
 
+// contractImporter meldet Importe, die schreiben dürften (DryRun=false).
+type contractImporter struct{ fakeImporter }
+
 // contractRunner zählt Syncs, die schreiben dürften (DryRun=false).
 type contractRunner struct{ fakeRunner }
 
@@ -202,8 +206,9 @@ func (c *contractRunner) Sync(ctx context.Context, a store.Account, pw secrets.S
 
 type contractEnv struct {
 	*mirrorEnv
-	runner *contractRunner
-	deps   Deps
+	runner   *contractRunner
+	importer *contractImporter
+	deps     Deps
 }
 
 // newContractEnv: Konto demo mit Passwort, einem Ordner und einer Nachricht;
@@ -229,8 +234,9 @@ func newContractEnv(t *testing.T) *contractEnv {
 		t.Fatal(err)
 	}
 	r := &contractRunner{}
-	return &contractEnv{mirrorEnv: m, runner: r, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
-		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Search: m.st, Extractor: extract.New(extract.Options{}),
+	imp := &contractImporter{}
+	return &contractEnv{mirrorEnv: m, runner: r, importer: imp, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
+		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir()}}
 }
 
@@ -278,6 +284,9 @@ func (e *contractEnv) fingerprint(t *testing.T) string {
 	fmt.Fprintf(&b, "secrets %v\n", keys)
 	if e.runner.acct != "" && !e.runner.got.DryRun {
 		b.WriteString("sync wrote\n")
+	}
+	if e.importer.acct != "" && !e.importer.got.DryRun {
+		b.WriteString("import wrote\n")
 	}
 	return b.String()
 }

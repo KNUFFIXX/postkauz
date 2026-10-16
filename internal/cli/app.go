@@ -10,6 +10,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/importer"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
@@ -23,6 +24,11 @@ var openSecrets = secrets.Open
 // newProber ist in Tests ersetzbar.
 var newProber = func(c config.IMAP) ops.AccountProber {
 	return imapprov.Prober{CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration}
+}
+
+// newImporter ist in Tests ersetzbar.
+var newImporter = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.ImportRunner {
+	return &importer.Runner{Store: st, Blobs: b, Log: log}
 }
 
 // newSyncRunner ist in Tests ersetzbar.
@@ -107,7 +113,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
-		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Search: st, Extractor: extract.New(extract.Options{}),
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
 		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir})
 	if err != nil {
 		return nil, err

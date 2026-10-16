@@ -8,6 +8,7 @@ var notOverMCP = map[string]string{
 	"accounts.test":   "admin: uses the account password, human only (CLI)",
 	"accounts.remove": "admin: human only (CLI)",
 	"sync.run":        "mail_sync_now needs the job type sync (the MCP process does not sync itself, docs/architektur.md section 7); later",
+	"import.run":      "admin: reads local files (mbox, maildir) into the archive; human only (CLI)",
 	"keys.create":     "admin: key management is for humans only",
 	"keys.list":       "admin: key management is for humans only",
 	"keys.revoke":     "admin: key management is for humans only",
