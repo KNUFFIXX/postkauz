@@ -190,14 +190,18 @@ if ($NoTest) {
 
 # 5. Einmal starten und pruefen, dass der Export wirklich lief
 Write-Step "Starting the task once to check it ..."
-$before = (Get-Date).ToUniversalTime().AddSeconds(-5)
+$startLocal = (Get-Date).AddSeconds(-5)
+$before = $startLocal.ToUniversalTime()
 Start-ScheduledTask -TaskName $TaskName
+# Warten, bis der Lauf begonnen (LastRunTime) und geendet hat (nicht mehr
+# Running); hoechstens zwei Minuten.
 $deadline = (Get-Date).AddSeconds(120)
 do {
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
     $state = (Get-ScheduledTask -TaskName $TaskName).State
-} while ($state -eq "Running" -and (Get-Date) -lt $deadline)
-$info = Get-ScheduledTaskInfo -TaskName $TaskName
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName
+    $started = ($info.LastRunTime -ge $startLocal)
+} while ((-not $started -or $state -eq "Running") -and (Get-Date) -lt $deadline)
 $report = Get-DoctorReport -Exe $ExePath -ProfileName $ProfileName
 $last = [datetime]::MinValue
 $ok = $false
