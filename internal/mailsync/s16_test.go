@@ -11,6 +11,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/corpus"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/jobs"
 )
 
 // Akzeptanz S1.6 über den Sync: Der Korpus wird gegen den Testserver im
@@ -25,7 +26,7 @@ func TestCorpusCleanupAttachmentsAndExtraction(t *testing.T) {
 	e := newEnv(t, addr)
 	eng := e.engine(t, connect(t, addr, 0))
 	ex := extract.New(extract.Options{Timeout: 20 * time.Second})
-	eng.Extractor, eng.ExtractBudget = ex, 5*time.Minute
+	eng.Jobs = &jobs.Runner{Store: e.st, Blobs: e.blobs, Extractor: ex, ExtractBudget: 5 * time.Minute}
 	rep, err := eng.SyncAll(context.Background(), Options{})
 	if err != nil || rep.Mirrored != memCount {
 		t.Fatalf("sync = %+v %v", rep, err)

@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: S1.6 (16.10.2026). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
+Stand: S1.7 (16.10.2026). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
 
 „PostKauz" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
 
@@ -65,7 +65,7 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/ops` | Register, Executor (mit Schwärzung je Operation, Fortschrittsmeldungen), `accounts.list/add/test/remove`, `sync.run`, `mailboxes.list`, `messages.get`, `threads.get`, `attachments.list`, `attachments.text` | S1.6 + Tests |
 | `internal/policy` | Scope, Risiko R0–R3, `Check` | Stub + Tests |
 | `internal/audit` | Event-Typ, Writer-Schnittstelle | Typ + Stubs (SQLite-Writer im Store) |
-| `internal/store` | Migrationen mit Schema-Schutz und Snapshot (`VACUUM INTO`), Konten, SQLite-Audit-Writer, Spiegel (Ordner, Nachrichten, Zuordnungen, Fenster als Transaktion) | S1.5 + Tests |
+| `internal/store` | Migrationen mit Schema-Schutz und Snapshot (`VACUUM INTO`), Konten, SQLite-Audit-Writer, Spiegel (Ordner, Nachrichten, Zuordnungen, Fenster als Transaktion), Threads, Texte, Anhänge, Index-Warteschlange und Suche (FTS5), Jobs | S1.7 + Tests |
 | `internal/config` | TOML-Konfiguration, Pfade (Konfiguration, Daten, Datenbank, Log) | S1.1 + Tests |
 | `internal/secrets` | Schlüsselbund (go-keyring), Umgebung, unsicherer Testspeicher, `Secret`-Typ | S1.1 + Tests |
 | `internal/imapx` | dünne Schicht über go-imap (ADR-007, v2.0.0-beta.8 gepinnt): Dial mit Watchdog (misst Schweigen, Rückrufe ausgenommen, plus Obergrenze je Kommando; ADR-007 Nachtrag 1) und TCP-Keepalive, `Session` mit Reconnect und Backoff, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST mit SPECIAL-USE/LIST-STATUS, CREATE, NOOP, EXAMINE/SELECT (CONDSTORE), UID SEARCH (ESEARCH), FETCH (Metadaten, Flags mit CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND, STORE (nur Testwerkzeuge/S3, kein `\Deleted`), IDLE mit eigenem Neustart | S1.5 + Tests |
@@ -75,15 +75,17 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/sanitize` | Body-Bereinigung: HTML → Text mit Allowlist, versteckter Text erkennen und entfernen, Links sichtbar mit Warnungen, unsichtbare Formatzeichen entfernen, Quote-Stripper | S1.6 + Korpus-Test, Fuzz-Test |
 | `internal/magic` | Typ eines Anhangs aus Magic Bytes (ZIP-Formate nur über Eintragsnamen, nie entpackt), Vergleich mit Content-Type und Endung, ausführbare Typen | S1.6 + Korpus-Test |
 | `internal/extract` | Textextraktion: PDF über `pdftotext`, DOCX im eigenen Kindprozess, Text/HTML/Mail im Prozess; Zeit-, Ein-/Ausgabe- und Speichergrenzen, knappe Umgebung | S1.6 + Tests (hängender Fake-Extraktor) |
+| `internal/search` | Volltextsuche ohne Datenbankzugriff: Normalisierer (`Fold`: Diakritika, ß→ss, ae/oe/ue), deutscher Stemmer (Snowball über `blevesearch/snowballstem`), Index-Spalten je Nachricht, Abfragesprache (Parser, Übersetzung in FTS5-Ausdrücke und Filter), Cursor | S1.7 + Tests |
+| `internal/jobs` | Warteschlange abarbeiten (Tabelle `jobs`): `extract` (Anhangstext im Subprozess, Zeitbudget je Lauf) und `index` (Volltextindex in Transaktionen); Sperre mit Ablauf, Übernahme nach Abbruch, Wiederholung nach Fehlern | S1.7 + Tests |
 | `internal/thread` | Threading: Zuordnung über Message-ID/In-Reply-To/References (vereinigt Threads), Rückfall normalisierter Betreff im 30-Tage-Fenster für Antworten ohne Verweise; Index im Speicher und in SQLite (`internal/store`) | S1.6 + Korpus-Test |
 | `internal/corpus` | Generator des synthetischen Testkorpus mit Manifest (`make corpus`); `imapload` und `cmd/corpusload` legen ihn per APPEND in einem lokalen Testserver ab (`make corpus-load`) | S1.2/S1.4 + Tests |
 | `internal/provider` | `MailProvider`, `Submission` | Schnittstellen |
 | `internal/provider/imap` | IMAP-Provider über `imapx`: `Connect`, Fähigkeiten, Strategie, `ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen) und Zustand, `Changes` (Fenster, CONDSTORE bzw. UID-Scan, UID-SEARCH-Abgleich), `FetchHeaders`, `FetchRaw`, `Idle` (eigene Verbindung); Verbindungsprüfung für `account test` | S1.5 + Tests, Integrationstest (Docker) |
-| `internal/mailsync` | Sync-Engine gegen eine schmale Provider-Schnittstelle: Ordnerabgleich, Fenster, Abgleich per Message-ID/Größe bzw. `content_hash`, Blob-Store, Parser, Aufbereitung (Text, Links, versteckter Text, Anhänge mit Typprüfung), Threads, Transaktion je Fenster; Nachziehen älterer Bestände und Textextraktion am Ende jedes Laufs; `Watch` (IDLE + Intervall); `Runner` für `sync.run` | S1.6 + Tests, Leck-Tests, Integrationstest (Docker) |
+| `internal/mailsync` | Sync-Engine gegen eine schmale Provider-Schnittstelle: Ordnerabgleich, Fenster, Abgleich per Message-ID/Größe bzw. `content_hash`, Blob-Store, Parser, Aufbereitung (Text, Links, versteckter Text, Anhänge mit Typprüfung), Threads, Transaktion je Fenster; Nachziehen älterer Bestände; am Ende jedes Laufs die Jobs des Kontos (`internal/jobs`: Extraktion, Suchindex); `Watch` (IDLE + Intervall); `Runner` für `sync.run` | S1.7 + Tests, Leck-Tests, Integrationstest (Docker) |
 | `internal/cli` | cobra-Adapter, Exit-Codes, `doctor`, Strg+C-Behandlung | `version`, `doctor`, `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show`, `thread`, `attach list/text` (minimal) |
 | `internal/mcp` | MCP-Adapter | nur Plan (`doc.go`) |
 
-Spätere Pakete (nicht angelegt): `internal/search`, `internal/importer`. Der Sync heißt `internal/mailsync` (nicht `internal/sync`, das kollidierte mit dem Standardpaket `sync`).
+Spätere Pakete (nicht angelegt): `internal/importer`. Der Sync heißt `internal/mailsync` (nicht `internal/sync`, das kollidierte mit dem Standardpaket `sync`).
 
 `make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen) und dass go-imap auf v2.0.0-beta.8 gepinnt bleibt.
 
@@ -230,16 +232,18 @@ Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `j
 | Job-Typ | Auslöser | Inhalt |
 |---|---|---|
 | `sync` | Intervall, IDLE-Signal, `postkauz sync`, `mail_sync_now` | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben |
-| `index` | nach `sync`/`import` | FTS-Zeilen und Wortstamm schreiben (die Body-Bereinigung macht seit S1.6 der Sync beim Speichern) |
-| `extract` | nach `sync` | Anhangstext in Subprozess mit Zeit- und Speicherlimit (S1.6: noch ohne Tabelle `jobs`, am Ende jedes Sync-Laufs mit Zeitbudget 60 s; Rest im nächsten Lauf) |
+| `index` | Trigger, sobald eine Nachricht, ihr Text oder ein Anhang entsteht oder sich ändert (`index_queue`) | FTS-Zeilen beider Tabellen schreiben, 200 Nachrichten je Transaktion, bis die Warteschlange leer ist (seit S1.7; die Body-Bereinigung macht seit S1.6 der Sync beim Speichern) |
+| `extract` | Trigger, sobald ein Anhang auf Extraktion wartet | Anhangstext in Subprozess mit Zeit- und Speicherlimit; Zeitbudget 60 s je Lauf, mindestens ein Anhang, Rest im nächsten Lauf (seit S1.7 über die Tabelle `jobs`; S1.6: am Ende des Syncs ohne Tabelle) |
 | `import` | `postkauz import mbox/maildir` | Einlesen mit Message-ID-/Hash-Abgleich |
 | `export` | `postkauz export`, täglich (Audit) | mbox/EML-Verzeichnis, Audit-JSONL mit Prüfsumme |
 
 Regeln: Jobs sind **idempotent** und wiederholbar; Sperren über `locked_by`/`locked_at` mit Ablauf; `attempts` und `last_error` für Backoff; ein Job je (Konto, Ordner) gleichzeitig.
 
+Umsetzung S1.7 (`internal/jobs`, `internal/store/jobs.go`): Ein Job gilt einem Konto und einer Art (`extract`, `index`), höchstens einer ist offen. Der Sync führt am Ende jedes Laufs (auch je Runde von `sync --watch`) die fälligen Jobs seines Kontos aus: zuerst die Extraktion, dann den Index, damit extrahierter Text im selben Lauf durchsuchbar wird; vorher baut er den Index neu auf, wenn sich `search.FTSVersion` geändert hat. Die Sperre gilt 2 Minuten und wird nach jedem Schritt erneuert; weil der Sync die Kontosperre hält, übernimmt er einen „laufenden" Job seines Kontos sofort (Abbruch per `kill -9` setzt ohne Wartezeit fort). Fehler des Jobs (nicht einzelner Anhänge) werden mit Wartezeit 1, 2, 4 … Minuten (höchstens 1 h) wiederholt, nach 5 Fehlern ist der Job `failed`; neue Arbeit legt dann einen neuen Job an. Strg+C gibt laufende Jobs zurück. Kurzlebige Prozesse (`search`, später MCP) führen keine Jobs aus; `search` meldet, wie viele Nachrichten noch auf den Index warten.
+
 Prozesse im MVP:
 
-- `postkauz sync --watch` (S1.5): Dauerläufer im Vordergrund. Er synct sofort, danach alle 5 Minuten (`--interval`) und bei jeder IDLE-Meldung der INBOX (eigene Verbindung, IDLE-Neustart alle 5 bis 10 Minuten, Standard 8; ein Blackhole fällt beim Neustart am unbeantworteten `DONE` auf). Verbindungsfehler eines Laufs beenden ihn nicht (nächster Lauf, IDLE nach 30 s neu), ein Anmeldefehler schon. Die Tabelle `jobs` nutzt er noch nicht (erst mit Index und Extraktion, S1.6/S1.7). Später als Windows-Aufgabe, systemd-Dienst oder Docker-Container.
+- `postkauz sync --watch` (S1.5): Dauerläufer im Vordergrund. Er synct sofort, danach alle 5 Minuten (`--interval`) und bei jeder IDLE-Meldung der INBOX (eigene Verbindung, IDLE-Neustart alle 5 bis 10 Minuten, Standard 8; ein Blackhole fällt beim Neustart am unbeantworteten `DONE` auf). Verbindungsfehler eines Laufs beenden ihn nicht (nächster Lauf, IDLE nach 30 s neu), ein Anmeldefehler schon. Nach jedem Lauf arbeitet er die Jobs seines Kontos ab (Extraktion, Index; seit S1.7). Später als Windows-Aufgabe, systemd-Dienst oder Docker-Container.
 - `postkauz mcp` (S1): kurzlebiger stdio-Prozess je Agent-Sitzung, **ohne** eigenen Sync; er liest die Datenbank und kann Jobs einreihen.
 - `postkauz …` (CLI): kurzlebig.
 

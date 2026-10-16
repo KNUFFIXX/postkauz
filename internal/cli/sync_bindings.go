@@ -78,6 +78,12 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 			}
 			last[p.Mailbox] = time.Now()
 			fmt.Fprintf(a.stderr, "  %s: %d/%d\n", termLine(p.Mailbox), p.Done, p.Total)
+		case "index":
+			if p.Done >= p.Total || time.Since(last["\x00index"]) < time.Second {
+				return
+			}
+			last["\x00index"] = time.Now()
+			fmt.Fprintf(a.stderr, "  search index: %d/%d\n", p.Done, p.Total)
 		case "error":
 			fmt.Fprintf(a.stderr, "  %s: error: %s\n", termLine(p.Mailbox), termLine(p.Message))
 		case "round":
@@ -128,6 +134,14 @@ func renderSync(w io.Writer, out any) error {
 				fmt.Fprintf(w, "  %s: %s\n", termLine(m.Path), termLine(p))
 			}
 		}
+	}
+	// Suchindex (S1.7) vor den beiden Schlusszeilen, die Skripte auswerten.
+	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
+		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
+		if o.IndexPending > 0 {
+			line += fmt.Sprintf(", %d still pending (the next sync continues)", o.IndexPending)
+		}
+		fmt.Fprintln(w, line)
 	}
 	fmt.Fprintf(w, "%d messages mirrored\n", o.MessagesMirrored)
 	_, err := fmt.Fprintf(w, "%d errors\n", o.Errors)

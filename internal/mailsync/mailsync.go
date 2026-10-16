@@ -34,7 +34,7 @@ import (
 	"unicode"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
-	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -63,8 +63,12 @@ type Store interface {
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
 	ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]store.ReprocessItem, error)
 	SaveReprocessed(ctx context.Context, items []store.Reprocessed) error
-	PendingExtractions(ctx context.Context, accountID int64, limit int) ([]store.ExtractItem, error)
-	SetExtraction(ctx context.Context, id int64, status, text, errText string, hidden bool) error
+}
+
+// JobRunner führt die Jobs eines Kontos aus (internal/jobs): Extraktion
+// und Volltextindex.
+type JobRunner interface {
+	RunAccount(ctx context.Context, accountID int64) (jobs.Report, error)
 }
 
 // Standardwerte.
@@ -93,7 +97,7 @@ type Options struct {
 
 // Event ist eine Fortschrittsmeldung.
 type Event struct {
-	Kind    string // mailbox_start | window | mailbox_done | error | backlog
+	Kind    string // mailbox_start | window | mailbox_done | error | backlog | extract | index
 	Mailbox string
 	Done    int // im Ordner bisher gespiegelt
 	Total   int // Nachrichten laut Server
@@ -126,8 +130,12 @@ type Report struct {
 	Mirrored int `json:"messages_mirrored"`
 	// Extracted zählt Anhänge, deren Text in diesem Lauf extrahiert wurde
 	// (oder deren Extraktion endgültig scheiterte).
-	Extracted int           `json:"attachments_extracted"`
-	Duration  time.Duration `json:"-"`
+	Extracted int `json:"attachments_extracted"`
+	// Indexed zählt die in diesem Lauf indizierten Nachrichten,
+	// IndexPending die danach noch eingereihten (S1.7).
+	Indexed      int           `json:"messages_indexed"`
+	IndexPending int           `json:"index_pending"`
+	Duration     time.Duration `json:"-"`
 }
 
 func (r *Report) add(m MailboxReport) {
@@ -150,11 +158,10 @@ type Engine struct {
 	// AfterBatch wird nach jedem gespeicherten Fenster aufgerufen; ein Fehler
 	// bricht den Lauf hart ab (Tests simulieren damit einen Absturz).
 	AfterBatch func(mailbox string, mirrored int) error
-	// Extractor gewinnt Text aus Anhängen am Ende jedes Laufs (nil = keine
-	// Extraktion; die Anhänge bleiben pending). ExtractBudget begrenzt die
-	// Zeit dafür je Lauf (0 = 60 s).
-	Extractor     *extract.Extractor
-	ExtractBudget time.Duration
+	// Jobs führt am Ende jedes Laufs die Warteschlange des Kontos aus
+	// (Textextraktion mit Zeitbudget, Volltextindex); nil = keine Jobs
+	// (Anhänge bleiben pending, Nachrichten eingereiht).
+	Jobs JobRunner
 }
 
 func (e *Engine) log() *slog.Logger {
@@ -218,9 +225,13 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		rep.Duration = time.Since(start)
 		return rep, err
 	}
-	if rep.Extracted, err = e.extractPending(ctx); err != nil {
-		rep.Duration = time.Since(start)
-		return rep, fmt.Errorf("extract: %w", err)
+	if e.Jobs != nil {
+		jr, err := e.Jobs.RunAccount(ctx, e.AccountID)
+		rep.Extracted, rep.Indexed, rep.IndexPending = jr.Extracted, jr.Indexed, jr.IndexPending
+		if err != nil {
+			rep.Duration = time.Since(start)
+			return rep, fmt.Errorf("jobs: %w", err)
+		}
 	}
 	if rep.Mirrored, err = e.Store.CountPresentMessages(ctx, e.AccountID); err != nil {
 		return rep, err

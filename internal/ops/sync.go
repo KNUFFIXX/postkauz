@@ -50,10 +50,14 @@ type SyncOutput struct {
 	MessagesMirrored int           `json:"messages_mirrored"`
 	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
 	// extrahiert hat (S1.6).
-	AttachmentsExtracted int   `json:"attachments_extracted,omitempty"`
-	Rounds               int   `json:"rounds,omitempty"`
-	DurationMS           int64 `json:"duration_ms"`
-	DryRun               bool  `json:"dry_run"`
+	AttachmentsExtracted int `json:"attachments_extracted,omitempty"`
+	// MessagesIndexed zählt die in den Suchindex aufgenommenen Nachrichten,
+	// IndexPending die danach noch wartenden (S1.7).
+	MessagesIndexed int   `json:"messages_indexed,omitempty"`
+	IndexPending    int   `json:"index_pending,omitempty"`
+	Rounds          int   `json:"rounds,omitempty"`
+	DurationMS      int64 `json:"duration_ms"`
+	DryRun          bool  `json:"dry_run"`
 }
 
 // SyncRunner führt den Sync eines Kontos aus (internal/mailsync). Im

@@ -11,6 +11,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -79,6 +80,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	if o.IdleRestart > 0 {
 		idleRestart = ClampIdleRestart(o.IdleRestart)
 	}
+	locked := false
 	if !o.DryRun {
 		// Vor dem Verbindungsaufbau: Ein zweiter Sync desselben Kontos
 		// meldet sich gar nicht erst am Server an.
@@ -87,6 +89,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 			return out, err
 		}
 		defer lock.release()
+		locked = lock != nil
 	}
 	start := time.Now()
 	remote, err := connect(ctx, a, pw, idleRestart)
@@ -104,12 +107,16 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	if ex == nil {
 		ex = extract.New(extract.Options{})
 	}
-	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log, Extractor: ex}
+	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log}
 	if progress != nil {
 		eng.Progress = func(ev Event) {
 			progress(ops.Progress{Event: ev.Kind, Mailbox: ev.Mailbox, Done: ev.Done, Total: ev.Total, Message: ev.Message})
 		}
 	}
+	// Die Kontosperre schließt einen zweiten Sync dieses Kontos aus; ein
+	// laufender Job des Kontos stammt dann von einem abgebrochenen Prozess.
+	eng.Jobs = &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Extractor: ex, Log: r.Log, TakeOver: locked,
+		Progress: func(ev jobs.Event) { eng.emit(Event{Kind: ev.Kind, Done: ev.Done, Total: ev.Total}) }}
 	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes}
 	if !o.Watch {
 		rep, err := eng.SyncAll(ctx, so)
@@ -128,6 +135,8 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		out.Errors += round.Errors
 		out.MessagesMirrored = round.MessagesMirrored
 		out.AttachmentsExtracted += round.AttachmentsExtracted
+		out.MessagesIndexed += round.MessagesIndexed
+		out.IndexPending = round.IndexPending
 		if err != nil {
 			out.Errors++
 		}
@@ -166,6 +175,7 @@ func fill(out *ops.SyncOutput, rep Report) {
 	}
 	out.New, out.Updated, out.Removed, out.Errors, out.MessagesMirrored = rep.New, rep.Updated, rep.Removed, rep.Errors, rep.Mirrored
 	out.AttachmentsExtracted = rep.Extracted
+	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
 }
 
 // dryRun meldet Ordner des Servers und den lokalen Stand, ohne zu schreiben.
