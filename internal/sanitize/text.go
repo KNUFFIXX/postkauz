@@ -3,33 +3,41 @@ package sanitize
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
-// invisible: Zeichen, die nichts anzeigen, aber Text verändern oder
-// verschleiern können (Nullbreite, Bidi-Steuerung wie U+202E, weiches
-// Trennzeichen, Wortverbinder, BOM).
-func invisible(r rune) bool {
+// Invisible meldet Zeichen, die nichts anzeigen, aber Text verändern,
+// verschleiern oder versteckte Botschaften tragen können: alle
+// Formatzeichen der Unicode-Kategorie Cf (Nullbreite, Bidi-Steuerung wie
+// U+202E, weiches Trennzeichen, Wortverbinder, BOM, Tag-Zeichen
+// U+E0000–E007F, Interlinear-Anker U+FFF9–FFFB), dazu Variantenwähler
+// (U+FE00–FE0F, U+E0100–E01EF; Kategorie Mn, mit ihnen lassen sich Bytes
+// unsichtbar an ein Zeichen hängen) und das Graphem-Verbindungszeichen
+// U+034F. Zentrale Funktion für Sync, CLI-Textausgabe und MCP-Ausgabe.
+// Preis: Emoji-Sequenzen verlieren Verbinder (U+200D) und Variantenwähler
+// (eine Familien-Emoji wird zu Einzelpersonen); der Inhalt bleibt lesbar.
+func Invisible(r rune) bool {
 	switch {
-	case r == 0x00AD, r == 0x034F, r == 0x061C, r == 0x180E, r == 0xFEFF:
+	case r < 0x00AD:
+		return false
+	case r >= 0xFE00 && r <= 0xFE0F, r >= 0xE0100 && r <= 0xE01EF:
 		return true
-	case r >= 0x200B && r <= 0x200F:
+	case r >= 0xE0000 && r <= 0xE007F, r >= 0xFFF9 && r <= 0xFFFB:
 		return true
-	case r >= 0x202A && r <= 0x202E:
-		return true
-	case r >= 0x2060 && r <= 0x2069:
+	case r == 0x034F:
 		return true
 	}
-	return false
+	return unicode.Is(unicode.Cf, r)
 }
 
-// Text entfernt unsichtbare Formatzeichen (siehe invisible); Zeilen und
+// Text entfernt unsichtbare Zeichen (siehe Invisible); Zeilen und
 // sichtbarer Inhalt bleiben, wie sie sind.
 func Text(s string) string {
-	if !strings.ContainsFunc(s, invisible) {
+	if !strings.ContainsFunc(s, Invisible) {
 		return s
 	}
 	return strings.Map(func(r rune) rune {
-		if invisible(r) {
+		if Invisible(r) {
 			return -1
 		}
 		return r

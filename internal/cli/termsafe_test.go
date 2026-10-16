@@ -89,6 +89,12 @@ func TestTermFilterLeavesCleanTextAlone(t *testing.T) {
 	if termLine(s) != s || termText(s+"\r\n\tx\n") != s+"\r\n\tx\n" {
 		t.Fatal("clean text was changed")
 	}
+	if got := termLine("rechnung\u202Efdp.exe\U000E0041\uFE0F\uFFF9\u200B"); got != "rechnungfdp.exe" {
+		t.Fatalf("invisible characters kept: %q", got)
+	}
+	if got := termText("a\u2066b\nc\U000E0100d"); got != "ab\ncd" {
+		t.Fatalf("invisible characters kept: %q", got)
+	}
 	if got := termLine("a\xffb"); got != "a�b" {
 		t.Fatalf("invalid UTF-8: %q", got)
 	}

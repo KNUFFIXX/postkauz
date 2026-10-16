@@ -39,7 +39,7 @@ var lookup = idna.Lookup
 // entfernt. text ist der sichtbare Text des Links (für den Abgleich).
 func CheckLink(href, text string) (Link, bool) {
 	href = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || invisible(r) || unicode.IsSpace(r) {
+		if unicode.IsControl(r) || Invisible(r) || unicode.IsSpace(r) {
 			return -1 // Browser ignorieren eingestreuten Leerraum im Schema
 		}
 		return r

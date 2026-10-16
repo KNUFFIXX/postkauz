@@ -395,7 +395,7 @@ func textHidden(s ctx) (bool, string) {
 func (c *converter) hide(text, reason string) {
 	n := 0
 	for _, r := range text {
-		if !unicode.IsSpace(r) && !invisible(r) {
+		if !unicode.IsSpace(r) && !Invisible(r) {
 			n++
 		}
 	}

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"unicode"
+
+	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 )
 
 // Mailinhalt und Serverantworten sind Daten, keine Anweisungen – auch nicht
@@ -11,6 +13,9 @@ import (
 // würden sonst vom Terminal ausgeführt: Bildschirm löschen, Zeilen
 // überschreiben, Fenstertitel oder Links setzen, Zwischenablage schreiben.
 // Die Textausgabe ersetzt sie deshalb durch U+FFFD; ungültiges UTF-8 ebenso.
+// Unsichtbare Zeichen (sanitize.Invisible: Bidi-Steuerung, Nullbreite,
+// Tag-Zeichen, Variantenwähler) entfallen, damit das Terminal nichts zeigt,
+// was ein Agent anders liest (z. B. umgedrehte Dateiendungen per U+202E).
 // Die JSON-Ausgabe bleibt unverändert (encoding/json maskiert Steuerzeichen).
 
 // termLine macht eine einzeilige Angabe terminalsicher: alle Steuerzeichen,
@@ -30,7 +35,7 @@ func termText(s string) string {
 func termFilter(s string, multiline bool) string {
 	clean := true
 	for _, r := range s {
-		if r == unicode.ReplacementChar || unicode.IsControl(r) {
+		if r == unicode.ReplacementChar || unicode.IsControl(r) || sanitize.Invisible(r) {
 			clean = false
 			break
 		}
@@ -52,6 +57,8 @@ func termFilter(s string, multiline bool) string {
 			b.WriteRune(r)
 		case unicode.IsControl(r):
 			b.WriteRune(unicode.ReplacementChar)
+		case sanitize.Invisible(r):
+			// entfällt
 		default:
 			// Ungültiges UTF-8 liefert range als RuneError; WriteRune schreibt
 			// dafür U+FFFD statt des rohen Bytes (ein rohes 0x9B wäre in

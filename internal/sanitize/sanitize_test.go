@@ -192,3 +192,31 @@ func FuzzHTML(f *testing.F) {
 		_ = StripQuotes(r.Text)
 	})
 }
+
+// Jede Klasse unsichtbarer Zeichen wird entfernt; sichtbarer Text bleibt.
+func TestTextRemovesInvisibleClasses(t *testing.T) {
+	cases := map[string]string{
+		"tag characters":         "A\U000E0001\U000E0069\U000E0067\U000E006E\U000E007FB",
+		"variation selector":     "A\uFE00\uFE0FB",
+		"variation supplement":   "A\U000E0100\U000E01EFB",
+		"interlinear annotation": "A\uFFF9\uFFFA\uFFFBB",
+		"bidi controls":          "A\u202A\u202E\u2066\u2069\u200E\u200F\u061CB",
+		"zero width":             "A\u200B\u200C\u200D\u2060\uFEFFB",
+		"other format chars":     "A\u00AD\u180E\u0600\u2064\U0001D173\U000110BDB",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Text(in); got != "AB" {
+				t.Fatalf("Text(%q) = %q", in, got)
+			}
+			if r := HTML("<p>" + in + "</p>"); r.Text != "AB" {
+				t.Fatalf("HTML text = %q", r.Text)
+			}
+		})
+	}
+	for _, s := range []string{"Größe – 5 € 🔧", "\u05e9\u05dc\u05d5\u05dd \u0639\u0631\u0628\u0649", "日本語", "e\u0301"} {
+		if Text(s) != s {
+			t.Fatalf("visible text changed: %q", s)
+		}
+	}
+}

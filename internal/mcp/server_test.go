@@ -203,6 +203,9 @@ func TestCleanStringRemovesControls(t *testing.T) {
 	if got := cleanString(in); got != "Rech[2Jnung\n\tokevilx\uFFFD" {
 		t.Fatalf("cleanString = %q", got)
 	}
+	if got := cleanString("A\U000E0041\U000E007F\uFE0F\U000E0100\uFFF9\u2066\u00ADB"); got != "AB" {
+		t.Fatalf("invisible characters kept: %q", got)
+	}
 	v := cleanValue(map[string]any{"a\x1b": []any{"x\x00y", 1.0, map[string]any{"z": "\u202E"}}})
 	b, _ := json.Marshal(v)
 	if string(b) != `{"a":["xy",1,{"z":""}]}` {

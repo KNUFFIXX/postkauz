@@ -11,7 +11,8 @@ import (
 // cleanString entfernt aus einer Zeichenkette alles, was ein Agent oder
 // eine Oberfläche als Steuerung lesen könnte: Steuerzeichen (C0, DEL, C1;
 // erhalten bleiben Zeilenumbruch und Tabulator, CR fällt weg) und
-// unsichtbare Formatzeichen (Nullbreite, Bidi-Steuerung). Ungültiges UTF-8
+// unsichtbare Zeichen (sanitize.Invisible: Kategorie Cf wie Nullbreite,
+// Bidi-Steuerung, Tag-Zeichen; Variantenwähler). Ungültiges UTF-8
 // wird zu U+FFFD. Teil der Untrusted-Hülle (docs/mcp.md, Abschnitt 5).
 func cleanString(s string) string {
 	s = strings.ToValidUTF8(s, string(utf8.RuneError))
