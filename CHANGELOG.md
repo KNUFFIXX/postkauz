@@ -34,9 +34,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Werkzeug `corpusload` (`make corpus-load`): Korpus per APPEND in einen lokalen Testserver laden; `-mark-seen` für die Abnahme D1.6.
 - Integrationstests des Syncs gegen Dovecot, Stalwart, GreenMail (Absturz und Wiederaufnahme, Änderungen von außen, UIDVALIDITY, IDLE); Unit-Test mit echtem `kill -9` eines Kindprozesses.
 - P2: Messung mit 50.000 Nachrichten als Nachtrag in `spike/s0/REPORT.md`; `docs/abnahme_D1.md` mit den Abnahme-Kommandos für Windows.
+- `make vuln` (govulncheck v1.9.0, per `go list -m golang.org/x/vuln@latest` aufgelöst) und CI-Job `vuln` (A01 N2); Ergebnis 16.10.2026: keine Schwachstellen.
 
 ### Changed
 
+- `golang.org/x/text` v0.14.0 → v0.43.0 (per `go get`, A01 N2); `go mod tidy` ohne weitere Änderung.
 - Testserver auf geprüfte Versionen festgelegt: Dovecot 2.4.5, GreenMail 2.1.14 (Stalwart bleibt 0.11.8).
 - `imapx`-Watchdog misst Schweigen statt Gesamtdauer (lange FETCHes über langsame Leitungen brechen nicht mehr ab); unlesbare Serverantworten sind `ErrProtocol` (Verbindung verwerfen, nicht wiederholen); der Sync grenzt betroffene Nachrichten durch Halbieren ein.
 - Provider-Schnittstelle: `Changes` mit `ChangesOptions` und `Present`, `FetchHeaders`/`FetchRaw` mit UIDVALIDITY-Prüfung, `FetchRaw` für ein Fenster von UIDs.

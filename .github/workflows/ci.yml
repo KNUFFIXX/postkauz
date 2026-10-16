@@ -1,6 +1,7 @@
 # CI für PostKauz (Arbeitstitel). Bewusst ohne Docker: Integrationstests gegen
 # die Testserver laufen vorerst lokal und nachts (make integration), nicht in
-# dieser Pipeline. Der Race-Detector läuft als eigener Job mit CGO.
+# dieser Pipeline. Der Race-Detector läuft als eigener Job mit CGO,
+# govulncheck als eigener Job (braucht Netz).
 name: ci
 
 on:
@@ -43,6 +44,17 @@ jobs:
           go-version: "1.27.x"
       - name: go test -race
         run: make race
+
+  # Bekannte Schwachstellen (A01 N2): govulncheck in der Version aus dem Makefile.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+      - name: govulncheck
+        run: make vuln
 
   cross:
     needs: test

@@ -13,7 +13,7 @@ export CGO_ENABLED ?= 0
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vet fmt fmt-check lint guard pii-check check cross corpus corpus-load testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross corpus corpus-load testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -32,6 +32,14 @@ test:
 # Ziel und nicht Teil von `make check` (Builds und Releases bleiben CGO-frei).
 race:
 	CGO_ENABLED=1 go test -race ./...
+
+# Bekannte Schwachstellen in Abhängigkeiten und Standardbibliothek (A01 N2).
+# Version gepinnt (per `go list -m golang.org/x/vuln@latest` aufgelöst, nicht
+# geraten); braucht Netz (Modul-Proxy und vuln.go.dev), deshalb eigenes Ziel
+# und eigener CI-Job, nicht Teil von `make check`.
+GOVULNCHECK_VERSION ?= v1.9.0
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 vet:
 	go vet ./...

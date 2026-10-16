@@ -39,6 +39,7 @@ PostKauz ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go
 - Testserver: `docker compose -f deploy/testmail/docker-compose.yml up` (oder `make testmail-up`); Ports und Zugangsdaten in `deploy/testmail/README.md`. Nur localhost, nie im Internet.
 - Integrationstests gegen die Server laufen lokal und nachts, nicht in der CI (kein Docker dort): `make testmail-up testmail-setup integration` (nur mit `POSTKAUZ_IT`). Unit-Tests müssen ohne Docker laufen.
 - Race-Detector: `make race` (braucht CGO; eigener CI-Job, nicht Teil von `make check`).
+- Schwachstellen: `make vuln` (govulncheck, Version im Makefile gepinnt; braucht Netz; eigener CI-Job, nicht Teil von `make check`).
 - Korpus: nur synthetisch oder anonymisiert (`docs/testkorpus.md`, `testdata/README.md`).
 
 ## Keine Geheimnisse, keine personenbezogenen Daten
