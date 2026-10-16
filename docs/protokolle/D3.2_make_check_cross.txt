@@ -1,0 +1,47 @@
+# Abnahme D3.2 (Container, Linux): make check && make cross, 2026-10-16T13:34Z, Commit efef34e, go version go1.27.2 linux/amd64
+$ make check && make cross
+go vet ./...
+go test ./...
+?   	github.com/KNUFFIXX/postkauz/cmd/postkauz	[no test files]
+ok  	github.com/KNUFFIXX/postkauz/internal/audit	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/blob	(cached)
+?   	github.com/KNUFFIXX/postkauz/internal/brand	[no test files]
+ok  	github.com/KNUFFIXX/postkauz/internal/cli	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/config	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/corpus	(cached)
+?   	github.com/KNUFFIXX/postkauz/internal/corpus/cmd/corpusload	[no test files]
+?   	github.com/KNUFFIXX/postkauz/internal/corpus/cmd/gencorpus	[no test files]
+?   	github.com/KNUFFIXX/postkauz/internal/corpus/imapload	[no test files]
+ok  	github.com/KNUFFIXX/postkauz/internal/crash	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/extract	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/imapx	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/importer	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/jobs	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/magic	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/mailsync	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/mcp	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/mimeparse	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/oauth	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/ops	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/policy	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/provider	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/provider/imap	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/sanitize	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/search	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/secrets	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/secretscan	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/store	(cached)
+ok  	github.com/KNUFFIXX/postkauz/internal/thread	(cached)
+guard: ok
+pii-check: ok
+build linux/amd64
+build windows/amd64
+build darwin/arm64
+SHA256SUMS                          0.0 MB
+VERSION                             0.0 MB
+abnahme-d2-daten.zip                3.4 MB
+abnahme-d3-import.zip               0.5 MB
+postkauz-darwin-arm64              22.8 MB
+postkauz-linux-amd64               24.2 MB
+postkauz-windows-amd64.exe         24.0 MB
+(exit 0)

@@ -1,0 +1,55 @@
+# Abnahme D3.4 (Container, Linux): sh scripts/abnahme-d3-import.sh, 2026-10-16T13:34Z, Commit efef34e
+import data in <tmp>/Thunderbird: expect new: 1005, existing: 100, skipped: 3, errors: 0
+== D2 data: 329f6d9e0c28cce98a387bf0f42dea81dc836995204939d9def362b43ac03ad4
+== before: search Rechnung
+1 of 453 results (by relevance)
+more: --cursor eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTIxNTc2NDYwMTAsInMiOjMuMTc4OTMyMDEzMjQzMDMxLCJpIjoxOTZ9
+== run 1: import mbox Thunderbird -a demo --mailbox Archive 
+import mbox into account demo (0.7s, 2.3 MB, 3.1 MB/s)
+SOURCE           FOLDER               MODE     NEW  EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  0    379       0        0
+Archiv.sbd/2025  Archive/Archiv/2025  content  0    371       0        0
+Drafts           Archive/Drafts       content  0    20        0        0
+Entw&APw-rfe     Archive/Entwürfe     content  5    0         0        0
+INBOX            Archive/INBOX        content  0    230       3        0
+Wichtig          Archive/Wichtig      content  0    100       0        0
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+1100 folder assignments added to existing messages
+search index: 5 messages indexed
+new: 5, existing: 1100, skipped: 3, errors: 0
+== run 2: import mbox Thunderbird -a demo --mailbox Archive 
+import mbox into account demo (0.0s, 0 B)
+SOURCE           FOLDER               MODE     NEW        EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  unchanged                     
+Archiv.sbd/2025  Archive/Archiv/2025  content  unchanged                     
+Drafts           Archive/Drafts       content  unchanged                     
+Entw&APw-rfe     Archive/Entwürfe     content  unchanged                     
+INBOX            Archive/INBOX        content  unchanged                     
+Wichtig          Archive/Wichtig      content  unchanged                     
+6 sources unchanged since the last import, not read again (--rescan reads them)
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+new: 0, existing: 0, skipped: 0, errors: 0
+== run 3: import mbox Thunderbird -a demo --mailbox Archive --rescan
+import mbox into account demo (0.4s, 2.3 MB, 6.0 MB/s)
+SOURCE           FOLDER               MODE     NEW  EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  0    379       0        0
+Archiv.sbd/2025  Archive/Archiv/2025  content  0    371       0        0
+Drafts           Archive/Drafts       content  0    20        0        0
+Entw&APw-rfe     Archive/Entwürfe     content  0    5         0        0
+INBOX            Archive/INBOX        content  0    230       3        0
+Wichtig          Archive/Wichtig      content  0    100       0        0
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+new: 0, existing: 1105, skipped: 3, errors: 0
+== after: search Rechnung, in:Archive/Entwürfe
+1 of 453 results (by relevance)
+more: --cursor eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTIxNTc2NDc1NTYsInMiOjMuMzI4MzAxMDUzODQ1NDA0OCwiaSI6MTk2fQ
+ID    DATE              FROM                                     SUBJECT
+1005  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Ohne Zeilenende
+1004  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Sehr lange Zeile
+1003  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Mit Schlagwörtern
+1002  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Nur ein Kopf
+1001  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Entwurf: Aushang Treppenhaus
+5 of 5 results (newest first)
+== zip
+473946 <repo>/dist/abnahme-d3-import.zip
+390e26342eeace3a4cf6294afe3464af0726d7f2aee2e98097826d63f6c71212  <repo>/dist/abnahme-d3-import.zip

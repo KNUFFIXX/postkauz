@@ -1,0 +1,252 @@
+# Abnahme D3.1: D0 bis D2 gegen greenmail (127.0.0.1:13143, TLS none)
+# 2026-10-16T13:33Z, Programm postkauz 0.1.0-rc1 (go1.27.2 linux/amd64), Commit efef34e
+
+## D0
+
+### D0.2 version
+$ postkauz version
+postkauz 0.1.0-rc1 (go1.27.2 linux/amd64)
+(exit 0)
+
+### D0.3 accounts list
+$ postkauz accounts list
+No accounts configured yet.
+(exit 0)
+
+### D0.4 accounts list --json
+$ postkauz accounts list --json
+{"accounts":[]}
+(exit 0)
+
+### D0.5 doctor (Auszug)
+$ postkauz doctor
+database:  ok (<tmp>/data/postkauz.db)
+schema:    7 (program knows 7)
+keyring:   insecure (INSECURE, for tests only: encrypted file with its key next to it in <tmp>/data/insecure-secrets) [secrets.backend = insecure-file]
+search:    0 messages waiting for the index (index version 1)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 1 day not exported yet [audit.export_dir = not set]
+
+### D0.6 unknown command
+$ postkauz bogus
+error: unknown command "bogus" for "postkauz"
+hint: see --help
+(exit 2)
+
+## D1
+
+### D1.1 account add
+$ postkauz account add demo --imap 127.0.0.1:13143 --user test --tls none --insecure-test-server --password-from-env
+account demo added (127.0.0.1:13143, tls none, user test); password read from POSTKAUZ_PASSWORD_DEMO at runtime (not stored)
+(exit 0)
+
+### D1.2 account test
+$ postkauz account test demo
+account:       demo
+login:         ok
+sync strategy: uid-scan
+capabilities:  AUTH=XOAUTH2 IDLE IMAP4rev1 LITERAL+ MOVE QUOTA SASL-IR SORT UIDPLUS
+mailboxes:
+  INBOX  inbox
+(exit 0)
+
+### D1.3 load corpus
+$ go run ./internal/corpus/cmd/corpusload -imap 127.0.0.1:13143 -user test -password pass
+Drafts                      20
+INBOX                      230
+1000 messages loaded in 4.2s
+
+### D1.4 sync --full, interrupted after 2 s (Ctrl+C)
+$ postkauz sync --full -a demo   # SIGINT after 2 s
+error: interrupted
+hint: progress up to the last completed window is saved; run the same command again to resume
+(exit 1)
+
+### D1.3/D1.4 sync --full (resumed)
+$ postkauz sync --full -a demo --quiet
+account demo (strategy uid-scan, full sync, 8.4s)
+MAILBOX      ROLE     NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+INBOX        inbox    0    0        0        0       230       230
+Archiv       archive  0    0        0        0       0         0
+Archiv.2024  custom   379  0        0        0       379       379
+Archiv.2025  custom   371  0        0        0       371       371
+Drafts       drafts   20   0        0        0       20        20
+search index: 1000 messages indexed
+1000 messages mirrored
+0 errors
+(exit 0)
+
+### D1.4 sync --full again (same count)
+$ postkauz sync --full -a demo --quiet
+account demo (strategy uid-scan, full sync, 0.7s)
+MAILBOX      ROLE     NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+INBOX        inbox    0    0        0        0       230       230
+Archiv       archive  0    0        0        0       0         0
+Archiv.2024  custom   0    0        0        0       379       379
+Archiv.2025  custom   0    0        0        0       371       371
+Drafts       drafts   0    0        0        0       20        20
+1000 messages mirrored
+0 errors
+(exit 0)
+
+### D1.5 mailbox list --json (total/mirrored per folder)
+$ postkauz mailbox list -a demo --json
+INBOX            role=inbox   total=230  mirrored=230  unread=136
+Archiv           role=archive total=0    mirrored=0    unread=0
+2024             role=custom  total=379  mirrored=379  unread=0
+2025             role=custom  total=371  mirrored=371  unread=0
+Drafts           role=drafts  total=20   mirrored=20   unread=20
+
+### D1.6 flag from outside, sync, show --headers
+$ go run ./internal/corpus/cmd/corpusload ... -mark-seen
+marked as read: <pk.00002.54fb76d8@corpus.example.org>
+
+### D1.6 sync
+$ postkauz sync -a demo --quiet
+account demo (strategy uid-scan, incremental sync, 0.6s)
+MAILBOX      ROLE     NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+INBOX        inbox    0    1        0        0       230       230
+Archiv       archive  0    0        0        0       0         0
+Archiv.2024  custom   0    0        0        0       379       379
+Archiv.2025  custom   0    0        0        0       371       371
+Drafts       drafts   0    0        0        0       20        20
+1000 messages mirrored
+0 errors
+(exit 0)
+
+$ postkauz show pk.00002.54fb76d8@corpus.example.org -a demo --headers   (line flags)
+flags:             seen
+
+## D2
+
+### D2.1 search Rechnung
+$ postkauz search Rechnung -a demo --limit 5
+ID   DATE              FROM                                      SUBJECT
+196  2026-09-28 06:45  Sören Straßburger <…  Rechnungen für das Erdgeschoss
+132  2026-08-09 14:54  Dörte Dummy <doerte@dummy.example.org>    Rechnungen für das Erdgeschoss
+135  2026-07-15 16:01  noreply@portal.example.net                Rechnungen für das Erdgeschoss
+3    2026-09-04 07:15  Grete Größe <grete@groesse.example.net>   AW: Fenster schließt nicht – Reparatur nötig 🔧 (Vorgang 1)
+219  2026-06-15 10:30  Hans-Jörg Fiktiv <…  Rechnung Gartenpflege Juni
+5 of 453 results (by relevance)
+more: --cursor eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTIxNTc2MzgwMzksInMiOjIuNjc5ODY5MTczNTgyMTk3LCJpIjoyMTl9
+(exit 0)
+
+### D2.2 search prüfen / pruefen (last line)
+$ postkauz search "prüfen" -a demo
+1 of 261 results (by relevance)
+$ postkauz search "pruefen" -a demo
+1 of 261 results (by relevance)
+
+### D2.3 search Vollstreck
+$ postkauz search Vollstreck -a demo --limit 3
+ID   DATE              FROM                                      SUBJECT
+67   2026-09-14 23:52  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen [attachment]
+39   2026-08-14 22:50  Postfach Test <postfach@example.org>      Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+152  2026-08-13 09:30  Hans-Jörg Fiktiv <…  Zwangsvollstreckung angedroht – bitte prüfen
+3 of 68 results (by relevance)
+more: --cursor eyJxIjoiNjk4ZGJkNDY5ZmJjMzIwMyIsIm4iOjE3OTIxNTc2MzgzMDksInMiOjEuNTgzNDU3OTYyNDE2NDQ0MmUtOSwiaSI6MTUyfQ
+(exit 0)
+
+### D2.4 search has:attachment --json | head -n 3 (cut to 150 characters)
+$ postkauz search "has:attachment" -a demo --json | head -n 3
+{"id":111,"account":"demo","thread_id":70,"date":"2026-09-22T11:58:00Z","from":"Bärbel Beispiel \u003cbaerbel@beispiel.example.org\u003e","subject":"
+{"id":91,"account":"demo","thread_id":50,"date":"2026-09-15T19:01:00Z","from":"Bärbel Beispiel \u003cbaerbel@beispiel.example.org\u003e","subject":"W
+{"id":67,"account":"demo","thread_id":26,"date":"2026-09-14T21:52:00Z","from":"Zoë Musterfrau \u003czoe@muster.example.org\u003e","subject":"Zwangsvo
+
+### D2.5 show (hidden text)
+$ postkauz show pk.s16.02.0045f9d9@corpus.example.org -a demo   (line warning)
+warning:           hidden text removed (the HTML contained text a reader would not see; possible prompt injection)
+
+### D2.6 key create
+$ postkauz key create --name test-agent --role reader
+key test-agent created (role reader: mail:read, mail:search, audit:read; writing calls run as dry run by default; expires 2027-01-14)
+This is the only time the key is shown. Store it now (e.g. in the MCP configuration as POSTKAUZ_KEY):
+
+  pk_key_<43 characters, shown once>
+
+Only its hash is stored. Lost it? Revoke it (key revoke test-agent) and create a new one.
+(exit 0)
+
+### D2.6 key list
+$ postkauz key list
+NAME        ROLE    SCOPES                            STATUS  DRY RUN  CREATED     EXPIRES     LAST USED
+test-agent  reader  mail:read,mail:search,audit:read  active  default  2026-10-16  2027-01-14  never
+(exit 0)
+
+### D2.7 MCP: tools/list and tools/call (JSON-RPC over stdio, key mcp-agent, role reader)
+tools: mail_audit_log, mail_get_attachment_text, mail_get_message, mail_get_policy, mail_get_thread, mail_list_accounts, mail_list_attachments, mail_list_mailboxes, mail_search
+mail_search: untrusted=True total=453 hits=2
+
+### D2.8 audit (agent calls, no mail text)
+$ postkauz audit --since 10m --key-id key:mcp-agent
+ID  TIME                 ACTOR  KEY            OPERATION        RESULT  TARGETS  PARAMS
+21  2026-10-16 15:33:58  agent  key:mcp-agent  messages.search  ok      -        {"cursor":false,"explain":false,"limit":2,"mailbox":false,"operators":[],"terms":1}
+(exit 0)
+
+### D2.9 audit export
+$ postkauz audit export --to <tmp>/export
+DAY         EVENTS  STATE    FILE
+2026-10-16  23      written  <tmp>/export/postkauz-audit-2026-10-16.jsonl
+manifest: <tmp>/export/postkauz-audit-manifest.json
+chain head: 72cc8f4a915e3bbbdb5cd0bede5c57e6f23258bce066af751970e8000e57419b
+1 day in <tmp>/export; check with: audit verify
+(exit 0)
+
+### D2.9 audit verify
+$ postkauz audit verify
+ok: 1 exported day checked; the export files match their checksums, the hash chain, the manifest and the database
+chain head: 72cc8f4a915e3bbbdb5cd0bede5c57e6f23258bce066af751970e8000e57419b
+not exported yet (new entries): 2026-10-16
+(exit 0)
+
+(line 2 of postkauz-audit-2026-10-16.jsonl changed: result ok -> denied)
+
+### D2.9 audit verify (changed line)
+$ postkauz audit verify
+mismatch: 2 problems in 1 exported day
+  2026-10-16: export file was changed (line 2): <tmp>/export/postkauz-audit-2026-10-16.jsonl
+  2026-10-16: hash chain is broken (line 2): <tmp>/export/postkauz-audit-2026-10-16.jsonl
+not exported yet (new entries): 2026-10-16
+error: audit export does not match
+hint: the audit log or its export was changed; see audit verify
+(exit 1)
+
+### S1.11 doctor --secrets (summary)
+$ postkauz doctor --secrets
+version:   0.1.0-rc1
+config:    <tmp>/keine-config.toml (exists: false)
+data dir:  <tmp>/data
+log:       <tmp>/data/postkauz.log
+database:  ok (<tmp>/data/postkauz.db)
+schema:    7 (program knows 7)
+keyring:   insecure (INSECURE, for tests only: encrypted file with its key next to it in <tmp>/data/insecure-secrets) [secrets.backend = insecure-file]
+pdftotext: /usr/bin/pdftotext
+search:    0 messages waiting for the index (index version 2)
+extract:   0 attachments waiting for text extraction
+audit:     last export 2026-10-16T13:34:02Z to <tmp>/export; 0 days not exported yet [audit.export_dir = not set]
+accounts:
+  demo: password environment, status ok (env override: POSTKAUZ_PASSWORD_DEMO)
+warnings:
+  - secrets.backend = insecure-file: passwords are only obfuscated; use it for test servers only
+secrets:
+  ok      permissions data dir: 0700
+  ok      permissions database: 0600
+  ok      permissions database WAL: not created yet
+  ok      permissions database SHM: not created yet
+  ok      permissions log: 0600
+  warn    search for password of account demo: shorter than 8 characters, too short to search for
+  ok      secrets in log <tmp>/data/postkauz.log
+  ok      secrets in database table meta
+  ok      secrets in database table accounts
+  ok      secrets in database table identities
+  ok      secrets in database table mailboxes
+  ok      secrets in database table api_keys
+  ok      secrets in database table policies
+  ok      secrets in database table jobs
+  ok      secrets in database table audit_events
+  ok      secrets in database table audit_exports
+  ok      secrets in database table import_sources
+  ok      secrets in database table import_folders
+  ok      secrets in audit export <tmp>/export
+  result: ok (no secret found where it must not be, permissions fine)
+(exit 0)
