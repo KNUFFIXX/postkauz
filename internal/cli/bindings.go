@@ -52,6 +52,12 @@ var bindings = []binding{
 		human: renderMailboxes},
 	{op: "messages.get", path: []string{"show"}, use: "<id>", args: cobra.ExactArgs(1), flags: showFlags,
 		input: showInput, human: renderShow},
+	{op: "threads.get", path: []string{"thread"}, use: "<thread-id>", args: cobra.ExactArgs(1), flags: threadFlags,
+		input: threadInput, human: renderThread},
+	{op: "attachments.list", path: []string{"attach", "list"}, use: "<message-id>", args: cobra.ExactArgs(1),
+		input: attachListInput, human: renderAttachList},
+	{op: "attachments.text", path: []string{"attach", "text"}, use: "<attachment-id>", args: cobra.ExactArgs(1),
+		input: attachTextInput, human: renderAttachText},
 }
 
 // humanKey ist der Schlüssel, unter dem die CLI handelt: der Mensch am

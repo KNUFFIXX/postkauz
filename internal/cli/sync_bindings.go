@@ -170,6 +170,7 @@ func renderMailboxes(w io.Writer, out any) error {
 
 func showFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("headers", false, "show the raw header lines instead of the text")
+	cmd.Flags().Bool("strip-quotes", false, "show only the new text of a reply (quoted parts removed)")
 }
 
 // showInput: Eine Zahl ist die lokale ID, alles andere eine Message-ID.
@@ -186,6 +187,9 @@ func showInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secr
 	}
 	if headers {
 		m["headers"] = true
+	}
+	if strip, _ := cmd.Flags().GetBool("strip-quotes"); strip {
+		m["strip_quotes"] = true
 	}
 	b, err := json.Marshal(m)
 	return b, "", err
@@ -237,6 +241,12 @@ func renderShow(w io.Writer, out any) error {
 	}
 	fmt.Fprintf(tw, "attachments:\t%s\n", yn[o.HasAttachments])
 	fmt.Fprintf(tw, "deleted on server:\t%s\n", yn[o.DeletedRemote])
+	if o.ThreadID != 0 {
+		fmt.Fprintf(tw, "thread:\t%d\n", o.ThreadID)
+	}
+	if o.HiddenTextRemoved {
+		fmt.Fprintf(tw, "warning:\thidden text removed (the HTML contained text a reader would not see; possible prompt injection)\n")
+	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
@@ -246,9 +256,190 @@ func renderShow(w io.Writer, out any) error {
 		return err
 	}
 	if o.Text != nil {
-		fmt.Fprintln(w, "--- text ---")
-		_, err := fmt.Fprintln(w, termText(strings.TrimRight(*o.Text, "\r\n")))
-		return err
+		label := "--- text ---"
+		switch o.TextSource {
+		case "html":
+			label = "--- text (from HTML) ---"
+		case "plain_unquoted", "html_unquoted":
+			label = "--- text (quotes removed) ---"
+		}
+		fmt.Fprintln(w, label)
+		if _, err := fmt.Fprintln(w, termText(strings.TrimRight(*o.Text, "\r\n"))); err != nil {
+			return err
+		}
+	}
+	if len(o.Links) > 0 {
+		fmt.Fprintln(w, "--- links ---")
+		for _, raw := range o.Links {
+			var l struct {
+				Text     string   `json:"text"`
+				URL      string   `json:"url"`
+				Host     string   `json:"host"`
+				Warnings []string `json:"warnings"`
+			}
+			_ = json.Unmarshal(raw, &l)
+			line := termLine(l.Host) + "  " + termLine(l.URL)
+			if l.Text != "" && l.Text != l.URL {
+				line += "  (" + termLine(l.Text) + ")"
+			}
+			if len(l.Warnings) > 0 {
+				line += "  WARNING: " + strings.Join(termLines(l.Warnings), ", ")
+			}
+			fmt.Fprintln(w, line)
+		}
 	}
 	return nil
+}
+
+// --- thread ---------------------------------------------------------------------
+
+func threadFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("strip-quotes", false, "show the new text of each message (quoted parts removed)")
+	cmd.Flags().Bool("message", false, "the argument is a message id; show the thread of that message")
+}
+
+func threadInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil || id <= 0 {
+		return nil, "", usageError{fmt.Errorf("thread id must be a positive number, got %q", args[0])}
+	}
+	m := map[string]any{"id": id}
+	if byMsg, _ := cmd.Flags().GetBool("message"); byMsg {
+		m = map[string]any{"message": id}
+	}
+	if strip, _ := cmd.Flags().GetBool("strip-quotes"); strip {
+		m["text"] = true
+	}
+	b, err := json.Marshal(m)
+	return b, "", err
+}
+
+func renderThread(w io.Writer, out any) error {
+	o, ok := out.(ops.ThreadOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	fmt.Fprintf(w, "thread %d (account %s): %s\n", o.ID, termLine(o.Account), termLine(o.Subject))
+	fmt.Fprintf(w, "%d messages, %s to %s\n", o.MessageCount, o.FirstDate, o.LastDate)
+	if len(o.Participants) > 0 {
+		fmt.Fprintf(w, "participants: %s\n", strings.Join(termLines(o.Participants), ", "))
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tDATE\tFROM\tSUBJECT\tFLAGS")
+	for _, m := range o.Messages {
+		flags := strings.Join(m.Flags, ",")
+		if m.HasAttachments {
+			flags = strings.Trim(flags+",attachment", ",")
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.ID, m.Date, termLine(m.From), termLine(m.Subject), flags)
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	for _, m := range o.Messages {
+		if m.Text == nil {
+			continue
+		}
+		fmt.Fprintf(w, "--- %d: %s ---\n", m.ID, termLine(m.From))
+		if m.HiddenTextRemoved {
+			fmt.Fprintln(w, "(hidden text removed)")
+		}
+		fmt.Fprintln(w, termText(strings.TrimRight(*m.Text, "\r\n")))
+	}
+	return nil
+}
+
+// --- attach list / text ---------------------------------------------------------
+
+func positiveID(arg, what string) (int64, error) {
+	id, err := strconv.ParseInt(arg, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, usageError{fmt.Errorf("%s must be a positive number, got %q", what, arg)}
+	}
+	return id, nil
+}
+
+func attachListInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := positiveID(args[0], "message id")
+	if err != nil {
+		return nil, "", err
+	}
+	b, err := json.Marshal(map[string]any{"message": id})
+	return b, "", err
+}
+
+func attachTextInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := positiveID(args[0], "attachment id")
+	if err != nil {
+		return nil, "", err
+	}
+	b, err := json.Marshal(map[string]any{"id": id})
+	return b, "", err
+}
+
+func renderAttachList(w io.Writer, out any) error {
+	o, ok := out.(ops.AttachmentsListOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	if len(o.Attachments) == 0 {
+		_, err := fmt.Fprintf(w, "message %d has no attachments\n", o.MessageID)
+		return err
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tPART\tFILENAME\tTYPE\tSIZE\tTEXT\tNOTES")
+	for _, a := range o.Attachments {
+		var notes []string
+		if a.TypeMismatch {
+			notes = append(notes, "TYPE MISMATCH: "+a.MismatchReason)
+		}
+		if a.Executable {
+			notes = append(notes, "EXECUTABLE")
+		}
+		if a.Inline {
+			notes = append(notes, "inline")
+		}
+		if a.Truncated {
+			notes = append(notes, "truncated")
+		}
+		if a.HiddenText {
+			notes = append(notes, "hidden text removed")
+		}
+		if a.ExtractError != "" {
+			notes = append(notes, a.ExtractError)
+		}
+		name := a.Filename
+		if name == "" {
+			name = "(no name)"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%s\t%s\n", a.ID, a.PartID, termLine(name), a.ContentType, a.Size, a.ExtractStatus,
+			termLine(strings.Join(notes, "; ")))
+	}
+	return tw.Flush()
+}
+
+func renderAttachText(w io.Writer, out any) error {
+	o, ok := out.(ops.AttachmentTextOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	fmt.Fprintf(w, "attachment %d of message %d: %s (%s), text: %s\n", o.ID, o.MessageID, termLine(o.Filename), o.ContentType, o.ExtractStatus)
+	if o.TypeMismatch {
+		fmt.Fprintf(w, "warning: type mismatch: %s\n", termLine(o.MismatchReason))
+	}
+	if o.HiddenText {
+		fmt.Fprintln(w, "warning: hidden text removed")
+	}
+	if o.ExtractError != "" {
+		fmt.Fprintf(w, "note: %s\n", termLine(o.ExtractError))
+	}
+	if o.ExtractedNow {
+		fmt.Fprintln(w, "note: extracted now; the next sync stores it")
+	}
+	if o.Text == "" {
+		return nil
+	}
+	fmt.Fprintln(w, "--- text ---")
+	_, err := fmt.Fprintln(w, termText(strings.TrimRight(o.Text, "\r\n")))
+	return err
 }

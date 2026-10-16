@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -171,13 +172,16 @@ var contractInputs = map[string]struct {
 	input  string
 	secret secrets.Secret
 }{
-	"accounts.list":   {input: `{}`},
-	"accounts.add":    {input: `{"name":"neu","host":"127.0.0.1","port":11143,"tls":"none","username":"u@example.invalid","insecure_test_server":true}`, secret: canary},
-	"accounts.remove": {input: `{"name":"leer"}`},
-	"accounts.test":   {input: `{"name":"demo"}`},
-	"sync.run":        {input: `{"account":"demo"}`},
-	"mailboxes.list":  {input: `{"account":"demo"}`},
-	"messages.get":    {input: `{"message_id":"a@example.org","account":"demo","headers":true}`},
+	"accounts.list":    {input: `{}`},
+	"accounts.add":     {input: `{"name":"neu","host":"127.0.0.1","port":11143,"tls":"none","username":"u@example.invalid","insecure_test_server":true}`, secret: canary},
+	"accounts.remove":  {input: `{"name":"leer"}`},
+	"accounts.test":    {input: `{"name":"demo"}`},
+	"sync.run":         {input: `{"account":"demo"}`},
+	"mailboxes.list":   {input: `{"account":"demo"}`},
+	"messages.get":     {input: `{"message_id":"a@example.org","account":"demo","headers":true}`},
+	"threads.get":      {input: `{"message":1,"text":true}`},
+	"attachments.list": {input: `{"message":1}`},
+	"attachments.text": {input: `{"id":2}`},
 }
 
 // contractRunner zählt Syncs, die schreiben dürften (DryRun=false).
@@ -207,8 +211,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 	m.prober.res = ProbeResult{Capabilities: []string{"IMAP4rev1"}, SyncStrategy: "uid-scan", CapabilitiesJSON: `{"imap4rev1":true}`}
 	r := &contractRunner{}
 	return &contractEnv{mirrorEnv: m, runner: r, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
-		Mailboxes: m.st, Messages: m.st, Blobs: mapBlobs{"sha-1": "Message-ID: <a@example.org>\r\nSubject: Hallo\r\n\r\nText"},
-		Runner: r}}
+		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Extractor: extract.New(extract.Options{})}}
 }
 
 // fingerprint fasst den lokalen Zustand zusammen: alle Tabellen der

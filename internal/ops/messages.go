@@ -14,11 +14,14 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
-// MessageRepo liefert gespiegelte Nachrichten.
+// MessageRepo liefert gespiegelte Nachrichten, Threads und Anhänge.
 type MessageRepo interface {
 	MessageByID(ctx context.Context, id int64) (store.Message, error)
 	MessageIDsByHeader(ctx context.Context, accountID int64, messageID string) ([]int64, error)
-	MessageText(ctx context.Context, id int64) (string, error)
+	MessageBody(ctx context.Context, id int64) (store.Body, error)
+	ThreadByID(ctx context.Context, id int64) (store.Thread, []store.ThreadMessage, error)
+	AttachmentsByMessage(ctx context.Context, messageID int64) ([]store.Attachment, error)
+	AttachmentByID(ctx context.Context, id int64) (store.Attachment, string, error)
 }
 
 // BlobReader liest Rohmails aus dem Blob-Store.
@@ -33,13 +36,13 @@ type MessageLocation struct {
 	UID     uint32 `json:"uid"`
 }
 
-// MessageOutput ist die Ausgabe von messages.get (Stand S1.5: minimal für
-// `show`; Untrusted-Hülle, HTML-Bereinigung und Anhänge folgen mit S1.6,
-// S1.8 und S1.9).
+// MessageOutput ist die Ausgabe von messages.get (Stand S1.6: bereinigter
+// Text, versteckter Text, Links, Thread; Untrusted-Hülle mit S1.8/S1.9).
 type MessageOutput struct {
 	ID             int64             `json:"id"`
 	Account        string            `json:"account"`
 	MessageID      string            `json:"message_id,omitempty"`
+	ThreadID       int64             `json:"thread_id,omitempty"`
 	Subject        string            `json:"subject"`
 	From           string            `json:"from"`
 	To             json.RawMessage   `json:"to"`
@@ -54,6 +57,13 @@ type MessageOutput struct {
 	Mailboxes      []MessageLocation `json:"mailboxes"`
 	Headers        string            `json:"headers,omitempty"` // nur mit headers=true
 	Text           *string           `json:"text,omitempty"`    // nur ohne headers
+	// TextSource: plain (Klartextteil) oder html (Text aus dem HTML-Teil,
+	// wenn es keinen Klartext gibt); mit strip_quotes ohne Zitate.
+	TextSource string `json:"text_source,omitempty"`
+	// HiddenTextRemoved: Das HTML enthielt versteckten Text, der entfernt
+	// wurde (Prompt-Injection-Indiz; docs/sicherheit.md).
+	HiddenTextRemoved bool              `json:"hidden_text_removed"`
+	Links             []json.RawMessage `json:"links,omitempty"`
 }
 
 // maxHeaderBytes begrenzt die ausgegebenen Kopfzeilen.
@@ -67,14 +77,15 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 		Scope:      policy.ScopeMailRead,
 		Risk:       policy.R0,
 		Idempotent: true,
-		Summary:    "Show a mirrored message: metadata, flags and its text or raw headers.",
+		Summary:    "Show a mirrored message: metadata, flags and its cleaned text (or raw headers).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "id": {"type": "integer", "minimum": 1},
     "message_id": {"type": "string"},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-    "headers": {"type": "boolean"}
+    "headers": {"type": "boolean"},
+    "strip_quotes": {"type": "boolean"}
   },
   "additionalProperties": false
 }`),
@@ -92,9 +103,16 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "mailboxes": {"type": "array", "items": {"type": "object", "properties": {
       "mailbox": {"type": "string"}, "role": {"type": "string"}, "uid": {"type": "integer"}},
       "required": ["mailbox", "role", "uid"]}},
-    "headers": {"type": "string"}, "text": {"type": "string"}
+    "headers": {"type": "string"}, "text": {"type": "string"},
+    "thread_id": {"type": "integer"},
+    "text_source": {"type": "string", "enum": ["plain", "html", "plain_unquoted", "html_unquoted"]},
+    "hidden_text_removed": {"type": "boolean"},
+    "links": {"type": "array", "items": {"type": "object", "properties": {
+      "text": {"type": "string"}, "url": {"type": "string"}, "host": {"type": "string"},
+      "host_unicode": {"type": "string"}, "warnings": {"type": "array", "items": {"type": "string"}}},
+      "required": ["text", "url", "host"]}}
   },
-  "required": ["id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords", "has_attachments", "deleted_remote", "mailboxes"]
+  "required": ["id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords", "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -108,10 +126,11 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				ID        int64  `json:"id,omitempty"`
-				MessageID string `json:"message_id,omitempty"`
-				Account   string `json:"account,omitempty"`
-				Headers   bool   `json:"headers,omitempty"`
+				ID          int64  `json:"id,omitempty"`
+				MessageID   string `json:"message_id,omitempty"`
+				Account     string `json:"account,omitempty"`
+				Headers     bool   `json:"headers,omitempty"`
+				StripQuotes bool   `json:"strip_quotes,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -141,7 +160,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			if in.Account != "" && m.Account != in.Account {
 				return nil, store.ErrMessageNotFound
 			}
-			out := MessageOutput{ID: m.ID, Account: m.Account, MessageID: m.MessageID, Subject: m.Subject, From: m.From,
+			out := MessageOutput{ID: m.ID, Account: m.Account, MessageID: m.MessageID, ThreadID: m.ThreadID, Subject: m.Subject, From: m.From,
 				To: arr(m.To), Cc: arr(m.Cc), Size: m.Size, Keywords: m.Keywords, HasAttachments: m.HasAttachments,
 				DeletedRemote: !m.DeletedRemoteAt.IsZero(), Flags: []string{}, Mailboxes: []MessageLocation{}}
 			if out.Keywords == nil {
@@ -174,12 +193,25 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 					}
 					out.Headers = h
 				}
-			} else {
-				t, err := msgs.MessageText(ctx, m.ID)
-				if err != nil {
-					return nil, err
+			}
+			body, err := msgs.MessageBody(ctx, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			out.HiddenTextRemoved = body.HiddenText
+			var links []json.RawMessage
+			if json.Unmarshal(body.Links, &links) == nil && len(links) > 0 {
+				out.Links = links
+			}
+			if !in.Headers {
+				text, src := body.TextPlain, "plain"
+				if strings.TrimSpace(text) == "" && strings.TrimSpace(body.TextHTML) != "" {
+					text, src = body.TextHTML, "html"
 				}
-				out.Text = &t
+				if in.StripQuotes && body.CleanVersion > 0 {
+					text, src = body.TextUnquoted, src+"_unquoted"
+				}
+				out.Text, out.TextSource = &text, src
 			}
 			return out, nil
 		},

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -36,6 +37,10 @@ func (f *fakeRunner) Sync(_ context.Context, a store.Account, pw secrets.Secret,
 
 type mapBlobs map[string]string
 
+// testBlobs: Rohmail der Beispielnachricht und zwei Anhänge.
+var testBlobs = mapBlobs{"sha-1": "Message-ID: <a@example.org>\r\nSubject: Hallo\r\n\r\nText",
+	"sha-att": "Notiz: Rückruf", "sha-html": `<p>Aushang</p><p style="display:none">versteckt</p>`}
+
 func (m mapBlobs) Get(sha string) (io.ReadCloser, error) {
 	v, ok := m[sha]
 	if !ok {
@@ -55,7 +60,8 @@ func newMirrorEnv(t *testing.T) *mirrorEnv {
 	e := newAccountsEnv(t)
 	m := &mirrorEnv{accountsEnv: e, runner: &fakeRunner{}}
 	for _, op := range []Operation{SyncRun(e.st, e.sec, m.runner), MailboxesList(e.st, e.st),
-		MessagesGet(e.st, e.st, mapBlobs{"sha-1": "Message-ID: <a@example.org>\r\nSubject: Hallo\r\n\r\nText"})} {
+		MessagesGet(e.st, e.st, testBlobs), ThreadsGet(e.st), AttachmentsList(e.st),
+		AttachmentsText(e.st, testBlobs, extract.New(extract.Options{}))} {
 		if err := e.x.Registry.Register(op); err != nil {
 			t.Fatal(err)
 		}
@@ -154,13 +160,25 @@ func (e *mirrorEnv) seed(t *testing.T) int64 {
 	_, err := e.st.ApplyBatch(ctx, store.MirrorBatch{AccountID: e.acct, MailboxID: boxes[0].ID,
 		New: []store.NewMessage{{Link: store.LinkFlags{UID: 5, Seen: true, Keywords: []string{"$Erledigt"}}, MessageID: "a@example.org",
 			Subject: "Hallo", From: "Absender <a@example.org>", To: json.RawMessage(`[{"name":"B","address":"b@example.org"}]`),
-			Size: 40, BlobSHA256: "sha-1", BlobSize: 40, TextPlain: "Text",
+			Size: 40, BlobSHA256: "sha-1", BlobSize: 40, TextPlain: "Text\n\nAm Montag schrieb B:\n> alt", TextUnquoted: "Text",
+			TextHTML: "Text aus HTML", HiddenText: true, CleanVersion: 1,
+			Links: json.RawMessage(`[{"text":"Portal","url":"https://portal.example.org/","host":"portal.example.org"}]`),
+			Attachments: []store.NewAttachment{
+				{PartID: "2", Filename: "Notiz.txt", ContentType: "text/plain", DeclaredType: "text/plain", Size: 15, SHA256: "sha-att", BlobSize: 15},
+				{PartID: "3", Filename: "Aushang.html", ContentType: "text/html", DeclaredType: "text/html", Size: 50, SHA256: "sha-html", BlobSize: 50},
+				{PartID: "4", Filename: "Rechnung.pdf", ContentType: "application/x-msdownload", DeclaredType: "application/pdf", Size: 512,
+					TypeMismatch: true, MismatchReason: "declared application/pdf, content is application/x-msdownload", Executable: true,
+					ExtractStatus: "skipped", ExtractError: "executable content is not extracted"}},
 			DateHeader: time.Date(2025, 1, 6, 9, 0, 0, 0, time.UTC), InternalDate: time.Date(2025, 1, 6, 9, 1, 0, 0, time.UTC)}},
 		State: &store.MailboxState{UIDValidity: 3, UIDNext: 6, Phase: store.PhaseReady, Total: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ids, _ := e.st.MessageIDsByHeader(ctx, e.acct, "a@example.org")
+	atts, _ := e.st.AttachmentsByMessage(ctx, ids[0])
+	if err := e.st.SetExtraction(ctx, atts[0].ID, "ok", "Notiz: Rückruf", "", false); err != nil {
+		t.Fatal(err)
+	}
 	return ids[0]
 }
 
@@ -203,8 +221,13 @@ func TestMessagesGet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := out.(MessageOutput); o.ID != id || o.Text == nil || *o.Text != "Text" || o.Headers != "" {
+	if o := out.(MessageOutput); o.ID != id || o.Text == nil || *o.Text != "Text\n\nAm Montag schrieb B:\n> alt" || o.Headers != "" ||
+		o.TextSource != "plain" || !o.HiddenTextRemoved || o.ThreadID == 0 || len(o.Links) != 1 {
 		t.Fatalf("by message-id = %+v", o)
+	}
+	out, err = e.run("messages.get", map[string]any{"id": id, "strip_quotes": true}, "", false)
+	if o := out.(MessageOutput); err != nil || *o.Text != "Text" || o.TextSource != "plain_unquoted" {
+		t.Fatalf("strip_quotes = %+v %v", o, err)
 	}
 	for _, in := range []map[string]any{{}, {"id": id, "message_id": "x"}} {
 		var ie *InputError
@@ -224,4 +247,101 @@ func TestMessagesGet(t *testing.T) {
 	if strings.Contains(string(last.ParamsRedacted), "Hallo") {
 		t.Fatalf("audit leaks content: %s", last.ParamsRedacted)
 	}
+}
+
+func TestThreadsGet(t *testing.T) {
+	e := newMirrorEnv(t)
+	id := e.seed(t)
+	out, err := e.run("threads.get", map[string]any{"message": id, "text": true}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := out.(ThreadOutput)
+	if o.Account != "demo" || o.MessageCount != 1 || len(o.Messages) != 1 || o.Subject != "Hallo" || o.FirstDate != "2025-01-06T09:00:00Z" ||
+		len(o.Participants) != 1 || o.Messages[0].Text == nil || *o.Messages[0].Text != "Text" || !o.Messages[0].HiddenTextRemoved ||
+		strings.Join(o.Messages[0].Flags, ",") != "seen" {
+		t.Fatalf("thread = %+v", o)
+	}
+	out, err = e.run("threads.get", map[string]any{"id": o.ID}, "", false)
+	if err != nil || out.(ThreadOutput).Messages[0].Text != nil {
+		t.Fatalf("by id without text = %+v %v", out, err)
+	}
+	for _, in := range []map[string]any{{}, {"id": 1, "message": 1}} {
+		var ie *InputError
+		if _, err := e.run("threads.get", in, "", false); !errors.As(err, &ie) {
+			t.Errorf("%v: %v", in, err)
+		}
+	}
+	if _, err := e.run("threads.get", map[string]any{"id": 999}, "", false); !errors.Is(err, store.ErrThreadNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	if _, err := e.x.Execute(context.Background(), Request{Key: policy.Key{Scopes: []policy.Scope{policy.ScopeMailSearch}},
+		Operation: "threads.get", Input: json.RawMessage(`{"id":1}`)}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("search-only key: %v", err)
+	}
+}
+
+func TestAttachmentsListAndText(t *testing.T) {
+	e := newMirrorEnv(t)
+	id := e.seed(t)
+	out, err := e.run("attachments.list", map[string]any{"message": id}, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := out.(AttachmentsListOutput)
+	if len(l.Attachments) != 3 {
+		t.Fatalf("list = %+v", l)
+	}
+	txt, html, exe := l.Attachments[0], l.Attachments[1], l.Attachments[2]
+	if txt.Filename != "Notiz.txt" || txt.ExtractStatus != "ok" || html.ExtractStatus != "pending" ||
+		!exe.TypeMismatch || !exe.Executable || exe.ContentType != "application/x-msdownload" || exe.DeclaredType != "application/pdf" ||
+		exe.ExtractStatus != "skipped" || exe.MismatchReason == "" {
+		t.Fatalf("attachments = %+v", l.Attachments)
+	}
+	// gespeicherter Text
+	out, err = e.run("attachments.text", map[string]any{"id": txt.ID}, "", false)
+	if o := out.(AttachmentTextOutput); err != nil || o.Text != "Notiz: Rückruf" || o.ExtractedNow || o.MessageID != id {
+		t.Fatalf("stored text = %+v %v", out, err)
+	}
+	// ausstehend: jetzt extrahiert, nicht gespeichert (R0)
+	before := e.fingerprintAttachments(t)
+	out, err = e.run("attachments.text", map[string]any{"id": html.ID}, "", false)
+	if o := out.(AttachmentTextOutput); err != nil || o.Text != "Aushang" || !o.ExtractedNow || !o.HiddenText || o.ExtractStatus != "ok" {
+		t.Fatalf("pending text = %+v %v", out, err)
+	}
+	if e.fingerprintAttachments(t) != before {
+		t.Fatal("attachments.text changed the database")
+	}
+	// übersprungen: kein Text, Grund
+	out, err = e.run("attachments.text", map[string]any{"id": exe.ID}, "", false)
+	if o := out.(AttachmentTextOutput); err != nil || o.Text != "" || o.ExtractStatus != "skipped" || o.ExtractError == "" {
+		t.Fatalf("skipped = %+v %v", out, err)
+	}
+	if _, err := e.run("attachments.text", map[string]any{"id": 999}, "", false); !errors.Is(err, store.ErrAttachmentNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	if _, err := e.run("attachments.list", map[string]any{"message": 999}, "", false); !errors.Is(err, store.ErrMessageNotFound) {
+		t.Fatalf("missing message: %v", err)
+	}
+	ev := e.au.Events()
+	if last := ev[len(ev)-1]; strings.Contains(string(last.ParamsRedacted), "Rückruf") {
+		t.Fatalf("audit leaks content: %s", last.ParamsRedacted)
+	}
+}
+
+func (e *mirrorEnv) fingerprintAttachments(t *testing.T) string {
+	t.Helper()
+	rows, err := e.st.DBForTest().Query(`SELECT id, extract_status, COALESCE(extracted_text,''), hidden_text FROM attachments ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var id, hidden int
+		var st, tx string
+		_ = rows.Scan(&id, &st, &tx, &hidden)
+		b.WriteString(st + tx + "|")
+	}
+	return b.String()
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
@@ -106,7 +107,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
-		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP)})
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Extractor: extract.New(extract.Options{})})
 	if err != nil {
 		return nil, err
 	}

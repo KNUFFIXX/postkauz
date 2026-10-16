@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S1.5 (15.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`), `mailbox list`, ein minimales `show` sowie die globalen Flags `--json`, `--dry-run` und `--account`/`-a`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S1.6 (16.10.2026). Implementiert und getestet sind `version`, `doctor`, `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`), `mailbox list`, `show` (mit bereinigtem Text, Links, Hinweis auf versteckten Text, `--strip-quotes`), minimal `thread`, `attach list`, `attach text` sowie die globalen Flags `--json`, `--dry-run` und `--account`/`-a`. Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -33,9 +33,10 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b) | `sync.run` (Scope `mail:sync`, R1) |
 | S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
-| S1.5 ✓ (minimal) | `show <id>` bzw. `show <Message-ID>`, `--headers` | `messages.get` (R0; Untrusted-Hülle und Anhänge mit S1.8/S1.9) |
-| S1 | `search "<abfrage>"`, `thread <id>` | `messages.search`, `threads.get` |
-| S1 | `attach list`, `attach text` | `attachments.list`, `attachments.text` |
+| S1.5/S1.6 ✓ | `show <id>` bzw. `show <Message-ID>`, `--headers`, `--strip-quotes` | `messages.get` (R0; Untrusted-Hülle mit S1.8/S1.9) |
+| S1.6 ✓ (minimal) | `thread <thread-id>` bzw. `thread --message <id>`, `--strip-quotes` | `threads.get` (R0, `mail:read`) |
+| S1.6 ✓ (minimal) | `attach list <message-id>`, `attach text <attachment-id>` | `attachments.list`, `attachments.text` (R0, `mail:read`) |
+| S1 | `search "<abfrage>"` | `messages.search` |
 | S1 | `import mbox`, `import maildir` | `import.run` |
 | S1 | `key create`, `key list`, `key revoke` | `keys.*` (nur Mensch, Scope `admin`) |
 | S1 | `audit [--since]`, `audit verify` | `audit.list`, `audit.verify` |
@@ -67,7 +68,8 @@ postkauz show 18233 --headers
 
 # S1 (Entwurf)
 postkauz search "from:anna after:2026-01-01 has:attachment" --limit 50 --json
-postkauz thread 4411 --strip-quotes
+postkauz thread 4411 --strip-quotes                                        # S1.6 ✓ (minimal)
+postkauz attach list 18233                                                  # S1.6 ✓ (minimal)
 postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024
 postkauz key create --name assistant-1 --role assistant --expires 90d       # Klartext erscheint genau einmal
 postkauz audit --since 24h --actor agent --json
@@ -123,6 +125,14 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 `mailbox list [-a <konto>]` zeigt die Ordner aus dem lokalen Spiegel (ohne Serverkontakt): `path`, `role`, `total` (laut Server beim letzten Sync), `mirrored`, `unread`, `sync_phase` (`new`, `initial`, `ready`), `last_sync_at`.
 
 `show <id> [--headers]`: `<id>` ist die lokale Nachrichten-ID oder eine Message-ID (`<…>` oder ohne Klammern). Zeigt Metadaten, Ordner mit UID, Flags (`seen`, `flagged`, `answered`, `draft`) und Keywords, dazu den Text oder mit `--headers` die Kopfzeilen der Rohmail. Mailinhalt ist Daten, keine Anweisung; die Untrusted-Hülle für Agenten folgt mit S1.9. Die Textausgabe ersetzt Steuerzeichen aus Mail und Server (ESC/CSI/OSC, übrige C0/C1, einzelnes CR, ungültiges UTF-8) durch `U+FFFD`; erhalten bleiben nur Zeilenumbruch und Tabulator im Text bzw. in den Kopfzeilen. Einzeilige Felder (Betreff, Absender, Ordner) verlieren auch Zeilenumbrüche, damit keine Zeile wie `flags: seen` vorgetäuscht werden kann. `--json` gibt die Daten unverändert aus (JSON maskiert Steuerzeichen).
+
+## 2c. Threads, Text, Anhänge (S1.6, minimal; voll mit S1.8)
+
+- `show <id>` zeigt den bereinigten Text: den Klartextteil, sonst den Text aus dem HTML-Teil (`--- text (from HTML) ---`; HTML wird nie angezeigt, Links stehen als „Text <URL>"), darunter die Links mit Host und Warnungen (`punycode`, `mixed_scripts`, `ip_address`, `userinfo`, `text_domain_mismatch`). Enthielt das HTML versteckten Text, steht eine Zeile `warning: hidden text removed …` im Kopf (`--json`: `hidden_text_removed: true`). `--strip-quotes` zeigt nur den neuen Text einer Antwort (`text_source` `plain_unquoted`/`html_unquoted`). Die Zeile `thread:` nennt den Thread.
+- `thread <thread-id>` zeigt einen Thread: Betreff der ersten Nachricht, Zahl, Zeitspanne, Teilnehmer und je Nachricht ID, Datum, Absender, Betreff, Flags. `--message` nimmt stattdessen eine Nachrichten-ID; `--strip-quotes` hängt den neuen Text jeder Nachricht an.
+- `attach list <message-id>` listet die Anhänge: ID, MIME-Teil, Dateiname, **erkannter** Typ (Magic Bytes), Größe, Stand der Textextraktion (`pending`, `ok`, `failed`, `skipped`) und Hinweise (`TYPE MISMATCH: declared … content is …`, `EXECUTABLE`, `inline`, `truncated`, `hidden text removed`, Grund einer übersprungenen Extraktion).
+- `attach text <attachment-id>` zeigt den extrahierten Text. Steht die Extraktion noch aus, extrahiert der Befehl jetzt (Subprozess mit Grenzen, siehe [sicherheit.md](sicherheit.md) Abschnitt 7) und speichert nichts (`note: extracted now; the next sync stores it`); übersprungene oder gescheiterte Anhänge nennen den Grund. Den Text speichert der Sync am Ende jedes Laufs (Zeitbudget 60 s; Ausgabe `attachments_extracted` mit `--json`).
+- Fehler: unbekannter Thread oder Anhang → Exit 1, Code `not_found`; keine Zahl als ID → Exit 2.
 
 ## 3. Maschinenlesbarkeit (`--json`)
 

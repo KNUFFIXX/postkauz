@@ -50,6 +50,10 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list accounts with: accounts list"}
 	case errors.Is(err, store.ErrMessageNotFound):
 		return ExitError, ErrorInfo{Code: "not_found", Message: "message not found", Hint: "the id is the local id shown by sync/search, or give the Message-ID"}
+	case errors.Is(err, store.ErrThreadNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "thread not found", Hint: "the thread id is shown by show <message-id>; or use thread --message <message-id>"}
+	case errors.Is(err, store.ErrAttachmentNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "attachment not found", Hint: "list attachment ids with: attach list <message-id>"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, secrets.ErrUnavailable):
