@@ -272,7 +272,10 @@ type NewMessage struct {
 	Links        json.RawMessage // JSON-Array der Links aus dem HTML
 	HiddenText   bool            // versteckter Text entfernt
 	CleanVersion int             // Stand der Aufbereitung
-	Attachments  []NewAttachment
+	// AlternativeMismatch: Klartext und HTML (multipart/alternative)
+	// weichen wesentlich ab (sanitize.AlternativeMismatch).
+	AlternativeMismatch bool
+	Attachments         []NewAttachment
 }
 
 // NewAttachment ist ein Anhang einer neu gespiegelten Nachricht.

@@ -48,7 +48,8 @@ var tools = []toolBinding{
 	{tool: "mail_get_message", op: "messages.get", title: "Read a message", mail: true,
 		defaults: map[string]any{"strip_quotes": true, "max_chars": ops.DefaultMaxChars},
 		desc: "Read one message by local id (from mail_search) or Message-ID: headers, sender checks (spf/dkim/dmarc), cleaned text " +
-			"(HTML reduced to text, hidden text removed and flagged in hidden_text_removed), links listed separately with warnings, " +
+			"(HTML reduced to text, hidden text removed and flagged in hidden_text_removed; alternative_mismatch=true when the " +
+			"plain-text part differs from the HTML part a person sees), links listed separately with warnings, " +
 			"attachment list. Defaults: quoted earlier messages removed (strip_quotes=false keeps them), text cut after 20000 characters " +
 			"(max_chars; truncated=true when cut). headers=true returns the raw header lines instead of the text."},
 	{tool: "mail_get_thread", op: "threads.get", title: "Read a thread", mail: true,

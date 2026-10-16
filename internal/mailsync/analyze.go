@@ -25,7 +25,8 @@ import (
 //	2  Betreff, Absender-/Empfängernamen und Dateinamen ohne unsichtbare
 //	   Zeichen (sanitize.Text); die Kopffelder in messages werden mit
 //	   nachgezogen
-const CleanVersion = 2
+//	3  alternative_mismatch: Klartext und HTML weichen ab
+const CleanVersion = 3
 
 // storedPart ist ein beim Parsen gespeicherter Anhang.
 type storedPart struct {
@@ -106,6 +107,9 @@ func fillClean(nm *store.NewMessage, m *mimeparse.Message, atts []store.NewAttac
 	if m.HTML != "" {
 		h := sanitize.HTML(m.HTML)
 		nm.TextHTML, nm.HiddenText = h.Text, h.Hidden
+		// Der Agent liest den Klartext, der Mensch sieht das HTML: weichen
+		// die beiden Darstellungen ab, wird das gemeldet.
+		nm.AlternativeMismatch = m.Alternative && sanitize.AlternativeMismatch(nm.TextPlain, h.Text)
 		if h.Links != nil {
 			links = h.Links
 		}

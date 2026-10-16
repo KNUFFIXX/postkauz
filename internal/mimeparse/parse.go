@@ -140,6 +140,9 @@ type Message struct {
 	Text        string // erster text/plain (plus weitere Inline-Textteile)
 	HTML        string // erster text/html, roh (Bereinigung in S1.6)
 	TextCharset string // deklarierter Zeichensatz des Textteils
+	// Alternative: Die Nachricht enthält einen multipart/alternative-Teil
+	// (Klartext und HTML als zwei Darstellungen desselben Inhalts).
+	Alternative bool
 
 	Attachments []Attachment
 
@@ -481,6 +484,9 @@ func (w *walker) walk(e *message.Entity, depth int, id string) {
 		if depth >= w.lim.MaxDepth {
 			w.m.problem("MIME nesting deeper than %d; rest ignored", w.lim.MaxDepth)
 			return
+		}
+		if mediaType == "multipart/alternative" {
+			w.m.Alternative = true
 		}
 		mr := e.MultipartReader()
 		if mr == nil || params["boundary"] == "" {

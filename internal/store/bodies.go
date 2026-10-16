@@ -15,11 +15,12 @@ import (
 // upsertBody schreibt den Text einer Nachricht (neu oder überschreibend).
 func upsertBody(ctx context.Context, q querier, mid int64, n NewMessage) error {
 	_, err := q.ExecContext(ctx, `INSERT INTO bodies(message_id, text_plain, text_from_html, hidden_text, charset, text_unquoted,
-		links, clean_version) VALUES (?,?,?,?,?,?,?,?)
+		links, clean_version, alternative_mismatch) VALUES (?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(message_id) DO UPDATE SET text_plain = excluded.text_plain, text_from_html = excluded.text_from_html,
 		hidden_text = excluded.hidden_text, charset = excluded.charset, text_unquoted = excluded.text_unquoted,
-		links = excluded.links, clean_version = excluded.clean_version`,
-		mid, n.TextPlain, n.TextHTML, b2i(n.HiddenText), nullStr(n.TextCharset), n.TextUnquoted, jsonOr(n.Links, "[]"), n.CleanVersion)
+		links = excluded.links, clean_version = excluded.clean_version, alternative_mismatch = excluded.alternative_mismatch`,
+		mid, n.TextPlain, n.TextHTML, b2i(n.HiddenText), nullStr(n.TextCharset), n.TextUnquoted, jsonOr(n.Links, "[]"), n.CleanVersion,
+		b2i(n.AlternativeMismatch))
 	if err != nil {
 		return fmt.Errorf("store: body %d: %w", mid, err)
 	}
@@ -310,19 +311,22 @@ type Body struct {
 	Links        json.RawMessage
 	HiddenText   bool
 	CleanVersion int
+	// AlternativeMismatch: Klartext und HTML weichen ab (seit CleanVersion 3).
+	AlternativeMismatch bool
 }
 
 // MessageBody liefert den gespeicherten Text (leer, wenn es keinen gibt).
 func (s *SQLite) MessageBody(ctx context.Context, id int64) (Body, error) {
 	var b Body
 	var links string
-	var hidden int
-	err := s.db.QueryRowContext(ctx, `SELECT text_plain, text_from_html, text_unquoted, links, hidden_text, clean_version
-		FROM bodies WHERE message_id = ?`, id).Scan(&b.TextPlain, &b.TextHTML, &b.TextUnquoted, &links, &hidden, &b.CleanVersion)
+	var hidden, mismatch int
+	err := s.db.QueryRowContext(ctx, `SELECT text_plain, text_from_html, text_unquoted, links, hidden_text, clean_version,
+		alternative_mismatch FROM bodies WHERE message_id = ?`, id).Scan(&b.TextPlain, &b.TextHTML, &b.TextUnquoted, &links,
+		&hidden, &b.CleanVersion, &mismatch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Body{Links: json.RawMessage("[]")}, nil
 	}
-	b.Links, b.HiddenText = json.RawMessage(links), hidden == 1
+	b.Links, b.HiddenText, b.AlternativeMismatch = json.RawMessage(links), hidden == 1, mismatch == 1
 	if strings.TrimSpace(links) == "" {
 		b.Links = json.RawMessage("[]")
 	}

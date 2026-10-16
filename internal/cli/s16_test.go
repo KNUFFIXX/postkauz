@@ -38,6 +38,13 @@ func s16Server(t *testing.T) string {
 			"--b1\r\nContent-Type: application/pdf; name=\"Rechnung.pdf\"\r\nContent-Disposition: attachment; filename=\"Rechnung.pdf\"\r\n" +
 			"Content-Transfer-Encoding: base64\r\n\r\n" + exe + "\r\n--b1--\r\n",
 	}
+	return serveMails(t, u, mails)
+}
+
+// serveMails legt mails in die INBOX von u und startet einen IMAP-Server im
+// Prozess; liefert die Adresse.
+func serveMails(t *testing.T, u *imapmemserver.User, mails []string) string {
+	t.Helper()
 	for _, m := range mails {
 		if _, err := u.Append("INBOX", litReader{bytes.NewReader([]byte(m))}, &imap.AppendOptions{}); err != nil {
 			t.Fatal(err)

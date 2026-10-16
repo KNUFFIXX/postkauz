@@ -64,8 +64,12 @@ type MessageOutput struct {
 	TextSource string `json:"text_source,omitempty"`
 	// HiddenTextRemoved: Das HTML enthielt versteckten Text, der entfernt
 	// wurde (Prompt-Injection-Indiz; docs/sicherheit.md).
-	HiddenTextRemoved bool              `json:"hidden_text_removed"`
-	Links             []json.RawMessage `json:"links,omitempty"`
+	HiddenTextRemoved bool `json:"hidden_text_removed"`
+	// AlternativeMismatch: Klartext und HTML-Teil (multipart/alternative)
+	// weichen wesentlich ab; der Text hier (Klartext) ist nicht das, was ein
+	// Mensch im Mailclient sieht (Prompt-Injection-Indiz).
+	AlternativeMismatch bool              `json:"alternative_mismatch"`
+	Links               []json.RawMessage `json:"links,omitempty"`
 	// Truncated: Der Text wurde auf max_chars gekürzt.
 	Truncated   bool               `json:"truncated"`
 	Auth        AuthOutput         `json:"auth"`
@@ -116,6 +120,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "thread_id": {"type": "integer"},
     "text_source": {"type": "string", "enum": ["plain", "html", "plain_unquoted", "html_unquoted"]},
     "hidden_text_removed": {"type": "boolean"},
+    "alternative_mismatch": {"type": "boolean"},
     "links": {"type": "array", "items": {"type": "object", "properties": {
       "text": {"type": "string"}, "url": {"type": "string"}, "host": {"type": "string"},
       "host_unicode": {"type": "string"}, "warnings": {"type": "array", "items": {"type": "string"}}},
@@ -125,7 +130,8 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "attachments": {"type": "array", "items": ` + attachmentSchema + `}
   },
   "required": ["untrusted", "source", "notice", "id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords",
-    "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed", "truncated", "auth", "attachments"]
+    "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed", "alternative_mismatch", "truncated", "auth",
+    "attachments"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -213,7 +219,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			if err != nil {
 				return nil, err
 			}
-			out.HiddenTextRemoved = body.HiddenText
+			out.HiddenTextRemoved, out.AlternativeMismatch = body.HiddenText, body.AlternativeMismatch
 			var links []json.RawMessage
 			if json.Unmarshal(body.Links, &links) == nil && len(links) > 0 {
 				out.Links = links

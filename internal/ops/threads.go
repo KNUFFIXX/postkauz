@@ -26,6 +26,8 @@ type ThreadMessageOutput struct {
 	// Text ist der neue Text ohne Zitate (nur mit text=true).
 	Text              *string `json:"text,omitempty"`
 	HiddenTextRemoved bool    `json:"hidden_text_removed,omitempty"`
+	// AlternativeMismatch: Klartext und HTML weichen ab (nur mit text=true).
+	AlternativeMismatch bool `json:"alternative_mismatch,omitempty"`
 	// Truncated: Text auf max_chars_per_message gekürzt.
 	Truncated bool `json:"truncated,omitempty"`
 }
@@ -84,7 +86,8 @@ func ThreadsGet(msgs MessageRepo) Operation {
       "id": {"type": "integer"}, "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"},
       "subject": {"type": "string"}, "flags": {"type": "array", "items": {"type": "string"}},
       "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "snippet": {"type": "string"},
-      "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}, "truncated": {"type": "boolean"}},
+      "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}, "alternative_mismatch": {"type": "boolean"},
+      "truncated": {"type": "boolean"}},
       "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "snippet"]}},
     "messages_omitted": {"type": "integer"}
   },
@@ -168,7 +171,7 @@ func ThreadsGet(msgs MessageRepo) Operation {
 						}
 					}
 					text, tm.Truncated = truncateRunes(text, in.MaxChars)
-					tm.Text, tm.HiddenTextRemoved = &text, b.HiddenText
+					tm.Text, tm.HiddenTextRemoved, tm.AlternativeMismatch = &text, b.HiddenText, b.AlternativeMismatch
 				}
 				out.Messages = append(out.Messages, tm)
 			}

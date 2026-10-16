@@ -285,6 +285,9 @@ func renderShow(w io.Writer, out any) error {
 	if o.HiddenTextRemoved {
 		fmt.Fprintf(tw, "warning:\thidden text removed (the HTML contained text a reader would not see; possible prompt injection)\n")
 	}
+	if o.AlternativeMismatch {
+		fmt.Fprintf(tw, "warning:\tplain text differs from the HTML part (a mail client shows the HTML; possible prompt injection)\n")
+	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
@@ -409,6 +412,9 @@ func renderThread(w io.Writer, out any) error {
 		fmt.Fprintf(w, "--- %d: %s ---\n", m.ID, termLine(m.From))
 		if m.HiddenTextRemoved {
 			fmt.Fprintln(w, "(hidden text removed)")
+		}
+		if m.AlternativeMismatch {
+			fmt.Fprintln(w, "(plain text differs from the HTML part)")
 		}
 		fmt.Fprintln(w, termText(strings.TrimRight(*m.Text, "\r\n")))
 		if m.Truncated {

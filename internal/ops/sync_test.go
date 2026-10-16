@@ -161,7 +161,7 @@ func (e *mirrorEnv) seed(t *testing.T) int64 {
 		New: []store.NewMessage{{Link: store.LinkFlags{UID: 5, Seen: true, Keywords: []string{"$Erledigt"}}, MessageID: "a@example.org",
 			Subject: "Hallo", From: "Absender <a@example.org>", To: json.RawMessage(`[{"name":"B","address":"b@example.org"}]`),
 			Size: 40, BlobSHA256: "sha-1", BlobSize: 40, TextPlain: "Text\n\nAm Montag schrieb B:\n> alt", TextUnquoted: "Text",
-			TextHTML: "Text aus HTML", HiddenText: true, CleanVersion: 1,
+			TextHTML: "Text aus HTML", HiddenText: true, AlternativeMismatch: true, CleanVersion: 1,
 			Links: json.RawMessage(`[{"text":"Portal","url":"https://portal.example.org/","host":"portal.example.org"}]`),
 			Attachments: []store.NewAttachment{
 				{PartID: "2", Filename: "Notiz.txt", ContentType: "text/plain", DeclaredType: "text/plain", Size: 15, SHA256: "sha-att", BlobSize: 15},
@@ -222,7 +222,7 @@ func TestMessagesGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if o := out.(MessageOutput); o.ID != id || o.Text == nil || *o.Text != "Text\n\nAm Montag schrieb B:\n> alt" || o.Headers != "" ||
-		o.TextSource != "plain" || !o.HiddenTextRemoved || o.ThreadID == 0 || len(o.Links) != 1 {
+		o.TextSource != "plain" || !o.HiddenTextRemoved || !o.AlternativeMismatch || o.ThreadID == 0 || len(o.Links) != 1 {
 		t.Fatalf("by message-id = %+v", o)
 	}
 	out, err = e.run("messages.get", map[string]any{"id": id, "strip_quotes": true}, "", false)
@@ -259,6 +259,7 @@ func TestThreadsGet(t *testing.T) {
 	o := out.(ThreadOutput)
 	if o.Account != "demo" || o.MessageCount != 1 || len(o.Messages) != 1 || o.Subject != "Hallo" || o.FirstDate != "2025-01-06T09:00:00Z" ||
 		len(o.Participants) != 1 || o.Messages[0].Text == nil || *o.Messages[0].Text != "Text" || !o.Messages[0].HiddenTextRemoved ||
+		!o.Messages[0].AlternativeMismatch ||
 		strings.Join(o.Messages[0].Flags, ",") != "seen" {
 		t.Fatalf("thread = %+v", o)
 	}
