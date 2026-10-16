@@ -36,9 +36,11 @@ type MessageLocation struct {
 	UID     uint32 `json:"uid"`
 }
 
-// MessageOutput ist die Ausgabe von messages.get (Stand S1.6: bereinigter
-// Text, versteckter Text, Links, Thread; Untrusted-Hülle mit S1.8/S1.9).
+// MessageOutput ist die Ausgabe von messages.get: Metadaten, bereinigter
+// Text (oder Kopfzeilen), Links, Anhänge, Absenderprüfung, in der
+// Untrusted-Hülle (seit S1.8).
 type MessageOutput struct {
+	Envelope
 	ID             int64             `json:"id"`
 	Account        string            `json:"account"`
 	MessageID      string            `json:"message_id,omitempty"`
@@ -64,34 +66,41 @@ type MessageOutput struct {
 	// wurde (Prompt-Injection-Indiz; docs/sicherheit.md).
 	HiddenTextRemoved bool              `json:"hidden_text_removed"`
 	Links             []json.RawMessage `json:"links,omitempty"`
+	// Truncated: Der Text wurde auf max_chars gekürzt.
+	Truncated   bool               `json:"truncated"`
+	Auth        AuthOutput         `json:"auth"`
+	Attachments []AttachmentOutput `json:"attachments"`
 }
 
 // maxHeaderBytes begrenzt die ausgegebenen Kopfzeilen.
 const maxHeaderBytes = 256 << 10
 
-// MessagesGet zeigt eine gespiegelte Nachricht: Metadaten und Flags, dazu
-// entweder den Text oder (headers) die Kopfzeilen der Rohmail. Lesend (R0).
+// MessagesGet zeigt eine gespiegelte Nachricht: Metadaten, Flags,
+// Absenderprüfung und Anhänge, dazu entweder den Text oder (headers) die
+// Kopfzeilen der Rohmail. Lesend (R0).
 func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Operation {
 	return Operation{
 		Name:       "messages.get",
 		Scope:      policy.ScopeMailRead,
 		Risk:       policy.R0,
 		Idempotent: true,
-		Summary:    "Show a mirrored message: metadata, flags and its cleaned text (or raw headers).",
+		Summary:    "Show a mirrored message: metadata, flags, sender checks, attachments and its cleaned text (or raw headers).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "id": {"type": "integer", "minimum": 1},
     "message_id": {"type": "string"},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-    "headers": {"type": "boolean"},
-    "strip_quotes": {"type": "boolean"}
+    "headers": {"type": "boolean", "description": "raw header lines instead of the text"},
+    "strip_quotes": {"type": "boolean", "description": "only the new text of a reply (quoted parts removed)"},
+    "max_chars": {"type": "integer", "minimum": 1, "description": "cut the text after this many characters (truncated=true)"}
   },
   "additionalProperties": false
 }`),
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    ` + envelopeProps + `,
     "id": {"type": "integer"}, "account": {"type": "string"}, "message_id": {"type": "string"},
     "subject": {"type": "string"}, "from": {"type": "string"},
     "to": {"type": "array"}, "cc": {"type": "array"},
@@ -110,9 +119,13 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "links": {"type": "array", "items": {"type": "object", "properties": {
       "text": {"type": "string"}, "url": {"type": "string"}, "host": {"type": "string"},
       "host_unicode": {"type": "string"}, "warnings": {"type": "array", "items": {"type": "string"}}},
-      "required": ["text", "url", "host"]}}
+      "required": ["text", "url", "host"]}},
+    "truncated": {"type": "boolean"},
+    "auth": ` + authSchema + `,
+    "attachments": {"type": "array", "items": ` + attachmentSchema + `}
   },
-  "required": ["id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords", "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed"]
+  "required": ["untrusted", "source", "notice", "id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords",
+    "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed", "truncated", "auth", "attachments"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -131,6 +144,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 				Account     string `json:"account,omitempty"`
 				Headers     bool   `json:"headers,omitempty"`
 				StripQuotes bool   `json:"strip_quotes,omitempty"`
+				MaxChars    int    `json:"max_chars,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -160,7 +174,8 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			if in.Account != "" && m.Account != in.Account {
 				return nil, store.ErrMessageNotFound
 			}
-			out := MessageOutput{ID: m.ID, Account: m.Account, MessageID: m.MessageID, ThreadID: m.ThreadID, Subject: m.Subject, From: m.From,
+			out := MessageOutput{Envelope: emailEnvelope(), Auth: parseAuthResults(m.AuthResults), Attachments: []AttachmentOutput{},
+				ID: m.ID, Account: m.Account, MessageID: m.MessageID, ThreadID: m.ThreadID, Subject: m.Subject, From: m.From,
 				To: arr(m.To), Cc: arr(m.Cc), Size: m.Size, Keywords: m.Keywords, HasAttachments: m.HasAttachments,
 				DeletedRemote: !m.DeletedRemoteAt.IsZero(), Flags: []string{}, Mailboxes: []MessageLocation{}}
 			if out.Keywords == nil {
@@ -211,7 +226,17 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 				if in.StripQuotes && body.CleanVersion > 0 {
 					text, src = body.TextUnquoted, src+"_unquoted"
 				}
+				text, out.Truncated = truncateRunes(text, in.MaxChars)
 				out.Text, out.TextSource = &text, src
+			} else {
+				out.Headers, out.Truncated = truncateRunes(out.Headers, in.MaxChars)
+			}
+			atts, err := msgs.AttachmentsByMessage(ctx, m.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range atts {
+				out.Attachments = append(out.Attachments, attachmentOut(a))
 			}
 			return out, nil
 		},

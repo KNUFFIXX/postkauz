@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 )
@@ -15,44 +14,10 @@ func (s *SQLite) AuditWriter() audit.Writer { return sqliteAudit{s} }
 
 type sqliteAudit struct{ s *SQLite }
 
+// Append schreibt einen Eintrag (audit.Writer).
 func (w sqliteAudit) Append(ctx context.Context, e audit.Event) error {
-	params := e.ParamsRedacted
-	if len(params) == 0 {
-		params = []byte(`{}`)
-	}
-	if !json.Valid(params) {
-		return fmt.Errorf("store: audit: params_redacted is not valid JSON")
-	}
-	targets := e.Targets
-	if targets == nil {
-		targets = []string{}
-	}
-	tj, err := json.Marshal(targets)
-	if err != nil {
-		return err
-	}
-	var key, scope, reason any
-	if e.KeyID != "" {
-		key = e.KeyID
-	}
-	if e.Scope != "" {
-		scope = e.Scope
-	}
-	if e.Reason != "" {
-		reason = e.Reason
-	}
-	var dur any
-	if e.Duration > 0 {
-		dur = e.Duration.Milliseconds()
-	}
-	_, err = w.s.db.ExecContext(ctx, `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation,
-		params_redacted, targets, result, reason, dry_run, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		e.TS.UnixMilli(), string(e.ActorType), key, scope, e.Operation, string(params), string(tj),
-		string(e.Result), reason, boolInt(e.DryRun), dur)
-	if err != nil {
-		return fmt.Errorf("store: audit append: %w", err)
-	}
-	return nil
+	_, err := w.AppendID(ctx, e)
+	return err
 }
 
 // AuditEvents liest die Ereignisse ab einer ID (aufsteigend), höchstens limit.

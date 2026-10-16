@@ -46,12 +46,16 @@ type Request struct {
 type Result struct {
 	Output   any
 	Decision policy.Decision
+	// AuditID ist die ID des Audit-Eintrags dieses Aufrufs (0, wenn der
+	// Writer keine IDs kennt). CLI --explain und MCP nennen sie.
+	AuditID int64
 }
 
 // PolicyError wird geliefert, wenn die Policy den Handler nicht freigibt.
 type PolicyError struct {
 	Operation string
 	Decision  policy.Decision
+	AuditID   int64
 }
 
 func (e *PolicyError) Error() string {
@@ -73,6 +77,15 @@ func (e *PolicyError) Is(target error) bool {
 		return e.Decision.Outcome == policy.NeedsApproval
 	}
 	return false
+}
+
+// appendAudit schreibt ein Ereignis und liefert dessen ID, wenn der Writer
+// sie kennt (audit.IDWriter).
+func (x *Executor) appendAudit(ctx context.Context, ev audit.Event) (int64, error) {
+	if w, ok := x.Audit.(audit.IDWriter); ok {
+		return w.AppendID(ctx, ev)
+	}
+	return 0, x.Audit.Append(ctx, ev)
 }
 
 // auditGrace begrenzt das Nachtragen des Fehler-Ereignisses nach einem
@@ -116,30 +129,42 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		if dec.Outcome == policy.NeedsApproval {
 			ev.Result = audit.ResultNeedsApproval
 		}
-		if err := x.Audit.Append(ctx, ev); err != nil {
+		id, err := x.appendAudit(ctx, ev)
+		if err != nil {
 			return Result{}, fmt.Errorf("ops: audit: %w", err)
 		}
-		return Result{Decision: dec}, &PolicyError{Operation: op.Name, Decision: dec}
+		return Result{Decision: dec, AuditID: id}, &PolicyError{Operation: op.Name, Decision: dec, AuditID: id}
 	}
 
 	ev.Result = audit.ResultOK
-	if err := x.Audit.Append(ctx, ev); err != nil {
+	auditID, err := x.appendAudit(ctx, ev)
+	if err != nil {
 		return Result{}, fmt.Errorf("ops: audit: %w", err)
 	}
 
-	out, herr := op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress})
+	// Die Eingabe muss dem InputSchema entsprechen, egal über welche
+	// Oberfläche sie kam (CLI, MCP, später REST). Geprüft wird nach dem
+	// Audit-Eintrag: Auch ein ungültiger Aufruf ist nachvollziehbar.
+	reason := "handler_error"
+	var out any
+	herr := op.validateInput(req.Input)
+	if herr != nil {
+		reason = "invalid_input"
+	} else {
+		out, herr = op.Handler(ctx, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress, Key: req.Key})
+	}
 	if herr != nil {
 		ev.Result = audit.ResultError
-		ev.Reason = "handler_error"
+		ev.Reason = reason
 		ev.Duration = now().Sub(start)
 		// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann
 		// schon beendet. Das Nachtragen läuft deshalb ohne dessen Abbruch,
 		// aber mit eigener Frist. Fehler beim Nachtragen dürfen den
 		// Handler-Fehler nicht verdecken.
 		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
-		_ = x.Audit.Append(actx, ev)
+		_, _ = x.appendAudit(actx, ev)
 		cancel()
-		return Result{Decision: dec}, herr
+		return Result{Decision: dec, AuditID: auditID}, herr
 	}
-	return Result{Output: out, Decision: dec}, nil
+	return Result{Output: out, Decision: dec, AuditID: auditID}, nil
 }

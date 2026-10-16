@@ -19,6 +19,11 @@ type Deps struct {
 	// Extractor extrahiert Anhangstext bei Bedarf (attachments.text);
 	// nil = nur gespeicherte Ergebnisse zeigen.
 	Extractor *extract.Extractor
+	Keys      KeyRepo
+	Audit     AuditRepo
+	// AuditExportDir ist das Standardziel von audit.export ([audit]
+	// export_dir in der Konfiguration; leer = Ziel muss angegeben werden).
+	AuditExportDir string
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -38,6 +43,13 @@ func Catalog(d Deps) []Operation {
 		ThreadsGet(d.Messages),
 		AttachmentsList(d.Messages),
 		AttachmentsText(d.Messages, d.Blobs, d.Extractor),
+		KeysCreate(d.Keys),
+		KeysList(d.Keys),
+		KeysRevoke(d.Keys),
+		AuditList(d.Audit),
+		AuditExport(d.Audit, d.AuditExportDir),
+		AuditVerify(d.Audit),
+		PolicyGet(),
 	}
 }
 

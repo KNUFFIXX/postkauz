@@ -44,6 +44,7 @@ type Message struct {
 	InReplyTo       string
 	References      []string
 	ListID          string
+	AuthResults     string // Authentication-Results, oberste zuerst, je Zeile
 	DeletedRemoteAt time.Time
 	Locations       []MessageLocation
 }
@@ -51,17 +52,17 @@ type Message struct {
 // MessageByID liefert eine Nachricht samt Ordnerkopien.
 func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 	var m Message
-	var mid, reply, blob, irt, list sql.NullString
+	var mid, reply, blob, irt, list, auth sql.NullString
 	var dh, idate, del, tid sql.NullInt64
 	var to, cc, kw, refs string
 	var seen, flagged, answered, draft, att int
 	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.account_id, a.name, m.message_id_header, m.subject, m.from_addr,
 		m.to_addrs, m.cc_addrs, m.reply_to, m.date_header, m.internal_date, m.size, m.flag_seen, m.flag_flagged,
 		m.flag_answered, m.flag_draft, m.keywords, m.has_attachments, m.snippet, m.blob_sha256, m.in_reply_to, m.refs,
-		m.list_id, m.deleted_remote_at, m.thread_id
+		m.list_id, m.deleted_remote_at, m.thread_id, m.auth_results
 		FROM messages m JOIN accounts a ON a.id = m.account_id WHERE m.id = ?`, id).Scan(
 		&m.ID, &m.AccountID, &m.Account, &mid, &m.Subject, &m.From, &to, &cc, &reply, &dh, &idate, &m.Size,
-		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid)
+		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid, &auth)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, fmt.Errorf("%w: id %d", ErrMessageNotFound, id)
 	}
@@ -69,7 +70,7 @@ func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 		return m, err
 	}
 	m.MessageID, m.ReplyTo, m.BlobSHA256, m.InReplyTo, m.ListID = mid.String, reply.String, blob.String, irt.String, list.String
-	m.ThreadID = tid.Int64
+	m.ThreadID, m.AuthResults = tid.Int64, auth.String
 	m.To, m.Cc = json.RawMessage(to), json.RawMessage(cc)
 	m.Seen, m.Flagged, m.Answered, m.Draft, m.HasAttachments = seen == 1, flagged == 1, answered == 1, draft == 1, att == 1
 	_ = json.Unmarshal([]byte(kw), &m.Keywords)

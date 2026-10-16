@@ -26,10 +26,13 @@ type ThreadMessageOutput struct {
 	// Text ist der neue Text ohne Zitate (nur mit text=true).
 	Text              *string `json:"text,omitempty"`
 	HiddenTextRemoved bool    `json:"hidden_text_removed,omitempty"`
+	// Truncated: Text auf max_chars_per_message gekürzt.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
-// ThreadOutput ist die Ausgabe von threads.get.
+// ThreadOutput ist die Ausgabe von threads.get (in der Untrusted-Hülle).
 type ThreadOutput struct {
+	Envelope
 	ID           int64                 `json:"id"`
 	Account      string                `json:"account"`
 	Subject      string                `json:"subject"` // Betreff der ersten Nachricht
@@ -38,6 +41,8 @@ type ThreadOutput struct {
 	LastDate     string                `json:"last_date,omitempty"`
 	Participants []string              `json:"participants"`
 	Messages     []ThreadMessageOutput `json:"messages"`
+	// MessagesOmitted: so viele ältere Nachrichten fehlen wegen max_messages.
+	MessagesOmitted int `json:"messages_omitted"`
 }
 
 func rfc3339(t time.Time) string {
@@ -61,13 +66,16 @@ func ThreadsGet(msgs MessageRepo) Operation {
   "properties": {
     "id": {"type": "integer", "minimum": 1, "description": "thread id"},
     "message": {"type": "integer", "minimum": 1, "description": "local message id; shows the thread of this message"},
-    "text": {"type": "boolean", "description": "include each message's text without quotes"}
+    "text": {"type": "boolean", "description": "include each message's text without quotes"},
+    "max_messages": {"type": "integer", "minimum": 1, "description": "only the newest messages (older ones are counted in messages_omitted)"},
+    "max_chars_per_message": {"type": "integer", "minimum": 1, "description": "cut each text after this many characters"}
   },
   "additionalProperties": false
 }`),
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    ` + envelopeProps + `,
     "id": {"type": "integer"}, "account": {"type": "string"}, "subject": {"type": "string"},
     "message_count": {"type": "integer"}, "first_date": {"type": "string", "format": "date-time"},
     "last_date": {"type": "string", "format": "date-time"},
@@ -76,10 +84,11 @@ func ThreadsGet(msgs MessageRepo) Operation {
       "id": {"type": "integer"}, "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"},
       "subject": {"type": "string"}, "flags": {"type": "array", "items": {"type": "string"}},
       "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "snippet": {"type": "string"},
-      "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}},
-      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "snippet"]}}
+      "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}, "truncated": {"type": "boolean"}},
+      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "snippet"]}},
+    "messages_omitted": {"type": "integer"}
   },
-  "required": ["id", "account", "subject", "message_count", "participants", "messages"]
+  "required": ["untrusted", "source", "notice", "id", "account", "subject", "message_count", "participants", "messages", "messages_omitted"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -98,9 +107,11 @@ func ThreadsGet(msgs MessageRepo) Operation {
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				ID      int64 `json:"id,omitempty"`
-				Message int64 `json:"message,omitempty"`
-				Text    bool  `json:"text,omitempty"`
+				ID          int64 `json:"id,omitempty"`
+				Message     int64 `json:"message,omitempty"`
+				Text        bool  `json:"text,omitempty"`
+				MaxMessages int   `json:"max_messages,omitempty"`
+				MaxChars    int   `json:"max_chars_per_message,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -123,15 +134,19 @@ func ThreadsGet(msgs MessageRepo) Operation {
 			if err != nil {
 				return nil, err
 			}
-			out := ThreadOutput{ID: th.ID, Account: th.Account, MessageCount: th.MessageCount, FirstDate: rfc3339(th.FirstDate),
+			out := ThreadOutput{Envelope: emailEnvelope(), ID: th.ID, Account: th.Account, MessageCount: th.MessageCount, FirstDate: rfc3339(th.FirstDate),
 				LastDate: rfc3339(th.LastDate), Participants: th.Participants, Messages: []ThreadMessageOutput{}}
 			if out.Participants == nil {
 				out.Participants = []string{}
 			}
-			for i, m := range list {
-				if i == 0 {
-					out.Subject = m.Subject
-				}
+			if len(list) > 0 {
+				out.Subject = list[0].Subject
+			}
+			if in.MaxMessages > 0 && len(list) > in.MaxMessages {
+				out.MessagesOmitted = len(list) - in.MaxMessages
+				list = list[out.MessagesOmitted:]
+			}
+			for _, m := range list {
 				tm := ThreadMessageOutput{ID: m.ID, Date: rfc3339(m.Date), From: m.From, Subject: m.Subject, Flags: []string{},
 					HasAttachments: m.HasAttachments, DeletedRemote: m.DeletedRemote, Snippet: m.Snippet}
 				if m.Seen {
@@ -152,6 +167,7 @@ func ThreadsGet(msgs MessageRepo) Operation {
 							text = b.TextHTML
 						}
 					}
+					text, tm.Truncated = truncateRunes(text, in.MaxChars)
 					tm.Text, tm.HiddenTextRemoved = &text, b.HiddenText
 				}
 				out.Messages = append(out.Messages, tm)
@@ -169,6 +185,7 @@ type AttachmentOutput struct {
 	ContentType    string `json:"content_type"` // erkannt (Magic Bytes)
 	DeclaredType   string `json:"declared_type"`
 	Size           int64  `json:"size"`
+	SHA256         string `json:"sha256,omitempty"`
 	Inline         bool   `json:"inline"`
 	Truncated      bool   `json:"truncated"`
 	TypeMismatch   bool   `json:"type_mismatch"`
@@ -179,15 +196,17 @@ type AttachmentOutput struct {
 	HiddenText     bool   `json:"hidden_text_removed"`
 }
 
-// AttachmentsListOutput ist die Ausgabe von attachments.list.
+// AttachmentsListOutput ist die Ausgabe von attachments.list (Dateinamen
+// stammen aus der Mail: Untrusted-Hülle).
 type AttachmentsListOutput struct {
+	Envelope
 	MessageID   int64              `json:"message_id"`
 	Attachments []AttachmentOutput `json:"attachments"`
 }
 
 func attachmentOut(a store.Attachment) AttachmentOutput {
 	return AttachmentOutput{ID: a.ID, PartID: a.PartID, Filename: a.Filename, ContentType: a.ContentType,
-		DeclaredType: a.DeclaredType, Size: a.Size, Inline: a.Inline, Truncated: a.Truncated, TypeMismatch: a.TypeMismatch,
+		DeclaredType: a.DeclaredType, Size: a.Size, SHA256: a.SHA256, Inline: a.Inline, Truncated: a.Truncated, TypeMismatch: a.TypeMismatch,
 		MismatchReason: a.MismatchReason, Executable: a.Executable, ExtractStatus: a.ExtractStatus, ExtractError: a.ExtractError,
 		HiddenText: a.HiddenText}
 }
@@ -195,7 +214,7 @@ func attachmentOut(a store.Attachment) AttachmentOutput {
 const attachmentSchema = `{"type": "object", "properties": {
       "id": {"type": "integer"}, "part_id": {"type": "string"}, "filename": {"type": "string"},
       "content_type": {"type": "string"}, "declared_type": {"type": "string"}, "size": {"type": "integer"},
-      "inline": {"type": "boolean"}, "truncated": {"type": "boolean"}, "type_mismatch": {"type": "boolean"},
+      "sha256": {"type": "string"}, "inline": {"type": "boolean"}, "truncated": {"type": "boolean"}, "type_mismatch": {"type": "boolean"},
       "mismatch_reason": {"type": "string"}, "executable": {"type": "boolean"},
       "extract_status": {"type": "string", "enum": ["pending", "ok", "failed", "skipped"]},
       "extract_error": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}},
@@ -220,10 +239,11 @@ func AttachmentsList(msgs MessageRepo) Operation {
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    ` + envelopeProps + `,
     "message_id": {"type": "integer"},
     "attachments": {"type": "array", "items": ` + attachmentSchema + `}
   },
-  "required": ["message_id", "attachments"]
+  "required": ["untrusted", "source", "notice", "message_id", "attachments"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -252,7 +272,7 @@ func AttachmentsList(msgs MessageRepo) Operation {
 			if err != nil {
 				return nil, err
 			}
-			out := AttachmentsListOutput{MessageID: in.Message, Attachments: []AttachmentOutput{}}
+			out := AttachmentsListOutput{Envelope: emailEnvelope(), MessageID: in.Message, Attachments: []AttachmentOutput{}}
 			for _, a := range list {
 				out.Attachments = append(out.Attachments, attachmentOut(a))
 			}
@@ -261,15 +281,18 @@ func AttachmentsList(msgs MessageRepo) Operation {
 	}
 }
 
-// AttachmentTextOutput ist die Ausgabe von attachments.text.
+// AttachmentTextOutput ist die Ausgabe von attachments.text (in der
+// Untrusted-Hülle).
 type AttachmentTextOutput struct {
+	Envelope
 	AttachmentOutput
 	MessageID int64  `json:"message_id"`
 	Text      string `json:"text"`
 	// ExtractedNow: Der Text stand noch nicht in der Datenbank und wurde
 	// für diese Anzeige extrahiert (nicht gespeichert; das tut der Sync).
 	ExtractedNow bool `json:"extracted_now"`
-	Truncated    bool `json:"text_truncated,omitempty"`
+	// Truncated: Text bei der Extraktion (Ausgabegrenze) oder auf max_chars gekürzt.
+	Truncated bool `json:"text_truncated,omitempty"`
 }
 
 // AttachmentsText zeigt den extrahierten Text eines Anhangs. Steht die
@@ -284,22 +307,26 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 		Summary:    "Show the extracted text of an attachment (extracts it now if the sync has not yet).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
-  "properties": {"id": {"type": "integer", "minimum": 1, "description": "attachment id from attachments.list"}},
+  "properties": {
+    "id": {"type": "integer", "minimum": 1, "description": "attachment id from attachments.list"},
+    "max_chars": {"type": "integer", "minimum": 1, "description": "cut the text after this many characters (text_truncated=true)"}
+  },
   "required": ["id"],
   "additionalProperties": false
 }`),
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    ` + envelopeProps + `,
     "id": {"type": "integer"}, "message_id": {"type": "integer"}, "part_id": {"type": "string"},
     "filename": {"type": "string"}, "content_type": {"type": "string"}, "declared_type": {"type": "string"},
-    "size": {"type": "integer"}, "inline": {"type": "boolean"}, "truncated": {"type": "boolean"},
+    "size": {"type": "integer"}, "sha256": {"type": "string"}, "inline": {"type": "boolean"}, "truncated": {"type": "boolean"},
     "type_mismatch": {"type": "boolean"}, "mismatch_reason": {"type": "string"}, "executable": {"type": "boolean"},
     "extract_status": {"type": "string", "enum": ["pending", "ok", "failed", "skipped"]},
     "extract_error": {"type": "string"}, "hidden_text_removed": {"type": "boolean"},
     "text": {"type": "string"}, "extracted_now": {"type": "boolean"}, "text_truncated": {"type": "boolean"}
   },
-  "required": ["id", "message_id", "filename", "content_type", "extract_status", "text", "extracted_now"]
+  "required": ["untrusted", "source", "notice", "id", "message_id", "filename", "content_type", "extract_status", "text", "extracted_now"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -313,7 +340,8 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				ID int64 `json:"id"`
+				ID       int64 `json:"id"`
+				MaxChars int   `json:"max_chars,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -325,7 +353,7 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 			if err != nil {
 				return nil, err
 			}
-			out := AttachmentTextOutput{AttachmentOutput: attachmentOut(a), MessageID: a.MessageID, Text: text}
+			out := AttachmentTextOutput{Envelope: emailEnvelope(), AttachmentOutput: attachmentOut(a), MessageID: a.MessageID, Text: text}
 			if a.ExtractStatus != extract.StatusOK {
 				out.Text = ""
 			}
@@ -339,6 +367,10 @@ func AttachmentsText(msgs MessageRepo, blobs BlobReader, ex *extract.Extractor) 
 				out.ExtractStatus, out.ExtractError, out.Text = res.Status, res.Error, res.Text
 				out.ExtractedNow, out.Truncated = true, res.Truncated
 				out.HiddenText = out.HiddenText || res.Hidden
+			}
+			var cut bool
+			if out.Text, cut = truncateRunes(out.Text, in.MaxChars); cut {
+				out.Truncated = true
 			}
 			return out, nil
 		},

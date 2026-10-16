@@ -14,6 +14,8 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -32,6 +34,10 @@ type Call struct {
 	// Progress empfängt Fortschrittsmeldungen langer Operationen (Sync).
 	// Darf nil sein; Handler rufen es über Call.progress auf.
 	Progress func(Progress)
+	// Key ist der Schlüssel, unter dem der Aufruf läuft (geprüft vom
+	// Executor). Handler dürfen ihn nur beschreiben (policy.get), nie für
+	// eigene Rechteentscheidungen nutzen: Die trifft allein die Policy.
+	Key policy.Key
 }
 
 // Progress ist eine Fortschrittsmeldung einer langen Operation. Sie enthält
@@ -81,6 +87,9 @@ type Operation struct {
 	Handler Handler
 	// Redact ist optional; ohne sie stehen im Audit leere Parameter ({}).
 	Redact RedactFunc
+
+	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
+	input *jsonschema.Resolved
 }
 
 // Requirement übersetzt die Operation in das, was policy.Check braucht.
@@ -109,6 +118,42 @@ func (o Operation) Validate() error {
 		if err := json.Unmarshal(s, &obj); err != nil || obj["type"] != "object" {
 			return fmt.Errorf("ops: %s: %s must be a JSON schema with type=object", o.Name, label)
 		}
+		if _, err := resolveSchema(s); err != nil {
+			return fmt.Errorf("ops: %s: %s: %v", o.Name, label, err)
+		}
+	}
+	return nil
+}
+
+// resolveSchema liest ein JSON-Schema und bereitet es für die Prüfung vor.
+func resolveSchema(raw json.RawMessage) (*jsonschema.Resolved, error) {
+	var s jsonschema.Schema
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, err
+	}
+	return s.Resolve(nil)
+}
+
+// validateInput prüft die Eingabe gegen das InputSchema (ungültig:
+// InputError, CLI Exit 2). Ohne aufgelöstes Schema (Operation nicht über
+// Register) wird es hier aufgelöst.
+func (o Operation) validateInput(raw json.RawMessage) error {
+	rs := o.input
+	if rs == nil {
+		var err error
+		if rs, err = resolveSchema(o.InputSchema); err != nil {
+			return err
+		}
+	}
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	var inst any
+	if err := json.Unmarshal(raw, &inst); err != nil {
+		return inputErr("invalid input: %v", err)
+	}
+	if err := rs.Validate(inst); err != nil {
+		return inputErr("invalid input: %v", err)
 	}
 	return nil
 }
@@ -131,6 +176,11 @@ func (r *Registry) Register(op Operation) error {
 	if err := op.Validate(); err != nil {
 		return err
 	}
+	rs, err := resolveSchema(op.InputSchema)
+	if err != nil {
+		return err
+	}
+	op.input = rs
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.ops[op.Name]; dup {

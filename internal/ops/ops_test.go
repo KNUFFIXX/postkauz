@@ -182,7 +182,14 @@ var contractInputs = map[string]struct {
 	"messages.search":  {input: `{"query":"Hallo -Werbung has:attachment","account":"demo","limit":5,"explain":true}`},
 	"threads.get":      {input: `{"message":1,"text":true}`},
 	"attachments.list": {input: `{"message":1}`},
-	"attachments.text": {input: `{"id":2}`},
+	"attachments.text": {input: `{"id":2,"max_chars":10}`},
+	"keys.create":      {input: `{"name":"neu-key","role":"assistant","scopes":["mail:read","mail:search"],"expires_in_days":30}`},
+	"keys.list":        {input: `{}`},
+	"keys.revoke":      {input: `{"name":"alt"}`},
+	"audit.list":       {input: `{"since":"7d","limit":5}`},
+	"audit.export":     {input: `{}`},
+	"audit.verify":     {input: `{}`},
+	"policy.get":       {input: `{}`},
 }
 
 // contractRunner zählt Syncs, die schreiben dürften (DryRun=false).
@@ -210,9 +217,20 @@ func newContractEnv(t *testing.T) *contractEnv {
 		t.Fatal(err)
 	}
 	m.prober.res = ProbeResult{Capabilities: []string{"IMAP4rev1"}, SyncStrategy: "uid-scan", CapabilitiesJSON: `{"imap4rev1":true}`}
+	// Schlüssel alt (für keys.revoke) und ein Audit-Eintrag in der
+	// Datenbank (für audit.export/verify).
+	if _, err := m.st.CreateAPIKey(context.Background(), store.APIKey{Name: "alt", KeyHash: HashKey("x"), Role: "reader",
+		Scopes: []string{"mail:read"}, DryRunDefault: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.st.AuditWriter().Append(context.Background(), audit.Event{TS: time.Now(), ActorType: audit.ActorHuman,
+		Operation: "accounts.list", Result: audit.ResultOK}); err != nil {
+		t.Fatal(err)
+	}
 	r := &contractRunner{}
 	return &contractEnv{mirrorEnv: m, runner: r, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
-		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Search: m.st, Extractor: extract.New(extract.Options{})}}
+		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Search: m.st, Extractor: extract.New(extract.Options{}),
+		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir()}}
 }
 
 // fingerprint fasst den lokalen Zustand zusammen: alle Tabellen der
@@ -349,7 +367,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					effDry := dry && op.Risk > policy.R0
 					want := policy.Allow
 					switch {
-					case !slices.Contains(key.Scopes, op.Scope):
+					case op.Scope != policy.ScopeAny && !slices.Contains(key.Scopes, op.Scope):
 						want = policy.Deny
 					case op.Risk == policy.R3 && !dry:
 						want = policy.NeedsApproval
@@ -466,10 +484,15 @@ func TestContractEveryOperationFailsClosed(t *testing.T) {
 type ctxAudit struct{ audit.Memory }
 
 func (c *ctxAudit) Append(ctx context.Context, e audit.Event) error {
+	_, err := c.AppendID(ctx, e)
+	return err
+}
+
+func (c *ctxAudit) AppendID(ctx context.Context, e audit.Event) (int64, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return 0, err
 	}
-	return c.Memory.Append(ctx, e)
+	return c.Memory.AppendID(ctx, e)
 }
 
 // Nach Strg+C (ctx abgebrochen, Handler liefert context.Canceled) muss das

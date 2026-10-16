@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -49,6 +50,14 @@ type Config struct {
 	LogLevel string  `toml:"log_level"`
 	Secrets  Secrets `toml:"secrets"`
 	IMAP     IMAP    `toml:"imap"`
+	Audit    Audit   `toml:"audit"`
+}
+
+// Audit steuert den Export des Audit-Logs (docs/sicherheit.md, Abschnitt 6).
+type Audit struct {
+	// ExportDir ist das Standardziel von `audit export`: ein zweiter Ort
+	// (anderer Datenträger oder Rechner), nicht das Datenverzeichnis.
+	ExportDir string `toml:"export_dir"`
 }
 
 // IMAP steuert den Watchdog der IMAP-Verbindungen (ADR-007, Nachtrag
@@ -122,12 +131,28 @@ func DefaultDataDir() (string, error) {
 // Load liest die Konfigurationsdatei (falls vorhanden), wendet
 // Umgebungsvariablen und Standards an und bestimmt die Pfade. Unbekannte
 // Schlüssel in der Datei sind ein Fehler (Tippfehler sollen auffallen).
-func Load() (Config, Paths, error) {
+func Load() (Config, Paths, error) { return LoadProfile("") }
+
+// ProfileRE: erlaubte Profilnamen (wie Kontonamen).
+var ProfileRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// LoadProfile ist Load für eine getrennte Instanz (--profile): Konfiguration
+// und Daten liegen in einem Unterordner profiles/<name> des normalen
+// Konfigurations- bzw. Datenordners (auch unter POSTKAUZ_CONFIG und
+// POSTKAUZ_DATA_DIR). data_dir in der Profil-Konfiguration ersetzt den
+// Datenordner ganz. Leerer Name = ohne Profil.
+func LoadProfile(profile string) (Config, Paths, error) {
 	var cfg Config
 	var p Paths
+	if profile != "" && !ProfileRE.MatchString(profile) {
+		return cfg, p, fmt.Errorf("config: invalid profile name %q: use lowercase letters, digits and '-' (max 63)", profile)
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return cfg, p, err
+	}
+	if profile != "" {
+		path = filepath.Join(filepath.Dir(path), "profiles", profile, "config.toml")
 	}
 	p.ConfigFile = path
 	md, err := toml.DecodeFile(path, &cfg)
@@ -148,6 +173,7 @@ func Load() (Config, Paths, error) {
 		return cfg, p, fmt.Errorf("config: %s: %w", path, err)
 	}
 
+	fileDataDir := cfg.DataDir
 	if d := os.Getenv(EnvDataDir); d != "" {
 		cfg.DataDir = d
 	}
@@ -184,6 +210,9 @@ func Load() (Config, Paths, error) {
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {
 			return cfg, p, err
 		}
+	}
+	if profile != "" && (fileDataDir == "" || os.Getenv(EnvDataDir) != "") {
+		cfg.DataDir = filepath.Join(cfg.DataDir, "profiles", profile)
 	}
 	if !filepath.IsAbs(cfg.DataDir) {
 		abs, err := filepath.Abs(cfg.DataDir)

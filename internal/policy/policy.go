@@ -8,6 +8,7 @@ package policy
 import (
 	"fmt"
 	"slices"
+	"time"
 )
 
 // Scope ist eine einzelne Berechtigung eines API-Schlüssels.
@@ -26,6 +27,10 @@ const (
 	ScopeMailExport Scope = "mail:export"
 	ScopeAuditRead  Scope = "audit:read"
 	ScopeAdmin      Scope = "admin"
+	// ScopeAny steht an Operationen, die jedem gültigen Schlüssel offen
+	// stehen, weil sie nur über den Schlüssel selbst Auskunft geben
+	// (policy.get, MCP mail_get_policy). Kein Schlüssel trägt ihn.
+	ScopeAny Scope = "any"
 )
 
 // Risk ist die Risikostufe einer Operation.
@@ -63,18 +68,28 @@ type Decision struct {
 	Reason string
 }
 
+// Covers meldet, ob der Schlüssel den Scope einer Operation erfüllt (für
+// die Auswahl, was eine Oberfläche einem Schlüssel überhaupt zeigt; die
+// Entscheidung selbst trifft Check).
+func (k Key) Covers(s Scope) bool { return s == ScopeAny || k.Has(s) }
+
 // Allowed meldet, ob der Handler laufen darf.
 func (d Decision) Allowed() bool { return d.Outcome == Allow }
 
 // Key ist der für die Prüfung relevante Teil eines API-Schlüssels.
 // Der Schlüsselwert selbst gehört nie hierher.
 type Key struct {
-	ID     string
-	Name   string
+	ID   string
+	Name string
+	// Role ist die Rolle, aus der die Scopes stammen (nur zur Auskunft).
+	Role   string
 	Scopes []Scope
 	// DryRunDefault: schreibende Operationen laufen als Trockenlauf, solange
 	// der Aufrufer nicht ausdrücklich dry_run=false verlangt.
 	DryRunDefault bool
+	// ExpiresAt ist das Ablaufdatum (Nullzeit = keins; nur zur Auskunft,
+	// abgelaufene Schlüssel weist schon die Anmeldung ab).
+	ExpiresAt time.Time
 }
 
 // Has meldet, ob der Schlüssel den Scope besitzt. „admin" ersetzt keine
@@ -111,14 +126,14 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 // Check ist der Policy-Schritt der Kette Scope → Policy → Freigabe → Audit →
 // Handler. Stub für Phase 0, Regeln:
 //
-//   - fehlender Scope: Deny.
+//   - fehlender Scope: Deny (ScopeAny fehlt nie).
 //   - R0: Allow (lesen; ein Trockenlauf ist bedeutungslos).
 //   - R1/R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
 //   - R1 (nur lokale Wirkung) und R2: Allow.
 //   - R3: NeedsApproval. Es gibt im MVP keinen Weg, eine R3-Operation ohne
 //     Mensch auszuführen; die Freigabe-Zustandsmaschine folgt in Schnitt 2.
 func Check(key Key, op Requirement, dryRun bool) Decision {
-	if !key.Has(op.Scope) {
+	if op.Scope != ScopeAny && !key.Has(op.Scope) {
 		return Decision{Outcome: Deny, Reason: "missing_scope"}
 	}
 	switch {

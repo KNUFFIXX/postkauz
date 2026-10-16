@@ -4,8 +4,9 @@
 // Trigger, siehe store/migrations/0001_init.sql).
 //
 // Hier liegen Typ, Schnittstelle und zwei Test-Implementierungen; der
-// SQLite-Writer liegt in internal/store (S1.1). Der tägliche Export mit
-// Prüfsumme folgt mit S1.11.
+// SQLite-Writer liegt in internal/store (S1.1), Abfrage, Export mit
+// Prüfsumme und Prüfung (audit.list, audit.export, audit.verify) in
+// internal/ops (S1.8).
 package audit
 
 import (
@@ -56,6 +57,14 @@ type Writer interface {
 	Append(ctx context.Context, e Event) error
 }
 
+// IDWriter ist ein Writer, der die ID des geschriebenen Eintrags kennt.
+// Der Executor meldet sie (CLI --explain, MCP-Ergebnisse), damit sich ein
+// Aufruf im Audit wiederfinden lässt.
+type IDWriter interface {
+	Writer
+	AppendID(ctx context.Context, e Event) (int64, error)
+}
+
 // Nop verwirft alle Ereignisse. Nur für Tests und Werkzeuge ohne Datenbank.
 type Nop struct{}
 
@@ -67,11 +76,17 @@ type Memory struct {
 	events []Event
 }
 
-func (m *Memory) Append(_ context.Context, e Event) error {
+func (m *Memory) Append(ctx context.Context, e Event) error {
+	_, err := m.AppendID(ctx, e)
+	return err
+}
+
+// AppendID hängt an und liefert die laufende Nummer (ab 1).
+func (m *Memory) AppendID(_ context.Context, e Event) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, e)
-	return nil
+	return int64(len(m.events)), nil
 }
 
 // Events liefert eine Kopie der bisher geschriebenen Ereignisse.

@@ -73,3 +73,22 @@ func TestRolesAreSubsetsInOrder(t *testing.T) {
 		}
 	}
 }
+
+// ScopeAny (policy.get): jeder Schlüssel, auch ohne Scopes; kein Schlüssel
+// „besitzt" ihn, Covers meldet ihn trotzdem als erfüllt.
+func TestScopeAny(t *testing.T) {
+	op := Requirement{Name: "policy.get", Scope: ScopeAny, Risk: R0}
+	if d := Check(Key{}, op, false); !d.Allowed() {
+		t.Fatalf("empty key: %+v", d)
+	}
+	if (Key{}).Has(ScopeAny) || !(Key{}).Covers(ScopeAny) || (Key{}).Covers(ScopeMailRead) {
+		t.Fatal("Has/Covers for ScopeAny")
+	}
+	for name, scopes := range Roles {
+		for _, s := range scopes {
+			if s == ScopeAny {
+				t.Errorf("role %s carries the pseudo scope any", name)
+			}
+		}
+	}
+}

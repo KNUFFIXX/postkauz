@@ -50,8 +50,10 @@ type SearchExplain struct {
 	SQL     string          `json:"sql"` // Anweisung mit Parametern (?), ohne Nutzertext
 }
 
-// SearchOutput ist die Ausgabe von messages.search.
+// SearchOutput ist die Ausgabe von messages.search (Betreff, Absender und
+// Snippet stammen aus Mails: Untrusted-Hülle).
 type SearchOutput struct {
+	Envelope
 	Hits []SearchHitOutput `json:"hits"`
 	// Total zählt alle Treffer der Anfrage (0 auf einer leeren Folgeseite).
 	Total      int    `json:"total"`
@@ -84,6 +86,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
   "properties": {
     "query": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "query language, see docs/cli.md"},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only this account (default: all)"},
+    "mailbox": {"type": "string", "minLength": 1, "description": "only this mailbox: path (with subfolders) or role, like in:"},
     "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "hits per page (default 20)"},
     "cursor": {"type": "string", "description": "next_cursor (or a hit's cursor) of the same query"},
     "explain": {"type": "boolean", "description": "include how the query was translated"}
@@ -94,6 +97,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    ` + envelopeProps + `,
     "hits": {"type": "array", "items": {"type": "object", "properties": {
       "id": {"type": "integer"}, "account": {"type": "string"}, "thread_id": {"type": "integer"},
       "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"}, "subject": {"type": "string"},
@@ -109,7 +113,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
       "terms": {"type": "array"}, "filters": {"type": "array"}, "ignored": {"type": "array"}, "sql": {"type": "string"}},
       "required": ["query", "scope", "order", "terms", "filters", "sql"]}
   },
-  "required": ["hits", "total", "order", "index_pending"]
+  "required": ["untrusted", "source", "notice", "hits", "total", "order", "index_pending"]
 }`),
 		// Ins Audit: Zahl der Suchbegriffe und Art der Operatoren, nie der
 		// Suchtext (er kann Namen und Inhalte enthalten).
@@ -117,6 +121,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 			var in struct {
 				Query   string `json:"query"`
 				Account string `json:"account"`
+				Mailbox string `json:"mailbox"`
 				Limit   int    `json:"limit"`
 				Cursor  string `json:"cursor"`
 				Explain bool   `json:"explain"`
@@ -124,7 +129,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 			if json.Unmarshal(raw, &in) != nil {
 				return json.RawMessage(`{"invalid_input":true}`), nil
 			}
-			p := map[string]any{"limit": in.Limit, "cursor": in.Cursor != "", "explain": in.Explain}
+			p := map[string]any{"limit": in.Limit, "cursor": in.Cursor != "", "explain": in.Explain, "mailbox": in.Mailbox != ""}
 			if q, err := search.Parse(in.Query, nil); err == nil {
 				kinds := []string{}
 				for _, f := range q.Filters {
@@ -149,6 +154,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 			var in struct {
 				Query   string `json:"query"`
 				Account string `json:"account,omitempty"`
+				Mailbox string `json:"mailbox,omitempty"`
 				Limit   int    `json:"limit,omitempty"`
 				Cursor  string `json:"cursor,omitempty"`
 				Explain bool   `json:"explain,omitempty"`
@@ -165,6 +171,10 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 			q, err := search.Parse(in.Query, nil)
 			if err != nil {
 				return nil, queryErr(err)
+			}
+			if in.Mailbox != "" {
+				// wie in:<mailbox> in der Anfrage (MCP: eigenes Feld)
+				q.Filters = append(q.Filters, search.Filter{Kind: "mailbox", Value: in.Mailbox})
 			}
 			params := store.SearchParams{Query: q, Limit: in.Limit, Now: time.Now()}
 			scope := "all accounts"
@@ -187,7 +197,7 @@ func MessagesSearch(accounts AccountRepo, repo SearchRepo) Operation {
 			if err != nil {
 				return nil, err
 			}
-			out := SearchOutput{Hits: []SearchHitOutput{}, Total: res.Total, Order: q.Order()}
+			out := SearchOutput{Envelope: emailEnvelope(), Hits: []SearchHitOutput{}, Total: res.Total, Order: q.Order()}
 			if out.IndexPending, err = repo.IndexPending(ctx, params.AccountID); err != nil {
 				return nil, err
 			}
