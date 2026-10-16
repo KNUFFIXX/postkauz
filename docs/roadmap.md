@@ -1,9 +1,11 @@
-Stand: **S1.4 und S1.5 erledigt** (15.10.2026: Sync mit Erstsync in Fenstern, Wiederaufnahme ohne Doppelte, inkrementell mit CONDSTORE bzw. UID-Scan, Löschabgleich per UID SEARCH, UIDVALIDITY-Wechsel mit Abgleich per Message-ID, `sync --watch` mit IDLE; `mailbox list`, minimales `show`; Migration 0002 mit Snapshot; P2-Messung mit 50.000 Nachrichten). Die **Gegenprüfung** vom 15.10.2026 ist eingearbeitet (Abnahme-Anleitung, `content_hash`, Terminal-Steuerzeichen, Vertragstest nach ADR-004, Fehler-Audit nach Abbruch, gleichzeitige Syncs; offene Punkte unter „Offene Fragen" 6 und 7). **Abnahme D1 durch den Betreiber steht aus** (`docs/abnahme_D1.md`, korrigierte Fassung). Danach: S1.6 (Threading, Body-Bereinigung, Anhänge). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
+# Roadmap
+
+Stand: **S1.6 Schritt 0 erledigt** (16.10.2026: Auflagen N1–N3 aus dem Nachtrag zu A01, Watchdog mit Obergrenze je Kommando nach ADR-007 Nachtrag 1, `make vuln`). Davor **S1.1 bis S1.5 erledigt** (15.10.2026) und vom Betreiber abgenommen: **D0 auf Windows und D1 bestanden** (16.10.2026). In Arbeit: S1.6 (Threading, Body-Bereinigung, Anhänge). Am Ende jeder Arbeitssitzung wird dieser „Stand" und `CHANGELOG.md` gepflegt.
 
 | Phase / Schnitt | Inhalt in einem Satz | Status |
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | **S0 (Spike und Gate) erledigt 14.10.2026**: Gate Go bestanden mit Auflagen, Bericht `spike/s0/REPORT.md`, ADR-007/008. **Schritt 0 (Go 1.27) erledigt 15.10.2026** |
-| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026** (Abnahme D1 offen); S1.6 ff. offen |
+| S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | **S1.1 bis S1.5 erledigt 15.10.2026**, D0/D1 bestanden 16.10.2026; S1.6 Schritt 0 erledigt 16.10.2026; S1.6 ff. offen |
 | S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook | offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | offen |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
@@ -18,11 +20,35 @@ Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (C
 
 **Schritt 0 erledigt (15.10.2026):** `go.mod` auf `go 1.27` (Toolchain go1.27.2, `GOTOOLCHAIN=local` in Makefile und CI), `modernc.org/sqlite` v1.45.0 → v1.60.1 (SQLite 3.53.4; mitgezogen: `modernc.org/libc` v1.77.1, `golang.org/x/sys` v0.48.0). `make check` und `make cross` grün; Binärgrößen ohne `-s -w`: linux/amd64 4,9 MB, windows/amd64 5,1 MB, darwin/arm64 4,8 MB (die CLI bindet SQLite noch nicht ein; mit Store-Anbindung in S1.1 wachsen sie, Spike: rund 11 MB mit `-s -w`).
 
-**Offen (Auftrag A01):** S1 ab S1.6 (nach der Abnahme D1). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
+**Offen (Auftrag A01):** S1 ab S1.6 (Abnahme D1 bestanden 16.10.2026). Die Spike-Befunde sind in A01 als Vorgaben und Prüfliste festgehalten.
 
 ## S1: Lesen, Spiegeln, Suchen
 
-### Stand S1.4/S1.5 (15.10.2026, erledigt; Abnahme D1 offen)
+### Stand S1.6 Schritt 0 (16.10.2026, erledigt): Auflagen N1–N3 und Watchdog
+
+Auflagen aus dem Nachtrag 16.10.2026 zu A01 (Programmierstand des Betreibers):
+
+- **N1 (Go 1.27, synchrone Timer-Kanäle, `asynctimerchan` entfernt):** Alle Timer-Stellen geprüft; keine verlässt sich auf einen gepufferten Wert oder leert `t.C` von Hand, keine Änderung am Verhalten nötig. Belegt mit `testing/synctest` (künstliche Uhr, exakte Zeitpunkte):
+
+  | Stelle | Timer | Befund nach dem Go-1.27-Modell | Beleg |
+  |---|---|---|---|
+  | `internal/imapx/imapx.go`, `guard` (Watchdog) | `time.NewTimer`, `Reset` nur nach Empfang aus `t.C`, `Stop` per defer | unverändert korrekt; kein Leeren nötig | `TestWatchdogTimersSynctest`: Schweigen exakt 30 s, Rinnsal exakt 10 min (Obergrenze), Rückruf ausgenommen, kein Nachzünden nach Ende |
+  | `internal/imapx/idle.go`, `Idle` (IDLE-Neustart) | ein `time.NewTimer(maxWait)`, `Stop` per defer | korrekt | `TestIdleRestartSynctest`: Rückkehr exakt nach 8 min, neue Nachricht nach exakt 90 s gemeldet (go-imap-Server über `net.Pipe` in der Blase) |
+  | `internal/imapx/session.go`, `sleepCtx` (Backoff) | ein Timer je Wartezeit, `Stop` per defer | korrekt | `TestSessionBackoffSynctest`: 1 + 2 + 4 s = exakt 7 s; Abbruch im Warten endet sofort |
+  | `internal/mailsync/watch.go`, `Watch` (Intervall) | `time.NewTicker`, `Stop` per defer | korrekt; ein Lauf länger als das Intervall verschiebt den nächsten auf sein Ende, weitere verpasste Ticks verfallen (wie vor Go 1.23) | `TestWatchTickerSynctest`: Läufe bei 0, 5, 12, 15 min (Lauf ab 5 min dauert 7 min) |
+  | `internal/mailsync/watch.go`, `idleLoop` (Pause nach IDLE-Fehler) | vorher `time.After` in der Schleife, jetzt Timer mit `Stop` | beides korrekt (seit Go 1.23 sammelt die Laufzeit nicht gestoppte Timer ein); umgestellt der Deutlichkeit halber | `TestWatchIdleRetrySynctest`: Wiederaufbau exakt 30 s nach dem Fehler |
+  | `internal/secrets/keyring.go` (Zeitgrenze Schlüsselbund) | `time.After` in einem `select` | korrekt (siehe oben) | bestehende Tests mit simulierter Zeitüberschreitung |
+  | go-imap v2.0.0-beta.8 (Bibliothek) | `imapclient` IDLE-Neustart 28 min (`Reset` nach Empfang), Warten auf CAPABILITY (`NewTimer` + `Stop`) | korrekt; der IDLE-Neustart der Bibliothek greift nie, weil PostKauz nach 5 bis 10 min selbst neu startet | Quelltext geprüft |
+
+  Nebenbei gefunden und behoben: Beendete ein Anmeldefehler eines Laufs `Watch`, lief die IDLE-Schleife mit eigener Verbindung weiter (`TestWatchStopsIdleLoopOnRoundAuthError`).
+- **N2:** `make vuln` (govulncheck v1.9.0, Version per `go list -m golang.org/x/vuln@latest` aufgelöst, im Makefile gepinnt, Aufruf per `go run`, deshalb keine Werkzeug-Abhängigkeit in `go.mod`) und CI-Job `vuln`; Ergebnis: keine Schwachstellen. `golang.org/x/text` v0.14.0 → v0.43.0; `go mod tidy` änderte darüber hinaus nichts (die erwartete Zusammenfassung der require-Blöcke blieb aus, weil sie schon getrennt sauber waren).
+- **N3:** Sync-Abläufe laufen ohne Docker in `make check` gegen den go-imap-Testserver im Prozess (`imapmemserver`, ausgebaut seit S1.4): Erstsync des Korpus, Wiederaufnahme nach Abbruch und `kill -9`, Änderungen von außen (Flags, Löschung, neue Nachricht), UIDVALIDITY-Wechsel, Dauerbetrieb mit IDLE. Neu: **Leck-Tests** für Erstsync und Dauerbetrieb (`internal/mailsync/leak_test.go`): Profil `goroutineleak` (Go 1.27) ohne Zeile aus diesem Modul und Vergleich aller Goroutinen vor/nach (offene go-imap-Verbindungen fallen so auch auf; von Hand geprüft: ein nicht geschlossener Provider wird gemeldet). Grenze: Der Testserver kann kein CONDSTORE; die Strategie `condstore` prüfen weiterhin nur die Integrationstests (Dovecot, Stalwart).
+- **N6** (vor Go 1.28): Makefile, Skripte und CI rufen `go list` nicht mit `...` im Module-Mode auf (`grep`, 16.10.2026); nichts zu ändern.
+- **N4** (vor S1.9) und **N5** (vor Schnitt 3) stehen aus.
+- **Watchdog (ADR-007 Nachtrag 1, Betreiber-Entscheid zu Frage 6):** Schweigen bleibt die Messgröße (Standard 30 s), dazu Obergrenze je Kommando (Standard 10 min), beides konfigurierbar (`[imap]` in `config.toml`); Rückrufe zählen nicht als Schweigen; Rohmails in Gruppen bis 16 MiB je FETCH.
+- `make check`, `make race`, `make integration` (Dovecot, Stalwart, GreenMail) und `make vuln` grün.
+
+### Stand S1.4/S1.5 (15.10.2026, erledigt; Abnahme D1 bestanden 16.10.2026)
 
 **Akzeptanz S1.4 erfüllt:** Die 1.000 Korpus-Nachrichten werden in Fenstern gespiegelt (Rohmail als Blob, Metadaten und geparste Felder in SQLite, Text in `bodies`), `sync --full -a <konto>` endet mit `1000 messages mirrored` und `0 errors` (Dovecot, Stalwart, GreenMail; Integrationstest und von Hand mit der Binärdatei). Abbruch mitten im Fenster, nach einem Fenster und **echtes `kill -9` eines Kindprozesses** (`TestKill9DuringInitialSync`; unter Windows wäre das `TerminateProcess`, dort aber **nicht ausgeführt, ungetestet**: nur kompiliert) setzen beim nächsten Lauf fort: dieselbe Anzahl, keine Doppelten (Nachrichten, Zuordnungen, Message-IDs geprüft). Von Hand gegen Dovecot: `kill -9` und Strg+C, danach `1000 messages mirrored`.
 
@@ -144,7 +170,7 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 5. Gmail-API-/Graph-Anbindung (bring your own client), Embeddings/semantische Suche (lokal), Mehrbenutzerbetrieb mit Rollen je Mensch.
 6. **GUI** frühestens nach 1.0 und nur gegen REST (siehe Nicht-Ziele).
 
-## Entschiedene Fragen (14./15.10.2026)
+## Entschiedene Fragen (14. bis 16.10.2026)
 
 1. **Gate:** bestanden mit Auflagen (ADR-007).
 2. **Go-Version:** Zielversion 1.27, Anhebung als Schritt 0 von A01 (ADR-008).
@@ -157,6 +183,8 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 9. **Ordnerrolle `all`** (15.10.2026): kommt mit Migration 0002 in die Datenbank (umgesetzt).
 10. **Testserver-Versionen** (15.10.2026): Dovecot 2.4.5 und GreenMail 2.1.14 festgelegt (umgesetzt), Stalwart bleibt 0.11.8.
 11. **Snapshot vor Migrationen** (15.10.2026): `VACUUM INTO` mit Migration 0002 umgesetzt.
+12. **Watchdog** (16.10.2026, vorher offene Frage 6): Schweigen messen bleibt, dazu Obergrenze je Kommando, konfigurierbar, Standard 10 min (ADR-007 Nachtrag 1, umgesetzt).
+13. **Testkorpus im Repository** (16.10.2026): bleibt synthetisch (Commit-Sprache Englisch bestätigt, siehe 6).
 
 ## Offene Fragen
 
@@ -165,7 +193,7 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 3. **Spike-Lücken** (Prüfliste in A01): Gmail `X-GM-EXT-1` (P1, manuell), WAN-Latenz (P2, Betreiber), COMPRESS/BINARY (P6, später), QRESYNC per Beitrag oder Fork (P8, nach S1; nach P2 für 50.000 Nachrichten nicht nötig). Erledigt bzw. als Entwurf: P2 lokal (50.000 Nachrichten, S1.5), P3 (OAuth2/SASL, Entwurf), P4 (Schlüsselbund; Windows/macOS noch manuell abzunehmen), P5 (UIDVALIDITY-Wechsel, S1.5), P7 (Race-Detector: `make race` und CI-Job, S1.3).
 4. **Kopien als eine Nachricht** (S1.5): Liegt dieselbe Nachricht in mehreren Ordnern (Kopie, Gmail-Label), ist sie lokal eine Nachricht mit mehreren Ordnern; ein Flag gilt als gesetzt, wenn eine Kopie es trägt. Vorschlag: so lassen.
 5. **Dauerläufer für mehrere Konten** (S1.5): `sync --watch` beobachtet ein Konto; für mehrere Konten je ein Prozess. Vorschlag: ein gemeinsamer Dauerläufer erst mit dem Betriebskonzept (S3).
-6. **Watchdog misst Schweigen statt fester Deadline je Kommando** (Gegenprüfung 15.10.2026; Betreiber-Entscheid offen, Code unverändert): `internal/imapx/imapx.go` (`guard`) bricht ab, wenn der Server eine Deadline lang **kein Byte** schickt; ADR-007 verlangt wörtlich eine Deadline je Kommando. Vorteil: Lange FETCHes über langsame Leitungen brechen nicht ab. Lücken: (a) ein Server, der ständig wenige Bytes schickt, hält ein Kommando beliebig lange offen; (b) lokale Verarbeitung im `FetchRaw`-Rückruf (Blob schreiben, parsen) zählt als Schweigen des Servers und kann bei sehr großen Mails den Watchdog auslösen. Nötig ist ein **Nachtrag zu ADR-007**. Vorschlag: Schweigen-Messung behalten, zusätzlich eine großzügige Obergrenze je Kommando (z. B. abhängig von der angekündigten Größe) und die Zeit im Rückruf nicht als Schweigen zählen.
+6. *(entschieden 16.10.2026, siehe „Entschiedene Fragen" 12 und ADR-007 Nachtrag 1)*
 7. **Weitere Befunde der Gegenprüfung (15.10.2026), bewusst noch nicht geändert:**
    - **Löschungen** werden inkrementell nur erkannt, wenn die Zahl der Nachrichten nicht passt (`internal/provider/imap/sync.go`, `KnownCount + neu != EXISTS`). Löscht jemand eine Nachricht und kommt gleichzeitig eine neue hinzu, fällt die Löschung erst beim nächsten Lauf mit Abweichung oder bei `sync --full` auf. Vorschlag: `--full` im Dauerbetrieb periodisch (z. B. stündlich) oder UID-Abgleich bei jedem n-ten Lauf.
    - **Schlüsselbund-Verweis** `account/<name>` (`internal/ops/accounts.go`) hängt nur am Kontonamen, nicht am Datenverzeichnis: Zwei Datenverzeichnisse (z. B. Abnahme und Alltag) mit gleichem Kontonamen teilen und überschreiben denselben Eintrag; `account remove` im einen löscht das Passwort des anderen. Vorschlag: Verweis um eine Kennung des Datenverzeichnisses ergänzen (Migration bestehender Einträge).
