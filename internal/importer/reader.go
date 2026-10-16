@@ -212,19 +212,38 @@ func (m *msgReader) readHeader() (hdr []byte, tooLong bool, err error) {
 	}
 }
 
-// Read liefert den Rumpf (nach readHeader).
+// Read liefert den Rumpf (nach readHeader). Es füllt p so weit wie möglich
+// (viele Zeilen je Aufruf): Ein Read je Zeile hieße bei base64-Anhängen ein
+// Schreibaufruf je 78 Bytes im Blob-Store.
 func (m *msgReader) Read(p []byte) (int, error) {
-	for m.outOff >= len(m.out) {
-		if m.finished {
-			return 0, io.EOF
+	n := 0
+	for n < len(p) {
+		if m.outOff >= len(m.out) {
+			if m.readErr != nil {
+				if n > 0 {
+					return n, nil
+				}
+				return 0, m.readErr
+			}
+			if m.finished {
+				break
+			}
+			m.out, m.outOff = m.out[:0], 0
+			if err := m.fill(); err != nil {
+				if n > 0 {
+					return n, nil
+				}
+				return 0, err
+			}
+			continue
 		}
-		m.out, m.outOff = m.out[:0], 0
-		if err := m.fill(); err != nil {
-			return 0, err
-		}
+		k := copy(p[n:], m.out[m.outOff:])
+		m.outOff += k
+		n += k
 	}
-	n := copy(p, m.out[m.outOff:])
-	m.outOff += n
+	if n == 0 && m.finished {
+		return 0, io.EOF
+	}
 	return n, nil
 }
 
