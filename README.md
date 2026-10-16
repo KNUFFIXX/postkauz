@@ -4,7 +4,7 @@
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: pre-alpha, slice S1.9.** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), API keys with roles and scopes, and an audit log you can query, export with checksums and verify work. A read-only stdio MCP server (`postkauz mcp`) serves agents such as Claude Code (S1.9). The name "PostKauz" is a working title and will still change.
+**Status: 0.1.0-rc1, slice 1 complete (release candidate, pre-alpha).** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), import from mbox and Maildir (Thunderbird profiles), API keys with roles and scopes, a read-only stdio MCP server for agents such as Claude Code, and an append-only audit log with a daily export (SHA-256 hash chain, manifest) that `audit verify` checks. The name "PostKauz" is a working title and will still change.
 
 ## Who is it for
 
@@ -34,9 +34,101 @@ An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mail
 9. Jobs (sync, index, extract, import) run from a table, no broker.
 10. Details: `docs/architektur.md`, `docs/datenmodell.md` (documentation is in German).
 
-## Quick start
+## Install in under 15 minutes
 
-Works today:
+You need one file: the program for your system. Nothing else has to be installed (no Go, no Docker, no database server). PDF text extraction is optional (see below).
+
+### 1. Download and check the program
+
+Take the file for your system from the release page (`https://github.com/KNUFFIXX/postkauz/releases`) or from `dist/` after `make release VERSION=…`, together with `SHA256SUMS`:
+
+| System | File | Rename to |
+|---|---|---|
+| Windows 10/11 (64-bit) | `postkauz-windows-amd64.exe` | `postkauz.exe` |
+| Linux (64-bit) | `postkauz-linux-amd64` | `postkauz` |
+| macOS (Apple silicon) | `postkauz-darwin-arm64` | `postkauz` |
+
+Compare the checksum with the line in `SHA256SUMS`:
+
+```powershell
+# Windows (PowerShell): put the file into C:\PostKauz first
+cd C:\PostKauz
+Get-FileHash .\postkauz-windows-amd64.exe -Algorithm SHA256
+Rename-Item .\postkauz-windows-amd64.exe postkauz.exe
+Unblock-File .\postkauz.exe          # removes the "downloaded from the internet" mark (SmartScreen)
+```
+
+```sh
+# Linux
+sha256sum postkauz-linux-amd64 && install -Dm755 postkauz-linux-amd64 ~/.local/bin/postkauz
+# macOS
+shasum -a 256 postkauz-darwin-arm64 && mkdir -p ~/bin && install -m755 postkauz-darwin-arm64 ~/bin/postkauz
+xattr -d com.apple.quarantine ~/bin/postkauz   # unsigned program: allow it once (Gatekeeper)
+```
+
+Optional on Windows: add the folder to your user `PATH`, then `postkauz` works in every window:
+
+```powershell
+$p = [Environment]::GetEnvironmentVariable("Path", "User"); [Environment]::SetEnvironmentVariable("Path", "$p;C:\PostKauz", "User")
+```
+
+(Open a new PowerShell window afterwards. Without it, call `C:\PostKauz\postkauz.exe` or `.\postkauz.exe` in that folder; the examples below write `postkauz`.)
+
+### 2. Check the installation
+
+```sh
+postkauz version
+postkauz doctor
+```
+
+`doctor` shows the configuration file, the data directory (Windows `%LOCALAPPDATA%\postkauz`, Linux `~/.local/share/postkauz`, macOS `~/Library/Application Support/postkauz`), the database, the keyring and the optional `pdftotext`. Expected on a fresh install: `database: missing` (it is created by the first real command) and `keyring: available (Windows Credential Manager)`, `(macOS Keychain)` or `(Secret Service (D-Bus))`. Keep the data directory out of OneDrive, Dropbox or iCloud; `doctor` warns if it is inside one.
+
+### 3. Add your mailbox
+
+```sh
+postkauz account add mail --imap imap.example.org:993 --user me@example.org
+postkauz account test mail
+```
+
+`account add` asks for the password and stores it in the operating system's keyring (never in a file of PostKauz). Port 993 means TLS. Many providers require an **app password** for IMAP (for example Gmail, iCloud, Outlook.com with two-factor authentication); OAuth sign-in is not available yet. `account test` logs in read-only and lists capabilities and folders with their roles (`inbox`, `sent`, `drafts`, …).
+
+### 4. Mirror and search
+
+```sh
+postkauz sync --full -a mail      # first sync: resumable, Ctrl+C and run again continues
+postkauz search "Rechnung" -a mail --limit 5
+postkauz show <id>                # an id from the search result
+```
+
+The first sync of a mailbox with a few thousand messages takes minutes; very large mailboxes (tens of thousands of messages, many attachments) take longer, mostly limited by your connection. It can be interrupted at any time. Afterwards `postkauz sync -a mail` only fetches changes; `postkauz sync -a mail --watch` keeps running and picks up new mail in the inbox within seconds (IDLE). Older archives (Thunderbird, mbox, Maildir) can be imported without touching the server: `postkauz import mbox <file or folder> -a mail --mailbox Archive` (`docs/cli.md`, section 2i).
+
+### 5. Connect Claude Code
+
+Create a read-only key for the agent and register the MCP server, see [Set up MCP in Claude Code](#set-up-mcp-in-claude-code):
+
+```sh
+postkauz key create --name claude-code --role reader --expires 30d
+claude mcp add --env POSTKAUZ_KEY=pk_key_... --scope user --transport stdio postkauz -- /full/path/to/postkauz mcp
+```
+
+Then set up the [daily audit export](#daily-audit-export) to a second location. That's it.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Windows: "Windows protected your PC" (SmartScreen) | The program is not signed yet. Run `Unblock-File .\postkauz.exe` once, or click "More info", then "Run anyway". Check the checksum first (step 1). |
+| macOS: "cannot be opened because the developer cannot be verified" | Unsigned program: `xattr -d com.apple.quarantine ~/bin/postkauz`, or right-click the file in Finder, "Open". The first access to the Keychain asks for permission: choose "Always Allow". |
+| `keyring: unavailable` (Linux servers, containers, SSH sessions without a desktop) | No Secret Service is running. Install and unlock one (GNOME Keyring, KWallet) or keep the password in the environment: `export POSTKAUZ_PASSWORD_MAIL='…'` and `account add … --password-from-env`. There is deliberately no silent fallback to a file. |
+| `account test` fails with `auth` | Wrong user name or password, or the provider wants an app password / has IMAP switched off in its settings. PostKauz never retries a rejected login. |
+| `account test` fails with `connection` (exit code 5) | Host, port or TLS mode wrong, or a firewall blocks port 993. |
+| `pdftotext: not found` | Optional. Without it PDF attachments get no searchable text (file names still are). Install Poppler (below); the next `sync` extracts the skipped PDFs. |
+| `sync_running` | Another `sync` or `import` of the same account is running (for example `sync --watch` in another window). |
+| Anything else | `postkauz doctor` and `postkauz doctor --secrets`; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
+
+## Command overview
+
+From a source checkout (`make build`, needs Go 1.27) the program is `./bin/postkauz`; installed, it is just `postkauz`:
 
 ```sh
 make build                       # builds bin/postkauz (and the alias bin/pk)
@@ -151,16 +243,16 @@ The service expects the program at `~/.local/bin/postkauz`; change `ExecStart` w
 
 Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`. Never develop against a real mailbox.
 
-## Security model in 8 lines
+## Security
 
-1. Every agent gets its own API key with **scopes** (`mail:read`, `mail:search`, `mail:draft`, ...). Tools the key may not use are not even listed.
-2. Operations have **risk levels** R0 (read) to R3 (external or hard to undo); `dry_run` is available on every write.
-3. The MVP has **no send capability at all**; agents can only prepare drafts, and drafts need human approval before they count as "ready".
-4. Agents can move mail to the trash at most; there is no expunge in the provider interface.
-5. Every mail content that reaches an agent is wrapped as **untrusted data**; HTML is reduced to text, links are listed separately, nothing is loaded remotely.
-6. Credentials live in the OS keyring or the environment, never in the repository, logs or audit.
-7. The audit log is append-only and exported daily with a checksum to a second location.
-8. Residual risk (prompt injection, exfiltration via other tools) is documented honestly in `docs/sicherheit.md`.
+PostKauz assumes that **every mail may contain instructions** aimed at your agent, and that no filter recognises them reliably. Protection therefore lives outside the model. Details and honest limits: `docs/sicherheit.md`.
+
+- **Draft-only.** The MVP contains no SMTP code at all (`make guard` checks it). Agents can at most prepare drafts in a later slice; a human sends them in the usual mail client. There is no expunge in the provider interface; agents reach the trash at most (slice 3).
+- **Scopes and roles.** Every agent gets its own API key (`key create`), only its SHA-256 hash is stored. Roles bundle scopes (`reader`: `mail:read`, `mail:search`, `audit:read`); `--scopes` can only narrow a role (for example `mail:search` without message bodies). The MCP server lists only the tools the key may use; revoking a key takes effect within seconds, also in a running session. `policy show --key <name>` shows what a key may do.
+- **Untrusted envelope.** Every output with mail content (CLI `show`, `thread`, `search`, `attach`; all MCP results) is marked `untrusted: true`, `source: "email"` with a notice to treat it as data. HTML is reduced to text, hidden text is removed and reported, links are listed with warnings, nothing is loaded remotely, control and invisible characters are removed.
+- **Audit.** Every call (CLI and MCP, allowed or denied) is written to an append-only table **before** it runs (fail closed), with key name and parameters but never mail text or search terms. The daily export to a second location with a hash chain and manifest makes later changes visible (`audit verify`).
+- **Secrets.** Passwords live in the OS keyring or the environment, never in files of PostKauz, logs, audit, error messages, `--json` output or crash reports; a canary test across all output channels runs with every `make check`, and `doctor --secrets` searches your own installation.
+- **What leaves your computer:** PostKauz itself sends nothing anywhere. An agent you connect sees what it reads through its key; use the narrowest role and a short expiry.
 
 ## Roadmap
 
@@ -186,6 +278,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Pre-Alpha, Schnitt S1.9 (Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, lesender MCP-Server über stdio; Einrichtung in Claude Code siehe „Set up MCP in Claude Code"). Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: 0.1.0-rc1, Schnitt 1 komplett (Release-Kandidat, Pre-Alpha; Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, lesender MCP-Server über stdio, Import aus mbox/Maildir, täglicher Audit-Export mit Hash-Kette). Installation in unter 15 Minuten: Abschnitt „Install in under 15 minutes"; Einrichtung in Claude Code: „Set up MCP in Claude Code". Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.
