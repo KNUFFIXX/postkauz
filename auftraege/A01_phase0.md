@@ -126,3 +126,17 @@ Testserver: `make testmail-up`; Dovecot ist auf Port 11143 (Nutzer `tester`, Pas
 ## Abschluss der Sitzung
 
 `make check` und `make cross` grün; `docs/roadmap.md` (Stand, offene Fragen), `CHANGELOG.md`, ADR-Status aktualisieren; Abschlussmeldung mit: was geht, was nicht, die nächsten Abnahmepunkte (Teil D) und die anstehende Entscheidung.
+
+## Nachtrag 16.10.2026: Auflagen aus dem Programmierstand (vor S1.6)
+
+Quelle: Recherche des Betreibers zum Stand von Go, Bibliotheken und MCP (16.10.2026). Diese Punkte gelten zusätzlich zu Teil C; Reihenfolge: N1–N3 als Schritt 0 von S1.6, N4 vor S1.9, N5 vor Schnitt 3.
+
+| # | Auflage | Wann | Nachweis |
+|---|---|---|---|
+| N1 | Go 1.27 hat `GODEBUG=asynctimerchan` entfernt, Timer-Kanäle sind immer synchron: alle Timer-Stellen in `internal/imapx` (Watchdog, Backoff, IDLE-Neustart) und `internal/mailsync` prüfen; wo ein `time.Timer`/`time.Ticker` gestoppt und neu gestartet wird, Verhalten nach dem neuen Modell belegen | S1.6, Schritt 0 | Liste der Stellen in `docs/roadmap.md`, Tests mit `testing/synctest` wo möglich |
+| N2 | `govulncheck ./...` in `make check` (oder eigenes Ziel `make vuln`) und in der CI; `golang.org/x/text` von v0.14.0 auf die per `go get` aufgelöste aktuelle Version heben; `go mod tidy` fasst require-Blöcke zusammen (erwarteter Diff) | S1.6, Schritt 0 | CI grün, `go.mod` |
+| N3 | Sync-Tests ohne Docker: `testing/synctest` und `net/http/httptest`-artige Fake-Server für IMAP-Abläufe, soweit sinnvoll; `goroutineleak`-Profil (`/debug/pprof/goroutineleak`) für IDLE-Watcher und Erstsync als Leck-Test | S1.6–S1.8 | Tests laufen in `make check` ohne `POSTKAUZ_IT` |
+| N4 | `google/uuid` ist nur indirekt in `go.mod`; neue Kennungen über die Standardbibliothek (`crypto/rand`, ab Go 1.27 stdlib-UUID), kein neuer direkter Import | S1.9 | `go.mod` |
+| N5 | MCP-Spezifikation 2026-07-28: stateless Kern, HTTP+SSE deprecated, Dynamic Client Registration deprecated (Client ID Metadata Documents); Go SDK v1.8.0 mit `StreamableHTTPOptions.Stateless = true`. Schnitt 3 (HTTP-MCP auf dem Dauerläufer) daran ausrichten; S1.9 (stdio) ist davon unberührt, nutzt aber die per `go get` aufgelöste SDK-Version | Schnitt 3, ADR vorab | ADR in `docs/entscheidungen.md` |
+| N6 | Go 1.28 (Februar 2027) verbietet `go list ...` im Module-Mode: Makefile, Skripte und CI auf `go list ./...` prüfen | vor dem Go-1.28-Wechsel | `grep` im Repo |
+

@@ -14,6 +14,7 @@ PostKauz ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go
 2. `docs/roadmap.md` (Stand, aktueller Schnitt, Akzeptanzkriterien, offene Fragen).
 3. Je nach Aufgabe: `docs/architektur.md`, `docs/datenmodell.md`, `docs/sicherheit.md`, `docs/mcp.md`, `docs/cli.md`, `docs/testkorpus.md`.
 4. Bei einem Auftrag: die Datei unter `auftraege/` (aktuell `A01_phase0.md`).
+5. Wissensstand: Modell-Wissen zu Go, Bibliotheken und MCP kann veraltet sein. Vor dem Einsatz einer API die gepinnte Version prüfen (`go list -m`, `go doc pkg@version`, Context7 oder `gopls mcp` mit Versionsangabe); bei Widerspruch gilt der ausgecheckte Quelltext. Der Betreiber pflegt außerhalb des Repos eine Übersicht „Programmierstand“ (Auflagen daraus stehen in A01, Nachtrag 16.10.2026).
 
 ## Sprache und Werkzeuge
 
