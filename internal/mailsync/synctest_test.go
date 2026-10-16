@@ -91,6 +91,7 @@ func (nopStore) FindByContentHash(context.Context, int64, int64, string) (int64,
 func (nopStore) ApplyBatch(context.Context, store.MirrorBatch) (store.BatchResult, error) {
 	return store.BatchResult{}, nil
 }
+func (nopStore) ThreadUnassigned(context.Context, int64, int) (int, error) { return 0, nil }
 
 func durations(ds ...string) []time.Duration {
 	out := make([]time.Duration, len(ds))

@@ -3,6 +3,7 @@ package mailsync
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -269,13 +270,82 @@ func TestInitialSyncMirrorsCorpus(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM blobs`); n != memCount {
 		t.Errorf("blobs = %d", n)
 	}
+	// Akzeptanz S1.6: Threads des Korpus stimmen mit dem Manifest.
+	e.checkThreads(t, c)
+	// Bestand ohne Threads (gespiegelt vor S1.6) wird beim nächsten Lauf
+	// nachgezogen, mit demselben Ergebnis.
+	for _, q := range []string{`UPDATE messages SET thread_id = NULL`, `DELETE FROM thread_refs`, `DELETE FROM threads`} {
+		if _, err := e.st.DBForTest().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	rep2, err := eng.SyncAll(context.Background(), Options{})
 	if err != nil || rep2.New != 0 || rep2.Updated != 0 || rep2.Removed != 0 || rep2.Mirrored != memCount {
 		t.Fatalf("second run = %+v %v", rep2, err)
 	}
+	e.checkThreads(t, c)
 	rep3, err := eng.SyncAll(context.Background(), Options{Full: true})
 	if err != nil || rep3.New != 0 || rep3.Updated != 0 || rep3.Removed != 0 || rep3.Mirrored != memCount {
 		t.Fatalf("full run = %+v %v", rep3, err)
+	}
+}
+
+// checkThreads: Jeder Thread des Manifests ist genau ein Thread in der
+// Datenbank, verschiedene Threads bleiben getrennt, Einzelnachrichten
+// stehen allein (Nachrichten ohne Message-ID werden über ihre ID nicht
+// gefunden und hier übersprungen).
+func (e *env) checkThreads(t *testing.T, c *corpus.Corpus) {
+	t.Helper()
+	rows, err := e.st.DBForTest().Query(`SELECT m.message_id_header, m.thread_id, t.message_count FROM messages m
+		LEFT JOIN threads t ON t.id = m.thread_id WHERE m.message_id_header IS NOT NULL`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type tinfo struct {
+		id, count int64
+	}
+	byMsg := map[string]tinfo{}
+	for rows.Next() {
+		var mid string
+		var tid, cnt sql.NullInt64
+		if err := rows.Scan(&mid, &tid, &cnt); err != nil {
+			t.Fatal(err)
+		}
+		if !tid.Valid {
+			t.Errorf("message %s has no thread", mid)
+		}
+		byMsg[mid] = tinfo{tid.Int64, cnt.Int64}
+	}
+	_ = rows.Close()
+	manifestThread := map[string]int64{}
+	dbThread := map[int64]string{}
+	checked := 0
+	for _, m := range c.Manifest.Messages {
+		if m.MessageID == "" || memSkip(m) {
+			continue
+		}
+		got, ok := byMsg[m.MessageID]
+		if !ok {
+			continue // z. B. Message-ID ohne Klammern anders gelesen
+		}
+		checked++
+		if m.Thread == "" {
+			if got.count != 1 {
+				t.Errorf("%s: standalone message in a thread of %d", m.File, got.count)
+			}
+			continue
+		}
+		if prev, ok := manifestThread[m.Thread]; ok && prev != got.id {
+			t.Errorf("%s: thread %s split (%d and %d)", m.File, m.Thread, prev, got.id)
+		}
+		manifestThread[m.Thread] = got.id
+		if other, ok := dbThread[got.id]; ok && other != m.Thread {
+			t.Errorf("%s: threads %s and %s merged", m.File, m.Thread, other)
+		}
+		dbThread[got.id] = m.Thread
+	}
+	if len(manifestThread) != 60 || checked < 900 {
+		t.Fatalf("checked %d messages in %d threads", checked, len(manifestThread))
 	}
 }
 

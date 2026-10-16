@@ -44,7 +44,7 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	}
 	want := []string{"accounts", "identities", "mailboxes", "messages", "message_mailboxes", "threads",
 		"attachments", "bodies", "blobs", "tags", "message_tags", "drafts", "approvals", "jobs",
-		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram"}
+		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram", "thread_refs"}
 	for _, name := range want {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name=?`, name).Scan(&n); err != nil || n != 1 {
@@ -221,6 +221,58 @@ func TestMigration0002KeepsDataAndSnapshots(t *testing.T) {
 	_ = snap.db.QueryRow(`SELECT count(*) FROM message_mailboxes`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("snapshot rows = %d", n)
+	}
+}
+
+// Migration 0003 (S1.6) auf einem Bestand von S1.5: Nachrichten und Texte
+// bleiben, bekommen clean_version 0 (Neuaufbereitung beim Sync) und lassen
+// sich nachträglich Threads zuordnen; attachments hat das neue Schema.
+func TestMigration0003KeepsS15Data(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "pk.db")
+	s, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.migrateTo(ctx, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO accounts(id,name,email,host,port,username,credential_ref,created_at) VALUES (1,'demo','demo@example.org','127.0.0.1',143,'u','account/demo',1)`,
+		`INSERT INTO messages(id,account_id,message_id_header,subject,internal_date,created_at) VALUES (5,1,'a@example.org','Hallo',1000,1)`,
+		`INSERT INTO messages(id,account_id,message_id_header,subject,in_reply_to,internal_date,created_at) VALUES (6,1,'b@example.org','AW: Hallo','a@example.org',2000,1)`,
+		`INSERT INTO bodies(message_id,text_plain) VALUES (5,'Text')`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(filepath.Base(s.LastSnapshot), "pk.db.pre-0003-") {
+		t.Fatalf("snapshot = %q", s.LastSnapshot)
+	}
+	var text string
+	var version int
+	if err := s.db.QueryRow(`SELECT text_plain, clean_version FROM bodies WHERE message_id=5`).Scan(&text, &version); err != nil ||
+		text != "Text" || version != 0 {
+		t.Fatalf("body = %q, version %d, %v", text, version, err)
+	}
+	if n, err := s.ThreadUnassigned(ctx, 1, 100); err != nil || n != 2 {
+		t.Fatalf("ThreadUnassigned = %d, %v", n, err)
+	}
+	a, _ := s.MessageByID(ctx, 5)
+	b, _ := s.MessageByID(ctx, 6)
+	if a.ThreadID == 0 || a.ThreadID != b.ThreadID {
+		t.Fatalf("threads = %d, %d", a.ThreadID, b.ThreadID)
+	}
+	if n, _ := s.ThreadUnassigned(ctx, 1, 100); n != 0 {
+		t.Fatalf("second run assigned %d", n)
+	}
+	if _, err := s.db.Exec(`INSERT INTO attachments(message_id,part_id,content_type,size,type_mismatch) VALUES (5,'2','application/pdf',10,1)`); err != nil {
+		t.Fatalf("new attachments schema: %v", err)
 	}
 }
 

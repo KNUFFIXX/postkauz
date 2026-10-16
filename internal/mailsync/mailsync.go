@@ -59,6 +59,7 @@ type Store interface {
 	FindLinkCandidate(ctx context.Context, accountID, mailboxID int64, messageID string, size int64) (int64, bool, error)
 	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hash string) (int64, bool, error)
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
+	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
 }
 
 // Standardwerte.
@@ -87,7 +88,7 @@ type Options struct {
 
 // Event ist eine Fortschrittsmeldung.
 type Event struct {
-	Kind    string // mailbox_start | window | mailbox_done | error
+	Kind    string // mailbox_start | window | mailbox_done | error | backlog
 	Mailbox string
 	Done    int // im Ordner bisher gespiegelt
 	Total   int // Nachrichten laut Server
@@ -200,11 +201,37 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			return rep, err
 		}
 	}
+	if err := e.backlog(ctx); err != nil {
+		rep.Duration = time.Since(start)
+		return rep, err
+	}
 	if rep.Mirrored, err = e.Store.CountPresentMessages(ctx, e.AccountID); err != nil {
 		return rep, err
 	}
 	rep.Duration = time.Since(start)
 	return rep, nil
+}
+
+// backlog zieht den Bestand nach, der vor S1.6 gespiegelt wurde: Threads
+// für Nachrichten ohne Zuordnung. Neue Nachrichten bekommen ihren Thread
+// schon beim Speichern; hier bleibt dann nichts zu tun.
+func (e *Engine) backlog(ctx context.Context) error {
+	total := 0
+	for {
+		n, err := e.Store.ThreadUnassigned(ctx, e.AccountID, 500)
+		if err != nil {
+			return fmt.Errorf("threads: %w", err)
+		}
+		total += n
+		if n == 0 {
+			break
+		}
+		e.emit(Event{Kind: "backlog", Done: total, Message: "threads"})
+	}
+	if total > 0 {
+		e.log().Info("threaded messages mirrored before threading existed", "count", total)
+	}
+	return nil
 }
 
 // fatal: Fehler, nach denen weitere Ordner keinen Sinn haben.

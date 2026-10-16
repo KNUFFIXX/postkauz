@@ -423,6 +423,9 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		if err := insertLink(mid, n.Link); err != nil {
 			return res, fmt.Errorf("store: insert link: %w", err)
 		}
+		if err := assignThread(ctx, tx, b.AccountID, mid, threadMessage(n)); err != nil {
+			return res, fmt.Errorf("store: thread: %w", err)
+		}
 		res.New++
 	}
 	for _, l := range b.Links {
