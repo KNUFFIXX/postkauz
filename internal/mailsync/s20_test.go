@@ -83,10 +83,15 @@ func TestWatchFullCheckFindsDeletionHiddenByCount(t *testing.T) {
 		done <- eng.Watch(ctx, WatchOptions{Interval: 100 * time.Millisecond, FullCheckInterval: 600 * time.Millisecond,
 			OnRound: func(Report, error) { rounds.Add(1) }})
 	}()
-	waitFor(t, 5*time.Second, func() bool { return deleted() == 1 })
-	waitFor(t, 5*time.Second, func() bool { return rounds.Load() >= 2 })
+	// Echte Uhr (Server im Prozess über TCP, synctest geht dafür nicht):
+	// Die Wartegrenzen sind großzügig, damit der Test unter Last (Race-
+	// Detector, volle CI) nicht flattert; im Normalfall endet er in rund
+	// einer Sekunde. Die Zeitpunkte selbst prüft
+	// TestWatchFullCheckIntervalSynctest mit künstlicher Uhr.
+	waitFor(t, watchWait, func() bool { return deleted() == 1 })
+	waitFor(t, watchWait, func() bool { return rounds.Load() >= 2 })
 	change(6, 12)
-	waitFor(t, 10*time.Second, func() bool {
+	waitFor(t, watchWait, func() bool {
 		return e.count(t, `SELECT count(*) FROM messages WHERE subject = 'Nachricht 6' AND deleted_remote_at IS NOT NULL`) == 1
 	})
 	cancel()
@@ -97,6 +102,9 @@ func TestWatchFullCheckFindsDeletionHiddenByCount(t *testing.T) {
 		t.Fatalf("new messages = %d", n)
 	}
 }
+
+// watchWait ist die Wartegrenze der Tests mit echter Uhr im Dauerbetrieb.
+const watchWait = 30 * time.Second
 
 // checkRemote merkt sich je Aufruf von Changes, ob CheckDeleted gesetzt war.
 type checkRemote struct {
