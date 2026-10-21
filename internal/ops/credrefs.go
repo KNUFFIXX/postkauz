@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -31,8 +32,10 @@ type CredentialMove struct {
 	To      string
 	// Result: moved (Eintrag umgezogen, alter gelöscht) | moved_old_left
 	// (umgezogen, alter Eintrag blieb, doctor warnt) | ref_only (kein
-	// gespeicherter Eintrag, z. B. Passwort aus der Umgebung: nur der
-	// Verweis wechselt) | failed (nichts geändert, der alte Verweis gilt
+	// gespeicherter Eintrag, Passwort aus POSTKAUZ_PASSWORD_<NAME>: nur der
+	// Verweis wechselt) | missing (kein gespeicherter Eintrag und keine
+	// Umgebungsvariable: nichts geändert, der alte Verweis bleibt, doctor
+	// warnt weiter) | failed (nichts geändert, der alte Verweis gilt
 	// weiter; nächster Versuch beim nächsten Öffnen) | postponed
 	// (Schlüsselbund nicht erreichbar, nichts versucht).
 	Result string
@@ -91,9 +94,16 @@ func moveOne(ctx context.Context, repo CredentialRefRepo, base secrets.Store, id
 	v, err := base.Get(from)
 	switch {
 	case errors.Is(err, secrets.ErrNotFound):
-		// Nichts gespeichert (Passwort aus der Umgebung oder nie
-		// hinterlegt): Die Umgebungsvariable hängt nur am Kontonamen, der
-		// Verweis kann sofort wechseln.
+		// Nichts gespeichert. Nur wenn das Passwort aus der Umgebung kommt,
+		// wechselt der Verweis sofort (die Variable hängt nur am
+		// Kontonamen). Sonst bleibt der alte Verweis: Meldet ein Schlüsselbund
+		// „nicht gefunden", obwohl der Eintrag besteht (etwa gesperrt), wäre
+		// er nach dem Umstellen weder unter dem alten noch unter dem neuen
+		// Namen lesbar; so versucht es das nächste Öffnen erneut, und doctor
+		// warnt weiter.
+		if v, ok := os.LookupEnv(secrets.EnvName(to)); !ok || v == "" {
+			return "missing", nil
+		}
 		if err := repo.SetCredentialRef(ctx, id, to); err != nil {
 			return "failed", err
 		}

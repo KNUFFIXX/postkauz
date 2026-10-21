@@ -128,3 +128,31 @@ type availableButReadOnly struct{ *memSecrets }
 func (availableButReadOnly) Status() secrets.Status {
 	return secrets.Status{Backend: "keyring", Available: true}
 }
+
+// Gegenprüfung 21.10.2026, Befund 5: Meldet der Schlüsselbund für den alten
+// Eintrag „nicht gefunden" und ist POSTKAUZ_PASSWORD_<NAME> nicht gesetzt,
+// bleibt der alte Verweis (Ergebnis missing); vorher wurde er trotzdem
+// umgestellt, und ein vorhandener, nur gerade nicht lesbarer Eintrag war
+// danach unter keinem Namen mehr erreichbar.
+func TestMoveCredentialRefsNotFoundWithoutEnvKeepsOldRef(t *testing.T) {
+	e := newAccountsEnv(t)
+	ctx := context.Background()
+	legacyAccount(t, e.st, "demo")
+	t.Setenv(secrets.EnvName("account/demo"), "") // leer zählt als nicht gesetzt
+	moves, err := MoveCredentialRefs(ctx, e.st, secrets.WithEnv(e.sec))
+	if err != nil || len(moves) != 1 || moves[0].Result != "missing" || moves[0].Err != nil {
+		t.Fatalf("moves = %+v, %v", moves, err)
+	}
+	if refOf(t, e.st, "demo") != "account/demo" {
+		t.Fatalf("reference switched to %s", refOf(t, e.st, "demo"))
+	}
+	if len(e.sec.m) != 0 {
+		t.Fatalf("keyring touched: %d entries", len(e.sec.m))
+	}
+	// Taucht der Eintrag wieder auf, zieht der nächste Lauf ihn um.
+	_ = e.sec.Set("account/demo", canary)
+	moves, err = MoveCredentialRefs(ctx, e.st, e.sec)
+	if err != nil || len(moves) != 1 || moves[0].Result != "moved" || refOf(t, e.st, "demo") != e.ref(t, "demo") {
+		t.Fatalf("second run: %+v %v", moves, err)
+	}
+}

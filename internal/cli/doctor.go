@@ -225,6 +225,10 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 		rep.Warnings = append(rep.Warnings, "keyring: "+err.Error())
 		return
 	}
+	pw := map[string]string{}
+	for _, da := range rep.Accounts {
+		pw[da.Name] = da.Password
+	}
 	for _, acc := range list {
 		want := secrets.AccountRef(dirID, acc.Name)
 		switch {
@@ -233,6 +237,11 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 			// Ohne Schlüsselbund wird nichts umgezogen (ein gesperrter
 			// Schlüsselbund sähe sonst leer aus); die Umgebungsvariable gilt.
 			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; it moves to %s once the OS keyring is reachable (%s is not affected)",
+				acc.Name, acc.CredentialRef, want, secrets.EnvName(want)))
+		case pw[acc.Name] == "missing":
+			// Der Umzug lässt den Verweis stehen, solange unter dem alten
+			// Namen nichts lesbar und keine Umgebungsvariable gesetzt ist.
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s, which holds no readable password; it moves to %s once the entry can be read (e.g. keyring unlocked) or %s is set",
 				acc.Name, acc.CredentialRef, want, secrets.EnvName(want)))
 		default:
 			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; the next command (e.g. accounts list) moves it to %s",

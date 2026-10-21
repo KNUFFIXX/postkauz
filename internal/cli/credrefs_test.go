@@ -292,3 +292,27 @@ func TestMCPDoesNotMoveKeyringEntries(t *testing.T) {
 		t.Fatalf("keyring after accounts list = %v", refs)
 	}
 }
+
+// Befund 5, Sicht des Menschen: Ohne lesbaren alten Eintrag und ohne
+// Umgebungsvariable bleibt der alte Verweis, und doctor sagt, worauf der
+// Umzug wartet (statt „the next command moves it").
+func TestLegacyKeyringEntryMissingKeepsRef(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	addDemo(t, canary)
+	st := openDB(t, dataDir)
+	a, _ := st.AccountByName(t.Context(), "demo")
+	if err := st.ExecForTest(`UPDATE accounts SET credential_ref = 'account/demo'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = kr.Delete(a.CredentialRef) // weder alt noch neu lesbar
+	if code, _, errs := run(t, "accounts", "list"); code != ExitOK || errs != "" {
+		t.Fatalf("accounts list: %d %q", code, errs)
+	}
+	if a, _ := st.AccountByName(t.Context(), "demo"); a.CredentialRef != "account/demo" {
+		t.Fatalf("reference switched to %s", a.CredentialRef)
+	}
+	rep := doctorJSON(t)
+	if !hasWarning(rep, "still uses the old keyring entry account/demo, which holds no readable password") || hasWarning(rep, "the next command") {
+		t.Fatalf("doctor: %v", rep.Warnings)
+	}
+}
