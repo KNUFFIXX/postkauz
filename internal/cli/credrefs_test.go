@@ -253,3 +253,42 @@ func TestDoctorOnSchema7Database(t *testing.T) {
 		t.Fatalf("keyring after move = %v", refs)
 	}
 }
+
+// Gegenprüfung 21.10.2026, Befund 3 (A02 E1): Der MCP-Server fasst keine
+// Passwörter an und zieht deshalb auch keine Schlüsselbund-Einträge um.
+// Startet `mcp` mit einem Konto mit altem Verweis, bleiben Verweis und
+// Schlüsselbund unverändert; erst ein CLI-Kommando zieht um.
+func TestMCPDoesNotMoveKeyringEntries(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	addDemo(t, canary)
+	key := newKey(t, "--name", "agent", "--role", "reader")
+	st := openDB(t, dataDir)
+	a, _ := st.AccountByName(t.Context(), "demo")
+	newRef := a.CredentialRef
+	if err := st.ExecForTest(`UPDATE accounts SET credential_ref = 'account/demo'`); err != nil {
+		t.Fatal(err)
+	}
+	_ = kr.Delete(newRef)
+	_ = kr.Set("account/demo", canary)
+
+	cs, stderr := mcpSession(t, key)
+	if v, res := callTool(t, cs, "mail_list_accounts", map[string]any{}); res.IsError {
+		t.Fatalf("mail_list_accounts: %v", v)
+	}
+	if a, _ := st.AccountByName(t.Context(), "demo"); a.CredentialRef != "account/demo" {
+		t.Fatalf("mcp switched the reference to %s", a.CredentialRef)
+	}
+	if refs := keyringRefs(kr); len(refs) != 1 || refs["account/demo"] != canary {
+		t.Fatalf("mcp changed the keyring: %v", refs)
+	}
+	if strings.Contains(stderr.String(), "keyring") {
+		t.Fatalf("stderr: %s", stderr.String())
+	}
+	// Gegenprobe: das nächste CLI-Kommando zieht um.
+	if code, _, errs := run(t, "accounts", "list"); code != ExitOK || errs != "" {
+		t.Fatalf("accounts list: %d %q", code, errs)
+	}
+	if refs := keyringRefs(kr); len(refs) != 1 || refs[newRef] != canary {
+		t.Fatalf("keyring after accounts list = %v", refs)
+	}
+}
