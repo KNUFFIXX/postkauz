@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -188,4 +190,66 @@ func hasWarning(rep DoctorReport, part string) bool {
 		}
 	}
 	return false
+}
+
+// Gegenprüfung 21.10.2026, Befund 1: doctor auf einem Bestand mit Schema 7
+// (0.1.0-rc1, noch nicht migriert) meldete „accounts: … no such column:
+// aliases". Jetzt liest doctor die Konten ohne die neuen Spalten, meldet
+// needs_migration mit Hinweis und warnt für den alten Verweis; das nächste
+// Kommando migriert und zieht um.
+func TestDoctorOnSchema7Database(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dataDir, "postkauz.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MigrateToForTest(t.Context(), 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ExecForTest(`INSERT INTO accounts(id,name,email,host,port,tls,username,credential_ref,insecure_test_server,created_at)
+		VALUES (1,'demo','demo@example.invalid','127.0.0.1',11143,'none','tester@example.invalid','account/demo',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	_ = kr.Set("account/demo", canary)
+
+	code, out, errs := run(t, "doctor", "--json")
+	var rep DoctorReport
+	if code != ExitOK || json.Unmarshal([]byte(out), &rep) != nil {
+		t.Fatalf("doctor: %d %s %s", code, out, errs)
+	}
+	if rep.Database != "needs_migration" || rep.SchemaVersion != 7 {
+		t.Fatalf("database = %s, schema %d", rep.Database, rep.SchemaVersion)
+	}
+	if hasWarning(rep, "no such column") || hasWarning(rep, "accounts:") {
+		t.Fatalf("accounts not readable: %v", rep.Warnings)
+	}
+	if len(rep.Accounts) != 1 || rep.Accounts[0].Name != "demo" || rep.Accounts[0].Password != "stored" {
+		t.Fatalf("accounts = %+v", rep.Accounts)
+	}
+	if !hasWarning(rep, "database schema 7 is older than this program") ||
+		!hasWarning(rep, "account demo still uses the old keyring entry account/demo; the next command (e.g. accounts list) migrates the database") {
+		t.Fatalf("warnings = %v", rep.Warnings)
+	}
+	if strings.Contains(out, canary) {
+		t.Fatal("password in the doctor output")
+	}
+	// Text-Ausgabe: dieselbe Lage ohne Fehlerzeile.
+	if code, out, _ := run(t, "doctor"); code != ExitOK || strings.Contains(out, "no such column") || !strings.Contains(out, "demo: password stored") {
+		t.Fatalf("doctor (text): %d %s", code, out)
+	}
+
+	if code, _, errs := run(t, "accounts", "list"); code != ExitOK || errs != "" {
+		t.Fatalf("accounts list: %d %q", code, errs)
+	}
+	rep = doctorJSON(t)
+	if rep.Database != "ok" || hasWarning(rep, "keyring entry") || hasWarning(rep, "older than this program") {
+		t.Fatalf("doctor after migration: %s %v", rep.Database, rep.Warnings)
+	}
+	if refs := keyringRefs(kr); len(refs) != 1 || refs["account/demo"] != "" {
+		t.Fatalf("keyring after move = %v", refs)
+	}
 }

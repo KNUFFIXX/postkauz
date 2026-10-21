@@ -163,6 +163,8 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		if v == 0 {
 			return rep
 		}
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("database schema %d is older than this program (%d); the next command that opens it (e.g. accounts list) migrates it, with a backup copy next to the database",
+			v, rep.SchemaKnown))
 	default:
 		rep.Database = "ok"
 	}
@@ -170,7 +172,9 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.FTSVersion, _ = db.FTSVersion(ctx)
 	rep.ExtractPending, _ = db.ExtractPending(ctx, 0)
 	doctorAudit(ctx, db, &rep, time.Now())
-	list, err := db.ListAccounts(ctx)
+	// Nur Spalten, die jedes Schema hat: doctor migriert nicht und muss die
+	// Konten auch bei needs_migration lesen können.
+	list, err := db.AccountRefs(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
 		return rep
@@ -197,10 +201,29 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 // doctorCredentialRefs meldet den Stand des Umzugs der Schlüsselbund-Einträge
 // (S2.0/A2): Konten mit altem Verweis und alte Einträge, die nach dem Umzug
 // nicht gelöscht werden konnten und noch bestehen.
-func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Store, list []store.AccountSummary, rep *DoctorReport) {
+func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Store, list []store.AccountRef, rep *DoctorReport) {
 	dirID, err := db.DataDirID(ctx)
+	if errors.Is(err, store.ErrNoDataDirID) {
+		// Schema vor 8 (needs_migration): Jedes Konto hat noch den alten
+		// Verweis; das nächste Kommando migriert und zieht dann um. Die
+		// Kennung entsteht erst mit der Migration.
+		for _, acc := range list {
+			if acc.CredentialRef != secrets.LegacyAccountRef(acc.Name) {
+				continue
+			}
+			if rep.Keyring == "unavailable" {
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; it moves to a name with the data directory id once the database is migrated and the OS keyring is reachable (%s is not affected)",
+					acc.Name, acc.CredentialRef, secrets.EnvName(acc.CredentialRef)))
+				continue
+			}
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; the next command (e.g. accounts list) migrates the database and moves it to a name with the data directory id",
+				acc.Name, acc.CredentialRef))
+		}
+		return
+	}
 	if err != nil {
-		return // Schema vor 8: Das nächste Kommando migriert und zieht um.
+		rep.Warnings = append(rep.Warnings, "keyring: "+err.Error())
+		return
 	}
 	for _, acc := range list {
 		want := secrets.AccountRef(dirID, acc.Name)

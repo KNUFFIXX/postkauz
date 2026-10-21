@@ -405,6 +405,14 @@ Nachbesserungen aus der Gegenprüfung (Fragen 6a, 6c, 6d) und Frage 15, Auftrag 
 
 **Prüfläufe (21.10.2026, Worktree `s2.0-b`, Go 1.27.0 mit `GOTOOLCHAIN=auto`):** `make check` vor jedem der vier Commits grün (je rund 3 min; Kanarientest `TestCanaryAllChannels` ohne neue Funde); `make cross` grün (ohne `-s -w`: linux/amd64 24,3 MB, windows/amd64 24,0 MB, darwin/arm64 22,8 MB); `go test -race -short` für `internal/mailsync` und `internal/imapx` grün (rund 2,3 min), zusätzlich für `internal/crash`, `internal/extract` und `internal/store` (geänderte Nebenläufigkeit der Suche) grün. Nicht gelaufen: `make race` ohne `-short`, `make integration` (kein Docker), `make vuln` (kein Netz).
 
+### Stand S2.0, Nachbesserung nach der Gegenprüfung (21.10.2026, Stand `c5d6eff` geprüft)
+
+Unabhängige Gegenprüfung des Merge-Stands `c5d6eff`: kein Blocker, 13 Befunde. Je Befund ein Commit mit Test (der ohne die Änderung scheitert, wo ein Test sinnvoll ist).
+
+**Wichtig:**
+
+1. **`doctor` auf einem nicht migrierten Bestand** (Schema 7, 0.1.0-rc1) meldete `accounts: SQL logic error: no such column: aliases`, weil er die Konten mit der neuen Spalte las. Jetzt liest `doctor` nur Name, Verweis und Status (`store.AccountRefs`, Spalten seit Schema 1), meldet bei `needs_migration` den Hinweis „database schema 7 is older than this program (8); the next command … migrates it" und die A2-Warnung zum alten Verweis („the next command … migrates the database and moves it"). Test `TestDoctorOnSchema7Database` (CLI, Datenbank mit Schema 7 über `MigrateToForTest`, Konto mit `account/demo`; danach `accounts list` migriert und zieht um, `doctor` ohne Warnung).
+
 **Umfang:** `drafts.*`: neu, antworten, allen antworten, weiterleiten mit korrekten `Message-ID`/`In-Reply-To`/`References`, Zitat, Anhänge aus vorhandenen Nachrichten oder Dateien; Ablage per `APPEND` im Entwürfe-Ordner; Policy-Datei; Freigabe-Zustände (`draft` → `pending_approval` → `ready` → `sent_by_human`) mit `preview_hash`; Prüf-Hook; Erkennung des Versands im Ordner „Gesendet"; Resources `mail://…/draft/…` und `mail://style/…`; Prompt `draft_reply`.
 
 **Nicht enthalten:** SMTP, `mail_request_send`, `auto`-Versand, Regeln.

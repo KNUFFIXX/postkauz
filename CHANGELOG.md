@@ -18,6 +18,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- S2.0, Gegenprüfung 1: `doctor` auf einem noch nicht migrierten Bestand (Schema 7, 0.1.0-rc1) meldete `accounts: … no such column: aliases`; er liest die Konten jetzt nur mit Spalten, die jedes Schema hat, und nennt bei `needs_migration` die anstehende Migration und den alten Schlüsselbund-Verweis.
 - S2.0/A3: Ein vorhandenes Datenverzeichnis und Log mit zu weiten Rechten werden beim Öffnen auf 0700 bzw. 0600 verschärft (nicht unter Windows); ein Fehler dabei steht als Warnung im Log, `doctor --secrets` meldet danach `ok`.
 - S2.0/A4: Der IMAP-Abruf begrenzt jede Rohmail auf `[imap] max_message_bytes` (Standard und Höchstwert 256 MiB); vorher las `FetchRaw` gepufferte Nachrichten mit `io.ReadAll` ohne Grenze (u. a. nach einem Fehler des Rückrufs jede weitere Nachricht der Gruppe). Eine zu große Nachricht ist ein Fehler dieser Nachricht, der Sync läuft weiter.
 - S2.0/A5: Panics in eigenen Hilfsgoroutinen (IDLE-Watcher, Watchdog je IMAP-Kommando, parallele Suchabfragen, Schlüsselbund-Aufruf mit Zeitgrenze) beenden nicht mehr den Prozess mit Panic-Wert und Stack samt Argumenten, sondern den Lauf mit Fehler (Code `internal`, Audit `panic`, bereinigter Bericht im Log); dasselbe für Ordner des Syncs, Quellen des Imports und den Extraktor (dort scheitert nur der Anhang, der Kindprozess meldet keinen Panic-Wert mehr als Grund).

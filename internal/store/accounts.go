@@ -134,6 +134,36 @@ func (s *SQLite) ListAccounts(ctx context.Context) ([]AccountSummary, error) {
 	return out, rows.Err()
 }
 
+// AccountRef ist die schmale Sicht eines Kontos für `doctor`: Name,
+// Schlüsselbund-Verweis und Status. Diese Spalten gibt es seit Schema 1.
+type AccountRef struct {
+	Name          string
+	CredentialRef string
+	Status        string
+}
+
+// AccountRefs liefert Name, Verweis und Status aller Konten, nach Namen
+// sortiert. Anders als ListAccounts liest sie nur Spalten, die jedes Schema
+// hat: `doctor` öffnet die Datenbank ohne Migration und meldet auch für
+// einen Bestand mit älterem Schema die Konten (vorher: „no such column:
+// aliases" bei Schema 7).
+func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status FROM accounts ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AccountRef
+	for rows.Next() {
+		var a AccountRef
+		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // CountMessages zählt die lokal archivierten Nachrichten eines Kontos.
 func (s *SQLite) CountMessages(ctx context.Context, accountID int64) (int, error) {
 	var n int
@@ -219,6 +249,10 @@ func (s *SQLite) QueryIntForTest(query string, args ...any) (int, error) {
 	err := s.db.QueryRow(query, args...).Scan(&n)
 	return n, err
 }
+
+// MigrateToForTest migriert nur bis einschließlich Version max (Bestand
+// mit älterem Schema). Nur für Tests anderer Pakete.
+func (s *SQLite) MigrateToForTest(ctx context.Context, max int) error { return s.migrateTo(ctx, max) }
 
 // DBForTest gibt die Datenbank frei. Nur für Tests.
 func (s *SQLite) DBForTest() *sql.DB { return s.db }
