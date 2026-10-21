@@ -26,6 +26,7 @@ func syncFlags(cmd *cobra.Command) {
 	f.Int("window", 0, "messages per window in the first sync (default 200)")
 	f.Duration("interval", 0, "with --watch: time between syncs of all mailboxes (default 5m)")
 	f.Duration("idle-restart", 0, "with --watch: restart IDLE after this time (5m to 10m, default 8m)")
+	f.Duration("full-check-interval", 0, "with --watch: time between full UID checks of all mailboxes, which find deletions the message counts miss (default 1h)")
 	f.StringSlice("mailbox", nil, "only these mailboxes (repeatable)")
 }
 
@@ -41,14 +42,22 @@ func syncInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secrets
 	window, _ := f.GetInt("window")
 	interval, _ := f.GetDuration("interval")
 	idle, _ := f.GetDuration("idle-restart")
+	fullCheck, _ := f.GetDuration("full-check-interval")
 	boxes, _ := f.GetStringSlice("mailbox")
-	if (interval != 0 || idle != 0) && !watch {
-		return nil, "", usageError{errors.New("--interval and --idle-restart need --watch")}
+	if (interval != 0 || idle != 0 || fullCheck != 0) && !watch {
+		return nil, "", usageError{errors.New("--interval, --idle-restart and --full-check-interval need --watch")}
+	}
+	if interval < 0 || fullCheck < 0 {
+		return nil, "", usageError{errors.New("--interval and --full-check-interval must be positive")}
 	}
 	in := ops.SyncRunInput{Account: accountFlag(cmd), Full: full, Watch: watch, Window: window, Mailboxes: boxes,
-		IntervalSeconds: int(interval / time.Second), IdleRestartSeconds: int(idle / time.Second)}
+		IntervalSeconds: int(interval / time.Second), IdleRestartSeconds: int(idle / time.Second),
+		FullCheckIntervalSeconds: int(fullCheck / time.Second)}
 	if interval > 0 && in.IntervalSeconds == 0 {
 		in.IntervalSeconds = 1
+	}
+	if fullCheck > 0 && in.FullCheckIntervalSeconds == 0 {
+		in.FullCheckIntervalSeconds = 1
 	}
 	b, err := json.Marshal(in)
 	return b, "", err

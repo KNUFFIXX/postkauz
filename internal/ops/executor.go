@@ -40,9 +40,12 @@ type Executor struct {
 	OnPanic func(op string, r crash.Report)
 }
 
-// ErrInternal: Der Handler ist abgestürzt (Panic). Der Aufruf scheitert,
-// der Prozess (z. B. der MCP-Server) läuft weiter.
-var ErrInternal = errors.New("internal error")
+// ErrInternal: Der Handler oder einer seiner Arbeitsschritte ist
+// abgestürzt (Panic). Der Aufruf scheitert, der Prozess (z. B. der
+// MCP-Server) läuft weiter. Derselbe Wert wie crash.ErrInternal: Ein
+// *crash.PanicError aus einer Hilfsgoroutine (crash.Go) zählt ebenso
+// (Code internal, Audit-Grund panic).
+var ErrInternal = crash.ErrInternal
 
 // PanicError trägt den bereinigten Bericht eines Panics im Handler.
 type PanicError struct {

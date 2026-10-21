@@ -31,6 +31,9 @@ type Runner struct {
 	// IMAP-Providers (0 = Standard; Konfiguration [imap]).
 	CommandTimeout     time.Duration
 	CommandMaxDuration time.Duration
+	// MaxMessageBytes begrenzt eine Rohmail (0 = 256 MiB; [imap]
+	// max_message_bytes). Größere zählen als Fehler je Nachricht.
+	MaxMessageBytes int64
 	// Extractor gewinnt Text aus Anhängen (nil = Standard: pdftotext wenn
 	// vorhanden, eigener Kindprozess für DOCX).
 	Extractor *extract.Extractor
@@ -56,7 +59,7 @@ func (r imapRemote) Strategy() string { return string(r.Provider.Strategy()) }
 func (r *Runner) connectIMAP(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error) {
 	p, err := imapprov.Connect(ctx, imapprov.Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
 		InsecureTestServer: a.InsecureTestServer, IdleRestart: idleRestart,
-		CommandTimeout: r.CommandTimeout, CommandMaxDuration: r.CommandMaxDuration}, pw)
+		CommandTimeout: r.CommandTimeout, CommandMaxDuration: r.CommandMaxDuration, MaxMessageBytes: r.MaxMessageBytes}, pw)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +127,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out, err
 	}
-	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, OnRound: func(rep Report, err error) {
+	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, OnRound: func(rep Report, err error) {
 		out.Rounds++
 		round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
 		fill(&round, rep)

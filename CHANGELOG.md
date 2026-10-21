@@ -8,11 +8,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 - S2.0/A6: Operationen nur für Menschen (`HumanOnly`, A02 E2, minimal): Mit API-Schlüssel (jede Rolle, auch `admin`, auch `--key`) lehnt die Policy sie mit Grund `human_only` ab, auditiert, ohne Handler; nur die CLI ohne `--key` darf sie. `policy show` führt sie für Schlüssel nicht auf, MCP bietet sie nie an; der Vertragstest prüft jede Operation zusätzlich als Mensch ohne Schlüssel.
 - S2.0/A6: Aliasse (weitere eigene Adressen) am Konto: Spalte `accounts.aliases` (Migration 0008), Operation `accounts.set` (`admin`, HumanOnly) mit `account set <name> --aliases a@…,b@…`; `accounts list` zeigt sie (Spalte `ALIASES`, Feld `aliases`, auch MCP). Der Betreff-Rückfall der Threads zählt Aliasse als eigene Adressen; ein Fremder, der an denselben Alias schreibt, landet nicht mehr im fremden Gespräch.
+- S2.0/A5: `crash.Go(name, fn)` und `crash.Do(name, fn)` (`internal/crash`): `recover`, bereinigter Bericht ins Log, Fehlerweitergabe als `*crash.PanicError`.
 
 ### Changed
 
 - S2.0/A2: Der Schlüsselbund-Eintrag eines Kontos heißt `account/<datadir-id>/<name>` statt `account/<name>`; `<datadir-id>` sind 8 Hex aus der Kennung des Datenverzeichnisses (`meta.datadir_id`, Migration 0008, Schema 8). Zwei Datenverzeichnisse (Profile) mit gleichem Kontonamen teilen sich keinen Eintrag mehr. Vorhandene Einträge zieht das erste Kommando um (lesen alt → schreiben neu → Verweis umstellen → löschen alt; nicht `mcp`); bleibt der alte Eintrag stehen, warnen das Kommando und `doctor`. `POSTKAUZ_PASSWORD_<NAME>` bleibt unverändert.
 - S2.0/A8: `docs/roadmap.md`: die Entscheide des Betreibers vom 18.10.2026 (A02, Abschnitt 0) als „Entschiedene Fragen" 19 bis 33, „Offene Fragen" geleert bis auf eine neue Frage (Passwort neu setzen); neuer Abschnitt „Umfeld: verwandte Projekte (Stand 21.10.2026)" (Make-or-buy-Gate, msgvault). `README.md`, Non-goals: kein Archiv für Chat, Kalender und Meetings, keine Web-UI vor 1.0.
+- S2.0/A1: `sync --watch` gleicht stündlich (`--full-check-interval`, Standard `1h`, erster Lauf eingeschlossen) die vollständigen UID-Listen aller Ordner ab und erkennt so auch Löschungen, die der Zahlenvergleich übersieht; Operation `sync.run` mit `full_check_interval_seconds`. Der einmalige `sync` ist unverändert.
+
+### Fixed
+
+- S2.0/A3: Ein vorhandenes Datenverzeichnis und Log mit zu weiten Rechten werden beim Öffnen auf 0700 bzw. 0600 verschärft (nicht unter Windows); ein Fehler dabei steht als Warnung im Log, `doctor --secrets` meldet danach `ok`.
+- S2.0/A4: Der IMAP-Abruf begrenzt jede Rohmail auf `[imap] max_message_bytes` (Standard und Höchstwert 256 MiB); vorher las `FetchRaw` gepufferte Nachrichten mit `io.ReadAll` ohne Grenze (u. a. nach einem Fehler des Rückrufs jede weitere Nachricht der Gruppe). Eine zu große Nachricht ist ein Fehler dieser Nachricht, der Sync läuft weiter.
+- S2.0/A5: Panics in eigenen Hilfsgoroutinen (IDLE-Watcher, Watchdog je IMAP-Kommando, parallele Suchabfragen) beenden nicht mehr den Prozess mit Panic-Wert und Stack samt Argumenten, sondern den Lauf mit Fehler (Code `internal`, Audit `panic`, bereinigter Bericht im Log); dasselbe für Ordner des Syncs, Quellen des Imports und den Extraktor (dort scheitert nur der Anhang, der Kindprozess meldet keinen Panic-Wert mehr als Grund).
 
 ## [0.1.0-rc1] – 2026-10-16
 

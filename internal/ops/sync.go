@@ -19,8 +19,10 @@ type SyncOptions struct {
 	Window      int
 	Interval    time.Duration // nur Watch
 	IdleRestart time.Duration // nur Watch
-	Mailboxes   []string
-	DryRun      bool
+	// FullCheckInterval: Abstand der vollen UID-Abgleiche (nur Watch; 0 = 1 h).
+	FullCheckInterval time.Duration
+	Mailboxes         []string
+	DryRun            bool
 }
 
 // SyncMailbox ist das Ergebnis eines Ordners.
@@ -107,13 +109,16 @@ func redactAccountRef(raw json.RawMessage) (json.RawMessage, []string) {
 
 // SyncRunInput ist die Eingabe von sync.run.
 type SyncRunInput struct {
-	Account            string   `json:"account,omitempty"`
-	Full               bool     `json:"full,omitempty"`
-	Watch              bool     `json:"watch,omitempty"`
-	Window             int      `json:"window,omitempty"`
-	IntervalSeconds    int      `json:"interval_seconds,omitempty"`
-	IdleRestartSeconds int      `json:"idle_restart_seconds,omitempty"`
-	Mailboxes          []string `json:"mailboxes,omitempty"`
+	Account            string `json:"account,omitempty"`
+	Full               bool   `json:"full,omitempty"`
+	Watch              bool   `json:"watch,omitempty"`
+	Window             int    `json:"window,omitempty"`
+	IntervalSeconds    int    `json:"interval_seconds,omitempty"`
+	IdleRestartSeconds int    `json:"idle_restart_seconds,omitempty"`
+	// FullCheckIntervalSeconds: Abstand der vollen UID-Abgleiche im
+	// Dauerbetrieb (0 = 3600; A02 A1).
+	FullCheckIntervalSeconds int      `json:"full_check_interval_seconds,omitempty"`
+	Mailboxes                []string `json:"mailboxes,omitempty"`
 }
 
 // SyncRun spiegelt ein Konto: Erstsync in Fenstern (wiederaufnehmbar),
@@ -135,6 +140,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "window": {"type": "integer", "minimum": 1, "maximum": 5000},
     "interval_seconds": {"type": "integer", "minimum": 1},
     "idle_restart_seconds": {"type": "integer", "minimum": 300, "maximum": 600},
+    "full_check_interval_seconds": {"type": "integer", "minimum": 1, "description": "with watch: time between full UID checks of all mailboxes (deletions); default 3600"},
     "mailboxes": {"type": "array", "items": {"type": "string"}}
   },
   "additionalProperties": false
@@ -170,11 +176,11 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 			if in.IdleRestartSeconds != 0 && (in.IdleRestartSeconds < 300 || in.IdleRestartSeconds > 600) {
 				return nil, inputErr("idle restart must be between 300 and 600 seconds (5 to 10 minutes)")
 			}
-			if in.IntervalSeconds < 0 {
+			if in.IntervalSeconds < 0 || in.FullCheckIntervalSeconds < 0 {
 				return nil, inputErr("interval must be positive")
 			}
-			if (in.IntervalSeconds != 0 || in.IdleRestartSeconds != 0) && !in.Watch {
-				return nil, inputErr("interval and idle restart only apply with watch")
+			if (in.IntervalSeconds != 0 || in.IdleRestartSeconds != 0 || in.FullCheckIntervalSeconds != 0) && !in.Watch {
+				return nil, inputErr("interval, idle restart and full check interval only apply with watch")
 			}
 			a, err := ResolveAccount(ctx, repo, in.Account)
 			if err != nil {
@@ -187,7 +193,8 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 				return nil, err
 			}
 			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
-				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second}
+				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
+				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second}
 			out, err := runner.Sync(ctx, a, pw, o, call.Progress)
 			if err != nil {
 				return nil, scrub(err, pw)

@@ -101,7 +101,7 @@ func TestSyncRun(t *testing.T) {
 	}
 	// Eingabefehler
 	for _, in := range []map[string]any{{"window": 0, "interval_seconds": 5}, {"watch": true, "idle_restart_seconds": 60},
-		{"account": "Nope_1"}, {"bogus": 1}} {
+		{"full_check_interval_seconds": 60}, {"account": "Nope_1"}, {"bogus": 1}} {
 		b, _ := json.Marshal(in)
 		_, err := e.x.Execute(context.Background(), Request{Key: adminKey, Operation: "sync.run", Input: b})
 		var ie *InputError
@@ -110,11 +110,12 @@ func TestSyncRun(t *testing.T) {
 		}
 	}
 	// Watch-Optionen kommen als Dauer an.
-	b, _ = json.Marshal(map[string]any{"watch": true, "interval_seconds": 30, "idle_restart_seconds": 420})
+	b, _ = json.Marshal(map[string]any{"watch": true, "interval_seconds": 30, "idle_restart_seconds": 420, "full_check_interval_seconds": 120})
 	if _, err := e.x.Execute(context.Background(), Request{Key: adminKey, Operation: "sync.run", Input: b}); err != nil {
 		t.Fatal(err)
 	}
-	if !e.runner.got.Watch || e.runner.got.Interval != 30*time.Second || e.runner.got.IdleRestart != 7*time.Minute {
+	if !e.runner.got.Watch || e.runner.got.Interval != 30*time.Second || e.runner.got.IdleRestart != 7*time.Minute ||
+		e.runner.got.FullCheckInterval != 2*time.Minute {
 		t.Fatalf("watch options = %+v", e.runner.got)
 	}
 	// Ein Fehler des Runners darf das Passwort nicht weitertragen.

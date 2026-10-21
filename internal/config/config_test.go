@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +65,9 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"negative":      "[imap]\ncommand_max_duration = \"-1m\"\n",
 		"max < timeout": "[imap]\ncommand_timeout = \"2m\"\ncommand_max_duration = \"1m\"\n",
 		"bad duration":  "[imap]\ncommand_timeout = \"zehn\"\n",
+		"max msg < 0":   "[imap]\nmax_message_bytes = -1\n",
+		"max msg > cap": "[imap]\nmax_message_bytes = 268435457\n",
+		"max msg text":  "[imap]\nmax_message_bytes = \"256MiB\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".toml")
@@ -80,7 +85,7 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 func TestLoadIMAPTimeouts(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(f, []byte("[imap]\ncommand_timeout = \"45s\"\ncommand_max_duration = \"20m\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(f, []byte("[imap]\ncommand_timeout = \"45s\"\ncommand_max_duration = \"20m\"\nmax_message_bytes = 1048576\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(EnvConfig, f)
@@ -90,7 +95,7 @@ func TestLoadIMAPTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.IMAP.CommandTimeout != 45*time.Second || cfg.IMAP.CommandMaxDuration != 20*time.Minute {
+	if cfg.IMAP.CommandTimeout != 45*time.Second || cfg.IMAP.CommandMaxDuration != 20*time.Minute || cfg.IMAP.MaxMessageBytes != 1<<20 {
 		t.Fatalf("imap = %+v", cfg.IMAP)
 	}
 }
@@ -115,5 +120,57 @@ func TestCloudSyncWarning(t *testing.T) {
 	}
 	if CloudSyncWarning(filepath.Join("home", "x", ".local", "share", "postkauz")) != "" {
 		t.Error("plain path must not warn")
+	}
+}
+
+// A02 A3 (Frage 6c): Ein vorhandenes Datenverzeichnis und Log mit weiten
+// Rechten werden beim Öffnen verschärft (Besitzerrechte bleiben); ein
+// Fehler dabei wird gemeldet, nicht abgebrochen. Unter Windows geschieht
+// nichts (dort gilt der Profilordner).
+func TestRestrictPermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	p := Paths{DataDir: dir, Log: filepath.Join(dir, "postkauz.log")}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Log, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil { // umask umgehen
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p.Log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes := RestrictPermissions(p)
+	if runtime.GOOS == "windows" {
+		if changes != nil {
+			t.Fatalf("windows: %+v", changes)
+		}
+		return
+	}
+	if len(changes) != 2 || changes[0].Err != nil || changes[0].Old != 0o755 || changes[0].New != 0o700 ||
+		changes[1].Err != nil || changes[1].Old != 0o644 || changes[1].New != 0o600 {
+		t.Fatalf("changes = %+v", changes)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, p.Log: 0o600} {
+		if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != want {
+			t.Fatalf("%s: %v %v, want %04o", path, fi.Mode().Perm(), err, want)
+		}
+	}
+	if c := RestrictPermissions(p); len(c) != 0 {
+		t.Fatalf("second call changed %+v", c)
+	}
+	// Fehlende Pfade sind kein Fehler.
+	if c := RestrictPermissions(Paths{DataDir: filepath.Join(dir, "missing")}); len(c) != 0 {
+		t.Fatalf("missing: %+v", c)
+	}
+	// Scheitert chmod, kommt der Fehler zurück (der Aufrufer warnt im Log).
+	_ = os.Chmod(dir, 0o750)
+	orig := chmod
+	chmod = func(string, os.FileMode) error { return os.ErrPermission }
+	defer func() { chmod = orig }()
+	if c := RestrictPermissions(p); len(c) != 1 || c[0].Path != dir || !errors.Is(c[0].Err, os.ErrPermission) {
+		t.Fatalf("failing chmod: %+v", c)
 	}
 }

@@ -68,7 +68,16 @@ type IMAP struct {
 	CommandTimeout time.Duration `toml:"command_timeout"`
 	// CommandMaxDuration: Obergrenze je Kommando (Standard 10m).
 	CommandMaxDuration time.Duration `toml:"command_max_duration"`
+	// MaxMessageBytes: größte Rohmail, die der Sync annimmt (Standard
+	// 256 MiB = MaxMessageBytesLimit; A02 A4). Größere zählen als Fehler je
+	// Nachricht, der Sync läuft weiter.
+	MaxMessageBytes int64 `toml:"max_message_bytes"`
 }
+
+// MaxMessageBytesLimit ist Standard und Obergrenze von
+// imap.max_message_bytes: Größere Nachrichten nimmt auch der Blob-Store
+// nicht an (blob.DefaultMaxSize).
+const MaxMessageBytesLimit int64 = 256 << 20
 
 // Secrets wählt, wo Zugangsdaten liegen.
 type Secrets struct {
@@ -206,6 +215,9 @@ func LoadProfile(profile string) (Config, Paths, error) {
 		return cfg, p, fmt.Errorf("config: imap.command_max_duration %s is shorter than imap.command_timeout %s",
 			cfg.IMAP.CommandMaxDuration, cfg.IMAP.CommandTimeout)
 	}
+	if cfg.IMAP.MaxMessageBytes < 0 || cfg.IMAP.MaxMessageBytes > MaxMessageBytesLimit {
+		return cfg, p, fmt.Errorf("config: imap.max_message_bytes %d is out of range (1 to %d; 0 = default)", cfg.IMAP.MaxMessageBytes, MaxMessageBytesLimit)
+	}
 	if cfg.DataDir == "" {
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {
 			return cfg, p, err
@@ -230,12 +242,60 @@ func LoadProfile(profile string) (Config, Paths, error) {
 }
 
 // EnsureDataDir legt das Datenverzeichnis nur für den Nutzer lesbar an
-// (0700, docs/sicherheit.md, Abschnitt 10).
+// (0700, docs/sicherheit.md, Abschnitt 10). Ein schon vorhandenes
+// Verzeichnis mit weiteren Rechten verschärft RestrictPermissions.
 func EnsureDataDir(p Paths) error {
 	if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
 		return fmt.Errorf("config: data directory: %w", err)
 	}
 	return nil
+}
+
+// chmod ist in Tests ersetzbar (ein Fehler lässt sich sonst als Besitzer
+// kaum auslösen).
+var chmod = os.Chmod
+
+// PermChange meldet eine Verschärfung durch RestrictPermissions: vorher
+// (Old) und nachher (New), oder den Fehler, an dem sie scheiterte.
+type PermChange struct {
+	Path string
+	Old  fs.FileMode
+	New  fs.FileMode
+	Err  error
+}
+
+// RestrictPermissions nimmt Datenverzeichnis und Log die Rechte für Gruppe
+// und andere (Datenverzeichnis danach 0700, Log 0600; A02 A3, Frage 6c).
+// Die Datenbank setzt store.Open selbst auf 0600. Rechte des Besitzers
+// bleiben, wie sie sind. Unter Windows gilt der Profilordner, dort
+// geschieht nichts. Fehler brechen nichts ab: Der Aufrufer schreibt sie
+// als Warnung ins Log (doctor --secrets meldet die Rechte dann als fail).
+func RestrictPermissions(p Paths) []PermChange {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	var out []PermChange
+	for _, path := range []string{p.DataDir, p.Log} {
+		if path == "" {
+			continue
+		}
+		fi, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			out = append(out, PermChange{Path: path, Err: err})
+			continue
+		}
+		old := fi.Mode().Perm()
+		if old&0o077 == 0 {
+			continue
+		}
+		c := PermChange{Path: path, Old: old, New: old &^ 0o077}
+		c.Err = chmod(path, c.New)
+		out = append(out, c)
+	}
+	return out
 }
 
 // cloudMarkers sind Namensteile typischer Cloud-Sync-Ordner. SQLite im

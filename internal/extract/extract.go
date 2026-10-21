@@ -32,6 +32,7 @@ import (
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/unicode"
 
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/magic"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
@@ -196,7 +197,15 @@ func (x *Extractor) Extract(ctx context.Context, kind Kind, r io.Reader, size in
 			res.Text, res.Hidden = rest, true
 		}
 	case KindText, KindHTML, KindMail:
-		res, err = x.inProcess(kind, in)
+		// crash.Do (A02 A5): Ein Panic im Parser oder in der Bereinigung
+		// wird bereinigt gemeldet; der Anhang gilt als gescheitert
+		// ("internal error in extractor: …", ohne Inhalt), die übrigen
+		// werden weiter extrahiert.
+		err = crash.Do("extractor", func() error {
+			var err error
+			res, err = x.inProcess(kind, in)
+			return err
+		})
 	default:
 		return Result{Status: StatusSkipped, Error: "no text extractor for this type"}
 	}
@@ -286,8 +295,15 @@ func firstLine(s string) string {
 	return strings.ToValidUTF8(s, "")
 }
 
+// testPanic löst in Tests einen Panic im Extraktor aus (im Prozess und im
+// Kindprozess, childMain); nil im Betrieb.
+var testPanic func(kind string)
+
 // inProcess liest Text, HTML und Mails ohne Kindprozess.
 func (x *Extractor) inProcess(kind Kind, in io.Reader) (Result, error) {
+	if testPanic != nil {
+		testPanic(string(kind))
+	}
 	data, err := io.ReadAll(in)
 	if err != nil {
 		return Result{}, err
