@@ -13,6 +13,9 @@ import (
 // Standardwerte für Watch.
 const (
 	DefaultInterval = 5 * time.Minute
+	// DefaultFullCheckInterval ist der Abstand der vollen UID-Abgleiche
+	// aller Ordner im Dauerbetrieb (A02 A1, `--full-check-interval`).
+	DefaultFullCheckInterval = time.Hour
 	// idleRetry ist die Wartezeit, bevor eine gescheiterte IDLE-Verbindung
 	// neu aufgebaut wird (der Provider hat dann schon mit Backoff
 	// wiederholt; Polling läuft in der Zeit weiter).
@@ -24,6 +27,12 @@ type WatchOptions struct {
 	Options
 	// Interval ist der Abstand der Läufe über alle Ordner (0 = 5 min).
 	Interval time.Duration
+	// FullCheckInterval ist der Abstand der vollen UID-Abgleiche (0 = 1 h):
+	// Der erste Lauf über alle Ordner und danach jeder, der mindestens so
+	// lange nach dem letzten erfolgreichen vollen Abgleich beginnt, gleicht
+	// in jedem Ordner die vollständige UID-Liste ab (Options.CheckDeleted),
+	// auch wenn die Zahlen passen. IDLE-Läufe (nur INBOX) tun das nie.
+	FullCheckInterval time.Duration
 	// IdleMailbox wird per IDLE beobachtet (Standard "INBOX"); eine Meldung
 	// löst sofort einen Lauf für diesen Ordner aus.
 	IdleMailbox string
@@ -34,7 +43,9 @@ type WatchOptions struct {
 }
 
 // Watch synct sofort, danach alle Interval und zusätzlich bei jeder
-// IDLE-Meldung für die INBOX, bis ctx endet (Rückgabe nil). Fehler eines
+// IDLE-Meldung für die INBOX, bis ctx endet (Rückgabe nil). Läufe über
+// alle Ordner gleichen alle FullCheckInterval die UID-Listen vollständig ab
+// (Löschungserkennung, A02 A1). Fehler eines
 // Laufs (Verbindung) beenden Watch nicht; der nächste Lauf versucht es neu
 // (die Session hat dann schon mit Backoff wiederholt). Nur ein
 // Anmeldefehler beendet Watch: Ein Wiederholen würde das Konto sperren.
@@ -47,6 +58,9 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	}
 	if o.IdleRetry <= 0 {
 		o.IdleRetry = idleRetry
+	}
+	if o.FullCheckInterval <= 0 {
+		o.FullCheckInterval = DefaultFullCheckInterval
 	}
 	// Die IDLE-Schleife endet mit Watch: eigener Kontext, und Watch wartet
 	// auf sie (sonst liefe sie nach einem Anmeldefehler eines Laufs mit
@@ -63,14 +77,22 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		e.log().Info("server has no IDLE; polling only", "interval", o.Interval.String())
 	}
 
+	var lastFull time.Time // Beginn des letzten erfolgreichen vollen Abgleichs
 	round := func(only []string) error {
 		ro := o.Options
+		start := time.Now()
 		if only != nil {
 			ro.Mailboxes = only
+		} else if lastFull.IsZero() || start.Sub(lastFull) >= o.FullCheckInterval {
+			ro.CheckDeleted = true
+			e.log().Info("full UID check of all mailboxes")
 		}
 		rep, err := e.SyncAll(ctx, ro)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if err == nil && ro.CheckDeleted {
+			lastFull = start
 		}
 		if o.OnRound != nil {
 			o.OnRound(rep, err)

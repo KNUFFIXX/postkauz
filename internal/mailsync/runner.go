@@ -124,7 +124,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out, err
 	}
-	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, OnRound: func(rep Report, err error) {
+	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, OnRound: func(rep Report, err error) {
 		out.Rounds++
 		round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
 		fill(&round, rep)

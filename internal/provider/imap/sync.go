@@ -39,8 +39,10 @@ func (p *Provider) cached(mailbox string, st imapx.SelectInfo) []uint32 {
 	return nil
 }
 
-func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo) ([]uint32, error) {
-	if uids := p.cached(mailbox, st); uids != nil {
+// searchAll liefert alle UIDs des Ordners; fresh fragt den Server auch dann,
+// wenn der Zwischenspeicher passt (voller Abgleich).
+func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) ([]uint32, error) {
+	if uids := p.cached(mailbox, st); uids != nil && !fresh {
 		return uids, nil
 	}
 	uids, err := c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
@@ -115,8 +117,9 @@ func Flags(list []string) provider.Flags {
 //   - SELECT (EXAMINE, mit CONDSTORE wo vorhanden). Anderes UIDVALIDITY als
 //     since: Reset, der Ordner wird wie neu behandelt.
 //   - Neue UIDs ab since.UIDNext (UID SEARCH). Stimmt EXISTS nicht mit
-//     KnownCount plus Neuen überein (oder FullScan, Erstabgleich, Reset),
-//     folgt UID SEARCH ALL: Present für den Löschabgleich.
+//     KnownCount plus Neuen überein (oder FullScan, CheckDeleted,
+//     Erstabgleich, Reset), folgt UID SEARCH ALL: Present für den
+//     Löschabgleich (bei FullScan und CheckDeleted frisch vom Server).
 //   - Höchstens Limit neue UIDs je Aufruf; More meldet den Rest. Der Cursor
 //     NewState.UIDNext steht dann hinter dem Fenster.
 //   - Flags erst im letzten Fenster: CONDSTORE per CHANGEDSINCE ab dem
@@ -143,7 +146,8 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 		from := max(s.UIDNext, 1)
 
 		var newUIDs []uint32
-		needAll := s.UIDValidity == 0 || o.FullScan
+		fresh := o.FullScan || o.CheckDeleted
+		needAll := s.UIDValidity == 0 || fresh
 		if !needAll && (st.UIDNext == 0 || st.UIDNext > from) {
 			if newUIDs, err = p.searchFrom(c, mailbox, st, from); err != nil {
 				return err
@@ -153,7 +157,7 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 			needAll = true
 		}
 		if needAll {
-			all, err := p.searchAll(c, mailbox, st)
+			all, err := p.searchAll(c, mailbox, st, fresh)
 			if err != nil {
 				return err
 			}

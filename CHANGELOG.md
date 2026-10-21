@@ -4,7 +4,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Noch nichts seit 0.1.0-rc1.
+### Changed
+
+- S2.0/A1: `sync --watch` gleicht stündlich (`--full-check-interval`, Standard `1h`, erster Lauf eingeschlossen) die vollständigen UID-Listen aller Ordner ab und erkennt so auch Löschungen, die der Zahlenvergleich übersieht; Operation `sync.run` mit `full_check_interval_seconds`. Der einmalige `sync` ist unverändert.
 
 ## [0.1.0-rc1] – 2026-10-16
 

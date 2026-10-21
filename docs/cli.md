@@ -113,13 +113,14 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 
 ## 2b. Sync, Ordner, Anzeige (S1.4/S1.5)
 
-`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--mailbox P ...]`
+`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--full-check-interval D] [--mailbox P ...]`
 
 | Option | Bedeutung |
 |---|---|
 | (ohne) | Erstsync neuer Ordner in Fenstern, sonst inkrementell: neue Nachrichten, Flag-Änderungen (CONDSTORE `CHANGEDSINCE` bzw. Abgleich aller Flags), Löschungen (UID-SEARCH-Abgleich, nur wenn die Zahlen nicht passen) |
 | `--full` | zusätzlich vollständiger Lösch- und Flag-Abgleich ohne `CHANGEDSINCE`; holt Fehlendes nach |
 | `--watch` | Dauerläufer: sofort ein Lauf, danach alle `--interval` (Standard 5 min) und bei jeder IDLE-Meldung der INBOX (IDLE-Neustart alle `--idle-restart`, 5 bis 10 min, Standard 8 min); Strg+C beendet ihn |
+| `--full-check-interval` | nur mit `--watch` (seit S2.0): Abstand der vollen UID-Abgleiche aller Ordner, Standard `1h`. Der erste Lauf über alle Ordner und danach der erste Lauf, der mindestens so lange nach dem letzten erfolgreichen vollen Abgleich beginnt, holt in jedem Ordner die vollständige UID-Liste (`UID SEARCH ALL`) und erkennt so auch Löschungen, die der Zahlenvergleich übersieht (z. B. wenn lokal zugleich eine Nachricht fehlt, die beim Spiegeln scheiterte). Flags bleiben inkrementell (`CHANGEDSINCE`); IDLE-Läufe (nur INBOX) gleichen nie voll ab. Der einmalige `sync` ist davon nicht betroffen |
 | `--window` | Nachrichten je Fenster im Erstsync (Standard 200) |
 | `--mailbox` | nur diese Ordner (mehrfach möglich) |
 | `--dry-run` | meldet Ordner und lokalen Stand, schreibt nichts |

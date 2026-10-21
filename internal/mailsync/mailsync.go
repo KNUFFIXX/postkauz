@@ -92,6 +92,11 @@ type Options struct {
 	// Full erzwingt Lösch- und Flag-Abgleich aller Nachrichten (ohne
 	// CHANGEDSINCE) und holt Fehlendes nach (`sync --full`).
 	Full bool
+	// CheckDeleted erzwingt den Löschabgleich (vollständige UID-Liste)
+	// aller Ordner, ohne den vollen Flag-Abgleich von Full. Der Dauerbetrieb
+	// setzt es alle WatchOptions.FullCheckInterval (A02 A1); der einmalige
+	// Sync nicht.
+	CheckDeleted bool
 	// Mailboxes beschränkt den Lauf auf diese Pfade (leer = alle).
 	Mailboxes []string
 }
@@ -299,9 +304,11 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 		if err != nil {
 			return rep, err
 		}
-		// FullScan nur beim ersten Aufruf je Ordner: Er holt die vollständige
-		// UID-Liste und prüft alle Flags; folgende Fenster brauchen das nicht.
-		cs, err := e.Remote.Changes(ctx, mb.Path, state, provider.ChangesOptions{Limit: window, KnownCount: known, FullScan: o.Full && first})
+		// FullScan und CheckDeleted nur beim ersten Aufruf je Ordner: Er holt
+		// die vollständige UID-Liste (FullScan prüft dazu alle Flags);
+		// folgende Fenster brauchen das nicht.
+		cs, err := e.Remote.Changes(ctx, mb.Path, state, provider.ChangesOptions{Limit: window, KnownCount: known,
+			FullScan: o.Full && first, CheckDeleted: o.CheckDeleted && first})
 		first = false
 		if err != nil {
 			return rep, fmt.Errorf("%s: %w", mb.Path, err)

@@ -203,6 +203,13 @@ type ChangesOptions struct {
 	// FullScan erzwingt Löschabgleich und Flag-Abgleich aller Nachrichten
 	// (ohne CHANGEDSINCE), z. B. für `sync --full`.
 	FullScan bool
+	// CheckDeleted erzwingt nur den Löschabgleich (vollständige UID-Liste,
+	// frisch vom Server, nicht aus einem Zwischenspeicher), ohne den vollen
+	// Flag-Abgleich. Der Dauerbetrieb setzt es in regelmäßigen Abständen
+	// (`sync --watch --full-check-interval`, A02 A1): Der Zahlenvergleich
+	// über KnownCount übersieht Löschungen, wenn zugleich lokal eine
+	// Nachricht fehlt, die der Server führt.
+	CheckDeleted bool
 }
 
 // MailProvider ist die Schnittstelle zu einem Postfach.

@@ -351,6 +351,23 @@ Auflagen aus dem Nachtrag 16.10.2026 zu A01 (Programmierstand des Betreibers):
 
 ## S2: Entwürfe (draft-only)
 
+### Stand S2.0, Teil 2 (A1, A3, A4, A5)
+
+Nachbesserungen aus der Gegenprüfung (Fragen 6a, 6c, 6d) und Frage 15, Auftrag [A02](../auftraege/A02_s2.md), Teil A. Je Punkt ein Commit mit Test, der ohne die Änderung scheitert (geprüft durch Zurücknehmen der Änderung).
+
+**Akzeptanz-Nachweise:**
+
+- **A1 Löschungserkennung (Frage 6a):** `TestWatchFullCheckFindsDeletionHiddenByCount` (Testserver im Prozess: Löschung und neue Nachricht in derselben Runde, während lokal eine Nachricht fehlt, die beim Spiegeln scheiterte; der einmalige Sync übersieht die Löschung weiterhin, `sync --watch` erkennt sie beim ersten vollen Abgleich, eine zweite Löschung dieser Art beim nächsten nach `FullCheckInterval`) und `TestWatchFullCheckIntervalSynctest` (künstliche Uhr: Intervall 5 min, volle Abgleiche exakt bei 0, 60 und 120 min, IDLE-Lauf ohne vollen Abgleich). Ohne die Änderung: kein voller Abgleich, beide Tests scheitern.
+
+**Umsetzung:**
+
+- A1: `provider.ChangesOptions.CheckDeleted` (vollständige UID-Liste frisch vom Server, ohne den vollen Flag-Abgleich von `FullScan`), `mailsync.Options.CheckDeleted`, `WatchOptions.FullCheckInterval` (Standard 1 h; der erste Lauf über alle Ordner zählt als voller Abgleich, danach der erste Lauf ab einer Stunde nach dem letzten erfolgreichen; ein gescheiterter Lauf holt ihn im nächsten nach). CLI `sync --watch --full-check-interval D`, Operation `sync.run` mit `full_check_interval_seconds` (nur mit `watch`). Der einmalige `sync` ist unverändert.
+
+**Befunde:**
+
+- A1: „Löschung plus neue Nachricht in derselben Runde" allein erkennt schon der bisherige Zahlenvergleich, weil er neue UIDs mitzählt (`EXISTS` = bekannt − 1 + 1 ≠ bekannt + 1). Er versagt, wenn lokal zugleich eine Nachricht fehlt, die der Server führt (z. B. ein Fehler beim Spiegeln, der beim nächsten Lauf nicht nachgeholt wird, weil kein UID-Abgleich stattfindet): Dann gleicht die fehlende Nachricht die Löschung in der Zahl aus. Der Test bildet genau diesen Fall nach.
+- A1: Der Zwischenspeicher von `UID SEARCH ALL` im Provider (je Ordner, gültig solange UIDVALIDITY, UIDNEXT und EXISTS gleich bleiben) lebt im Dauerbetrieb über Läufe hinweg. Bei einem Server ohne UIDNEXT in der SELECT-Antwort (RFC 3501 verlangt es) könnte er nach „eine gelöscht, eine neu" veralten; der volle Abgleich fragt deshalb immer frisch. Vorschlag: Zwischenspeicher nur mit bekanntem UIDNEXT verwenden (klein, nicht umgesetzt, weil kein Server der Testmatrix betroffen ist).
+
 **Umfang:** `drafts.*`: neu, antworten, allen antworten, weiterleiten mit korrekten `Message-ID`/`In-Reply-To`/`References`, Zitat, Anhänge aus vorhandenen Nachrichten oder Dateien; Ablage per `APPEND` im Entwürfe-Ordner; Policy-Datei; Freigabe-Zustände (`draft` → `pending_approval` → `ready` → `sent_by_human`) mit `preview_hash`; Prüf-Hook; Erkennung des Versands im Ordner „Gesendet"; Resources `mail://…/draft/…` und `mail://style/…`; Prompt `draft_reply`.
 
 **Nicht enthalten:** SMTP, `mail_request_send`, `auto`-Versand, Regeln.
