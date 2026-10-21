@@ -55,6 +55,8 @@ var bindings = []binding{
 	{op: "accounts.add", path: []string{"account", "add"}, use: "<name>", args: cobra.ExactArgs(1),
 		flags: accountAddFlags, input: accountAddInput, human: renderAccountAdd,
 		covers: []string{"name", "email", "host", "port", "tls", "username", "auth_type", "insecure_test_server", "password_from_env"}},
+	{op: "accounts.set", path: []string{"account", "set"}, use: "<name> --aliases a@example.org,b@example.org", args: cobra.ExactArgs(1),
+		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
 		input: nameInput, human: renderAccountTest, covers: []string{"name"}},
 	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
@@ -375,6 +377,30 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	return raw, pw, nil
 }
 
+// --- account set ------------------------------------------------------------
+
+func accountSetFlags(cmd *cobra.Command) {
+	cmd.Flags().String("aliases", "", "further own addresses of the account, comma separated; replaces the list (\"\" removes all)")
+}
+
+func accountSetInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	in := ops.AccountsSetInput{Name: args[0]}
+	if cmd.Flags().Changed("aliases") {
+		v, _ := cmd.Flags().GetString("aliases")
+		list := []string{}
+		for _, a := range strings.Split(v, ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				list = append(list, a)
+			}
+		}
+		in.Aliases = &list
+	} else {
+		return nil, "", usageError{errors.New("nothing to change; use --aliases a@example.org,b@example.org (--aliases \"\" removes all)")}
+	}
+	b, err := json.Marshal(in)
+	return b, "", err
+}
+
 func terminalFD(r io.Reader) (int, bool) {
 	f, ok := r.(*os.File)
 	if !ok || !term.IsTerminal(int(f.Fd())) {
@@ -395,13 +421,17 @@ func renderAccounts(w io.Writer, out any) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tEMAIL\tPROVIDER\tUNREAD\tLAST SYNC")
+	fmt.Fprintln(tw, "ID\tNAME\tEMAIL\tPROVIDER\tUNREAD\tLAST SYNC\tALIASES")
 	for _, a := range o.Accounts {
 		last := a.LastSyncAt
 		if last == "" {
 			last = "never"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%s\n", a.ID, a.Name, a.Email, a.Provider, a.UnreadTotal, last)
+		aliases := strings.Join(a.Aliases, ", ")
+		if aliases == "" {
+			aliases = "-"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%s\t%s\n", a.ID, a.Name, a.Email, a.Provider, a.UnreadTotal, last, aliases)
 	}
 	return tw.Flush()
 }
@@ -422,6 +452,23 @@ func renderAccountAdd(w io.Writer, out any) error {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "account %s added (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where)
+	return err
+}
+
+func renderAccountSet(w io.Writer, out any) error {
+	o, ok := out.(ops.AccountsSetOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	aliases := "none"
+	if len(o.Aliases) > 0 {
+		aliases = strings.Join(o.Aliases, ", ")
+	}
+	prefix := "account " + o.Account
+	if o.DryRun {
+		prefix = "dry run: would set account " + o.Account
+	}
+	_, err := fmt.Fprintf(w, "%s: aliases %s\n", prefix, aliases)
 	return err
 }
 

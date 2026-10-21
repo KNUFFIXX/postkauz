@@ -36,6 +36,7 @@ func Catalog(d Deps) []Operation {
 	return []Operation{
 		AccountsList(d.Accounts),
 		AccountsAdd(d.Accounts, d.Secrets),
+		AccountsSet(d.Accounts),
 		AccountsRemove(d.Accounts, d.Secrets),
 		AccountsTest(d.Accounts, d.Secrets, d.Prober),
 		SyncRun(d.Accounts, d.Secrets, d.Runner),

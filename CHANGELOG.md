@@ -7,6 +7,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 ### Added
 
 - S2.0/A6: Operationen nur für Menschen (`HumanOnly`, A02 E2, minimal): Mit API-Schlüssel (jede Rolle, auch `admin`, auch `--key`) lehnt die Policy sie mit Grund `human_only` ab, auditiert, ohne Handler; nur die CLI ohne `--key` darf sie. `policy show` führt sie für Schlüssel nicht auf, MCP bietet sie nie an; der Vertragstest prüft jede Operation zusätzlich als Mensch ohne Schlüssel.
+- S2.0/A6: Aliasse (weitere eigene Adressen) am Konto: Spalte `accounts.aliases` (Migration 0008), Operation `accounts.set` (`admin`, HumanOnly) mit `account set <name> --aliases a@…,b@…`; `accounts list` zeigt sie (Spalte `ALIASES`, Feld `aliases`, auch MCP). Der Betreff-Rückfall der Threads zählt Aliasse als eigene Adressen; ein Fremder, der an denselben Alias schreibt, landet nicht mehr im fremden Gespräch.
 
 ### Changed
 

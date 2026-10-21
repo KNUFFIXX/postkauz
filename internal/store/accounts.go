@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,6 +34,9 @@ type Account struct {
 	Status             string // new | ok | error | disabled
 	LastError          string
 	CreatedAt          time.Time
+	// Aliases sind weitere eigene Adressen (klein, ohne Namen; seit
+	// Migration 0008, S2.0/A6).
+	Aliases []string
 }
 
 // AccountSummary ergänzt ein Konto um Zähler aus Ordnern und Nachrichten.
@@ -43,15 +47,19 @@ type AccountSummary struct {
 }
 
 const accountCols = `id, name, email, provider_type, host, port, tls, username, auth_type, credential_ref,
-	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at`
+	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at, aliases`
 
 func scanAccount(sc interface{ Scan(...any) error }, a *Account, extra ...any) error {
 	var created int64
 	var insecure int
+	var aliases string
 	dest := append([]any{&a.ID, &a.Name, &a.Email, &a.Provider, &a.Host, &a.Port, &a.TLS, &a.Username,
-		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created}, extra...)
+		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created, &aliases}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return err
+	}
+	if err := json.Unmarshal([]byte(aliases), &a.Aliases); err != nil {
+		return fmt.Errorf("store: account %s: aliases are corrupt", a.Name)
 	}
 	a.InsecureTestServer = insecure == 1
 	a.CreatedAt = time.UnixMilli(created).UTC()
@@ -72,11 +80,15 @@ func (s *SQLite) CreateAccount(ctx context.Context, a Account) (int64, error) {
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = time.Now()
 	}
+	aliases, err := aliasesJSON(a.Aliases)
+	if err != nil {
+		return 0, err
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name, email, provider_type, host, port, tls, username,
-		auth_type, credential_ref, insecure_test_server, capabilities, status, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		auth_type, credential_ref, insecure_test_server, capabilities, status, created_at, aliases)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		a.Name, a.Email, a.Provider, a.Host, a.Port, a.TLS, a.Username, a.AuthType, a.CredentialRef,
-		boolInt(a.InsecureTestServer), a.Capabilities, a.Status, a.CreatedAt.UnixMilli())
+		boolInt(a.InsecureTestServer), a.Capabilities, a.Status, a.CreatedAt.UnixMilli(), aliases)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: accounts.name") {
 			return 0, fmt.Errorf("%w: %s", ErrAccountExists, a.Name)
@@ -156,6 +168,34 @@ func (s *SQLite) UpdateAccountProbe(ctx context.Context, id int64, capabilities,
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET capabilities = ?, status = ?, last_error = ? WHERE id = ?`,
 		capabilities, status, le, id)
 	return err
+}
+
+// aliasesJSON speichert die Aliasse als JSON-Liste (nil = []).
+func aliasesJSON(as []string) (string, error) {
+	if as == nil {
+		as = []string{}
+	}
+	b, err := json.Marshal(as)
+	return string(b), err
+}
+
+// SetAccountAliases ersetzt die weiteren eigenen Adressen eines Kontos
+// (S2.0/A6). Normalisiert und geprüft hat sie der Aufrufer (accounts.set).
+// Bestehende Thread-Zuordnungen bleiben; die Aliasse gelten für neu
+// zugeordnete Nachrichten.
+func (s *SQLite) SetAccountAliases(ctx context.Context, id int64, aliases []string) error {
+	v, err := aliasesJSON(aliases)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET aliases = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("store: set aliases: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: id %d", ErrAccountNotFound, id)
+	}
+	return nil
 }
 
 func boolInt(b bool) int {

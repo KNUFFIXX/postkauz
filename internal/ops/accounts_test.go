@@ -353,3 +353,69 @@ func TestAccountAdminOpsDeniedForAgents(t *testing.T) {
 func insertMessage(st *store.SQLite, accountID int64) error {
 	return st.ExecForTest(`INSERT INTO messages(account_id, subject, created_at) VALUES (?, 'x', 1)`, accountID)
 }
+
+// S2.0/A6: accounts.set pflegt die Aliasse (geprüft, klein, ohne Dubletten
+// und ohne die Kontoadresse, sortiert); accounts.list zeigt sie; das Audit
+// nennt nur Feldnamen und Anzahl, nie die Adressen; kein API-Schlüssel darf
+// es (HumanOnly, auch admin).
+func TestAccountsSetAliases(t *testing.T) {
+	e := newAccountsEnv(t)
+	if err := e.x.Registry.Register(AccountsSet(e.st)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.add", demoInput(), canary, false); err != nil {
+		t.Fatal(err)
+	}
+	in := map[string]any{"name": "demo", "aliases": []string{" Post@Example.net", "zweit@example.org", "post@example.net", "Tester@example.invalid"}}
+	out, err := e.run("accounts.set", in, "", true)
+	if err != nil || !out.(AccountsSetOutput).DryRun || len(out.(AccountsSetOutput).Aliases) != 2 {
+		t.Fatalf("dry run: %+v %v", out, err)
+	}
+	if a, _ := e.st.AccountByName(context.Background(), "demo"); len(a.Aliases) != 0 {
+		t.Fatal("dry run stored aliases")
+	}
+	out, err = e.run("accounts.set", in, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.(AccountsSetOutput).Aliases; len(got) != 2 || got[0] != "post@example.net" || got[1] != "zweit@example.org" {
+		t.Fatalf("aliases = %v", got)
+	}
+	out, _ = e.run("accounts.list", map[string]any{}, "", false)
+	if l := out.(AccountsListOutput).Accounts; len(l) != 1 || len(l[0].Aliases) != 2 || l[0].Aliases[0] != "post@example.net" {
+		t.Fatalf("list = %+v", l)
+	}
+	last := e.au.Events()[len(e.au.Events())-2] // accounts.set vor accounts.list
+	if p := string(last.ParamsRedacted); last.Operation != "accounts.set" || strings.Contains(p+strings.Join(last.Targets, ","), "example") ||
+		!strings.Contains(p, `"aliases_count":4`) {
+		t.Fatalf("audit = %+v (params %s)", last, p)
+	}
+
+	for _, bad := range []any{[]string{"Post <post@example.net>"}, []string{"kein-at"}, []string{"a@example.org, b@example.org"}} {
+		if _, err := e.run("accounts.set", map[string]any{"name": "demo", "aliases": bad}, "", false); err == nil {
+			t.Errorf("aliases %v accepted", bad)
+		}
+	}
+	if _, err := e.run("accounts.set", map[string]any{"name": "demo"}, "", false); err == nil || !strings.Contains(err.Error(), "nothing to change") {
+		t.Fatalf("no field: %v", err)
+	}
+	if _, err := e.run("accounts.set", map[string]any{"name": "nope", "aliases": []string{}}, "", false); !errors.Is(err, store.ErrAccountNotFound) {
+		t.Fatalf("unknown account: %v", err)
+	}
+	// Leere Liste entfernt alle.
+	if out, err := e.run("accounts.set", map[string]any{"name": "demo", "aliases": []string{}}, "", false); err != nil || len(out.(AccountsSetOutput).Aliases) != 0 {
+		t.Fatalf("clear: %+v %v", out, err)
+	}
+
+	// HumanOnly: ein admin-Schlüssel wird abgewiesen, nichts ändert sich.
+	b, _ := json.Marshal(in)
+	_, err = e.x.Execute(context.Background(), Request{Key: policy.Key{ID: "key:adm", Scopes: policy.Roles["admin"]},
+		Actor: audit.ActorAgent, Operation: "accounts.set", Input: b})
+	var pe *PolicyError
+	if !errors.As(err, &pe) || pe.Decision.Reason != "human_only" {
+		t.Fatalf("admin key: %v", err)
+	}
+	if a, _ := e.st.AccountByName(context.Background(), "demo"); len(a.Aliases) != 0 {
+		t.Fatal("aliases changed by an API key")
+	}
+}

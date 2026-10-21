@@ -211,6 +211,7 @@ var contractInputs = map[string]struct {
 	"accounts.list":      {input: `{}`},
 	"accounts.add":       {input: `{"name":"neu","host":"127.0.0.1","port":11143,"tls":"none","username":"u@example.invalid","insecure_test_server":true}`, secret: canary},
 	"accounts.remove":    {input: `{"name":"leer"}`},
+	"accounts.set":       {input: `{"name":"demo","aliases":["Alias@Example.org","zweit@example.net"]}`},
 	"accounts.test":      {input: `{"name":"demo"}`},
 	"sync.run":           {input: `{"account":"demo"}`},
 	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true}`},

@@ -149,16 +149,20 @@ func participants(from string, to, cc json.RawMessage, self []string) []string {
 	return out
 }
 
-// selfAddresses liefert die eigenen Adressen des Kontos (E-Mail und
-// Benutzername, wenn er eine Adresse ist).
+// selfAddresses liefert die eigenen Adressen des Kontos: E-Mail,
+// Benutzername (wenn er eine Adresse ist) und die Aliasse (seit S2.0/A6).
 func selfAddresses(ctx context.Context, q querier, account int64) ([]string, error) {
-	var email, user string
-	err := q.QueryRowContext(ctx, `SELECT email, username FROM accounts WHERE id = ?`, account).Scan(&email, &user)
+	var email, user, aliases string
+	err := q.QueryRowContext(ctx, `SELECT email, username, aliases FROM accounts WHERE id = ?`, account).Scan(&email, &user, &aliases)
 	if err != nil {
 		return nil, fmt.Errorf("store: account %d: %w", account, err)
 	}
+	var more []string
+	if err := json.Unmarshal([]byte(aliases), &more); err != nil {
+		return nil, fmt.Errorf("store: account %d: aliases are corrupt", account)
+	}
 	var out []string
-	for _, s := range []string{email, user} {
+	for _, s := range append([]string{email, user}, more...) {
 		if a := thread.NormalizeAddress(s); a != "" && !slices.Contains(out, a) {
 			out = append(out, a)
 		}

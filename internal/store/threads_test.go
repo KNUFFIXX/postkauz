@@ -85,3 +85,61 @@ func TestThreadsAssignedOnApply(t *testing.T) {
 		t.Fatal("unknown thread found")
 	}
 }
+
+// S2.0/A6: Aliasse zählen im Betreff-Rückfall als eigene Adressen. Schreibt
+// ein Fremder an den Alias „AW: Rechnung" ohne Verweise, verbindet der Alias
+// allein ihn nicht mit dem Gespräch einer anderen Person an denselben Alias
+// (ohne Alias am Konto geschah genau das: der Alias galt als gemeinsamer
+// Beteiligter). Eine Antwort der echten Gesprächspartnerin hängt weiter an.
+func TestThreadSubjectFallbackTreatsAliasesAsOwn(t *testing.T) {
+	for _, withAlias := range []bool{false, true} {
+		s := openMem(t)
+		ctx := context.Background()
+		acct := newAccount(t, s)
+		if withAlias {
+			if err := s.SetAccountAliases(ctx, acct, []string{"post@example.net"}); err != nil {
+				t.Fatal(err)
+			}
+			if a, _ := s.AccountByName(ctx, "demo"); len(a.Aliases) != 1 || a.Aliases[0] != "post@example.net" {
+				t.Fatalf("aliases = %v", a.Aliases)
+			}
+		}
+		if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+			t.Fatal(err)
+		}
+		boxes, _ := s.Mailboxes(ctx, acct)
+		msg := func(uid uint32, mid, subject, from string, d int) NewMessage {
+			m := newMsg(uid, mid, false)
+			m.Subject, m.From = subject, from
+			m.To = []byte(`[{"name":"Post","address":"Post@Example.net"}]`)
+			m.DateHeader = time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC).Add(time.Duration(d) * 24 * time.Hour)
+			return m
+		}
+		if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: boxes[0].ID, New: []NewMessage{
+			msg(1, "anna-1@example.org", "Rechnung", "Anna <anna@example.org>", 0),
+			msg(2, "x-1@example.com", "AW: Rechnung", "Xaver <x@example.com>", 2),
+			msg(3, "anna-2@example.org", "AW: Rechnung", "Anna <anna@example.org>", 3),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		tid := func(mid string) int64 {
+			t.Helper()
+			ids, _ := s.MessageIDsByHeader(ctx, acct, mid)
+			m, err := s.MessageByID(ctx, ids[0])
+			if err != nil || m.ThreadID == 0 {
+				t.Fatalf("%s: thread %d, %v", mid, m.ThreadID, err)
+			}
+			return m.ThreadID
+		}
+		if tid("anna-2@example.org") != tid("anna-1@example.org") {
+			t.Fatalf("alias=%v: reply of the real partner not joined", withAlias)
+		}
+		joined := tid("x-1@example.com") == tid("anna-1@example.org")
+		if withAlias && joined {
+			t.Fatal("orphan reply of a stranger joined only via the alias")
+		}
+		if !withAlias && !joined {
+			t.Fatal("without the alias the shared address used to join; the test no longer shows the difference")
+		}
+	}
+}

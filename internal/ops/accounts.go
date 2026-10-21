@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +28,8 @@ type AccountInfo struct {
 	Provider    string `json:"provider"`
 	LastSyncAt  string `json:"last_sync_at,omitempty"` // RFC 3339, UTC
 	UnreadTotal int    `json:"unread_total"`
+	// Aliases: weitere eigene Adressen (accounts.set; S2.0/A6).
+	Aliases []string `json:"aliases"`
 }
 
 // AccountDetail beschreibt ein Konto ausführlich (accounts.add). Statt des
@@ -58,6 +62,8 @@ type AccountRepo interface {
 	// DataDirID ist die Kennung des Datenverzeichnisses im
 	// Schlüsselbund-Verweis (S2.0/A2).
 	DataDirID(ctx context.Context) (string, error)
+	// SetAccountAliases ersetzt die weiteren eigenen Adressen (S2.0/A6).
+	SetAccountAliases(ctx context.Context, id int64, aliases []string) error
 }
 
 // ProbeMailbox ist ein Ordner im Ergebnis von accounts.test.
@@ -169,9 +175,10 @@ func AccountsList(repo AccountRepo) Operation {
           "email": {"type": "string"},
           "provider": {"type": "string"},
           "last_sync_at": {"type": "string", "format": "date-time"},
-          "unread_total": {"type": "integer"}
+          "unread_total": {"type": "integer"},
+          "aliases": {"type": "array", "items": {"type": "string"}}
         },
-        "required": ["id", "name", "email", "provider", "unread_total"]
+        "required": ["id", "name", "email", "provider", "unread_total", "aliases"]
       }
     }
   },
@@ -187,7 +194,11 @@ func AccountsList(repo AccountRepo) Operation {
 			}
 			out := AccountsListOutput{Accounts: []AccountInfo{}} // JSON: [] statt null
 			for _, a := range list {
-				info := AccountInfo{ID: a.ID, Name: a.Name, Email: a.Email, Provider: a.Provider, UnreadTotal: a.UnreadTotal}
+				info := AccountInfo{ID: a.ID, Name: a.Name, Email: a.Email, Provider: a.Provider, UnreadTotal: a.UnreadTotal,
+					Aliases: a.Aliases}
+				if info.Aliases == nil {
+					info.Aliases = []string{}
+				}
 				if !a.LastSyncAt.IsZero() {
 					info.LastSyncAt = a.LastSyncAt.UTC().Format(time.RFC3339)
 				}
@@ -383,6 +394,128 @@ func detail(a store.Account, source string) AccountDetail {
 	return AccountDetail{ID: a.ID, Name: a.Name, Email: a.Email, Provider: a.Provider, Host: a.Host, Port: a.Port,
 		TLS: a.TLS, Username: a.Username, AuthType: a.AuthType, CredentialRef: a.CredentialRef,
 		SecretSource: source, InsecureTestServer: a.InsecureTestServer, Status: a.Status}
+}
+
+// --- accounts.set ----------------------------------------------------------
+
+// MaxAliases begrenzt die weiteren eigenen Adressen je Konto.
+const MaxAliases = 50
+
+// AccountsSetInput ist die Eingabe von accounts.set. Fehlt ein Feld, bleibt
+// der Wert, wie er ist; mindestens ein Feld außer name ist nötig.
+type AccountsSetInput struct {
+	Name string `json:"name"`
+	// Aliases ersetzt die Liste vollständig ([] leert sie).
+	Aliases *[]string `json:"aliases,omitempty"`
+}
+
+// AccountsSetOutput ist die Ausgabe von accounts.set.
+type AccountsSetOutput struct {
+	Account string   `json:"account"`
+	Aliases []string `json:"aliases"`
+	DryRun  bool     `json:"dry_run"`
+}
+
+// normalizeAliases prüft die Adressen (RFC 5322, nur die Adresse ohne
+// Namen), schreibt sie klein, entfernt Dubletten und die Kontoadresse.
+func normalizeAliases(in []string, own string) ([]string, error) {
+	out := []string{}
+	own = strings.ToLower(strings.TrimSpace(own))
+	for _, raw := range in {
+		s := strings.TrimSpace(raw)
+		addr, err := mail.ParseAddress(s)
+		if err != nil || addr.Name != "" || addr.Address != s || !strings.Contains(s, "@") {
+			return nil, inputErr("invalid alias %q: give a plain e-mail address such as alias@example.org", raw)
+		}
+		a := strings.ToLower(addr.Address)
+		if a == own || slices.Contains(out, a) {
+			continue
+		}
+		out = append(out, a)
+	}
+	if len(out) > MaxAliases {
+		return nil, inputErr("too many aliases (%d, at most %d)", len(out), MaxAliases)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// redactAccountSet: Feldnamen, Zahl der Aliasse und das Konto als Ziel,
+// nie die Adressen.
+func redactAccountSet(raw json.RawMessage) (json.RawMessage, []string) {
+	params, targets := redactAccountInput(raw)
+	var in struct {
+		Aliases *[]string `json:"aliases"`
+	}
+	if json.Unmarshal(raw, &in) == nil && in.Aliases != nil {
+		var m map[string]any
+		_ = json.Unmarshal(params, &m)
+		m["aliases_count"] = len(*in.Aliases)
+		params, _ = json.Marshal(m)
+	}
+	return params, targets
+}
+
+// AccountsSet ändert Einstellungen eines Kontos; seit S2.0 die weiteren
+// eigenen Adressen (Aliasse). R1 (lokal), Scope admin, nur für Menschen
+// (A02, E2): kein Schlüssel, auch nicht admin, darf eigene Adressen
+// umdefinieren (sie steuern ab S2, wen „Allen antworten" weglässt).
+func AccountsSet(repo AccountRepo) Operation {
+	return Operation{
+		Name:       "accounts.set",
+		Scope:      policy.ScopeAdmin,
+		Risk:       policy.R1,
+		Idempotent: true,
+		HumanOnly:  true,
+		Summary:    "Change account settings: the further own addresses (aliases) of an account. Human only.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 50}
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}`),
+		OutputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "account": {"type": "string"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "dry_run": {"type": "boolean"}
+  },
+  "required": ["account", "aliases", "dry_run"]
+}`),
+		Redact: redactAccountSet,
+		Handler: func(ctx context.Context, call Call) (any, error) {
+			var in AccountsSetInput
+			if err := decodeInput(call.Input, &in); err != nil {
+				return nil, err
+			}
+			if err := validAccountName(in.Name); err != nil {
+				return nil, err
+			}
+			if in.Aliases == nil {
+				return nil, inputErr("nothing to change: give aliases (an empty list removes them)")
+			}
+			a, err := repo.AccountByName(ctx, in.Name)
+			if err != nil {
+				return nil, err
+			}
+			aliases, err := normalizeAliases(*in.Aliases, a.Email)
+			if err != nil {
+				return nil, err
+			}
+			out := AccountsSetOutput{Account: a.Name, Aliases: aliases, DryRun: call.DryRun}
+			if call.DryRun {
+				return out, nil
+			}
+			if err := repo.SetAccountAliases(ctx, a.ID, aliases); err != nil {
+				return nil, err
+			}
+			return out, nil
+		},
+	}
 }
 
 // --- accounts.remove -------------------------------------------------------

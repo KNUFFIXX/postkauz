@@ -113,6 +113,7 @@ var cliSamples = []cliSample{
 	{"accounts.list", []string{"accounts", "list"}, false},
 	{"accounts.add", []string{"account", "add", "zwei", "--imap", "127.0.0.1:1", "--user", "u@example.invalid", "--email", "z@example.invalid",
 		"--tls", "none", "--auth", "app_password", "--insecure-test-server", "--password-from-env", "--dry-run"}, false},
+	{"accounts.set", []string{"account", "set", "demo", "--aliases", "Alias@example.org, zweit@example.net"}, false},
 	{"accounts.test", []string{"account", "test", "demo"}, false},
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
