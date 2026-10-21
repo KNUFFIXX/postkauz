@@ -1,0 +1,205 @@
+D3-Lauf gestartet 21.10.2026 14:19:22
+===== D3.3a (normales Datenverzeichnis, ohne POSTKAUZ_DATA_DIR)
+
+> version
+postkauz 0.1.0-rc1 (go1.27.2 windows/amd64)
+
+[exit 0]
+
+> doctor
+version:   0.1.0-rc1
+config:    C:\Users\Admin\AppData\Roaming\postkauz\config.toml (exists: false)
+data dir:  C:\Users\Admin\AppData\Local\postkauz
+log:       C:\Users\Admin\AppData\Local\postkauz\postkauz.log
+database:  needs_migration (C:\Users\Admin\AppData\Local\postkauz\postkauz.db)
+schema:    2 (program knows 7)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+
+[exit 0]
+
+> accounts list (migriert ggf.)
+No accounts configured yet.
+
+[exit 0]
+
+> doctor danach
+version:   0.1.0-rc1
+config:    C:\Users\Admin\AppData\Roaming\postkauz\config.toml (exists: false)
+data dir:  C:\Users\Admin\AppData\Local\postkauz
+log:       C:\Users\Admin\AppData\Local\postkauz\postkauz.log
+database:  ok (C:\Users\Admin\AppData\Local\postkauz\postkauz.db)
+schema:    7 (program knows 7)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+search:    0 messages waiting for the index (index version 1)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 2 days not exported yet [audit.export_dir = not set]
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+
+[exit 0]
+===== D3.3b
+
+> doctor --secrets (erwartet Exit 0)
+version:   0.1.0-rc1
+config:    C:\Users\Admin\AppData\Roaming\postkauz\config.toml (exists: false)
+data dir:  C:\Users\Admin\AppData\Local\postkauz
+log:       C:\Users\Admin\AppData\Local\postkauz\postkauz.log
+database:  ok (C:\Users\Admin\AppData\Local\postkauz\postkauz.db)
+schema:    7 (program knows 7)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+search:    0 messages waiting for the index (index version 1)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 2 days not exported yet [audit.export_dir = not set]
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+secrets:
+  skipped permissions data dir: Windows: the access rights of the user profile apply
+  skipped permissions database: Windows: the access rights of the user profile apply
+  skipped permissions database WAL: Windows: the access rights of the user profile apply
+  skipped permissions database SHM: Windows: the access rights of the user profile apply
+  skipped permissions log: Windows: the access rights of the user profile apply
+  ok      secrets in log C:\Users\Admin\AppData\Local\postkauz\postkauz.log
+  ok      secrets in database table meta
+  ok      secrets in database table accounts
+  ok      secrets in database table identities
+  ok      secrets in database table mailboxes
+  ok      secrets in database table api_keys
+  ok      secrets in database table policies
+  ok      secrets in database table jobs
+  ok      secrets in database table audit_events
+  ok      secrets in database table audit_exports
+  ok      secrets in database table import_sources
+  ok      secrets in database table import_folders
+  result: ok (no secret found where it must not be, permissions fine)
+
+[exit 0]
+===== D3.3c Audit-Export als Windows-Aufgabe
+G:\Meine Ablage fehlt -> Ausweichordner C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+
+> Register-AuditExport.ps1
+== Program: C:\PostKauz\postkauz.exe
+== Export folder: C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+== Task 'PostKauz audit export' registered: daily at 12:30 for DRACO\Admin (missed runs start as soon as possible)
+== Starting the task once to check it ...
+WARNING: The task ran (result 0) but no new export was found.
+WARNING: Run the export by hand to see the error message:
+WARNING:   C:\PostKauz\postkauz.exe audit export --to C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+WARNING: If that works, register again with -ShowWindow (the hidden console may be blocked on this PC).
+
+[exit 1]
+
+> Get-ScheduledTask
+
+
+TaskName : PostKauz audit export
+State    : Ready
+
+
+
+
+[exit 1]
+
+> Exportordner
+
+Name                            Length
+----                            ------
+postkauz-audit-2026-10-21.jsonl    355
+postkauz-audit-manifest.json       788
+
+
+
+[exit 1]
+
+> audit verify (erwartet ok, Exit 0)
+ok: nothing exported yet (run: audit export --to <dir>)
+not exported yet (new entries): 2026-10-16, 2026-10-21
+
+[exit 0]
+===== D3.4 Importprobe
+
+> import mbox (1. Lauf; erwartet new 5, existing 1100, skipped 3)
+.\postkauz.exe :   Archiv.sbd/2024: 0% (1.6 KB of 729.5 KB), 1.6 MB/s
+At C:\Users\Admin\AI\Cowork_Temp\PostKauz\d3_run.ps1:35 char:73
++ ... ipped 3)' { .\postkauz.exe import mbox .\abnahme-d3-import\Thunderbir ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  Archiv.sbd/20...5 KB), 1.6 MB/s:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+import mbox into account demo (0.4s, 2.3 MB, 6.5 MB/s)
+SOURCE           FOLDER               MODE     NEW  EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  0    379       0        0
+Archiv.sbd/2025  Archive/Archiv/2025  content  0    371       0        0
+Drafts           Archive/Drafts       content  0    20        0        0
+Entw&APw-rfe     Archive/Entwürfe     content  5    0         0        0
+INBOX            Archive/INBOX        content  0    230       3        0
+Wichtig          Archive/Wichtig      content  0    100       0        0
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+1100 folder assignments added to existing messages
+search index: 5 messages indexed
+new: 5, existing: 1100, skipped: 3, errors: 0
+
+[exit 0]
+
+> import mbox (2. Lauf; erwartet alles unchanged, new 0)
+import mbox into account demo (0.0s, 0 B)
+SOURCE           FOLDER               MODE     NEW        EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  unchanged                     
+Archiv.sbd/2025  Archive/Archiv/2025  content  unchanged                     
+Drafts           Archive/Drafts       content  unchanged                     
+Entw&APw-rfe     Archive/Entwürfe     content  unchanged                     
+INBOX            Archive/INBOX        content  unchanged                     
+Wichtig          Archive/Wichtig      content  unchanged                     
+6 sources unchanged since the last import, not read again (--rescan reads them)
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+new: 0, existing: 0, skipped: 0, errors: 0
+
+[exit 0]
+
+> import mbox --rescan (erwartet new 0, existing 1105, skipped 3)
+.\postkauz.exe :   Archiv.sbd/2024: 0% (1.6 KB of 729.5 KB), 3.0 MB/s
+At C:\Users\Admin\AI\Cowork_Temp\PostKauz\d3_run.ps1:37 char:73
++ ... ipped 3)' { .\postkauz.exe import mbox .\abnahme-d3-import\Thunderbir ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  Archiv.sbd/20...5 KB), 3.0 MB/s:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+import mbox into account demo (0.1s, 2.3 MB, 16.9 MB/s)
+SOURCE           FOLDER               MODE     NEW  EXISTING  SKIPPED  ERRORS
+Archiv.sbd/2024  Archive/Archiv/2024  content  0    379       0        0
+Archiv.sbd/2025  Archive/Archiv/2025  content  0    371       0        0
+Drafts           Archive/Drafts       content  0    20        0        0
+Entw&APw-rfe     Archive/Entwürfe     content  0    5         0        0
+INBOX            Archive/INBOX        content  0    230       3        0
+Wichtig          Archive/Wichtig      content  0    100       0        0
+7 files ignored (not mbox, e.g. Thunderbird .msf index files)
+new: 0, existing: 1105, skipped: 3, errors: 0
+
+[exit 0]
+
+> search Rechnung --limit 1 (erwartet 1 of 453)
+ID   DATE              FROM                                      SUBJECT
+196  2026-09-28 06:45  Sören Straßburger <soeren@…  Rechnungen für das Erdgeschoss
+1 of 453 results (by relevance)
+more: --cursor eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTI1ODUxOTgwMTMsInMiOjMuMjYyMzU2NzQ4NzgxNTA0NCwiaSI6MTk2fQ
+
+[exit 0]
+
+> search in:Archive/Entwuerfe (erwartet 5 of 5)
+ID    DATE              FROM                                     SUBJECT
+1005  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Ohne Zeilenende
+1004  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Sehr lange Zeile
+1003  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Mit Schlagwörtern
+1002  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Nur ein Kopf
+1001  2026-03-04 10:00  Grete Größe <grete@groesse.example.net>  Entwurf: Aushang Treppenhaus
+5 of 5 results (newest first)
+
+[exit 0]
+===== Aufraeumen D2/D3 (Abnahme-Datenverzeichnisse, Export D2, Importordner, Schluesseldatei)
+Aufgeraeumt; verbleibend: postkauz
+D3-Lauf beendet 21.10.2026 14:20:01
+ENDE

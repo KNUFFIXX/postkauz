@@ -1,0 +1,286 @@
+D2-Lauf gestartet 21.10.2026 14:17:55
+===== 0 Vorbereitung
+Hash: 329F6D9E0C28CCE98A387BF0F42DEA81DC836995204939D9DEF362B43AC03AD4
+HASH: OK
+
+> version
+postkauz 0.1.0-rc1 (go1.27.2 windows/amd64)
+
+[exit 0]
+
+> doctor
+version:   0.1.0-rc1
+config:    C:\Users\Admin\AppData\Roaming\postkauz\config.toml (exists: false)
+data dir:  C:\Users\Admin\AppData\Local\postkauz-abnahme-d2
+log:       C:\Users\Admin\AppData\Local\postkauz-abnahme-d2\postkauz.log
+database:  needs_migration (C:\Users\Admin\AppData\Local\postkauz-abnahme-d2\postkauz.db)
+schema:    6 (program knows 7)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+accounts:
+  demo: password missing, status new (env override: POSTKAUZ_PASSWORD_DEMO)
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+  - account demo has no password (keyring entry account/demo or POSTKAUZ_PASSWORD_DEMO)
+
+[exit 0]
+===== D2.1
+
+> search Rechnung -a demo --limit 5
+ID   DATE              FROM                                      SUBJECT
+196  2026-09-28 06:45  Sören Straßburger <soeren@…  Rechnungen für das Erdgeschoss
+132  2026-08-09 14:54  Dörte Dummy <doerte@dummy.example.org>    Rechnungen für das Erdgeschoss
+135  2026-07-15 16:01  noreply@portal.example.net                Rechnungen für das Erdgeschoss
+3    2026-09-04 07:15  Grete Größe <grete@groesse.example.net>   AW: Fenster schließt nicht – Reparatur nötig 🔧 (Vorgang 1)
+219  2026-06-15 10:30  Hans-Jörg Fiktiv <hj.fiktiv@…  Rechnung Gartenpflege Juni
+5 of 453 results (by relevance)
+more: --cursor eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTI1ODUwNzYwOTAsInMiOjIuNjYxODU5MzYwNjc5NzI3NiwiaSI6MjE5fQ
+
+[exit 0]
+===== D2.2
+
+> search pruefen (Umlaut)
+ID   DATE              FROM                                      SUBJECT
+40   2026-08-12 16:50  Ömer Platzhalter <oemer.p@…  Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+67   2026-09-14 23:52  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen [attachment]
+38   2026-08-12 23:50  Ömer Platzhalter <oemer.p@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+11   2026-07-03 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+15   2026-07-09 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  WG: AW: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 10)
+39   2026-08-14 22:50  Postfach Test <postfach@example.org>      Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+52   2026-05-24 08:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+12   2026-07-05 06:07  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10) [attachment]
+152  2026-08-13 09:30  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen
+50   2026-05-16 11:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+49   2026-05-19 08:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59)
+48   2026-05-16 18:24  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59) [attachment]
+14   2026-07-04 04:07  Postfach Test <postfach@example.org>      AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+45   2026-08-11 13:48  Ömer Platzhalter <oemer.p@…  Fwd: Mieterhöhung gemäß § 558 BGB – Zustimmung (Vorgang 58)
+54   2026-05-22 14:24  Zoë Musterfrau <zoe@muster.example.org>   AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+53   2026-05-21 20:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59) [attachment]
+145  2026-05-19 21:48  Grete Größe <grete@groesse.example.net>   Zwangsvollstreckung angedroht – bitte prüfen
+13   2026-07-03 22:07  Hans-Jörg Fiktiv <hj.fiktiv@…  AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+79   2026-05-13 01:08  Dörte Dummy <doerte@dummy.example.org>    Zwangsvollstreckung angedroht – bitte prüfen
+105  2026-01-17 09:08  Jürgen Testmann <juergen.testmann@…  Zwangsvollstreckung angedroht – bitte prüfen
+20 of 262 results (by relevance)
+more: --cursor eyJxIjoiMzFjNzQxYWM3Y2M3NjY0YyIsIm4iOjE3OTI1ODUwNzYzMDMsInMiOjIuMjQyNDIzMjI5ODQwNjUzNywiaSI6MTA1fQ
+
+[exit 0]
+
+> search pruefen (ue)
+ID   DATE              FROM                                      SUBJECT
+40   2026-08-12 16:50  Ömer Platzhalter <oemer.p@…  Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+67   2026-09-14 23:52  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen [attachment]
+38   2026-08-12 23:50  Ömer Platzhalter <oemer.p@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+11   2026-07-03 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+15   2026-07-09 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  WG: AW: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 10)
+39   2026-08-14 22:50  Postfach Test <postfach@example.org>      Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+52   2026-05-24 08:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+12   2026-07-05 06:07  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10) [attachment]
+152  2026-08-13 09:30  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen
+50   2026-05-16 11:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+49   2026-05-19 08:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59)
+48   2026-05-16 18:24  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59) [attachment]
+14   2026-07-04 04:07  Postfach Test <postfach@example.org>      AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+45   2026-08-11 13:48  Ömer Platzhalter <oemer.p@…  Fwd: Mieterhöhung gemäß § 558 BGB – Zustimmung (Vorgang 58)
+54   2026-05-22 14:24  Zoë Musterfrau <zoe@muster.example.org>   AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+53   2026-05-21 20:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59) [attachment]
+145  2026-05-19 21:48  Grete Größe <grete@groesse.example.net>   Zwangsvollstreckung angedroht – bitte prüfen
+13   2026-07-03 22:07  Hans-Jörg Fiktiv <hj.fiktiv@…  AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+79   2026-05-13 01:08  Dörte Dummy <doerte@dummy.example.org>    Zwangsvollstreckung angedroht – bitte prüfen
+105  2026-01-17 09:08  Jürgen Testmann <juergen.testmann@…  Zwangsvollstreckung angedroht – bitte prüfen
+20 of 262 results (by relevance)
+more: --cursor eyJxIjoiMzFlYzc3NThlMTI4ZWYyOCIsIm4iOjE3OTI1ODUwNzY1MTAsInMiOjIuMjQyNDIzMjI2OTYwMTc4MywiaSI6MTA1fQ
+
+[exit 0]
+Compare-Object Ausgabe (leer = gleich): []
+===== D2.3
+
+> search Vollstreck
+ID   DATE              FROM                                      SUBJECT
+67   2026-09-14 23:52  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen [attachment]
+39   2026-08-14 22:50  Postfach Test <postfach@example.org>      Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+152  2026-08-13 09:30  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen
+38   2026-08-12 23:50  Ömer Platzhalter <oemer.p@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+40   2026-08-12 16:50  Ömer Platzhalter <oemer.p@…  Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 50)
+15   2026-07-09 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  WG: AW: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 10)
+16   2026-07-05 16:07  Postfach Test <postfach@example.org>      WG: AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10) [attachment]
+12   2026-07-05 06:07  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10) [attachment]
+14   2026-07-04 04:07  Postfach Test <postfach@example.org>      AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+13   2026-07-03 22:07  Hans-Jörg Fiktiv <hj.fiktiv@…  AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+11   2026-07-03 09:07  Hans-Jörg Fiktiv <hj.fiktiv@…  Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 10)
+55   2026-05-28 22:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59) [attachment]
+52   2026-05-24 08:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+54   2026-05-22 14:24  Zoë Musterfrau <zoe@muster.example.org>   AW: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+53   2026-05-21 20:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59) [attachment]
+51   2026-05-21 10:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59)
+145  2026-05-19 21:48  Grete Größe <grete@groesse.example.net>   Zwangsvollstreckung angedroht – bitte prüfen
+49   2026-05-19 08:24  Postfach Test <postfach@example.org>      Fwd: Zwangsvollstreckung angedroht - bitte prüfen (Vorgang 59)
+48   2026-05-16 18:24  Zoë Musterfrau <zoe@muster.example.org>   Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59) [attachment]
+50   2026-05-16 11:24  Zoë Musterfrau <zoe@muster.example.org>   Re: Zwangsvollstreckung angedroht – bitte prüfen (Vorgang 59)
+20 of 68 results (by relevance)
+more: --cursor eyJxIjoiYzk2MGVkZjcxMWMzYzVhMCIsIm4iOjE3OTI1ODUwNzcwOTAsInMiOjEuMzYyNzI2NTQzMzg1MTAzOWUtOSwiaSI6NTB9
+
+[exit 0]
+===== D2.4
+
+> search has:attachment --json | first 3
+{"id":111,"account":"demo","thread_id":70,"date":"2026-09-22T11:58:00Z","from":"Bärbel Beispiel \u003cbaerbel@beispiel.example.org\u003e","subject":"Sehr lange Betreffzeile zur Nebenkostenabrechnung mit Grundsteuer, Müllgebühren, Straßenreinigung, Winterdienst, Treppenhausreinigung, Gartenpflege, Allgemeinstrom und Aufzugswartung für das gesamte Gebäude","snippet":"Können Sie bitte einen Handwerker schicken? Ich bin werktags ab 15 Uhr erreichbar. Der Gärtner hat die Hecke zu stark gekürzt, die Nachbarn beschweren sich.","flags":["seen"],"has_attachments":true,"deleted_remote":false,"score":1790078280000,"cursor":"eyJxIjoiYTQ3NTNlM2RkMzRjOGQ5MSIsIm4iOjE3OTI1ODUwNzcyOTksInMiOjE3OTAwNzgyODAwMDAsImkiOjExMX0","untrusted":true,"source":"email"}
+{"id":91,"account":"demo","thread_id":50,"date":"2026-09-15T19:01:00Z","from":"Bärbel Beispiel \u003cbaerbel@beispiel.example.org\u003e","subject":"Wasserschaden im Badezimmer (dringend!)","snippet":"Der Gärtner hat die Hecke zu stark gekürzt, die Nachbarn beschweren sich. Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin. Für Rückfragen stehe ich gern zur Verfügung. Mit freundlichen G","flags":[],"has_attachments":true,"deleted_remote":false,"score":1789498860000,"cursor":"eyJxIjoiYTQ3NTNlM2RkMzRjOGQ5MSIsIm4iOjE3OTI1ODUwNzcyOTksInMiOjE3ODk0OTg4NjAwMDAsImkiOjkxfQ","untrusted":true,"source":"email"}
+{"id":67,"account":"demo","thread_id":26,"date":"2026-09-14T21:52:00Z","from":"Zoë Musterfrau \u003czoe@muster.example.org\u003e","subject":"Zwangsvollstreckung angedroht – bitte prüfen","snippet":"Für Rückfragen stehe ich gern zur Verfügung. Mit freundlichen Grüßen Die Thermostatventile im Wohnzimmer lassen sich nicht mehr drehen. Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin. A","flags":["seen"],"has_attachments":true,"deleted_remote":false,"score":1789422720000,"cursor":"eyJxIjoiYTQ3NTNlM2RkMzRjOGQ5MSIsIm4iOjE3OTI1ODUwNzcyOTksInMiOjE3ODk0MjI3MjAwMDAsImkiOjY3fQ","untrusted":true,"source":"email"}
+
+[exit -1]
+===== D2.5
+
+> show hidden
+id:                976
+account:           demo
+mailboxes:         Archiv/2025 (uid 367)
+message-id:        pk.s16.02.0045f9d9@corpus.example.org
+date:              2025-11-04T03:49:00Z
+from:              Ömer Platzhalter <oemer.p@verwaltung.example.org>
+to:                Postfach Test <postfach@example.org>
+subject:           Rechnung Hausmeisterdienst
+size:              735
+flags:             seen
+attachments:       no
+deleted on server: no
+thread:            736
+sender checks:     spf none, dkim none, dmarc none
+warning:           hidden text removed (the HTML contained text a reader would not see; possible prompt injection)
+--- text (from HTML) ---
+Können Sie bitte einen Handwerker schicken? Ich bin werktags ab 15 Uhr erreichbar.
+
+Mit freundlichen Grüßen
+
+[exit 0]
+show --json: untrusted=True source=email=True hidden_text_removed=True Injection-Satz=False
+===== D2.6
+key create: Schluessel erhalten (Laenge 50), maskiert: key test-agent created (role reader: mail:read, mail:search, audit:read; writing calls run as dry run by default; expires 2027-01-19)
+This is the only time the key is shown. Store it now (e.g. in the MCP configuration as POSTKAUZ_KEY):
+
+  pk_key_********
+
+Only its hash is stored. Lost it? Revoke it (key revoke test-agent) and create a new one.
+
+
+> key list
+NAME        ROLE    SCOPES                            STATUS  DRY RUN  CREATED     EXPIRES     LAST USED
+test-agent  reader  mail:read,mail:search,audit:read  active  default  2026-10-21  2027-01-19  never
+
+[exit 0]
+key list enthaelt pk_key_: [] (leer = gut)
+
+> policy show --key test-agent
+key:             key:test-agent
+role:            reader
+scopes:          audit:read, mail:read, mail:search
+dry-run default: true
+expires:         2027-01-19
+max chars:       20000 per text for agents
+draft-only:      true (nothing is ever sent)
+operations:
+  accounts.list       mail:read    R0
+  mailboxes.list      mail:read    R0
+  mailboxes.overview  mail:read    R0
+  messages.get        mail:read    R0
+  messages.search     mail:search  R0
+  threads.get         mail:read    R0
+  attachments.list    mail:read    R0
+  attachments.text    mail:read    R0
+  audit.list          audit:read   R0
+  audit.verify        audit:read   R0
+  policy.get          any          R0
+
+[exit 0]
+
+> key list --key test-agent (erwartet Exit 3)
+.\postkauz.exe : error: ops: keys.list: deny (missing_scope)
+At C:\Users\Admin\AI\Cowork_Temp\PostKauz\d2_run.ps1:49 char:53
++ ... (erwartet Exit 3)' { .\postkauz.exe key list --key test-agent } | Out ...
++                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: ops: key...(missing_scope):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+hint: the key lacks the required scope or the policy forbids this
+
+[exit 3]
+===== D2.7 + D2.8 (MCP-Sonde ueber stdio, Windows-Python)
+
+> mcp_probe_win.py
+server: postkauz 0.1.0-rc1
+tools: 9
+mail_audit_log, mail_get_attachment_text, mail_get_message, mail_get_policy, mail_get_thread, mail_list_accounts, mail_list_attachments, mail_list_mailboxes, mail_search
+tools ohne readOnlyHint: []
+send/delete/trash/move/draft: []
+prompts: ['extract_actions', 'inbox_triage', 'open_threads', 'summarize_important']
+resources: 3
+mail_search isError: False | chars: 1983
+mail_search head: {"hits":[{"account":"demo","cursor":"eyJxIjoiZmQ1ZTVhOGJjMDdjZTY0NiIsIm4iOjE3OTI1ODUwNzg5MjQsInMiOjMuMTE1OTYzNzMxNjMyMjg5MiwiaSI6MTk2fQ","date":"2026-09-28T04:45:00Z","deleted_remote":false,"flags":[],"from":"S�ren Stra�burger \u003csoeren@strasse.example.org\u003e","has_attachments":false,"id":196,
+erste Treffer-ID: 196
+mail_get_message isError: False | untrusted im Text: True
+mail_get_message head: {"account":"demo","alternative_mismatch":false,"attachments":[],"auth":{"dkim":"none","dmarc":"none","spf":"none"},"cc":[],"date":"2026-09-28T04:45:00Z","deleted_remote":false,"flags":[],"from":"S�ren Stra�burger \u003csoeren@strasse.example.org\u003
+hidden: hidden_text_removed: True | Injection-Satz enthalten: False
+stderr tail: 
+
+[exit 0]
+
+> audit --since 10m
+ID  TIME                 ACTOR  KEY             OPERATION        RESULT                  TARGETS         PARAMS
+5   2026-10-21 14:17:56  human  cli             messages.search  ok                      account:demo    {"cursor":false,"explain":false,"limit":5,"mailbox":false,"operators":[],"terms":1}
+6   2026-10-21 14:17:56  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":[],"terms":1}
+7   2026-10-21 14:17:56  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":[],"terms":1}
+8   2026-10-21 14:17:56  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":[],"terms":1}
+9   2026-10-21 14:17:56  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":[],"terms":1}
+10  2026-10-21 14:17:57  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":[],"terms":1}
+11  2026-10-21 14:17:57  human  cli             messages.search  ok                      -               {"cursor":false,"explain":false,"limit":0,"mailbox":false,"operators":["has_attachment"],"terms":0}
+12  2026-10-21 14:17:57  human  cli             messages.get     ok                      -               {"fields":["message_id"]}
+13  2026-10-21 14:17:57  human  cli             messages.get     ok                      -               {"fields":["message_id"]}
+14  2026-10-21 14:17:57  human  cli             keys.create      ok                      key:test-agent  {"fields":["expires_in_days","name","role"]}
+15  2026-10-21 14:17:58  human  cli             keys.list        ok                      -               {}
+16  2026-10-21 14:17:58  human  cli             keys.list        ok                      -               {}
+17  2026-10-21 14:17:58  human  key:test-agent  policy.get       ok                      -               {}
+18  2026-10-21 14:17:58  human  key:test-agent  keys.list        denied (missing_scope)  -               {}
+19  2026-10-21 14:17:58  agent  key:test-agent  messages.search  ok                      -               {"cursor":false,"explain":false,"limit":3,"mailbox":false,"operators":[],"terms":1}
+20  2026-10-21 14:17:58  agent  key:test-agent  messages.get     ok                      message:196     {"fields":["id","max_chars","strip_quotes"]}
+21  2026-10-21 14:17:58  agent  key:test-agent  messages.get     ok                      -               {"fields":["account","max_chars","message_id","strip_quotes"]}
+22  2026-10-21 14:17:59  human  cli             audit.list       ok                      -               {"fields":["since"]}
+
+[exit 0]
+audit --json enthaelt "Rechnung": [] (leer = gut)
+===== D2.9
+
+> audit export --to
+DAY         EVENTS  STATE    FILE
+2026-10-16  4       written  C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-2026-10-16.jsonl
+2026-10-21  20      written  C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-2026-10-21.jsonl
+manifest: C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-manifest.json
+chain head: d8690ebbb67b2e191bed99a48f30e78e6875f78776e3c3ccb91289cad6dde6e6
+2 days in C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export; check with: audit verify
+
+[exit 0]
+
+> audit verify (erwartet ok, Exit 0)
+ok: 2 exported days checked; the export files match their checksums, the hash chain, the manifest and the database
+chain head: d8690ebbb67b2e191bed99a48f30e78e6875f78776e3c3ccb91289cad6dde6e6
+not exported yet (new entries): 2026-10-21
+
+[exit 0]
+Veraendere: C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-2026-10-16.jsonl
+
+> audit verify nach Veraenderung (erwartet mismatch, Exit 1)
+mismatch: 2 problems in 2 exported days
+  2026-10-16: export file was changed (line 5): C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-2026-10-16.jsonl
+  2026-10-16: hash chain is broken (line 5): C:\Users\Admin\AppData\Local\postkauz-abnahme-d2-export\postkauz-audit-2026-10-16.jsonl
+not exported yet (new entries): 2026-10-21
+.\postkauz.exe : error: audit export does not match
+At C:\Users\Admin\AI\Cowork_Temp\PostKauz\d2_run.ps1:64 char:68
++ ... ng (erwartet mismatch, Exit 1)' { .\postkauz.exe audit verify } | Out ...
++                                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: audit export does not match:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+hint: the audit log or its export was changed; see audit verify
+
+[exit 1]
+D2-Lauf beendet 21.10.2026 14:18:00
+ENDE
