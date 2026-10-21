@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
@@ -55,6 +56,10 @@ type app struct {
 	log     *slog.Logger
 	logFile *os.File
 	exec    *ops.Executor
+	// noCredentials: Der Prozess fasst keine Passwörter an (MCP-Server,
+	// docs/sicherheit.md, Abschnitt 4); open zieht dann auch keine
+	// Schlüsselbund-Einträge um.
+	noCredentials bool
 }
 
 func newApp(version string, stdin io.Reader, stdout, stderr io.Writer) *app {
@@ -109,6 +114,9 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	a.sec = sec
+	if !a.noCredentials {
+		a.moveCredentialRefs(ctx)
+	}
 	blobs, err := blob.Open(a.paths.Blobs, blob.Options{})
 	if err != nil {
 		return nil, err
@@ -124,6 +132,34 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 			a.log.Error("panic in operation", "op", op, "message", r.Message, "stack", r.Stack)
 		}}
 	return a.exec, nil
+}
+
+// moveCredentialRefs zieht Schlüsselbund-Einträge auf den Verweis mit der
+// Kennung des Datenverzeichnisses um (S2.0/A2). Ein Fehler hält kein
+// Kommando auf: Der alte Verweis gilt dann weiter, der nächste Start
+// versucht es erneut, und `doctor` warnt.
+func (a *app) moveCredentialRefs(ctx context.Context) {
+	moves, err := ops.MoveCredentialRefs(ctx, a.st, a.sec)
+	if err != nil {
+		a.log.Warn("keyring entries not moved", "error", err.Error())
+		fmt.Fprintf(a.stderr, "warning: keyring entries not moved to the new names: %v\n", err)
+		return
+	}
+	for _, m := range moves {
+		args := []any{"account", m.Account, "from", m.From, "to", m.To, "result", m.Result}
+		if m.Err != nil {
+			args = append(args, "error", m.Err.Error())
+		}
+		a.log.Info("keyring entry moved", args...)
+		switch m.Result {
+		case "failed":
+			fmt.Fprintf(a.stderr, "warning: keyring entry %s of account %s not moved to %s (%v); the old name stays in use, the next start tries again\n",
+				m.From, m.Account, m.To, m.Err)
+		case "moved_old_left":
+			fmt.Fprintf(a.stderr, "warning: keyring entry of account %s moved to %s, but the old entry %s could not be deleted (%v); delete it yourself (see: %s doctor)\n",
+				m.Account, m.To, m.From, m.Err, brand.Name)
+		}
+	}
 }
 
 func (a *app) close() {

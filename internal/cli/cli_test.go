@@ -273,7 +273,11 @@ func TestAccountLifecycleWithCanary(t *testing.T) {
 				t.Fatalf("add: %q", out)
 			}
 			if backend == "keyring" {
-				if v, err := kr.Get("account/demo"); err != nil || v.Reveal() != canary {
+				a, err := openDB(t, dataDir).AccountByName(t.Context(), "demo")
+				if err != nil || !strings.HasPrefix(a.CredentialRef, "account/") || !strings.HasSuffix(a.CredentialRef, "/demo") {
+					t.Fatalf("credential_ref = %q, %v", a.CredentialRef, err)
+				}
+				if v, err := kr.Get(a.CredentialRef); err != nil || v.Reveal() != canary {
 					t.Fatal("password not in keyring")
 				}
 			}

@@ -45,6 +45,7 @@ func mcpCmd(a *app) *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			a.noCredentials = true
 			x, err := a.open(ctx)
 			if err != nil {
 				return err

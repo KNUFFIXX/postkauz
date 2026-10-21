@@ -42,16 +42,26 @@ func TestSecretIsRedactedEverywhere(t *testing.T) {
 }
 
 func TestRefAndEnvName(t *testing.T) {
-	if err := ValidRef(AccountRef("demo-1")); err != nil {
+	if err := ValidRef(AccountRef("1a2b3c4d", "demo-1")); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"", "demo", "account/", "account/Demo", "account/../x", "account/a b"} {
+	if err := ValidRef(LegacyAccountRef("demo-1")); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "demo", "account/", "account/Demo", "account/../x", "account/a b",
+		"account/1a2b3c4d/", "account/1A2B3C4D/demo", "account/1a2b3c/demo", "account/1a2b3c4d/x/y", "account/1a2b3c4d/../x"} {
 		if ValidRef(bad) == nil {
 			t.Errorf("ref %q must be invalid", bad)
 		}
 	}
-	if got := EnvName("account/demo-1"); got != "POSTKAUZ_PASSWORD_DEMO_1" {
-		t.Errorf("EnvName = %s", got)
+	if ValidDataDirID("1a2b3c4d") != nil || ValidDataDirID("1a2b3c4") == nil || ValidDataDirID("1a2b3c4g") == nil {
+		t.Error("ValidDataDirID")
+	}
+	// Die Umgebungsvariable hängt nur am Kontonamen (alt und neu gleich).
+	for _, ref := range []string{"account/demo-1", AccountRef("1a2b3c4d", "demo-1")} {
+		if got := EnvName(ref); got != "POSTKAUZ_PASSWORD_DEMO_1" {
+			t.Errorf("EnvName(%s) = %s", ref, got)
+		}
 	}
 	if got := EnvName("oauth/demo"); got != "POSTKAUZ_SECRET_OAUTH_DEMO" {
 		t.Errorf("EnvName = %s", got)
@@ -97,7 +107,7 @@ func TestKeyringBackend(t *testing.T) {
 	if st := k.Probe(); !st.Available || st.Backend != "keyring" {
 		t.Fatalf("probe = %+v", st)
 	}
-	ref := AccountRef("demo")
+	ref := AccountRef("1a2b3c4d", "demo")
 	if _, err := k.Get(ref); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get missing = %v", err)
 	}
@@ -132,7 +142,7 @@ func TestKeyringUnavailableFallsBackToEnvOnly(t *testing.T) {
 			if s := st.Status(); s.Available || s.Backend != "none" {
 				t.Fatalf("status = %+v", s)
 			}
-			ref := AccountRef("demo")
+			ref := AccountRef("1a2b3c4d", "demo")
 			err = st.Set(ref, canary)
 			if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "insecure-file") {
 				t.Fatalf("set = %v", err)
@@ -151,6 +161,25 @@ func TestKeyringUnavailableFallsBackToEnvOnly(t *testing.T) {
 	}
 }
 
+// Stored liest unter der Umgebung: Ein Passwort aus POSTKAUZ_PASSWORD_<NAME>
+// gilt dort nicht als gespeichert (der Umzug der Einträge darf es nie in
+// den Schlüsselbund kopieren).
+func TestStoredIgnoresEnvironment(t *testing.T) {
+	k := fakeKeyring(nil, 0)
+	st := WithEnv(k)
+	ref := AccountRef("1a2b3c4d", "demo")
+	t.Setenv(EnvName(ref), canary)
+	if v, err := st.Get(ref); err != nil || v.Reveal() != canary {
+		t.Fatalf("env layer: %v", err)
+	}
+	if _, err := Stored(st).Get(ref); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stored = %v, want not found", err)
+	}
+	if Stored(k) != Store(k) {
+		t.Fatal("Stored of a plain store must return it unchanged")
+	}
+}
+
 func TestInsecureFileBackend(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "insecure-secrets")
 	st, err := open(BackendInsecureFile, dir, fakeKeyring(errors.New("no keyring"), 0))
@@ -160,7 +189,7 @@ func TestInsecureFileBackend(t *testing.T) {
 	if s := st.Status(); !s.Available || !s.Insecure || !strings.Contains(s.Detail, "INSECURE") {
 		t.Fatalf("status = %+v", s)
 	}
-	ref, ref2 := AccountRef("demo"), AccountRef("other")
+	ref, ref2 := AccountRef("1a2b3c4d", "demo"), AccountRef("1a2b3c4d", "other")
 	if _, err := st.Get(ref); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get before set = %v", err)
 	}
@@ -224,7 +253,7 @@ func TestRealKeyringProbe(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Set(AccountRef("probe-test"), canary); !errors.Is(err, ErrUnavailable) {
+		if err := s.Set(AccountRef("1a2b3c4d", "probe-test"), canary); !errors.Is(err, ErrUnavailable) {
 			t.Fatalf("set on unavailable keyring = %v", err)
 		}
 		return
@@ -232,7 +261,7 @@ func TestRealKeyringProbe(t *testing.T) {
 	if os.Getenv("POSTKAUZ_TEST_REAL_KEYRING") != "1" {
 		t.Skip("keyring available; set POSTKAUZ_TEST_REAL_KEYRING=1 to run a write/read/delete round trip")
 	}
-	ref := AccountRef("selftest-" + fmt.Sprint(time.Now().UnixNano()%100000))
+	ref := AccountRef("1a2b3c4d", "selftest-"+fmt.Sprint(time.Now().UnixNano()%100000))
 	if err := k.Set(ref, canary); err != nil {
 		t.Fatal(err)
 	}

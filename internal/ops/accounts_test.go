@@ -97,6 +97,17 @@ func newAccountsEnv(t *testing.T) *accountsEnv {
 	return e
 }
 
+// ref liefert den Schlüsselbund-Verweis eines Kontos in dieser Datenbank
+// (account/<datadir-id>/<name>, S2.0/A2).
+func (e *accountsEnv) ref(t *testing.T, name string) string {
+	t.Helper()
+	id, err := e.st.DataDirID(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return secrets.AccountRef(id, name)
+}
+
 var adminKey = policy.Key{ID: "cli", Scopes: policy.Roles["admin"]}
 
 func (e *accountsEnv) run(op string, input any, secret secrets.Secret, dry bool) (any, error) {
@@ -138,16 +149,16 @@ func TestAccountsAddListRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	add := out.(AccountsAddOutput)
-	if add.Account.ID == 0 || add.Account.CredentialRef != "account/demo" || add.Account.SecretSource != "keyring" || add.Account.Email != "tester@example.invalid" {
+	if add.Account.ID == 0 || add.Account.CredentialRef != e.ref(t, "demo") || add.Account.SecretSource != "keyring" || add.Account.Email != "tester@example.invalid" {
 		t.Fatalf("add output: %+v", add)
 	}
-	if v, err := e.sec.Get("account/demo"); err != nil || v.Reveal() != canary {
+	if v, err := e.sec.Get(e.ref(t, "demo")); err != nil || v.Reveal() != canary {
 		t.Fatalf("secret not stored: %v", err)
 	}
 	if _, err := e.run("accounts.add", demoInput(), "other", false); !errors.Is(err, store.ErrAccountExists) {
 		t.Fatalf("duplicate: %v", err)
 	}
-	if v, _ := e.sec.Get("account/demo"); v.Reveal() != canary {
+	if v, _ := e.sec.Get(e.ref(t, "demo")); v.Reveal() != canary {
 		t.Fatal("duplicate add overwrote the secret")
 	}
 
@@ -165,7 +176,7 @@ func TestAccountsAddListRemove(t *testing.T) {
 	if err != nil || !out.(AccountsRemoveOutput).SecretDeleted {
 		t.Fatalf("remove: %+v %v", out, err)
 	}
-	if _, err := e.sec.Get("account/demo"); !errors.Is(err, secrets.ErrNotFound) {
+	if _, err := e.sec.Get(e.ref(t, "demo")); !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatal("secret still stored after remove")
 	}
 	if _, err := e.run("accounts.remove", map[string]any{"name": "demo"}, "", false); !errors.Is(err, store.ErrAccountNotFound) {
@@ -230,7 +241,7 @@ func TestAccountsAddPasswordFromEnv(t *testing.T) {
 	sec := secrets.WithEnv(e.sec)
 	_ = reg.Register(AccountsAdd(e.st, sec))
 	x := &Executor{Registry: reg, Audit: e.au}
-	t.Setenv(secrets.EnvName("account/demo"), canary)
+	t.Setenv(secrets.EnvName(e.ref(t, "demo")), canary)
 	in := demoInput()
 	in["password_from_env"] = true
 	b, _ := json.Marshal(in)
@@ -266,7 +277,7 @@ func TestAccountsRemoveRefusesWithArchive(t *testing.T) {
 	if _, err := e.run("accounts.remove", map[string]any{"name": "demo"}, "", false); err == nil || !strings.Contains(err.Error(), "archived messages") {
 		t.Fatalf("remove with archive: %v", err)
 	}
-	if _, err := e.sec.Get("account/demo"); err != nil {
+	if _, err := e.sec.Get(e.ref(t, "demo")); err != nil {
 		t.Fatal("secret deleted although remove was refused")
 	}
 }
@@ -310,7 +321,7 @@ func TestAccountsTest(t *testing.T) {
 	}
 
 	// Ohne gespeichertes Passwort: klarer Fehler mit Verweis und Variable.
-	_ = e.sec.Delete("account/demo")
+	_ = e.sec.Delete(e.ref(t, "demo"))
 	_, err = e.run("accounts.test", map[string]any{"name": "demo"}, "", false)
 	if !errors.Is(err, ErrNoSecret) || !strings.Contains(err.Error(), "POSTKAUZ_PASSWORD_DEMO") {
 		t.Fatalf("no secret: %v", err)

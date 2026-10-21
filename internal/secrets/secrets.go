@@ -77,9 +77,15 @@ type Status struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
-var refRE = regexp.MustCompile(`^[a-z][a-z0-9]*/[a-z0-9][a-z0-9-]{0,62}$`)
+// refRE: Art, optional die Kennung des Datenverzeichnisses (8 Hex, seit
+// S2.0/A2), Name. Beispiele: "account/demo" (bis S1, Altform),
+// "account/1a2b3c4d/demo".
+var refRE = regexp.MustCompile(`^[a-z][a-z0-9]*/(?:[0-9a-f]{8}/)?[a-z0-9][a-z0-9-]{0,62}$`)
 
-// ValidRef prüft die Form eines Verweises, z. B. "account/demo".
+// dataDirIDRE ist die Form der Kennung des Datenverzeichnisses im Verweis.
+var dataDirIDRE = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// ValidRef prüft die Form eines Verweises, z. B. "account/1a2b3c4d/demo".
 func ValidRef(ref string) error {
 	if !refRE.MatchString(ref) {
 		return fmt.Errorf("secrets: invalid reference %q", ref)
@@ -87,19 +93,52 @@ func ValidRef(ref string) error {
 	return nil
 }
 
-// AccountRef liefert den Verweis für das Passwort eines Kontos.
-func AccountRef(account string) string { return "account/" + account }
+// ValidDataDirID prüft die Kennung des Datenverzeichnisses (8 Hex).
+func ValidDataDirID(id string) error {
+	if !dataDirIDRE.MatchString(id) {
+		return fmt.Errorf("secrets: invalid data directory id %q", id)
+	}
+	return nil
+}
+
+// AccountRef liefert den Verweis für das Passwort eines Kontos:
+// "account/<datadir-id>/<name>". Die Kennung des Datenverzeichnisses
+// (store.DataDirID) trennt die Einträge zweier Datenverzeichnisse (Profile)
+// mit gleichem Kontonamen (S2.0/A2).
+func AccountRef(dataDirID, account string) string {
+	return "account/" + dataDirID + "/" + account
+}
+
+// LegacyAccountRef ist der Verweis bis S1 ("account/<name>"); beim ersten
+// Öffnen mit Schema 8 zieht der Eintrag nach AccountRef um.
+func LegacyAccountRef(account string) string { return "account/" + account }
 
 // EnvName liefert die Umgebungsvariable, die einen Verweis überschreibt:
-// "account/demo-1" → POSTKAUZ_PASSWORD_DEMO_1. Andere Verweisarten:
-// POSTKAUZ_SECRET_<ART>_<NAME>.
+// "account/1a2b3c4d/demo-1" (wie "account/demo-1") → POSTKAUZ_PASSWORD_DEMO_1.
+// Die Kennung des Datenverzeichnisses gehört nicht dazu: Die Umgebung gilt
+// je Prozess, und der Name bleibt so von außen vorhersagbar. Andere
+// Verweisarten: POSTKAUZ_SECRET_<ART>_<NAME>.
 func EnvName(ref string) string {
 	kind, name, _ := strings.Cut(ref, "/")
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
 	name = strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 	if kind == "account" {
 		return brand.EnvPrefix + "_PASSWORD_" + name
 	}
 	return brand.EnvPrefix + "_SECRET_" + strings.ToUpper(kind) + "_" + name
+}
+
+// Stored liefert den Speicher unter der Umgebungsschicht (WithEnv): Get
+// liest dann nur, was wirklich gespeichert ist. Für den Umzug von Einträgen
+// und für `doctor`; ein Wert aus der Umgebung darf nie in den Schlüsselbund
+// kopiert werden.
+func Stored(st Store) Store {
+	if e, ok := st.(envStore); ok {
+		return e.base
+	}
+	return st
 }
 
 // WithEnv legt die Umgebungsvariablen über einen Speicher: Get liest zuerst

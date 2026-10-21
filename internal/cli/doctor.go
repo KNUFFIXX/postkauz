@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -189,7 +190,39 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		}
 		rep.Accounts = append(rep.Accounts, da)
 	}
+	doctorCredentialRefs(ctx, db, sec, list, &rep)
 	return rep
+}
+
+// doctorCredentialRefs meldet den Stand des Umzugs der Schlüsselbund-Einträge
+// (S2.0/A2): Konten mit altem Verweis und alte Einträge, die nach dem Umzug
+// nicht gelöscht werden konnten und noch bestehen.
+func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Store, list []store.AccountSummary, rep *DoctorReport) {
+	dirID, err := db.DataDirID(ctx)
+	if err != nil {
+		return // Schema vor 8: Das nächste Kommando migriert und zieht um.
+	}
+	for _, acc := range list {
+		if want := secrets.AccountRef(dirID, acc.Name); acc.CredentialRef != want {
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; the next command (e.g. accounts list) moves it to %s",
+				acc.Name, acc.CredentialRef, want))
+		}
+	}
+	if sec == nil {
+		return
+	}
+	left, err := db.CredentialRefsLeft(ctx)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "keyring: "+err.Error())
+		return
+	}
+	base := secrets.Stored(sec)
+	for _, ref := range left {
+		if _, err := base.Get(ref); err == nil {
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("old keyring entry %s is still there after the move and could not be deleted; delete it in the OS keyring (service %s, entry %s)",
+				ref, brand.KeyringService, ref))
+		}
+	}
 }
 
 // auditExportStale: Ein Tag mit Einträgen, der so lange zurückliegt und noch

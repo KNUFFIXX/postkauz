@@ -4,7 +4,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Noch nichts seit 0.1.0-rc1.
+### Changed
+
+- S2.0/A2: Der Schlüsselbund-Eintrag eines Kontos heißt `account/<datadir-id>/<name>` statt `account/<name>`; `<datadir-id>` sind 8 Hex aus der Kennung des Datenverzeichnisses (`meta.datadir_id`, Migration 0008, Schema 8). Zwei Datenverzeichnisse (Profile) mit gleichem Kontonamen teilen sich keinen Eintrag mehr. Vorhandene Einträge zieht das erste Kommando um (lesen alt → schreiben neu → Verweis umstellen → löschen alt; nicht `mcp`); bleibt der alte Eintrag stehen, warnen das Kommando und `doctor`. `POSTKAUZ_PASSWORD_<NAME>` bleibt unverändert.
 
 ## [0.1.0-rc1] – 2026-10-16
 

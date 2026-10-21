@@ -55,6 +55,9 @@ type AccountRepo interface {
 	DeleteAccount(ctx context.Context, id int64) error
 	CountMessages(ctx context.Context, accountID int64) (int, error)
 	UpdateAccountProbe(ctx context.Context, id int64, capabilities, status, lastError string) error
+	// DataDirID ist die Kennung des Datenverzeichnisses im
+	// Schlüsselbund-Verweis (S2.0/A2).
+	DataDirID(ctx context.Context) (string, error)
 }
 
 // ProbeMailbox ist ein Ordner im Ergebnis von accounts.test.
@@ -327,7 +330,11 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 			if err := in.normalize(); err != nil {
 				return nil, err
 			}
-			ref := secrets.AccountRef(in.Name)
+			dirID, err := repo.DataDirID(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ref := secrets.AccountRef(dirID, in.Name)
 			if _, err := repo.AccountByName(ctx, in.Name); err == nil {
 				return nil, fmt.Errorf("%w: %s", store.ErrAccountExists, in.Name)
 			} else if !errors.Is(err, store.ErrAccountNotFound) {
