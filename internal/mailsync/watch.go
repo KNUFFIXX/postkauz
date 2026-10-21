@@ -3,9 +3,9 @@ package mailsync
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 )
@@ -64,15 +64,20 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	}
 	// Die IDLE-Schleife endet mit Watch: eigener Kontext, und Watch wartet
 	// auf sie (sonst liefe sie nach einem Anmeldefehler eines Laufs mit
-	// eigener Verbindung weiter; Leck-Test in leak_test.go).
+	// eigener Verbindung weiter; Leck-Test in leak_test.go). Sie läuft
+	// unter crash.Go (A02 A5): Ein Panic darin beendet Watch mit einem
+	// *crash.PanicError statt den Prozess mit Go-Stack und Argumenten.
 	ctx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer cancel()
 	kick := make(chan struct{}, 1)
-	idleErr := make(chan error, 1)
+	var idleDone <-chan error // nil = keine IDLE-Schleife (mehr)
+	defer func() {
+		cancel()
+		if idleDone != nil {
+			<-idleDone
+		}
+	}()
 	if e.Remote.Capabilities().Idle {
-		wg.Go(func() { e.idleLoop(ctx, o, kick, idleErr) })
+		idleDone = crash.Go("IDLE watcher", func() error { return e.idleLoop(ctx, o, kick) })
 	} else {
 		e.log().Info("server has no IDLE; polling only", "interval", o.Interval.String())
 	}
@@ -115,8 +120,11 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case err := <-idleErr:
-			return err
+		case err := <-idleDone:
+			idleDone = nil // beendet; ohne Fehler (IDLE nicht unterstützt) bleibt das Polling
+			if err != nil {
+				return err
+			}
 		case <-kick:
 			if err := round([]string{o.IdleMailbox}); err != nil {
 				return err
@@ -130,19 +138,19 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 }
 
 // idleLoop hält IDLE auf dem Ordner; nach einem Fehler wartet sie und baut
-// neu auf. Ein Anmeldefehler geht an Watch und beendet es.
-func (e *Engine) idleLoop(ctx context.Context, o WatchOptions, kick chan<- struct{}, fatalErr chan<- error) {
+// neu auf. Ein Anmeldefehler kommt zurück und beendet Watch; nil heißt
+// beendet (ctx) oder IDLE nicht unterstützt.
+func (e *Engine) idleLoop(ctx context.Context, o WatchOptions, kick chan<- struct{}) error {
 	for ctx.Err() == nil {
 		err := e.Remote.Idle(ctx, o.IdleMailbox, kick)
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		if errors.Is(err, provider.ErrAuth) {
-			fatalErr <- err
-			return
+			return err
 		}
 		if errors.Is(err, provider.ErrUnsupported) {
-			return
+			return nil
 		}
 		if err != nil {
 			e.log().Warn("IDLE connection failed; reconnecting later", "error", err.Error(), "retry_in", o.IdleRetry.String())
@@ -151,7 +159,7 @@ func (e *Engine) idleLoop(ctx context.Context, o WatchOptions, kick chan<- struc
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return
+			return nil
 		case <-t.C:
 		}
 		// Nach dem Wiederaufbau einmal synchronisieren: Während der Pause
@@ -161,6 +169,7 @@ func (e *Engine) idleLoop(ctx context.Context, o WatchOptions, kick chan<- struc
 		default:
 		}
 	}
+	return nil
 }
 
 // ClampIdleRestart hält den IDLE-Neustart im Rahmen von ADR-007 (5 bis

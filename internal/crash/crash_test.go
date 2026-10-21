@@ -1,8 +1,10 @@
 package crash
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -72,5 +74,43 @@ func TestSanitizeStackFormat(t *testing.T) {
 		"created by net/http.(*Server).Serve (net/http/server.go:3360)"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
+// A02 A5 (Frage 15): Do und Go fangen einen Panic ab, geben einen
+// *PanicError ohne Panic-Wert zurück und schreiben den bereinigten Bericht
+// ins Log; Fehler und nil von fn kommen unverändert durch.
+func TestDoAndGoRecoverPanics(t *testing.T) {
+	var buf bytes.Buffer
+	SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer SetLogger(nil)
+
+	err := Do("unit task", func() error { leak(secret); return nil })
+	var pe *PanicError
+	if !errors.Is(err, ErrInternal) || !errors.As(err, &pe) || pe.Name != "unit task" ||
+		err.Error() != "internal error in unit task: panic value withheld (string)" {
+		t.Fatalf("Do = %v", err)
+	}
+	if !strings.Contains(strings.Join(pe.Report.Stack, "\n"), "internal/crash.leak (internal/crash/crash_test.go:") {
+		t.Fatalf("stack: %v", pe.Report.Stack)
+	}
+	// In einer eigenen Goroutine: Der Prozess läuft weiter, der Fehler kommt
+	// über den Kanal.
+	if err := <-Go("background", func() error { _ = index([]string{secret}, 3); return nil }); !errors.Is(err, ErrInternal) ||
+		err.Error() != "internal error in background: runtime error: index out of range [3] with length 1" {
+		t.Fatalf("Go = %v", err)
+	}
+	log := buf.String()
+	if strings.Contains(log, secret) || strings.Contains(log, "bad message") || strings.Count(log, `"msg":"panic in background task"`) != 2 ||
+		!strings.Contains(log, `"task":"unit task"`) || !strings.Contains(log, "internal/crash.leak (internal/crash/crash_test.go:") {
+		t.Fatalf("log:\n%s", log)
+	}
+
+	plain := errors.New("plain")
+	if err := Do("x", func() error { return plain }); err != plain {
+		t.Fatalf("error passes through: %v", err)
+	}
+	if err := <-Go("x", func() error { return nil }); err != nil {
+		t.Fatalf("nil: %v", err)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -157,15 +158,18 @@ func (e *Engine) Run(ctx context.Context, o Options) (Report, error) {
 	var rep Report
 	for _, src := range o.Sources {
 		sr := SourceReport{Path: src.Rel, Folder: src.Folder, Mode: src.Mode}
-		var err error
-		switch src.Format {
-		case FormatMbox:
-			err = r.mbox(src, &sr)
-		case FormatMaildir:
-			err = r.maildir(src, &sr)
-		default:
-			err = fmt.Errorf("unknown format %q", src.Format)
-		}
+		// crash.Do (A02 A5): Ein Panic beim Lesen einer Quelle oder in einem
+		// ihrer Stapel wird bereinigt gemeldet und beendet den Import mit
+		// Fehler (fatal); gespeicherte Stapel und der Stand der Quelle bleiben.
+		err := crash.Do("import source", func() error {
+			switch src.Format {
+			case FormatMbox:
+				return r.mbox(src, &sr)
+			case FormatMaildir:
+				return r.maildir(src, &sr)
+			}
+			return fmt.Errorf("unknown format %q", src.Format)
+		})
 		if err != nil && fatal(ctx, err) {
 			rep.add(sr)
 			rep.Duration = time.Since(start)
@@ -204,7 +208,8 @@ func (s storeError) Unwrap() error { return s.err }
 
 func fatal(ctx context.Context, err error) bool {
 	var se storeError
-	return ctx.Err() != nil || errors.Is(err, ErrAborted) || errors.Is(err, context.Canceled) || errors.As(err, &se)
+	return ctx.Err() != nil || errors.Is(err, ErrAborted) || errors.Is(err, context.Canceled) || errors.As(err, &se) ||
+		errors.Is(err, crash.ErrInternal)
 }
 
 // item ist eine gelesene Nachricht vor dem Abgleich.

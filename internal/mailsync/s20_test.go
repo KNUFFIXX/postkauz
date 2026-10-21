@@ -5,6 +5,9 @@ package mailsync
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"slices"
 	"strconv"
@@ -17,6 +20,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -180,4 +184,65 @@ func TestSyncSkipsMessageOverMaxMessageBytes(t *testing.T) {
 	if n := e.count(t, `SELECT count(*) FROM messages WHERE subject IN ('Nachricht 1', 'Nachricht 3')`); n != 2 {
 		t.Fatalf("mirrored = %d", n)
 	}
+}
+
+// A02 A5 (Frage 15): Ein Panic im IDLE-Watcher (eigene Goroutine) beendet
+// den Lauf mit einem Fehler (ErrInternal, ohne Panic-Wert), nicht den
+// Prozess; der bereinigte Bericht steht im Log. Vorher endete das Programm
+// mit der Standardausgabe von Go (Panic-Wert, Stack mit Argumenten).
+func TestWatchIdlePanicEndsRunWithError(t *testing.T) {
+	const canary = "KANARIE-MAILTEXT-idle-3a9c"
+	var logBuf bytes.Buffer
+	crash.SetLogger(slog.New(slog.NewJSONHandler(&logBuf, nil)))
+	defer crash.SetLogger(nil)
+	synctest.Test(t, func(t *testing.T) {
+		r := &clockRemote{start: time.Now()}
+		r.idle = func(context.Context, int, chan<- struct{}) error {
+			time.Sleep(time.Minute)
+			panic("IDLE saw " + canary)
+		}
+		e := &Engine{Store: nopStore{}, Remote: r}
+		err := e.Watch(context.Background(), WatchOptions{Interval: 5 * time.Minute})
+		var pe *crash.PanicError
+		if !errors.Is(err, crash.ErrInternal) || !errors.As(err, &pe) || pe.Name != "IDLE watcher" || strings.Contains(err.Error(), canary) {
+			t.Fatalf("Watch = %v", err)
+		}
+		if d := time.Since(r.start); d != time.Minute {
+			t.Fatalf("Watch ended after %s, want 1m (right after the panic)", d)
+		}
+	})
+	if log := logBuf.String(); strings.Contains(log, canary) || !strings.Contains(log, `"task":"IDLE watcher"`) ||
+		!strings.Contains(log, "internal/mailsync.(*Engine).idleLoop") {
+		t.Fatalf("log:\n%s", log)
+	}
+}
+
+// A02 A5: Ein Panic beim Spiegeln eines Ordners (hier im Abruf der
+// Rohmails) beendet den Lauf mit Fehler, statt als Ordnerfehler
+// weiterzulaufen; der Panic-Wert erscheint nirgends.
+func TestSyncPanicInMailboxEndsRun(t *testing.T) {
+	const canary = "KANARIE-MAILTEXT-window-8d2b"
+	addr, u := memServer(t, false)
+	_, _ = u.Append("INBOX", lit(mail(1)), &imap.AppendOptions{})
+	_ = u.Create("Archiv", nil)
+	_, _ = u.Append("Archiv", lit(mail(2)), &imap.AppendOptions{})
+	e := newEnv(t, addr)
+	pr := &panicRemote{Remote: connect(t, addr, 0), canary: canary}
+	rep, err := e.engine(t, pr).SyncAll(context.Background(), Options{})
+	if !errors.Is(err, crash.ErrInternal) || strings.Contains(err.Error(), canary) || !strings.Contains(err.Error(), "internal error in sync mailbox") {
+		t.Fatalf("SyncAll = %+v %v", rep, err)
+	}
+	if len(rep.Mailboxes) != 1 || rep.Mailboxes[0].Path != "INBOX" || strings.Contains(strings.Join(rep.Mailboxes[0].Problems, " "), canary) {
+		t.Fatalf("report = %+v (the run must stop after the first mailbox)", rep)
+	}
+}
+
+// panicRemote löst beim Abruf der Rohmails einen Panic mit Inhalt aus.
+type panicRemote struct {
+	Remote
+	canary string
+}
+
+func (p *panicRemote) FetchRaw(context.Context, string, uint32, []provider.UID, func(provider.UID, io.Reader) error) error {
+	panic("raw message " + p.canary)
 }

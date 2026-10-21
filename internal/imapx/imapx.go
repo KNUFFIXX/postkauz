@@ -57,6 +57,7 @@ import (
 	"github.com/emersion/go-message/charset"
 	"github.com/emersion/go-sasl"
 
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -367,13 +368,23 @@ func (c *Client) guard(f func() error, closeFn func()) error {
 	var reason atomic.Int32
 	done := make(chan struct{})
 	first, _ := c.watchdogDue(start, start)
-	go func() {
+	// Der Watchdog läuft unter crash.Go (A02 A5). Endet er durch einen
+	// Panic, schließt er vorher die Verbindung (f hinge sonst ohne Aufsicht)
+	// und guard meldet den *crash.PanicError.
+	wd := crash.Go("IMAP watchdog", func() error {
+		ok := false
+		defer func() {
+			if !ok {
+				closeFn()
+			}
+		}()
 		t := time.NewTimer(first)
 		defer t.Stop()
 		for {
 			select {
 			case <-done:
-				return
+				ok = true
+				return nil
 			case <-t.C:
 				wait, why := c.watchdogDue(start, time.Now())
 				if why == 0 {
@@ -381,13 +392,17 @@ func (c *Client) guard(f func() error, closeFn func()) error {
 					continue
 				}
 				reason.Store(int32(why))
+				ok = true
 				closeFn()
-				return
+				return nil
 			}
 		}
-	}()
+	})
 	err := f()
 	close(done)
+	if werr := <-wd; werr != nil {
+		return werr
+	}
 	switch reason.Load() {
 	case watchSilence:
 		return fmt.Errorf("%w: server did not answer within %s (watchdog closed the connection)", provider.ErrConnection, c.timeout)

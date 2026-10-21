@@ -4,15 +4,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- S2.0/A3: Ein vorhandenes Datenverzeichnis und Log mit zu weiten Rechten werden beim Öffnen auf 0700 bzw. 0600 verschärft (nicht unter Windows); ein Fehler dabei steht als Warnung im Log, `doctor --secrets` meldet danach `ok`.
-
-- S2.0/A4: Der IMAP-Abruf begrenzt jede Rohmail auf `[imap] max_message_bytes` (Standard und Höchstwert 256 MiB); vorher las `FetchRaw` gepufferte Nachrichten mit `io.ReadAll` ohne Grenze (u. a. nach einem Fehler des Rückrufs jede weitere Nachricht der Gruppe). Eine zu große Nachricht ist ein Fehler dieser Nachricht, der Sync läuft weiter.
+- S2.0/A5: `crash.Go(name, fn)` und `crash.Do(name, fn)` (`internal/crash`): `recover`, bereinigter Bericht ins Log, Fehlerweitergabe als `*crash.PanicError`.
 
 ### Changed
 
 - S2.0/A1: `sync --watch` gleicht stündlich (`--full-check-interval`, Standard `1h`, erster Lauf eingeschlossen) die vollständigen UID-Listen aller Ordner ab und erkennt so auch Löschungen, die der Zahlenvergleich übersieht; Operation `sync.run` mit `full_check_interval_seconds`. Der einmalige `sync` ist unverändert.
+
+### Fixed
+
+- S2.0/A3: Ein vorhandenes Datenverzeichnis und Log mit zu weiten Rechten werden beim Öffnen auf 0700 bzw. 0600 verschärft (nicht unter Windows); ein Fehler dabei steht als Warnung im Log, `doctor --secrets` meldet danach `ok`.
+- S2.0/A4: Der IMAP-Abruf begrenzt jede Rohmail auf `[imap] max_message_bytes` (Standard und Höchstwert 256 MiB); vorher las `FetchRaw` gepufferte Nachrichten mit `io.ReadAll` ohne Grenze (u. a. nach einem Fehler des Rückrufs jede weitere Nachricht der Gruppe). Eine zu große Nachricht ist ein Fehler dieser Nachricht, der Sync läuft weiter.
+- S2.0/A5: Panics in eigenen Hilfsgoroutinen (IDLE-Watcher, Watchdog je IMAP-Kommando, parallele Suchabfragen) beenden nicht mehr den Prozess mit Panic-Wert und Stack samt Argumenten, sondern den Lauf mit Fehler (Code `internal`, Audit `panic`, bereinigter Bericht im Log); dasselbe für Ordner des Syncs, Quellen des Imports und den Extraktor (dort scheitert nur der Anhang, der Kindprozess meldet keinen Panic-Wert mehr als Grund).
 
 ## [0.1.0-rc1] – 2026-10-16
 

@@ -7,9 +7,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/search"
 )
 
@@ -81,25 +82,31 @@ func (s *SQLite) runFTS(ctx context.Context, j *ftsJob) {
 }
 
 // runAll führt die Abfragen mit höchstens so vielen gleichzeitig aus, wie
-// Prozessoren da sind (höchstens 4).
+// Prozessoren da sind (höchstens 4). Die Arbeiter laufen unter crash.Go
+// (A02 A5): Ein Panic beendet die Suche mit einem *crash.PanicError statt
+// den Prozess (z. B. den MCP-Server). Sie holen sich die nächste Abfrage
+// über einen Zähler, damit ein abgestürzter Arbeiter niemanden blockiert.
 func (s *SQLite) runAll(ctx context.Context, jobs []*ftsJob) error {
 	workers := min(runtime.GOMAXPROCS(0), 4, len(jobs))
-	next := make(chan *ftsJob)
-	var wg sync.WaitGroup
+	var next atomic.Int64
+	done := make([]<-chan error, 0, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range next {
-				s.runFTS(ctx, j)
+		done = append(done, crash.Go("search query", func() error {
+			for i := next.Add(1) - 1; i < int64(len(jobs)); i = next.Add(1) - 1 {
+				s.runFTS(ctx, jobs[i])
 			}
-		}()
+			return nil
+		}))
 	}
-	for _, j := range jobs {
-		next <- j
+	var perr error
+	for _, d := range done {
+		if err := <-d; err != nil && perr == nil {
+			perr = err
+		}
 	}
-	close(next)
-	wg.Wait()
+	if perr != nil {
+		return perr
+	}
 	for _, j := range jobs {
 		if j.err != nil {
 			return j.err

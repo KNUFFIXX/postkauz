@@ -57,3 +57,25 @@ func TestExecutorRecoversHandlerPanic(t *testing.T) {
 		t.Fatalf("after panic: %v", err)
 	}
 }
+
+// A02 A5: Ein Panic in einer Hilfsgoroutine des Handlers (crash.Go) kommt
+// als Fehler zurück und zählt wie ein Panic im Handler: ErrInternal, Audit
+// mit Grund "panic", ohne Panic-Wert.
+func TestExecutorAuditsHelperGoroutinePanic(t *testing.T) {
+	const canary = "KANARIE-MAILTEXT-helper-77"
+	reg := NewRegistry()
+	if err := reg.Register(newTestOp("m.helper", policy.ScopeMailRead, policy.R0, func(context.Context, Call) (any, error) {
+		return nil, <-crash.Go("helper", func() error { panic("text " + canary) })
+	})); err != nil {
+		t.Fatal(err)
+	}
+	au := &audit.Memory{}
+	x := &Executor{Registry: reg, Audit: au}
+	_, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "rd", Scopes: policy.Roles["reader"]}, Operation: "m.helper"})
+	if !errors.Is(err, ErrInternal) || strings.Contains(err.Error(), canary) || err.Error() != "internal error in helper: panic value withheld (string)" {
+		t.Fatalf("err = %v", err)
+	}
+	if ev := au.Events(); len(ev) != 2 || ev[1].Reason != "panic" {
+		t.Fatalf("audit = %+v", ev)
+	}
+}

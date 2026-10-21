@@ -95,6 +95,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	}
 	a.logFile = lf
 	a.log = slog.New(slog.NewJSONHandler(lf, &slog.HandlerOptions{Level: parseLevel(a.cfg.LogLevel)}))
+	// Panics in Hilfsgoroutinen (crash.Go/Do) bereinigt ins Log (A02 A5).
+	crash.SetLogger(a.log)
 	// Vorhandenes Datenverzeichnis und Log nur für den Nutzer (A02 A3);
 	// scheitert das, läuft das Kommando trotzdem, mit Warnung im Log.
 	for _, c := range config.RestrictPermissions(a.paths) {

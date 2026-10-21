@@ -11,15 +11,81 @@
 //     anderen Wert nur mit seinem Typ ("panic value withheld (string)");
 //   - je Rahmen den Funktionsnamen und Datei:Zeile, ohne Argumente und
 //     ohne Programmzähler-Versatz.
+//
+// Seit S2.0 (A02 A5, Frage 15) fangen Do und Go Panics in eigenen
+// Hilfsgoroutinen und Arbeitsschritten (IDLE-Watcher, Sync-Ordner,
+// Import-Quellen, Extraktor, Watchdog, Suche) mit demselben Bericht ab:
+// Der Bericht geht ins Log (SetLogger), der Aufrufer bekommt einen
+// *PanicError (errors.Is(err, ErrInternal)) statt eines Programmabbruchs.
 package crash
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"reflect"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"strings"
+	"sync/atomic"
 )
+
+// ErrInternal kennzeichnet einen abgefangenen Panic (ops.ErrInternal ist
+// derselbe Wert: CLI-Code internal, Audit-Grund panic).
+var ErrInternal = errors.New("internal error")
+
+// PanicError ist ein abgefangener Panic in einem Arbeitsschritt (Do, Go).
+// Die Meldung enthält nur den Namen des Schritts und Report.Message.
+type PanicError struct {
+	Name   string
+	Report Report
+}
+
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("internal error in %s: %s", e.Name, e.Report.Message)
+}
+
+// Is: errors.Is(err, ErrInternal).
+func (e *PanicError) Is(target error) bool { return target == ErrInternal }
+
+var logger atomic.Pointer[slog.Logger]
+
+// SetLogger setzt das Log für Berichte aus Do und Go (die CLI setzt ihr
+// Log beim Öffnen des Datenverzeichnisses); ohne Logger bleibt nur der
+// Fehler beim Aufrufer.
+func SetLogger(l *slog.Logger) { logger.Store(l) }
+
+func currentLogger() *slog.Logger {
+	if l := logger.Load(); l != nil {
+		return l
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// Do führt fn aus und fängt einen Panic ab: Der bereinigte Bericht geht
+// ins Log, der Rückgabewert ist dann ein *PanicError. Sonst liefert Do den
+// Fehler von fn unverändert.
+func Do(name string, fn func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			rep := FromPanic(v, debug.Stack())
+			currentLogger().Error("panic in background task", "task", name, "message", rep.Message, "stack", rep.Stack)
+			err = &PanicError{Name: name, Report: rep}
+		}
+	}()
+	return fn()
+}
+
+// Go startet fn in einer eigenen Goroutine wie Do. Der Kanal liefert genau
+// einen Wert (nil, den Fehler von fn oder einen *PanicError), dann nichts
+// mehr; er ist gepuffert, die Goroutine endet auch, wenn niemand liest.
+func Go(name string, fn func() error) <-chan error {
+	ch := make(chan error, 1)
+	go func() { ch <- Do(name, fn) }()
+	return ch
+}
 
 // Report ist ein bereinigter Panic.
 type Report struct {

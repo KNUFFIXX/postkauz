@@ -34,6 +34,7 @@ import (
 	"unicode"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -213,7 +214,18 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		if len(o.Mailboxes) > 0 && !slices.Contains(o.Mailboxes, mb.Path) {
 			continue
 		}
-		mr, err := e.SyncMailbox(ctx, mb, o)
+		// crash.Do (A02 A5): Ein Panic in einem Fenster des Ordners (Abruf,
+		// Parser, Aufbereitung) wird bereinigt gemeldet und beendet den Lauf
+		// mit Fehler (fatal), statt als Ordnerfehler weiterzulaufen.
+		var mr MailboxReport
+		err := crash.Do("sync mailbox", func() error {
+			var err error
+			mr, err = e.SyncMailbox(ctx, mb, o)
+			return err
+		})
+		if mr.Path == "" {
+			mr = MailboxReport{Path: mb.Path, Role: mb.Role, Mirrored: mb.Mirrored, Total: mb.Total}
+		}
 		if err != nil && !fatal(ctx, err) {
 			// Ordner überspringen, Lauf fortsetzen; der nächste Lauf
 			// setzt am gespeicherten Stand wieder an.
@@ -279,7 +291,7 @@ func (e *Engine) backlog(ctx context.Context) error {
 // fatal: Fehler, nach denen weitere Ordner keinen Sinn haben.
 func fatal(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, provider.ErrAuth) || errors.Is(err, provider.ErrConnection) ||
-		errors.Is(err, ErrAborted) || errors.Is(err, context.Canceled)
+		errors.Is(err, ErrAborted) || errors.Is(err, context.Canceled) || errors.Is(err, crash.ErrInternal)
 }
 
 // SyncMailbox synct einen Ordner in Fenstern bis zum aktuellen Stand.

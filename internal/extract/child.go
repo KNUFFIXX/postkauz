@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 )
 
 // Kindprozess: Das init schaltet das Programm in den Extraktor-Modus, wenn
@@ -30,13 +32,30 @@ const (
 	docxDocumentPath = "word/document.xml"
 )
 
+// childMain ist der Extraktor im Kindprozess. Ein Panic (z. B. im
+// XML-Decoder) darf nicht mit der Standardausgabe von Go enden: Deren
+// erste Zeile („panic: <Wert>") übernimmt der Elternprozess als Grund in
+// attachments.extract_error, und der Wert kann Text aus dem Dokument
+// tragen. Deshalb crash.Do (A02 A5): Ausgegeben wird nur der bereinigte
+// Bericht, Exit 2.
 func childMain(mode string, stdin io.Reader, stdout, stderr io.Writer) int {
-	var err error
-	switch mode {
-	case string(KindDOCX):
-		err = docxText(stdin, stdout)
-	default:
-		err = fmt.Errorf("unknown extractor mode %q", mode)
+	err := crash.Do("extractor", func() error {
+		if testPanic != nil {
+			testPanic(mode)
+		}
+		switch mode {
+		case string(KindDOCX):
+			return docxText(stdin, stdout)
+		}
+		return fmt.Errorf("unknown extractor mode %q", mode)
+	})
+	var pe *crash.PanicError
+	if errors.As(err, &pe) {
+		fmt.Fprintln(stderr, pe.Error())
+		for _, f := range pe.Report.Stack {
+			fmt.Fprintln(stderr, "    "+f)
+		}
+		return 2
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
