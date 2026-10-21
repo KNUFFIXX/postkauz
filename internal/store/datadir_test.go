@@ -96,3 +96,51 @@ func TestCredentialRefsLeftAndSetRef(t *testing.T) {
 		t.Fatalf("left = %v", left)
 	}
 }
+
+// Migration 0009: übersprungene Nachrichten je Ordner, nur unter ihrem
+// UIDVALIDITY; der Abgleich entfernt, was der Server nicht mehr führt oder
+// unter einem anderen UIDVALIDITY entstand.
+func TestSkippedMessages(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	id, err := s.CreateAccount(ctx, Account{Name: "demo", Email: "demo@example.invalid", Host: "127.0.0.1", Port: 143,
+		TLS: "none", Username: "u", AuthType: "password", CredentialRef: "account/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.SyncMailboxes(ctx, id, []MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+		t.Fatal(err)
+	}
+	mbs, _ := s.Mailboxes(ctx, id)
+	mb := mbs[0].ID
+	for _, u := range []uint32{7, 3, 9} {
+		if err := s.MarkSkipped(ctx, mb, 100, u, 1<<30, SkipTooLarge); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.MarkSkipped(ctx, mb, 99, 12, 5, SkipTooLarge); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkSkipped(ctx, mb, 100, 3, 2<<30, SkipTooLarge); err != nil { // erneut: kein Fehler
+		t.Fatal(err)
+	}
+	if got, err := s.SkippedUIDs(ctx, mb, 100); err != nil || len(got) != 3 || got[0] != 3 || got[2] != 9 {
+		t.Fatalf("skipped = %v, %v", got, err)
+	}
+	if err := s.MarkSkipped(ctx, mb, 100, 4, 1, "other"); err == nil {
+		t.Fatal("unknown reason accepted")
+	}
+	n, err := s.PruneSkipped(ctx, mb, 100, []uint32{1, 3, 9, 12})
+	if err != nil || n != 2 { // 7 nicht mehr da, 12 unter altem UIDVALIDITY
+		t.Fatalf("pruned %d, %v", n, err)
+	}
+	if got, _ := s.SkippedUIDs(ctx, mb, 100); len(got) != 2 || got[0] != 3 || got[1] != 9 {
+		t.Fatalf("after prune = %v", got)
+	}
+	if err := s.ClearSkipped(ctx, mb); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.SkippedUIDs(ctx, mb, 100); len(got) != 0 {
+		t.Fatalf("after clear = %v", got)
+	}
+}

@@ -110,7 +110,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	if ex == nil {
 		ex = extract.New(extract.Options{})
 	}
-	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log}
+	eng := &Engine{Store: r.Store, Blobs: r.Blobs, Remote: remote, AccountID: a.ID, Log: r.Log, MaxMessageBytes: r.MaxMessageBytes}
 	if progress != nil {
 		eng.Progress = func(ev Event) {
 			progress(ops.Progress{Event: ev.Kind, Mailbox: ev.Mailbox, Done: ev.Done, Total: ev.Total, Message: ev.Message})

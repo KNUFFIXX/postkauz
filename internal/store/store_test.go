@@ -44,7 +44,7 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	}
 	want := []string{"accounts", "identities", "mailboxes", "messages", "message_mailboxes", "threads",
 		"attachments", "bodies", "blobs", "tags", "message_tags", "drafts", "approvals", "jobs",
-		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram", "thread_refs", "index_queue"}
+		"audit_events", "audit_exports", "api_keys", "policies", "meta", "fts_messages", "fts_trigram", "thread_refs", "index_queue", "skipped_messages"}
 	for _, name := range want {
 		var n int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name=?`, name).Scan(&n); err != nil || n != 1 {

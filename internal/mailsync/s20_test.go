@@ -186,6 +186,123 @@ func TestSyncSkipsMessageOverMaxMessageBytes(t *testing.T) {
 	}
 }
 
+// recordRemote merkt sich, für welche UIDs Köpfe und Rohmails angefordert
+// wurden (FetchRaw = UID FETCH BODY.PEEK[]).
+type recordRemote struct {
+	Remote
+	mu      sync.Mutex
+	headers []provider.UID
+	raw     []provider.UID
+}
+
+func (r *recordRemote) FetchHeaders(ctx context.Context, mb string, uv uint32, uids []provider.UID) ([]provider.Header, error) {
+	r.mu.Lock()
+	r.headers = append(r.headers, uids...)
+	r.mu.Unlock()
+	return r.Remote.FetchHeaders(ctx, mb, uv, uids)
+}
+
+func (r *recordRemote) FetchRaw(ctx context.Context, mb string, uv uint32, uids []provider.UID, fn func(provider.UID, io.Reader) error) error {
+	r.mu.Lock()
+	r.raw = append(r.raw, uids...)
+	r.mu.Unlock()
+	return r.Remote.FetchRaw(ctx, mb, uv, uids, fn)
+}
+
+// reset liefert die bisher angeforderten UIDs und leert die Listen.
+func (r *recordRemote) reset() (headers, raw []provider.UID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	headers, raw = r.headers, r.raw
+	r.headers, r.raw = nil, nil
+	return headers, raw
+}
+
+// Gegenprüfung 21.10.2026, Befund 2 (A4): Eine Nachricht über
+// max_message_bytes wird gar nicht erst angefordert (Größe aus RFC822.SIZE
+// der Köpfe), zählt einmal als Fehler, wird gemerkt und in folgenden Läufen
+// nicht erneut angefordert, auch nicht beim Löschabgleich, der sie als
+// „lokal fehlend" sähe. sync --full prüft sie erneut; mit höherer Grenze
+// wird sie gespiegelt und die Liste leer.
+func TestSyncDoesNotFetchMessageOverLimit(t *testing.T) {
+	addr, u := memServer(t, false)
+	_, _ = u.Append("INBOX", lit(mail(1)), &imap.AppendOptions{})
+	big := append(mail(2), bytes.Repeat([]byte("x"), 8192)...)
+	_, _ = u.Append("INBOX", lit(big), &imap.AppendOptions{})
+	_, _ = u.Append("INBOX", lit(mail(3)), &imap.AppendOptions{})
+	e := newEnv(t, addr)
+	rr := &recordRemote{Remote: connect(t, addr, 0)}
+	eng := e.engine(t, rr)
+	eng.MaxMessageBytes = 4096
+	const bigUID = 2
+
+	rep, err := eng.SyncAll(context.Background(), Options{})
+	if err != nil || rep.Mirrored != 2 || rep.Errors != 1 {
+		t.Fatalf("first sync = %+v %v", rep, err)
+	}
+	if pr := rep.Mailboxes[0].Problems; len(pr) != 1 || !strings.Contains(pr[0], "uid 2:") || !strings.Contains(pr[0], "max_message_bytes") {
+		t.Fatalf("problems = %v", pr)
+	}
+	if _, raw := rr.reset(); slices.Contains(raw, bigUID) || len(raw) != 2 {
+		t.Fatalf("FetchRaw for %v; the large message must not be fetched", raw)
+	}
+	if n := e.count(t, `SELECT count(*) FROM skipped_messages WHERE uid = 2 AND reason = 'too_large' AND size > 8192`); n != 1 {
+		t.Fatalf("skipped_messages = %d", n)
+	}
+
+	// Folgeläufe, auch mit Löschabgleich (vollständige UID-Liste): nichts
+	// wird erneut angefordert, kein Fehler.
+	for _, o := range []Options{{}, {CheckDeleted: true}} {
+		rep, err = eng.SyncAll(context.Background(), o)
+		if err != nil || rep.Errors != 0 || rep.Mirrored != 2 {
+			t.Fatalf("next sync %+v = %+v %v", o, rep, err)
+		}
+		if headers, raw := rr.reset(); len(headers) != 0 || len(raw) != 0 {
+			t.Fatalf("next sync %+v requested headers %v, raw %v", o, headers, raw)
+		}
+	}
+
+	// sync --full prüft erneut: wieder ein Fehler, wieder kein Inhalt.
+	rep, err = eng.SyncAll(context.Background(), Options{Full: true})
+	if err != nil || rep.Errors != 1 {
+		t.Fatalf("full sync = %+v %v", rep, err)
+	}
+	if headers, raw := rr.reset(); !slices.Contains(headers, bigUID) || slices.Contains(raw, bigUID) {
+		t.Fatalf("full sync: headers %v, raw %v", headers, raw)
+	}
+
+	// Höhere Grenze: sync --full spiegelt sie, die Liste ist leer.
+	eng.MaxMessageBytes = 0
+	rep, err = eng.SyncAll(context.Background(), Options{Full: true})
+	if err != nil || rep.Errors != 0 || rep.Mirrored != 3 {
+		t.Fatalf("full sync with default limit = %+v %v", rep, err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM skipped_messages`); n != 0 {
+		t.Fatalf("skipped_messages after mirroring = %d", n)
+	}
+
+	// Löscht der Server eine gemerkte Nachricht, verschwindet der Eintrag.
+	eng.MaxMessageBytes = 4096
+	_, _ = u.Append("INBOX", lit(append(mail(4), bytes.Repeat([]byte("y"), 8192)...)), &imap.AppendOptions{})
+	if rep, err = eng.SyncAll(context.Background(), Options{}); err != nil || rep.Errors != 1 {
+		t.Fatalf("sync with a new large message = %+v %v", rep, err)
+	}
+	out := imapSession(t, addr)
+	uid := uidOf(t, out, "INBOX", "Nachricht 4")
+	if err := out.Store(imap.UIDSetNum(uid), &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}, Silent: true}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.UIDExpunge(imap.UIDSetNum(uid)).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rep, err = eng.SyncAll(context.Background(), Options{}); err != nil || rep.Errors != 0 || rep.Removed != 0 {
+		t.Fatalf("sync after deleting the large message = %+v %v", rep, err)
+	}
+	if n := e.count(t, `SELECT count(*) FROM skipped_messages`); n != 0 {
+		t.Fatalf("skipped_messages after server delete = %d", n)
+	}
+}
+
 // A02 A5 (Frage 15): Ein Panic im IDLE-Watcher (eigene Goroutine) beendet
 // den Lauf mit einem Fehler (ErrInternal, ohne Panic-Wert), nicht den
 // Prozess; der bereinigte Bericht steht im Log. Vorher endete das Programm

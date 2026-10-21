@@ -65,6 +65,11 @@ type Store interface {
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
 	ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]store.ReprocessItem, error)
 	SaveReprocessed(ctx context.Context, items []store.Reprocessed) error
+	// Übersprungene Nachrichten (zu groß; Migration 0009).
+	SkippedUIDs(ctx context.Context, mailboxID int64, uidValidity uint32) ([]uint32, error)
+	MarkSkipped(ctx context.Context, mailboxID int64, uidValidity, uid uint32, size int64, reason string) error
+	PruneSkipped(ctx context.Context, mailboxID int64, uidValidity uint32, present []uint32) (int, error)
+	ClearSkipped(ctx context.Context, mailboxID int64) error
 }
 
 // JobRunner führt die Jobs eines Kontos aus (internal/jobs): Extraktion
@@ -169,6 +174,19 @@ type Engine struct {
 	// (Textextraktion mit Zeitbudget, Volltextindex); nil = keine Jobs
 	// (Anhänge bleiben pending, Nachrichten eingereiht).
 	Jobs JobRunner
+	// MaxMessageBytes ist die größte Rohmail, die der Sync anfordert
+	// ([imap] max_message_bytes; 0 = 256 MiB wie der Blob-Store). Größer
+	// laut Server (RFC822.SIZE aus den Köpfen) = Fehler dieser Nachricht,
+	// ohne sie zu laden; sie wird gemerkt und erst mit `sync --full` neu
+	// geprüft. Die Lese-Grenze im IMAP-Abruf bleibt die zweite Sicherung.
+	MaxMessageBytes int64
+}
+
+func (e *Engine) maxMessageBytes() int64 {
+	if e.MaxMessageBytes > 0 {
+		return e.MaxMessageBytes
+	}
+	return blob.DefaultMaxSize
 }
 
 func (e *Engine) log() *slog.Logger {
@@ -306,6 +324,13 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 		state = provider.SyncState{}
 	}
 	e.emit(Event{Kind: "mailbox_start", Mailbox: mb.Path, Done: mb.Mirrored, Total: mb.Total})
+	if o.Full {
+		// sync --full prüft übersprungene Nachrichten erneut (etwa nach
+		// einer höheren Grenze); noch zu große kommen wieder auf die Liste.
+		if err := e.Store.ClearSkipped(ctx, mb.ID); err != nil {
+			return rep, err
+		}
+	}
 	retries := 0
 	first := true
 	for {
@@ -316,6 +341,13 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 		if err != nil {
 			return rep, err
 		}
+		// Übersprungene Nachrichten führt der Server, lokal fehlen sie: Sie
+		// zählen als bekannt, sonst löste jede einen UID-Abgleich aus.
+		skipped, err := e.Store.SkippedUIDs(ctx, mb.ID, state.UIDValidity)
+		if err != nil {
+			return rep, err
+		}
+		known += len(skipped)
 		// FullScan und CheckDeleted nur beim ersten Aufruf je Ordner: Er holt
 		// die vollständige UID-Liste (FullScan prüft dazu alle Flags);
 		// folgende Fenster brauchen das nicht.
@@ -330,7 +362,7 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 			e.log().Warn("UIDVALIDITY changed; re-matching mailbox by Message-ID", "mailbox", mb.Path)
 			state = provider.SyncState{}
 		}
-		err = e.applyChanges(ctx, mb, state, cs, &rep)
+		err = e.applyChanges(ctx, mb, state, cs, o.Full, &rep)
 		if errors.Is(err, provider.ErrUIDValidityChanged) && retries < 3 {
 			retries++ // zwischen Changes und Fetch neu angelegt: nochmal von vorn
 			continue
@@ -358,7 +390,7 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 }
 
 // applyChanges verarbeitet ein ChangeSet und speichert es samt Zustand.
-func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provider.SyncState, cs provider.ChangeSet, rep *MailboxReport) error {
+func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provider.SyncState, cs provider.ChangeSet, full bool, rep *MailboxReport) error {
 	uv := cs.NewState.UIDValidity
 	batch := store.MirrorBatch{AccountID: e.AccountID, MailboxID: mb.ID}
 	if cs.Reset {
@@ -384,6 +416,26 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 		removed, missing := diff(local, cs.Present, max(since.UIDNext, 1))
 		batch.Removed = removed
+		present := make([]uint32, len(cs.Present))
+		for i, u := range cs.Present {
+			present[i] = uint32(u)
+		}
+		if n, err := e.Store.PruneSkipped(ctx, mb.ID, uv, present); err != nil {
+			return err
+		} else if n > 0 {
+			e.log().Info("skipped messages no longer on the server", "mailbox", mb.Path, "count", n)
+		}
+		if !full && len(missing) > 0 {
+			// Gemerkte zu große Nachrichten nicht erneut anfordern.
+			skipped, err := e.Store.SkippedUIDs(ctx, mb.ID, uv)
+			if err != nil {
+				return err
+			}
+			missing = slices.DeleteFunc(missing, func(u provider.UID) bool {
+				_, found := slices.BinarySearch(skipped, uint32(u))
+				return found
+			})
+		}
 		if len(missing) > 0 {
 			e.log().Info("fetching messages missing locally", "mailbox", mb.Path, "count", len(missing))
 			fetch = append(fetch, missing...)
@@ -438,6 +490,10 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				continue
 			}
 			need = append(need, h)
+		}
+		need, err = e.skipTooLarge(ctx, mb, uv, need, rep)
+		if err != nil {
+			return err
 		}
 		if len(need) == 0 {
 			continue
@@ -495,6 +551,29 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 	}
 	return flush(true)
+}
+
+// skipTooLarge sortiert Nachrichten aus, die laut Server (RFC822.SIZE)
+// größer als MaxMessageBytes sind, bevor ihr Inhalt angefordert wird
+// (sonst überträgt der Server sie ganz, und der Abruf verwirft sie). Jede
+// zählt als Fehler dieser Nachricht und wird gemerkt, damit folgende Läufe
+// sie nicht erneut anfordern; `sync --full` prüft sie wieder.
+func (e *Engine) skipTooLarge(ctx context.Context, mb store.Mailbox, uv uint32, hs []provider.Header, rep *MailboxReport) ([]provider.Header, error) {
+	limit := e.maxMessageBytes()
+	out := hs[:0:0]
+	for _, h := range hs {
+		if h.Size <= limit {
+			out = append(out, h)
+			continue
+		}
+		if err := e.Store.MarkSkipped(ctx, mb.ID, uv, uint32(h.UID), h.Size, store.SkipTooLarge); err != nil {
+			return nil, err
+		}
+		rep.Errors++
+		rep.problem(fmt.Sprintf("uid %d: message of %d bytes is larger than imap.max_message_bytes (%d); not fetched, sync --full checks it again", h.UID, h.Size, limit))
+		e.log().Warn("message larger than max_message_bytes; not fetched", "mailbox", mb.Path, "uid", h.UID, "size", h.Size, "limit", limit)
+	}
+	return out, nil
 }
 
 // fetchHeaders holt Köpfe; schickt der Server eine unlesbare Antwort
