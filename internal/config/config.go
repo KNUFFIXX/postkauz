@@ -230,12 +230,60 @@ func LoadProfile(profile string) (Config, Paths, error) {
 }
 
 // EnsureDataDir legt das Datenverzeichnis nur für den Nutzer lesbar an
-// (0700, docs/sicherheit.md, Abschnitt 10).
+// (0700, docs/sicherheit.md, Abschnitt 10). Ein schon vorhandenes
+// Verzeichnis mit weiteren Rechten verschärft RestrictPermissions.
 func EnsureDataDir(p Paths) error {
 	if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
 		return fmt.Errorf("config: data directory: %w", err)
 	}
 	return nil
+}
+
+// chmod ist in Tests ersetzbar (ein Fehler lässt sich sonst als Besitzer
+// kaum auslösen).
+var chmod = os.Chmod
+
+// PermChange meldet eine Verschärfung durch RestrictPermissions: vorher
+// (Old) und nachher (New), oder den Fehler, an dem sie scheiterte.
+type PermChange struct {
+	Path string
+	Old  fs.FileMode
+	New  fs.FileMode
+	Err  error
+}
+
+// RestrictPermissions nimmt Datenverzeichnis und Log die Rechte für Gruppe
+// und andere (Datenverzeichnis danach 0700, Log 0600; A02 A3, Frage 6c).
+// Die Datenbank setzt store.Open selbst auf 0600. Rechte des Besitzers
+// bleiben, wie sie sind. Unter Windows gilt der Profilordner, dort
+// geschieht nichts. Fehler brechen nichts ab: Der Aufrufer schreibt sie
+// als Warnung ins Log (doctor --secrets meldet die Rechte dann als fail).
+func RestrictPermissions(p Paths) []PermChange {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	var out []PermChange
+	for _, path := range []string{p.DataDir, p.Log} {
+		if path == "" {
+			continue
+		}
+		fi, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			out = append(out, PermChange{Path: path, Err: err})
+			continue
+		}
+		old := fi.Mode().Perm()
+		if old&0o077 == 0 {
+			continue
+		}
+		c := PermChange{Path: path, Old: old, New: old &^ 0o077}
+		c.Err = chmod(path, c.New)
+		out = append(out, c)
+	}
+	return out
 }
 
 // cloudMarkers sind Namensteile typischer Cloud-Sync-Ordner. SQLite im

@@ -4,6 +4,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### Fixed
+
+- S2.0/A3: Ein vorhandenes Datenverzeichnis und Log mit zu weiten Rechten werden beim Öffnen auf 0700 bzw. 0600 verschärft (nicht unter Windows); ein Fehler dabei steht als Warnung im Log, `doctor --secrets` meldet danach `ok`.
+
 ### Changed
 
 - S2.0/A1: `sync --watch` gleicht stündlich (`--full-check-interval`, Standard `1h`, erster Lauf eingeschlossen) die vollständigen UID-Listen aller Ordner ab und erkennt so auch Löschungen, die der Zahlenvergleich übersieht; Operation `sync.run` mit `full_check_interval_seconds`. Der einmalige `sync` ist unverändert.

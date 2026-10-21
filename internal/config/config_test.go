@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -115,5 +117,57 @@ func TestCloudSyncWarning(t *testing.T) {
 	}
 	if CloudSyncWarning(filepath.Join("home", "x", ".local", "share", "postkauz")) != "" {
 		t.Error("plain path must not warn")
+	}
+}
+
+// A02 A3 (Frage 6c): Ein vorhandenes Datenverzeichnis und Log mit weiten
+// Rechten werden beim Öffnen verschärft (Besitzerrechte bleiben); ein
+// Fehler dabei wird gemeldet, nicht abgebrochen. Unter Windows geschieht
+// nichts (dort gilt der Profilordner).
+func TestRestrictPermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	p := Paths{DataDir: dir, Log: filepath.Join(dir, "postkauz.log")}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Log, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil { // umask umgehen
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p.Log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changes := RestrictPermissions(p)
+	if runtime.GOOS == "windows" {
+		if changes != nil {
+			t.Fatalf("windows: %+v", changes)
+		}
+		return
+	}
+	if len(changes) != 2 || changes[0].Err != nil || changes[0].Old != 0o755 || changes[0].New != 0o700 ||
+		changes[1].Err != nil || changes[1].Old != 0o644 || changes[1].New != 0o600 {
+		t.Fatalf("changes = %+v", changes)
+	}
+	for path, want := range map[string]os.FileMode{dir: 0o700, p.Log: 0o600} {
+		if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != want {
+			t.Fatalf("%s: %v %v, want %04o", path, fi.Mode().Perm(), err, want)
+		}
+	}
+	if c := RestrictPermissions(p); len(c) != 0 {
+		t.Fatalf("second call changed %+v", c)
+	}
+	// Fehlende Pfade sind kein Fehler.
+	if c := RestrictPermissions(Paths{DataDir: filepath.Join(dir, "missing")}); len(c) != 0 {
+		t.Fatalf("missing: %+v", c)
+	}
+	// Scheitert chmod, kommt der Fehler zurück (der Aufrufer warnt im Log).
+	_ = os.Chmod(dir, 0o750)
+	orig := chmod
+	chmod = func(string, os.FileMode) error { return os.ErrPermission }
+	defer func() { chmod = orig }()
+	if c := RestrictPermissions(p); len(c) != 1 || c[0].Path != dir || !errors.Is(c[0].Err, os.ErrPermission) {
+		t.Fatalf("failing chmod: %+v", c)
 	}
 }
