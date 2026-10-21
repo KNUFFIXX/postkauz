@@ -316,3 +316,43 @@ func TestLegacyKeyringEntryMissingKeepsRef(t *testing.T) {
 		t.Fatalf("doctor: %v", rep.Warnings)
 	}
 }
+
+// Gegenprüfung 21.10.2026, Befund 6: Bricht der Prozess zwischen dem
+// Umstellen des Verweises und dem Löschen des alten Eintrags ab, bleibt der
+// alte Eintrag ohne Vermerk in meta. doctor prüft deshalb je Konto nur
+// lesend, ob account/<name> noch besteht, und warnt (einmal, auch wenn er
+// zugleich in meta vermerkt ist).
+func TestDoctorWarnsAboutLegacyEntryWithoutNote(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	addDemo(t, canary)
+	a, _ := openDB(t, dataDir).AccountByName(t.Context(), "demo")
+	if rep := doctorJSON(t); hasWarning(rep, "old keyring entry") {
+		t.Fatalf("doctor before: %v", rep.Warnings)
+	}
+	_ = kr.Set("account/demo", canary) // Rest eines abgebrochenen Umzugs
+	rep := doctorJSON(t)
+	want := "old keyring entry account/demo is still there, but account demo uses " + a.CredentialRef
+	if !hasWarning(rep, want) {
+		t.Fatalf("doctor: %v", rep.Warnings)
+	}
+	if refs := keyringRefs(kr); len(refs) != 2 {
+		t.Fatalf("doctor changed the keyring: %v", refs)
+	}
+	// Auch in meta vermerkt: nur eine Warnung.
+	if err := openDB(t, dataDir).AddCredentialRefLeft(t.Context(), "account/demo"); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, w := range doctorJSON(t).Warnings {
+		if strings.Contains(w, "old keyring entry account/demo") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("warnings about account/demo = %d", n)
+	}
+	_ = kr.Delete("account/demo")
+	if rep := doctorJSON(t); hasWarning(rep, "old keyring entry") {
+		t.Fatalf("doctor after delete: %v", rep.Warnings)
+	}
+}

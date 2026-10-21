@@ -254,13 +254,33 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 	left, err := db.CredentialRefsLeft(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "keyring: "+err.Error())
-		return
 	}
 	base := secrets.Stored(sec)
+	reported := map[string]bool{}
 	for _, ref := range left {
 		if _, err := base.Get(ref); err == nil {
+			reported[ref] = true
 			rep.Warnings = append(rep.Warnings, fmt.Sprintf("old keyring entry %s is still there after the move and could not be deleted; delete it in the OS keyring (service %s, entry %s)",
 				ref, brand.KeyringService, ref))
+		}
+	}
+	// Zusätzlich je umgezogenem Konto nur lesend: Besteht der alte Eintrag
+	// noch, ohne dass er in meta vermerkt ist (z. B. Abbruch zwischen dem
+	// Umstellen des Verweises und dem Löschen), warnt doctor ebenfalls.
+	// Vorsicht beim Löschen: Ein anderes, noch nicht umgezogenes
+	// Datenverzeichnis mit gleichem Kontonamen (Stand S1) liest denselben
+	// Eintrag.
+	if rep.Keyring == "unavailable" {
+		return
+	}
+	for _, acc := range list {
+		old := secrets.LegacyAccountRef(acc.Name)
+		if acc.CredentialRef != secrets.AccountRef(dirID, acc.Name) || reported[old] {
+			continue
+		}
+		if _, err := base.Get(old); err == nil {
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("old keyring entry %s is still there, but account %s uses %s; unless another data directory of an older version still uses it, delete it in the OS keyring (service %s, entry %s)",
+				old, acc.Name, acc.CredentialRef, brand.KeyringService, old))
 		}
 	}
 }
