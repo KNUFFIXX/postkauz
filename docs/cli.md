@@ -290,7 +290,7 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   [imap]                    # Watchdog (ADR-007, Nachtrag 16.10.2026); Dauer als Text
   command_timeout = "30s"       # so lange darf der Server während eines Kommandos schweigen (ab 1s)
   command_max_duration = "10m"  # Obergrenze je Kommando (nicht kleiner als command_timeout)
-  max_message_bytes = 268435456 # größte Rohmail in Bytes (Standard und Höchstwert 256 MiB, seit S2.0); größere (laut Server) fordert der Sync nicht an: einmal Fehler dieser Nachricht, danach gemerkt bis zum nächsten `sync --full`; der Rest läuft weiter
+  max_message_bytes = 268435456 # größte Rohmail in Bytes (Standard und Höchstwert 256 MiB, Mindestwert 1 MiB = 1048576, seit S2.0); größere (laut Server) fordert der Sync nicht an: einmal Fehler dieser Nachricht, danach gemerkt bis zum nächsten `sync --full`; der Rest läuft weiter
   [audit]
   export_dir = ""           # Standardziel von `audit export`: ein zweiter Ort, nicht das Datenverzeichnis
   ```

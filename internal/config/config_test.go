@@ -66,6 +66,8 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"max < timeout": "[imap]\ncommand_timeout = \"2m\"\ncommand_max_duration = \"1m\"\n",
 		"bad duration":  "[imap]\ncommand_timeout = \"zehn\"\n",
 		"max msg < 0":   "[imap]\nmax_message_bytes = -1\n",
+		"max msg 1":     "[imap]\nmax_message_bytes = 1\n",
+		"max msg < MiB": "[imap]\nmax_message_bytes = 1048575\n",
 		"max msg > cap": "[imap]\nmax_message_bytes = 268435457\n",
 		"max msg text":  "[imap]\nmax_message_bytes = \"256MiB\"\n",
 	} {
