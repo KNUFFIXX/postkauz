@@ -128,6 +128,10 @@ type MailboxReport struct {
 	Total    int      `json:"total"`           // laut Server
 	Mirrored int      `json:"mirrored"`        // lokal nach dem Lauf
 	Problems []string `json:"problems,omitempty"`
+	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
+	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
+	// erledigt (Watch).
+	Failed bool `json:"-"`
 }
 
 // Report ist das Ergebnis eines Laufs.
@@ -148,6 +152,18 @@ type Report struct {
 	Indexed      int           `json:"messages_indexed"`
 	IndexPending int           `json:"index_pending"`
 	Duration     time.Duration `json:"-"`
+}
+
+// failedMailboxes zählt die Ordner, die wegen eines Fehlers übersprungen
+// wurden.
+func (r Report) failedMailboxes() int {
+	n := 0
+	for _, m := range r.Mailboxes {
+		if m.Failed {
+			n++
+		}
+	}
+	return n
 }
 
 func (r *Report) add(m MailboxReport) {
@@ -248,6 +264,7 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			// Ordner überspringen, Lauf fortsetzen; der nächste Lauf
 			// setzt am gespeicherten Stand wieder an.
 			mr.Errors++
+			mr.Failed = true
 			mr.problem(err.Error())
 			e.emit(Event{Kind: "error", Mailbox: mb.Path, Message: err.Error()})
 		}

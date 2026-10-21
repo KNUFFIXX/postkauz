@@ -363,3 +363,61 @@ type panicRemote struct {
 func (p *panicRemote) FetchRaw(context.Context, string, uint32, []provider.UID, func(provider.UID, io.Reader) error) error {
 	panic("raw message " + p.canary)
 }
+
+// twoBoxStore ist nopStore mit zwei Ordnern.
+type twoBoxStore struct{ nopStore }
+
+func (twoBoxStore) Mailboxes(context.Context, int64) ([]store.Mailbox, error) {
+	return []store.Mailbox{{ID: 1, Path: "INBOX", Phase: store.PhaseReady, UIDValidity: 1, UIDNext: 1},
+		{ID: 2, Path: "Archiv", Phase: store.PhaseReady, UIDValidity: 1, UIDNext: 1}}, nil
+}
+
+// failOnceRemote lässt den ersten vollen Abgleich von "Archiv" scheitern
+// (Ordnerfehler, kein Verbindungsfehler) und merkt sich die Zeitpunkte der
+// vollen Abgleiche der INBOX.
+type failOnceRemote struct {
+	checkRemote
+	failed bool
+}
+
+func (r *failOnceRemote) Changes(ctx context.Context, mb string, st provider.SyncState, o provider.ChangesOptions) (provider.ChangeSet, error) {
+	if mb == "Archiv" {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if o.CheckDeleted && !r.failed {
+			r.failed = true
+			return provider.ChangeSet{}, errors.New("mailbox not selectable (test)")
+		}
+		return provider.ChangeSet{}, nil
+	}
+	return r.checkRemote.Changes(ctx, mb, st, o)
+}
+
+// Gegenprüfung 21.10.2026, Befund 8 (A1): Scheitert beim vollen Abgleich
+// ein Ordner, gilt der Abgleich nicht als erledigt; der nächste Lauf
+// gleicht erneut voll ab, statt eine Stunde zu warten. Danach wieder im
+// Stundenraster ab dem erfolgreichen Abgleich.
+func TestWatchFullCheckRepeatedAfterMailboxFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		r := &failOnceRemote{checkRemote: checkRemote{clockRemote: clockRemote{start: time.Now()}}}
+		e := &Engine{Store: twoBoxStore{}, Remote: r}
+		ctx, cancel := context.WithTimeout(context.Background(), 66*time.Minute)
+		defer cancel()
+		var problems []string
+		if err := e.Watch(ctx, WatchOptions{Interval: 5 * time.Minute, OnRound: func(rep Report, err error) {
+			for _, m := range rep.Mailboxes {
+				problems = append(problems, m.Problems...)
+			}
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if want := durations("0s", "5m", "65m"); !slices.Equal(r.checks, want) {
+			t.Fatalf("full checks of INBOX at %v, want %v", r.checks, want)
+		}
+		if len(problems) != 1 || !strings.Contains(problems[0], "not selectable") {
+			t.Fatalf("problems = %v", problems)
+		}
+	})
+}

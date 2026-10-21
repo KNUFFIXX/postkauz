@@ -31,7 +31,9 @@ type WatchOptions struct {
 	// Der erste Lauf über alle Ordner und danach jeder, der mindestens so
 	// lange nach dem letzten erfolgreichen vollen Abgleich beginnt, gleicht
 	// in jedem Ordner die vollständige UID-Liste ab (Options.CheckDeleted),
-	// auch wenn die Zahlen passen. IDLE-Läufe (nur INBOX) tun das nie.
+	// auch wenn die Zahlen passen. Erfolgreich heißt: Lauf ohne Fehler und
+	// ohne übersprungenen Ordner; sonst gleicht der nächste Lauf erneut voll
+	// ab. IDLE-Läufe (nur INBOX) tun das nie.
 	FullCheckInterval time.Duration
 	// IdleMailbox wird per IDLE beobachtet (Standard "INBOX"); eine Meldung
 	// löst sofort einen Lauf für diesen Ordner aus.
@@ -96,8 +98,13 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		if err == nil && ro.CheckDeleted {
+		// Nur ein voller Abgleich ohne übersprungenen Ordner zählt; scheitern
+		// einzelne Ordner, gleicht der nächste Lauf erneut alle voll ab
+		// (sonst warteten sie bis zum nächsten FullCheckInterval).
+		if failed := rep.failedMailboxes(); err == nil && ro.CheckDeleted && failed == 0 {
 			lastFull = start
+		} else if err == nil && ro.CheckDeleted {
+			e.log().Info("full UID check incomplete; repeating it in the next round", "failed_mailboxes", failed)
 		}
 		if o.OnRound != nil {
 			o.OnRound(rep, err)

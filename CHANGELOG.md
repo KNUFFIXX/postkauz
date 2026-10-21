@@ -18,6 +18,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- S2.0, Gegenprüfung 8 (A1): Scheitern beim vollen UID-Abgleich in `sync --watch` einzelne Ordner, wiederholt der nächste Lauf den vollen Abgleich, statt eine Stunde zu warten.
 - S2.0, Gegenprüfung 7 (A3): Das Verschärfen der Rechte folgt keinem Symlink mehr (`Lstat`), lässt Pfade anderer Nutzer unverändert (Warnung im Log) und erhält Sonderbits wie Setgid; vorher wurde ein per Symlink eingebundenes fremdes Verzeichnis auf 0700 gesetzt.
 - S2.0, Gegenprüfung 6 (A2): `doctor` prüft je umgezogenem Konto nur lesend, ob der alte Schlüsselbund-Eintrag `account/<name>` noch besteht (etwa nach einem Abbruch zwischen Umstellen und Löschen, ohne Vermerk in `meta`), und warnt.
 - S2.0, Gegenprüfung 5 (A2): Der Umzug der Schlüsselbund-Verweise stellt einen Verweis ohne gefundenen alten Eintrag nur noch um, wenn `POSTKAUZ_PASSWORD_<NAME>` gesetzt ist; sonst bleibt der alte Verweis (vorher war ein gerade nicht lesbarer Eintrag danach unter keinem Namen erreichbar), und `doctor` nennt, worauf der Umzug wartet.
