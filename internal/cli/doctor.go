@@ -203,7 +203,15 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 		return // Schema vor 8: Das nächste Kommando migriert und zieht um.
 	}
 	for _, acc := range list {
-		if want := secrets.AccountRef(dirID, acc.Name); acc.CredentialRef != want {
+		want := secrets.AccountRef(dirID, acc.Name)
+		switch {
+		case acc.CredentialRef == want:
+		case rep.Keyring == "unavailable":
+			// Ohne Schlüsselbund wird nichts umgezogen (ein gesperrter
+			// Schlüsselbund sähe sonst leer aus); die Umgebungsvariable gilt.
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; it moves to %s once the OS keyring is reachable (%s is not affected)",
+				acc.Name, acc.CredentialRef, want, secrets.EnvName(want)))
+		default:
 			rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s still uses the old keyring entry %s; the next command (e.g. accounts list) moves it to %s",
 				acc.Name, acc.CredentialRef, want))
 		}

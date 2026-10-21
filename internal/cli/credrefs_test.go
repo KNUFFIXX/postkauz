@@ -151,6 +151,31 @@ func TestLegacyKeyringEntryLeftDoctorWarns(t *testing.T) {
 	}
 }
 
+// Ohne erreichbaren Schlüsselbund zieht nichts um, das Kommando läuft, und
+// doctor sagt, dass der Umzug wartet und die Umgebungsvariable gilt.
+func TestLegacyKeyringEntryPostponedWithoutKeyring(t *testing.T) {
+	dataDir, _ := setupEnv(t)
+	addDemo(t, canary)
+	st := openDB(t, dataDir)
+	if err := st.ExecForTest(`UPDATE accounts SET credential_ref = 'account/demo'`); err != nil {
+		t.Fatal(err)
+	}
+	orig := openSecrets
+	openSecrets = func(string, string) (secrets.Store, error) {
+		return secrets.WithEnv(secrets.Unavailable{Reason: "test"}), nil
+	}
+	t.Cleanup(func() { openSecrets = orig })
+	if code, _, errs := run(t, "accounts", "list"); code != ExitOK || errs != "" {
+		t.Fatalf("accounts list: %d %q", code, errs)
+	}
+	if a, _ := st.AccountByName(t.Context(), "demo"); a.CredentialRef != "account/demo" {
+		t.Fatalf("ref switched without keyring: %s", a.CredentialRef)
+	}
+	if rep := doctorJSON(t); !hasWarning(rep, "once the OS keyring is reachable (POSTKAUZ_PASSWORD_DEMO is not affected)") {
+		t.Fatalf("doctor: %v", rep.Warnings)
+	}
+}
+
 // stuckKeyring: Löschen scheitert (z. B. fehlende Rechte am Eintrag).
 type stuckKeyring struct{ *memKeyring }
 
