@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/zalando/go-keyring"
+
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 )
 
 var errNotFoundLib = keyring.ErrNotFound
@@ -268,5 +270,24 @@ func TestRealKeyringProbe(t *testing.T) {
 	defer func() { _ = k.Delete(ref) }()
 	if v, err := k.Get(ref); err != nil || v.Reveal() != canary {
 		t.Fatalf("round trip: %v", err)
+	}
+}
+
+// TestKeyringCallRecoversPanic: Ein Panic in der Schlüsselbund-Bibliothek
+// beendet nicht den Prozess, sondern kommt als Fehler zurück (S2.0/A5).
+func TestKeyringCallRecoversPanic(t *testing.T) {
+	k := &Keyring{service: "postkauz-test", timeout: time.Second, api: keyringAPI{
+		get: func(svc, user string) (string, error) { panic("secret-canary-value in panic") },
+	}}
+	_, err := k.Get("account/demo")
+	if err == nil {
+		t.Fatal("expected an error from a panicking keyring call")
+	}
+	var pe *crash.PanicError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *crash.PanicError, got %T: %v", err, err)
+	}
+	if strings.Contains(err.Error(), "secret-canary-value") {
+		t.Fatalf("panic value leaked into the error: %v", err)
 	}
 }

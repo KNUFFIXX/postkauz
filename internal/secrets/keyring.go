@@ -9,6 +9,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 )
 
 // keyringAPI sind die drei Funktionen von go-keyring; in Tests ersetzbar,
@@ -37,9 +38,11 @@ func NewKeyring() *Keyring {
 	return &Keyring{api: osKeyring, service: brand.KeyringService, timeout: keyringTimeout}
 }
 
+// call ruft die Bibliothek in einer eigenen Goroutine mit Zeitgrenze auf;
+// ein Panic darin (crash.Go, S2.0/A5) kommt als Fehler zurück statt den
+// Prozess zu beenden.
 func (k *Keyring) call(f func() error) error {
-	done := make(chan error, 1)
-	go func() { done <- f() }()
+	done := crash.Go("keyring call", f)
 	select {
 	case err := <-done:
 		return err
@@ -58,6 +61,9 @@ func mapErr(err error) error {
 	case errors.Is(err, keyring.ErrNotFound):
 		return ErrNotFound
 	case errors.Is(err, ErrUnavailable):
+		return err
+	case errors.As(err, new(*crash.PanicError)):
+		// bereinigter Panic aus crash.Go: Typ erhalten, nichts anhängen
 		return err
 	case errors.Is(err, keyring.ErrSetDataTooBig):
 		return fmt.Errorf("secrets: value too large for the keyring")
