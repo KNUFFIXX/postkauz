@@ -480,7 +480,7 @@ Am 21.10.2026 hat der Betreiber ein Make-or-buy-Gate durchgeführt (Vergleichsdo
 
 Zwei Befunde aus der Messung hat der Betreiber am 21.10.2026 an msgvault gemeldet: versteckter Text unmarkiert in der Textfassung ([kenn-io/msgvault#1416](https://github.com/kenn-io/msgvault/issues/1416)) und UTF-8-HTML als Latin-1 decodiert ([kenn-io/msgvault#1417](https://github.com/kenn-io/msgvault/issues/1417)). Beide Fälle deckt der PostKauz-Korpus ab (Art `hidden`, S1.6-Tests); die Issues sind zugleich die Referenz, falls msgvault die Lücken schließt (Wiedervorlage Januar 2027).
 
-## Entschiedene Fragen (14. bis 18.10.2026)
+## Entschiedene Fragen (14. bis 21.10.2026)
 
 1. **Gate:** bestanden mit Auflagen (ADR-007).
 2. **Go-Version:** Zielversion 1.27, Anhebung als Schritt 0 von A01 (ADR-008).
@@ -519,10 +519,11 @@ Entscheide des Betreibers vom **18.10.2026** ([A02](../auftraege/A02_s2.md), Abs
 32. **Audit-Rotation** (18.10.2026, A02; vorher Frage 14): mit dem Löschkonzept in S3.
 33. **Panics in Nebengoroutinen** (18.10.2026, A02; vorher Frage 15): eigene Hilfsgoroutinen in S2.0 mit demselben `recover` versehen (A02, Teil A, A5).
 
+34. **Go-Patchstand** (21.10.2026, Betreiber `##`; früher Offene Frage 3 aus S2.0): Programme werden ab jetzt mit **Go 1.27.3** gebaut (`toolchain go1.27.3` in `go.mod`; `go.mod` behält `go 1.27`); CI nutzt `1.27.x` und damit mindestens diesen Stand. Grund: `make vuln` fand mit 1.27.0 neun erreichbare Schwachstellen der Standardbibliothek, mit 1.27.3 keine. Mit `GOTOOLCHAIN=local` bricht ein Build ohne passende Toolchain ab, statt still nachzuladen (ADR-008).
+
 ## Offene Fragen
 
 Stand S2.0 (21.10.2026, nach der Gegenprüfung). Die Fragen bis S1.11 sind entschieden (oben, Nummern 19 bis 33). Aus Auftrag A02 selbst: derzeit keine. Neu aus S2.0 (je mit Vorschlag als Standardantwort):
 
 1. **Passwort eines Kontos neu setzen** (neu, S2.0/A2): Es gibt kein Kommando, um das gespeicherte Passwort eines Kontos zu ersetzen; `account remove` und `account add` gehen nur ohne archivierte Nachrichten. Nötig ist das bei einem geänderten App-Passwort und für den seltenen Fall, dass zwei Datenverzeichnisse unter S1 ein Konto gleichen Namens hatten (das zweite verliert beim Umzug den gemeinsamen Eintrag, Befund A2). Vorschlag: `account set <name> --password-stdin` (Operation `accounts.set`, HumanOnly) in S2.1; bis dahin hilft `POSTKAUZ_PASSWORD_<NAME>`.
 2. **Zwischenspeicher der UID-Liste bei Servern ohne UIDNEXT** (neu, S2.0/A1, Befund in „Teil 2"): Der Provider merkt sich das Ergebnis von `UID SEARCH ALL` je Ordner, solange UIDVALIDITY, UIDNEXT und EXISTS gleich bleiben. Ein Server, der in der SELECT-Antwort kein UIDNEXT nennt (RFC 3501 verlangt es), könnte nach „eine gelöscht, eine neu" einen veralteten Stand liefern; der stündliche volle Abgleich fragt ohnehin frisch. Vorschlag: den Zwischenspeicher nur mit bekanntem UIDNEXT verwenden (klein). Default: so lassen, weil kein Server der Testmatrix (Dovecot, Stalwart, GreenMail) betroffen ist; einverstanden?
-3. **Go-Patchstand** (neu, Prüfläufe S2.0): `make vuln` findet mit Go 1.27.0 neun erreichbare Schwachstellen der Standardbibliothek (TLS, HTTP, MIME-Kopfzeilen), behoben in Go 1.27.2 bzw. 1.27.3; mit 1.27.3 keine. Vorschlag: Programme ab jetzt (spätestens 0.2.0-rc1) mit Go 1.27.3 bauen und die Toolchain der Arbeitsumgebung und CI darauf heben; `go.mod` behält `go 1.27`. Default: so machen, einverstanden?

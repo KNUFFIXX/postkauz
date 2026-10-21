@@ -11,6 +11,9 @@ COMPOSE := docker compose -f deploy/testmail/docker-compose.yml
 export CGO_ENABLED ?= 0
 # ADR-008: nie still eine andere Toolchain nachladen (sonst hebt `go get` die
 # go-Zeile in go.mod an). Die Zielversion (Go 1.27.x) muss installiert sein.
+# Go-Patchstand (Entscheid Betreiber 21.10.2026, Roadmap Frage 34): Builds mit go1.27.3
+# (toolchain-Zeile in go.mod); govulncheck meldete mit 1.27.0 neun stdlib-Schwachstellen.
+# GOTOOLCHAIN=local: fehlt die Toolchain, bricht der Build ab, statt still nachzuladen (ADR-008).
 export GOTOOLCHAIN ?= local
 
 .PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
