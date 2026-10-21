@@ -370,6 +370,8 @@ Auftrag [A02](../auftraege/A02_s2.md), Teil A (Nachbesserung und Vorarbeiten), P
 - **Umsetzung:** Migration 0008: `accounts.aliases` (JSON-Liste, `CHECK` auf Array). `store.Account.Aliases`, `SetAccountAliases`; `selfAddresses` (eigene Adressen im Betreff-Rückfall) nimmt die Aliasse dazu. Neue Operation `accounts.set` (R1, `admin`, HumanOnly, idempotent; Eingabe `name`, `aliases` ersetzt die Liste; Adressen per `net/mail` geprüft, nur Adresse ohne Namen, klein, sortiert, ohne Dubletten und ohne Kontoadresse, höchstens 50; Redact: Feldnamen und Anzahl). `accounts.list` liefert `aliases` (immer eine Liste; auch MCP `mail_list_accounts` und `mail://accounts`), die CLI zeigt die Spalte `ALIASES`. CLI `account set <name> --aliases a@…,b@…` (`--aliases ""` leert). Doku: `docs/cli.md` (2a), `docs/mcp.md`, `docs/datenmodell.md`, `docs/sicherheit.md` (Abschnitt 2).
 - **Befunde:** (1) Geänderte Aliasse ordnen vorhandene Nachrichten nicht neu zu (wie bisher bei allen Regeln des Rückfalls); wer Aliasse nachträgt, behält bestehende Fehlzuordnungen. (2) `accounts.set` kennt vorerst nur `aliases`; das Schema ist so angelegt, dass weitere Felder (z. B. ein neues Passwort, siehe „Offene Fragen") dazukommen können.
 
+**A8: Entschiedene Fragen — erledigt.** Die Tabelle „Entscheide des Betreibers (18.10.2026)" aus A02, Abschnitt 0, steht unter „Entschiedene Fragen" als Nummern 19 bis 33 (Datum 18.10.2026, Verweis auf A02, frühere Nummer); „Offene Fragen" ist bis auf die neue Frage aus S2.0/A2 geleert (aus A02 selbst derzeit keine). Neuer Abschnitt „Umfeld: verwandte Projekte (Stand 21.10.2026)" mit dem Ergebnis des Make-or-buy-Gates (Text des Betreibers, unverändert); `README.md`, „Non-goals": kein Archiv für Chat, Kalender und Meetings, keine Web-UI vor 1.0 (Verweis auf msgvault). Nachweis: diese Roadmap.
+
 **Umfang:** `drafts.*`: neu, antworten, allen antworten, weiterleiten mit korrekten `Message-ID`/`In-Reply-To`/`References`, Zitat, Anhänge aus vorhandenen Nachrichten oder Dateien; Ablage per `APPEND` im Entwürfe-Ordner; Policy-Datei; Freigabe-Zustände (`draft` → `pending_approval` → `ready` → `sent_by_human`) mit `preview_hash`; Prüf-Hook; Erkennung des Versands im Ordner „Gesendet"; Resources `mail://…/draft/…` und `mail://style/…`; Prompt `draft_reply`.
 
 **Nicht enthalten:** SMTP, `mail_request_send`, `auto`-Versand, Regeln.
@@ -409,7 +411,11 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 5. Gmail-API-/Graph-Anbindung (bring your own client), Embeddings/semantische Suche (lokal), Mehrbenutzerbetrieb mit Rollen je Mensch.
 6. **GUI** frühestens nach 1.0 und nur gegen REST (siehe Nicht-Ziele).
 
-## Entschiedene Fragen (14. bis 16.10.2026)
+## Umfeld: verwandte Projekte (Stand 21.10.2026)
+
+Am 21.10.2026 hat der Betreiber ein Make-or-buy-Gate durchgeführt (Vergleichsdokument außerhalb des Repos). Nächster Verwandter ist **msgvault** (github.com/kenn-io/msgvault; Go, MIT, Wes McKinney; lokales Archiv für Mail, Chat, Kalender und Meetings mit SQLite+FTS5, CLI, HTTP-API, TUI, Web-UI, MCP; IMAP-Sync seit 03/2026, Entwürfe draft-only seit 09/2026). Messung gegen denselben Dovecot und Korpus (v0.21.0): deutscher Suchtestsatz 7/22 (PostKauz 22/22), Thunderbird-Import gegen das gesyncte Konto +612 Doppelte (PostKauz 0), versteckter Text wird unmarkiert ausgegeben, IMAP-Passwort im Klartext, kein Audit der Agentenaktionen, kein IDLE, Agent-Tokens nur im RAM, Telemetrie standardmäßig an, 146-MB-CGO-Binary. msgvault hat, was PostKauz nicht hat: Web-UI, TUI, PST-Import, Vektorsuche, über 60 Beiträger. Entscheid: PostKauz wird weitergebaut; msgvault ist Referenz für Import-Formate und Backup-Kommandos und wird im Januar 2027 neu geprüft. Weitere geprüfte Projekte: Himalaya (Rust-CLI, kein Spiegel), OpenAgentEmail (Agenten-Postfächer), mbsync+notmuch+MCP (Unix-only), codefuturist/email-mcp (Wrapper mit Cache, sendet selbst).
+
+## Entschiedene Fragen (14. bis 18.10.2026)
 
 1. **Gate:** bestanden mit Auflagen (ADR-007).
 2. **Go-Version:** Zielversion 1.27, Anhebung als Schritt 0 von A01 (ADR-008).
@@ -430,22 +436,26 @@ Reihenfolge nach Nutzen und Risiko, jeweils mit eigener Entscheidung:
 17. **Teilweise geladene Thunderbird-Nachrichten** (16.10.2026, vorher offene Frage 15): werden mit Hinweis importiert, nicht übersprungen; kommt die vollständige Fassung später per Sync, stehen beide im Archiv (umgesetzt S1.10).
 18. **Täglicher Audit-Export** (16.10.2026, Auftrag S1.11): als Windows-Aufgabe (PowerShell-Registrierungsskript, Windows PowerShell 5.1, UTF-8 mit BOM, ASCII, keine Aliase) und als systemd-Timer; Ziel konfigurierbar (`[audit] export_dir`, z. B. ein Google-Drive-Ordner); JSONL mit SHA-256-Kette je Datei und Manifest (umgesetzt S1.11).
 
+Entscheide des Betreibers vom **18.10.2026** ([A02](../auftraege/A02_s2.md), Abschnitt 0, „Entscheide des Betreibers"): Alle bis dahin offenen Fragen (Stand nach S1.11) sind mit ihrer Standardantwort entschieden. Die Nummern 19 bis 33 entsprechen den früheren offenen Fragen 1 bis 15; die Abschnitte „Stand S1.x" oben verweisen mit „Frage N" auf diese früheren Nummern (Frage N = Nummer 18 + N).
+
+19. **Name** (18.10.2026, A02; vorher Frage 1): PostKauz ist geprüft und bleibt (15.10.2026); Umbenennung erledigt.
+20. **Mehrere Menschen an einem Postfach** (18.10.2026, A02; vorher Frage 2): Im MVP gibt **ein** Mensch frei; `decided_by` ist der Name aus `[operator] name` der Konfiguration, sonst der Benutzername des Betriebssystems. Zuordnung je Person kommt mit Mehrbenutzerbetrieb (S4+).
+21. **Spike-Lücken** (18.10.2026, A02; vorher Frage 3): P1 und P2 misst der Betreiber nach D3 mit seinem Konto, nur lesend; P6 und P8 bleiben zurückgestellt.
+22. **Kopien als eine Nachricht** (18.10.2026, A02; vorher Frage 4): so lassen.
+23. **Dauerläufer und `mail_sync_now`** (18.10.2026, A02; vorher Frage 5): S3 (Job-Typ `sync`, MCP reiht ein). S2 legt mit dem Job `draft_push` die Mechanik dafür an (A02, Abschnitt 1, E1).
+24. **Befunde der Gegenprüfung (a–d)** (18.10.2026, A02; vorher Frage 6): alle vier als Nachbesserung in S2.0 (A02, Teil A: A1, A2, A3, A4; A2 erledigt, siehe „Stand S2.0, Teil 1").
+25. **Suchlatenz** (18.10.2026, A02; vorher Frage 7): auf dem Windows-PC nachmessen, erst bei spürbaren Wartezeiten optimieren.
+26. **Import-Durchsatz** (18.10.2026, A02; vorher Frage 8): auf dem Windows-PC nachmessen, Parallelisierung erst bei Bedarf.
+27. **Emoji-Sequenzen** (18.10.2026, A02; vorher Frage 9): so lassen (Sicherheit vor Darstellung).
+28. **Weitere eigene Adressen (Aliasse)** (18.10.2026, A02; vorher Frage 10): Feld am Konto in S2.0; S2 nutzt es für „Allen antworten" und die Versanderkennung (umgesetzt S2.0/A6: `accounts.aliases`, `account set --aliases`).
+29. **Teilwortsuche ohne Umlaut** (18.10.2026, A02; vorher Frage 11): hinnehmen.
+30. **Grenzen von `alternative_mismatch`** (18.10.2026, A02; vorher Frage 12): hinnehmen.
+31. **Code-Signatur** (18.10.2026, A02; vorher Frage 13): bis 1.0 unsigniert mit `SHA256SUMS`.
+32. **Audit-Rotation** (18.10.2026, A02; vorher Frage 14): mit dem Löschkonzept in S3.
+33. **Panics in Nebengoroutinen** (18.10.2026, A02; vorher Frage 15): eigene Hilfsgoroutinen in S2.0 mit demselben `recover` versehen (A02, Teil A, A5).
+
 ## Offene Fragen
 
-Stand nach S1.11 (16.10.2026): alle offenen Fragen gesammelt und **neu nummeriert**; in Klammern die frühere Nummer bzw. Herkunft (die Abschnitte „Stand S1.x" weiter oben verweisen mit „Frage N" noch auf die früheren Nummern). Zu jeder ein Vorschlag als Standardantwort. Entschiedene stehen oben unter „Entschiedene Fragen".
+Stand S2.0, Teil 1 (21.10.2026). Die Fragen bis S1.11 sind entschieden (oben, Nummern 19 bis 33). Aus Auftrag A02 selbst: derzeit keine. Neu aus S2.0 (je mit Vorschlag als Standardantwort):
 
-1. **Name** (früher 1): Ergebnis der Namensprüfung; danach Umbenennung gemäß [architektur.md](architektur.md), Abschnitt 8. Vorschlag: Prüfung durch den Betreiber vor dem ersten öffentlichen Release (spätestens vor 0.1.0).
-2. **Mehrere Menschen an einem Postfach** (früher 2): Wie wird eine Freigabe einer Person zugeordnet, wenn mehrere Menschen dasselbe Postfach bedienen? Vorschlag: zu Beginn von S2 klären (relevant erst mit Freigaben).
-3. **Spike-Lücken** (früher 3, Prüfliste A01): Gmail `X-GM-EXT-1` (P1), WAN-Messung des Erstsyncs (P2), Schlüsselbund unter macOS (P4; Windows in D0/D1 bestanden), COMPRESS/BINARY (P6), QRESYNC per Beitrag oder Fork (P8). Vorschlag: P1 und P2 misst der Betreiber nach D3 mit seinem Gmail-Konto (nur lesend: `account test`, `sync`); P6 und P8 bleiben zurückgestellt (für 50.000 Nachrichten nicht nötig, P2 lokal).
-4. **Kopien als eine Nachricht** (früher 4): Liegt dieselbe Nachricht in mehreren Ordnern, ist sie lokal eine Nachricht mit mehreren Ordnern; ein Flag gilt, wenn eine Kopie es trägt. Vorschlag: so lassen.
-5. **Dauerläufer für mehrere Konten und `mail_sync_now`** (früher 5 und 13): `sync --watch` beobachtet ein Konto; der MCP-Server kann keinen Sync anstoßen. Vorschlag: gemeinsamer Dauerläufer mit Job-Typ `sync` (MCP reiht ein) zusammen mit dem Betriebskonzept in S3; bis dahin je Konto ein `sync --watch`.
-6. **Befunde der Gegenprüfung vom 15.10.2026** (früher 7), bewusst noch nicht geändert: (a) Löschungen werden inkrementell nur bei unpassender Zahl erkannt (Löschung plus neue Nachricht fällt erst später auf); (b) der Schlüsselbund-Verweis `account/<name>` hängt nicht am Datenverzeichnis (zwei Datenverzeichnisse mit gleichem Kontonamen teilen den Eintrag); (c) ein vorhandenes Datenverzeichnis wird nicht auf 0700 verschärft (seit S1.11 meldet `doctor --secrets` es als `fail`); (d) `io.ReadAll` ohne Grenze in `internal/imapx/mailbox.go`. Vorschlag: alle vier als Nachbesserung am Anfang von S2 (a: im Dauerbetrieb stündlich voller UID-Abgleich; b: Verweis um eine Kennung des Datenverzeichnisses ergänzen, Migration; c: beim Öffnen verschärfen; d: auf 256 MiB begrenzen).
-7. **Suchlatenz bei sehr häufigen Wörtern** (früher 11): Median knapp unter 300 ms, einzelne Läufe darüber (2 Kerne). Vorschlag: auf dem Windows-PC nachmessen ([suche_messung.md](suche_messung.md)), erst bei spürbaren Wartezeiten optimieren.
-8. **Import-Durchsatz** (früher 14): rund 23 MB/s im Container (Gmail-Archiv 20,7 GB rund 15 min). Vorschlag: auf dem Windows-PC nachmessen ([import_messung.md](import_messung.md)), Parallelisierung erst bei Bedarf.
-9. **Emoji-Sequenzen** (Nachbesserung 16.10.): Das Entfernen unsichtbarer Zeichen zerlegt zusammengesetzte Emoji. Vorschlag: so lassen (Sicherheit vor Darstellung).
-10. **Weitere eigene Adressen (Aliasse)** (Nachbesserung 16.10.): Aliasse, die nicht im Konto stehen, zählen beim Betreff-Rückfall der Threads als gemeinsamer Beteiligter. Vorschlag: Feld „weitere eigene Adressen" am Konto in S2.
-11. **Teilwortsuche ohne Umlaut** (Nachbesserung 16.10.): „pruf" findet „Prüfung" nur als Wort/Präfix, nicht mitten im Kompositum. Vorschlag: hinnehmen.
-12. **Grenzen von `alternative_mismatch`** (Nachbesserung 16.10.): Wortmengen übersehen umgestellte Sätze und ein vertauschtes „nicht". Vorschlag: hinnehmen (Hinweis, kein Urteil); genauer erst, wenn es im Alltag stört.
-13. **Code-Signatur** (neu, S1.11): Die Programme sind nicht signiert; Windows (SmartScreen) und macOS (Gatekeeper) warnen, das README erklärt den Weg (`Unblock-File`, `xattr`) und die Prüfsummen. Vorschlag: bis 1.0 unsigniert mit `SHA256SUMS`; Signatur (Authenticode, Apple-Notarisierung, kostet Zertifikate) vor einer breiteren Veröffentlichung entscheiden.
-14. **Aufbewahrung und Rotation des Audits** (neu, S1.11; [sicherheit.md](sicherheit.md) nennt „Standard ein Jahr"): Es gibt noch keine Rotation; Tabelle und Exporte wachsen. Vorschlag: mit dem Löschkonzept in S3 (Rotation nur per Export, nie durch Löschen einzelner Zeilen).
-15. **Panics in Nebengoroutinen** (neu, S1.11): Nur Handler und Hauptablauf fangen Panics bereinigt ab. Vorschlag: in S2 die eigenen Hilfsgoroutinen (Sync, IDLE, Import) mit demselben `recover` versehen; Goroutinen des MCP-SDK bleiben außen vor.
+1. **Passwort eines Kontos neu setzen** (neu, S2.0/A2): Es gibt kein Kommando, um das gespeicherte Passwort eines Kontos zu ersetzen; `account remove` und `account add` gehen nur ohne archivierte Nachrichten. Nötig ist das bei einem geänderten App-Passwort und für den seltenen Fall, dass zwei Datenverzeichnisse unter S1 ein Konto gleichen Namens hatten (das zweite verliert beim Umzug den gemeinsamen Eintrag, Befund A2). Vorschlag: `account set <name> --password-stdin` (Operation `accounts.set`, HumanOnly) in S2.1; bis dahin hilft `POSTKAUZ_PASSWORD_<NAME>`.

@@ -17,6 +17,7 @@ An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mail
 - No GUI before 1.0 (a minimal web UI may follow, on top of a REST API).
 - No bulk mail or newsletter sending.
 - No agent-owned mailboxes (for that, see OpenAgentEmail and similar projects).
+- No archive for chat, calendars or meetings, and no web UI before 1.0 (for that, see msgvault).
 - No own verified Google OAuth app ("bring your own client" instead).
 - No spam filter.
 - No PGP/S/MIME in the MVP.

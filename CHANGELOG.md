@@ -12,6 +12,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 ### Changed
 
 - S2.0/A2: Der Schlüsselbund-Eintrag eines Kontos heißt `account/<datadir-id>/<name>` statt `account/<name>`; `<datadir-id>` sind 8 Hex aus der Kennung des Datenverzeichnisses (`meta.datadir_id`, Migration 0008, Schema 8). Zwei Datenverzeichnisse (Profile) mit gleichem Kontonamen teilen sich keinen Eintrag mehr. Vorhandene Einträge zieht das erste Kommando um (lesen alt → schreiben neu → Verweis umstellen → löschen alt; nicht `mcp`); bleibt der alte Eintrag stehen, warnen das Kommando und `doctor`. `POSTKAUZ_PASSWORD_<NAME>` bleibt unverändert.
+- S2.0/A8: `docs/roadmap.md`: die Entscheide des Betreibers vom 18.10.2026 (A02, Abschnitt 0) als „Entschiedene Fragen" 19 bis 33, „Offene Fragen" geleert bis auf eine neue Frage (Passwort neu setzen); neuer Abschnitt „Umfeld: verwandte Projekte (Stand 21.10.2026)" (Make-or-buy-Gate, msgvault). `README.md`, Non-goals: kein Archiv für Chat, Kalender und Meetings, keine Web-UI vor 1.0.
 
 ## [0.1.0-rc1] – 2026-10-16
 
