@@ -68,7 +68,16 @@ type IMAP struct {
 	CommandTimeout time.Duration `toml:"command_timeout"`
 	// CommandMaxDuration: Obergrenze je Kommando (Standard 10m).
 	CommandMaxDuration time.Duration `toml:"command_max_duration"`
+	// MaxMessageBytes: größte Rohmail, die der Sync annimmt (Standard
+	// 256 MiB = MaxMessageBytesLimit; A02 A4). Größere zählen als Fehler je
+	// Nachricht, der Sync läuft weiter.
+	MaxMessageBytes int64 `toml:"max_message_bytes"`
 }
+
+// MaxMessageBytesLimit ist Standard und Obergrenze von
+// imap.max_message_bytes: Größere Nachrichten nimmt auch der Blob-Store
+// nicht an (blob.DefaultMaxSize).
+const MaxMessageBytesLimit int64 = 256 << 20
 
 // Secrets wählt, wo Zugangsdaten liegen.
 type Secrets struct {
@@ -205,6 +214,9 @@ func LoadProfile(profile string) (Config, Paths, error) {
 	if cfg.IMAP.CommandMaxDuration != 0 && cfg.IMAP.CommandMaxDuration < cfg.IMAP.CommandTimeout {
 		return cfg, p, fmt.Errorf("config: imap.command_max_duration %s is shorter than imap.command_timeout %s",
 			cfg.IMAP.CommandMaxDuration, cfg.IMAP.CommandTimeout)
+	}
+	if cfg.IMAP.MaxMessageBytes < 0 || cfg.IMAP.MaxMessageBytes > MaxMessageBytesLimit {
+		return cfg, p, fmt.Errorf("config: imap.max_message_bytes %d is out of range (1 to %d; 0 = default)", cfg.IMAP.MaxMessageBytes, MaxMessageBytesLimit)
 	}
 	if cfg.DataDir == "" {
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {

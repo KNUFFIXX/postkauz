@@ -65,6 +65,9 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"negative":      "[imap]\ncommand_max_duration = \"-1m\"\n",
 		"max < timeout": "[imap]\ncommand_timeout = \"2m\"\ncommand_max_duration = \"1m\"\n",
 		"bad duration":  "[imap]\ncommand_timeout = \"zehn\"\n",
+		"max msg < 0":   "[imap]\nmax_message_bytes = -1\n",
+		"max msg > cap": "[imap]\nmax_message_bytes = 268435457\n",
+		"max msg text":  "[imap]\nmax_message_bytes = \"256MiB\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".toml")
@@ -82,7 +85,7 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 func TestLoadIMAPTimeouts(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "config.toml")
-	if err := os.WriteFile(f, []byte("[imap]\ncommand_timeout = \"45s\"\ncommand_max_duration = \"20m\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(f, []byte("[imap]\ncommand_timeout = \"45s\"\ncommand_max_duration = \"20m\"\nmax_message_bytes = 1048576\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(EnvConfig, f)
@@ -92,7 +95,7 @@ func TestLoadIMAPTimeouts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.IMAP.CommandTimeout != 45*time.Second || cfg.IMAP.CommandMaxDuration != 20*time.Minute {
+	if cfg.IMAP.CommandTimeout != 45*time.Second || cfg.IMAP.CommandMaxDuration != 20*time.Minute || cfg.IMAP.MaxMessageBytes != 1<<20 {
 		t.Fatalf("imap = %+v", cfg.IMAP)
 	}
 }

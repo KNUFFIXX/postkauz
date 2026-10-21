@@ -77,6 +77,9 @@ const (
 	// DefaultCommandMaxDuration ist die Obergrenze je Kommando
 	// (ADR-007, Nachtrag 16.10.2026).
 	DefaultCommandMaxDuration = 10 * time.Minute
+	// DefaultMaxMessageBytes begrenzt eine Rohmail in FetchRaw (A02 A4,
+	// [imap] max_message_bytes); so groß ist auch ein Blob höchstens.
+	DefaultMaxMessageBytes int64 = 256 << 20
 )
 
 // Config beschreibt eine Verbindung.
@@ -95,6 +98,11 @@ type Config struct {
 	// (0 = 10 min). Kleiner als CommandTimeout wird auf CommandTimeout
 	// angehoben.
 	CommandMaxDuration time.Duration
+	// MaxMessageBytes begrenzt eine Rohmail in FetchRaw (0 = 256 MiB).
+	// Eine größere Nachricht wird nicht gelesen; der Rückruf bekommt einen
+	// Reader, der sofort ErrMessageTooLarge meldet (Fehler je Nachricht,
+	// der Abruf der übrigen läuft weiter).
+	MaxMessageBytes int64
 
 	// dialContext ersetzt den TCP-Aufbau (Tests mit testing/synctest und
 	// net.Pipe); nil = net.Dialer mit Keepalive.
@@ -106,6 +114,7 @@ type Client struct {
 	c       *imapclient.Client
 	timeout time.Duration // Schweigen (CommandTimeout)
 	maxDur  time.Duration // Obergrenze je Kommando (CommandMaxDuration)
+	maxMsg  int64         // größte Rohmail in FetchRaw (MaxMessageBytes)
 	stopCtx func() bool
 	act     *activityConn
 	// changed wird bei unaufgeforderten Serverdaten (EXISTS, EXPUNGE,
@@ -252,6 +261,9 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	if cfg.CommandMaxDuration < cfg.CommandTimeout {
 		cfg.CommandMaxDuration = cfg.CommandTimeout
 	}
+	if cfg.MaxMessageBytes <= 0 {
+		cfg.MaxMessageBytes = DefaultMaxMessageBytes
+	}
 	if (cfg.TLS == TLSNone || cfg.InsecureTestServer) && !isLoopback(cfg.Host) {
 		return nil, fmt.Errorf("imapx: plain text or unverified TLS is only allowed for localhost test servers")
 	}
@@ -272,7 +284,7 @@ func dial(dialCtx, lifeCtx context.Context, cfg Config) (*Client, error) {
 	}
 	tlsCfg := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12, NextProtos: []string{"imap"},
 		InsecureSkipVerify: cfg.InsecureTestServer} //nolint:gosec // nur localhost-Testserver, oben geprüft
-	cl := &Client{timeout: cfg.CommandTimeout, maxDur: cfg.CommandMaxDuration, changed: make(chan struct{}, 1)}
+	cl := &Client{timeout: cfg.CommandTimeout, maxDur: cfg.CommandMaxDuration, maxMsg: cfg.MaxMessageBytes, changed: make(chan struct{}, 1)}
 	opts := &imapclient.Options{WordDecoder: WordDecoder(), TLSConfig: tlsCfg,
 		UnilateralDataHandler: cl.unilateralHandler()}
 

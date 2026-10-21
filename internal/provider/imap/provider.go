@@ -26,6 +26,9 @@ type Config struct {
 	// CommandMaxDuration: Obergrenze je Kommando (0 = 10 min; ADR-007,
 	// Nachtrag 16.10.2026).
 	CommandMaxDuration time.Duration
+	// MaxMessageBytes begrenzt eine Rohmail (0 = 256 MiB; [imap]
+	// max_message_bytes, A02 A4). Größere sind ein Fehler je Nachricht.
+	MaxMessageBytes int64
 	// Session steuert Reconnect und Backoff (Nullwert = Standard).
 	Session imapx.SessionOptions
 	// IdleRestart ist der Abstand, in dem IDLE neu gestartet wird
@@ -56,7 +59,7 @@ func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provide
 		return imapx.NewSession(imapx.Config{
 			Host: cfg.Host, Port: cfg.Port, TLS: imapx.TLSMode(cfg.TLS),
 			InsecureTestServer: cfg.InsecureTestServer, CommandTimeout: cfg.CommandTimeout,
-			CommandMaxDuration: cfg.CommandMaxDuration,
+			CommandMaxDuration: cfg.CommandMaxDuration, MaxMessageBytes: cfg.MaxMessageBytes,
 		}, func(c *imapx.Client) error { return c.Login(cfg.Username, password) }, cfg.Session)
 	}
 	s := newSession()

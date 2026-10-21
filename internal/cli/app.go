@@ -34,7 +34,8 @@ var newImporter = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.Im
 
 // newSyncRunner ist in Tests ersetzbar.
 var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c config.IMAP) ops.SyncRunner {
-	return &mailsync.Runner{Store: st, Blobs: b, Log: log, CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration}
+	return &mailsync.Runner{Store: st, Blobs: b, Log: log, CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration,
+		MaxMessageBytes: c.MaxMessageBytes}
 }
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,

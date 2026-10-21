@@ -259,10 +259,80 @@ func (c *Client) FetchFlags(from, to uint32, o FlagsOptions, fn func(FlagsData))
 	return cmdErr(err)
 }
 
+// ErrMessageTooLarge: Die Rohmail ist größer als MaxMessageBytes
+// ([imap] max_message_bytes). FetchRaw liest sie nicht und reicht dem
+// Rückruf einen Reader, der diesen Fehler meldet; der Sync zählt das als
+// Fehler dieser Nachricht und macht mit den übrigen weiter.
+var ErrMessageTooLarge = errors.New("imapx: message larger than imap.max_message_bytes")
+
+func (c *Client) tooLarge(size int64) error {
+	if size > 0 {
+		return fmt.Errorf("%w (%d bytes, limit %d)", ErrMessageTooLarge, size, c.maxMsg)
+	}
+	return fmt.Errorf("%w (limit %d)", ErrMessageTooLarge, c.maxMsg)
+}
+
+// errReader meldet beim ersten Lesen err.
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// cappedReader liefert höchstens left Bytes; kommt danach noch etwas, meldet
+// er tooLarge (statt still abzuschneiden: eine gekürzte Mail wäre falsch
+// gespiegelt). Ein Server kann eine kleinere Größe ankündigen, als er
+// schickt; der Rest des Literals verwirft go-imap beim nächsten Element.
+type cappedReader struct {
+	r    io.Reader
+	left int64
+	err  func() error
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		var one [1]byte
+		n, err := c.r.Read(one[:])
+		if n > 0 {
+			return 0, c.err()
+		}
+		return 0, err
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
+
+// limited begrenzt eine Rohmail (r, angekündigte Größe size) auf maxMsg
+// Bytes (A02 A4). Ist schon die Ankündigung zu groß, wird nichts gelesen.
+func (c *Client) limited(r io.Reader, size int64) io.Reader {
+	if size > c.maxMsg {
+		return errReader{c.tooLarge(size)}
+	}
+	return &cappedReader{r: r, left: c.maxMsg, err: func() error { return c.tooLarge(0) }}
+}
+
+// buffer liest eine Rohmail in den Speicher, höchstens maxMsg Bytes; eine
+// größere ergibt einen Reader, der ErrMessageTooLarge meldet (kein Fehler
+// des Abrufs). Andere Lesefehler kommen zurück.
+func (c *Client) buffer(lit imap.LiteralReader) (io.Reader, error) {
+	b, err := io.ReadAll(c.limited(lit, lit.Size()))
+	switch {
+	case errors.Is(err, ErrMessageTooLarge):
+		return errReader{err}, nil
+	case err != nil:
+		return nil, err
+	}
+	return bytes.NewReader(b), nil
+}
+
 // FetchRaw streamt die vollständigen Rohmails (BODY.PEEK[], \Seen bleibt
 // unberührt) der angegebenen UIDs und ruft fn je Nachricht auf. Der Reader
 // gilt nur während fn. Nennt der Server die UID erst nach dem Inhalt, wird
-// der Inhalt gepuffert.
+// der Inhalt gepuffert, höchstens MaxMessageBytes. Eine größere Nachricht
+// wird nicht gelesen: fn bekommt einen Reader, der ErrMessageTooLarge
+// meldet (A02 A4); gibt fn nil zurück, geht es mit der nächsten weiter.
 func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error) error {
 	if len(uids) == 0 {
 		return nil
@@ -274,33 +344,40 @@ func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error)
 		cmd := c.c.Fetch(uidSet(uids), opts)
 		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
 			var uid uint32
-			var pending []byte
+			var pending io.Reader // gepufferter Inhalt (UID kam erst danach)
 			delivered := false
 			for item := msg.Next(); item != nil; item = msg.Next() {
 				switch it := item.(type) {
 				case imapclient.FetchItemDataUID:
 					uid = uint32(it.UID)
 				case imapclient.FetchItemDataBodySection:
-					if it.Literal == nil {
+					if it.Literal == nil || fnErr != nil {
+						// Nach einem Fehler des Rückrufs wird nichts mehr
+						// gelesen (vorher: jede weitere Nachricht ganz in den
+						// Speicher); go-imap verwirft den Rest des Literals.
 						continue
 					}
-					if uid != 0 && fnErr == nil {
-						u := uid
-						fnErr = c.callback(it.Literal, func(r io.Reader) error { return fn(u, r) })
+					if uid != 0 {
+						u, size := uid, it.Literal.Size()
+						fnErr = c.callback(it.Literal, func(r io.Reader) error { return fn(u, c.limited(r, size)) })
 						delivered = true
 					} else {
-						b, err := io.ReadAll(it.Literal)
-						if err != nil {
+						// UID erst nach dem Inhalt: puffern, höchstens bis zur
+						// Grenze. go-imap beta.8 ordnet solche Antworten
+						// allerdings gar nicht dem Kommando zu (es erwartet die
+						// UID vor jedem Literal); der Zweig bleibt für einen
+						// Fork bzw. eine neuere Bibliothek.
+						var err error
+						if pending, err = c.buffer(it.Literal); err != nil {
 							_ = cmd.Close()
 							return err
 						}
-						pending = b
 					}
 				}
 			}
 			if !delivered && pending != nil && uid != 0 && fnErr == nil {
 				u := uid
-				fnErr = c.callback(bytes.NewReader(pending), func(r io.Reader) error { return fn(u, r) })
+				fnErr = c.callback(pending, func(r io.Reader) error { return fn(u, r) })
 			}
 		}
 		return cmd.Close()

@@ -3,9 +3,12 @@ package mailsync
 // Tests zu A02, Teil A (S2.0): voller UID-Abgleich im Dauerbetrieb (A1).
 
 import (
+	"bytes"
 	"context"
+	"net"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -146,4 +150,34 @@ func TestWatchFullCheckIntervalSynctest(t *testing.T) {
 			t.Fatalf("Changes calls = %d, want 26", r.calls)
 		}
 	})
+}
+
+// A02 A4 (Frage 6d): Eine Rohmail über [imap] max_message_bytes ist ein
+// Fehler dieser Nachricht; der Sync spiegelt die übrigen und endet ohne
+// Fehler (Testserver im Prozess, Grenze klein).
+func TestSyncSkipsMessageOverMaxMessageBytes(t *testing.T) {
+	addr, u := memServer(t, false)
+	_, _ = u.Append("INBOX", lit(mail(1)), &imap.AppendOptions{})
+	big := append(mail(2), bytes.Repeat([]byte("x"), 8192)...)
+	_, _ = u.Append("INBOX", lit(big), &imap.AppendOptions{})
+	_, _ = u.Append("INBOX", lit(mail(3)), &imap.AppendOptions{})
+	e := newEnv(t, addr)
+	host, port, _ := net.SplitHostPort(addr)
+	p, _ := strconv.Atoi(port)
+	prov, err := imapprov.Connect(context.Background(), imapprov.Config{Host: host, Port: p, TLS: "none", Username: testUser,
+		InsecureTestServer: true, CommandTimeout: 5 * time.Second, MaxMessageBytes: 4096}, testPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = prov.Close() })
+	rep, err := e.engine(t, prov).SyncAll(context.Background(), Options{})
+	if err != nil || rep.Mirrored != 2 || rep.Errors != 1 || len(rep.Mailboxes) != 1 {
+		t.Fatalf("sync = %+v %v", rep, err)
+	}
+	if pr := rep.Mailboxes[0].Problems; len(pr) != 1 || !strings.Contains(pr[0], "uid 2:") || !strings.Contains(pr[0], "max_message_bytes") {
+		t.Fatalf("problems = %v", pr)
+	}
+	if n := e.count(t, `SELECT count(*) FROM messages WHERE subject IN ('Nachricht 1', 'Nachricht 3')`); n != 2 {
+		t.Fatalf("mirrored = %d", n)
+	}
 }
