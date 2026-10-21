@@ -109,7 +109,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 			a.log.Warn("could not restrict permissions", "path", c.Path, "error", c.Err.Error())
 			continue
 		}
-		a.log.Info("restricted permissions", "path", c.Path, "from", fmt.Sprintf("%04o", c.Old), "to", fmt.Sprintf("%04o", c.New))
+		if c.Skip != "" {
+			a.log.Warn("did not restrict permissions", "path", c.Path, "reason", c.Skip, "mode", config.OctalMode(c.Old))
+			continue
+		}
+		a.log.Info("restricted permissions", "path", c.Path, "from", config.OctalMode(c.Old), "to", config.OctalMode(c.New))
 	}
 
 	st, err := store.Open(a.paths.Database)

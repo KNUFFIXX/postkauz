@@ -251,25 +251,40 @@ func EnsureDataDir(p Paths) error {
 	return nil
 }
 
-// chmod ist in Tests ersetzbar (ein Fehler lässt sich sonst als Besitzer
-// kaum auslösen).
-var chmod = os.Chmod
+// chmod und euid sind in Tests ersetzbar (ein Fehler bzw. ein fremder
+// Besitzer lässt sich sonst als Besitzer kaum auslösen).
+var (
+	chmod = os.Chmod
+	euid  = os.Geteuid
+)
 
 // PermChange meldet eine Verschärfung durch RestrictPermissions: vorher
-// (Old) und nachher (New), oder den Fehler, an dem sie scheiterte.
+// (Old) und nachher (New), oder den Fehler, an dem sie scheiterte. Skip
+// nennt den Grund, aus dem der Pfad bewusst nicht geändert wurde
+// (symlink | foreign_owner); der Aufrufer schreibt dann eine Warnung ins
+// Log.
 type PermChange struct {
 	Path string
 	Old  fs.FileMode
 	New  fs.FileMode
 	Err  error
+	Skip string
 }
+
+// permBits sind die Rechte samt Sonderbits (Setuid, Setgid, Sticky), wie
+// os.Chmod sie setzt.
+const permBits = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 
 // RestrictPermissions nimmt Datenverzeichnis und Log die Rechte für Gruppe
 // und andere (Datenverzeichnis danach 0700, Log 0600; A02 A3, Frage 6c).
-// Die Datenbank setzt store.Open selbst auf 0600. Rechte des Besitzers
-// bleiben, wie sie sind. Unter Windows gilt der Profilordner, dort
-// geschieht nichts. Fehler brechen nichts ab: Der Aufrufer schreibt sie
-// als Warnung ins Log (doctor --secrets meldet die Rechte dann als fail).
+// Die Datenbank setzt store.Open selbst auf 0600. Rechte des Besitzers und
+// Sonderbits (etwa Setgid eines Verzeichnisses) bleiben, wie sie sind; nur
+// die Bits für Gruppe und andere fallen weg. Ein Symlink (das Ziel kann ein
+// fremdes, geteiltes Verzeichnis sein) und ein Pfad, der einem anderen
+// Nutzer gehört, bleiben unverändert (Skip; Lstat, folgt keinem Symlink).
+// Unter Windows gilt der Profilordner, dort geschieht nichts. Fehler
+// brechen nichts ab: Der Aufrufer schreibt sie als Warnung ins Log (doctor
+// --secrets meldet die Rechte dann als fail).
 func RestrictPermissions(p Paths) []PermChange {
 	if runtime.GOOS == "windows" {
 		return nil
@@ -279,7 +294,7 @@ func RestrictPermissions(p Paths) []PermChange {
 		if path == "" {
 			continue
 		}
-		fi, err := os.Stat(path)
+		fi, err := os.Lstat(path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -287,15 +302,43 @@ func RestrictPermissions(p Paths) []PermChange {
 			out = append(out, PermChange{Path: path, Err: err})
 			continue
 		}
-		old := fi.Mode().Perm()
-		if old&0o077 == 0 {
+		if fi.Mode()&fs.ModeSymlink != 0 {
+			// Nie dem Symlink folgen; warnen nur, wenn das Ziel zu offen ist.
+			if t, err := os.Stat(path); err == nil && t.Mode().Perm()&0o077 != 0 {
+				m := t.Mode() & permBits
+				out = append(out, PermChange{Path: path, Old: m, New: m, Skip: "symlink"})
+			}
 			continue
 		}
-		c := PermChange{Path: path, Old: old, New: old &^ 0o077}
+		mode := fi.Mode() & permBits
+		if mode.Perm()&0o077 == 0 {
+			continue
+		}
+		c := PermChange{Path: path, Old: mode, New: mode &^ 0o077}
+		if uid, ok := fileOwner(fi); ok && uid != euid() {
+			c.Skip, c.New = "foreign_owner", c.Old
+			out = append(out, c)
+			continue
+		}
 		c.Err = chmod(path, c.New)
 		out = append(out, c)
 	}
 	return out
+}
+
+// OctalMode schreibt Rechte samt Sonderbits wie chmod (z. B. "2700").
+func OctalMode(m fs.FileMode) string {
+	v := uint32(m.Perm())
+	if m&fs.ModeSetuid != 0 {
+		v |= 0o4000
+	}
+	if m&fs.ModeSetgid != 0 {
+		v |= 0o2000
+	}
+	if m&fs.ModeSticky != 0 {
+		v |= 0o1000
+	}
+	return fmt.Sprintf("%04o", v)
 }
 
 // cloudMarkers sind Namensteile typischer Cloud-Sync-Ordner. SQLite im

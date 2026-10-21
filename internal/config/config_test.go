@@ -174,3 +174,66 @@ func TestRestrictPermissions(t *testing.T) {
 		t.Fatalf("failing chmod: %+v", c)
 	}
 }
+
+// Gegenprüfung 21.10.2026, Befund 7 (A3): RestrictPermissions folgt keinem
+// Symlink (das Ziel kann ein fremdes, geteiltes Verzeichnis sein), ändert
+// nichts, was einem anderen Nutzer gehört, und erhält Sonderbits wie Setgid
+// (nur die Bits für Gruppe und andere fallen weg).
+func TestRestrictPermissionsSymlinkOwnerSpecialBits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permissions")
+	}
+	base := t.TempDir()
+	shared := filepath.Join(base, "shared")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(shared, 0o755)
+	link := filepath.Join(base, "data")
+	if err := os.Symlink(shared, link); err != nil {
+		t.Fatal(err)
+	}
+	c := RestrictPermissions(Paths{DataDir: link})
+	if len(c) != 1 || c[0].Skip != "symlink" || c[0].Err != nil || OctalMode(c[0].Old) != "0755" {
+		t.Fatalf("symlink: %+v", c)
+	}
+	if fi, _ := os.Stat(shared); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target changed to %04o", fi.Mode().Perm())
+	}
+
+	// Setgid bleibt erhalten: 2775 -> 2700.
+	sg := filepath.Join(base, "setgid")
+	if err := os.Mkdir(sg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sg, 0o775|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(sg); fi.Mode()&os.ModeSetgid == 0 {
+		t.Skip("file system does not keep the setgid bit")
+	}
+	c = RestrictPermissions(Paths{DataDir: sg})
+	if len(c) != 1 || c[0].Err != nil || c[0].Skip != "" || OctalMode(c[0].Old) != "2775" || OctalMode(c[0].New) != "2700" {
+		t.Fatalf("setgid: %+v", c)
+	}
+	if fi, _ := os.Stat(sg); fi.Mode()&os.ModeSetgid == 0 || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("setgid dir is %v", fi.Mode())
+	}
+
+	// Fremder Besitzer: nichts ändern, nur melden.
+	other := filepath.Join(base, "other")
+	if err := os.Mkdir(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(other, 0o755)
+	orig := euid
+	euid = func() int { return orig() + 4711 }
+	defer func() { euid = orig }()
+	c = RestrictPermissions(Paths{DataDir: other})
+	if len(c) != 1 || c[0].Skip != "foreign_owner" || c[0].Err != nil {
+		t.Fatalf("foreign owner: %+v", c)
+	}
+	if fi, _ := os.Stat(other); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("foreign directory changed to %04o", fi.Mode().Perm())
+	}
+}
