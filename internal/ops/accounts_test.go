@@ -419,3 +419,43 @@ func TestAccountsSetAliases(t *testing.T) {
 		t.Fatal("aliases changed by an API key")
 	}
 }
+
+// Gegenprüfung 21.10.2026, Befund 10 (A6): Ein Alias gleich der
+// Kontoadresse oder dem Anmeldenamen (beliebige Schreibweise) ist keine
+// weitere Adresse und fällt heraus; die Grenze von 50 gilt nach dem
+// Entfernen von Dubletten (vorher lehnte maxItems 50 im Schema schon die
+// Eingabe ab).
+func TestAccountsSetAliasesDropsOwnAddressesAndCountsAfterDedup(t *testing.T) {
+	e := newAccountsEnv(t)
+	if err := e.x.Registry.Register(AccountsSet(e.st)); err != nil {
+		t.Fatal(err)
+	}
+	in := demoInput()
+	in["email"] = "Demo@Example.org"
+	in["username"] = "Login@Example.net"
+	if _, err := e.run("accounts.add", in, canary, false); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.run("accounts.set", map[string]any{"name": "demo",
+		"aliases": []string{"LOGIN@example.NET", "demo@EXAMPLE.org", "weiter@example.org"}}, "", false)
+	if got := out.(AccountsSetOutput).Aliases; err != nil || len(got) != 1 || got[0] != "weiter@example.org" {
+		t.Fatalf("aliases = %v, %v", out, err)
+	}
+	// 60 Einträge, 10 verschiedene: angenommen.
+	var many []string
+	for i := range 60 {
+		many = append(many, fmt.Sprintf("a%d@example.org", i%10))
+	}
+	out, err = e.run("accounts.set", map[string]any{"name": "demo", "aliases": many}, "", false)
+	if err != nil || len(out.(AccountsSetOutput).Aliases) != 10 {
+		t.Fatalf("60 entries with duplicates: %+v %v", out, err)
+	}
+	// 51 verschiedene: abgelehnt.
+	many = many[:0]
+	for i := range 51 {
+		many = append(many, fmt.Sprintf("b%d@example.org", i))
+	}
+	if _, err := e.run("accounts.set", map[string]any{"name": "demo", "aliases": many}, "", false); err == nil || !strings.Contains(err.Error(), "too many aliases") {
+		t.Fatalf("51 aliases: %v", err)
+	}
+}

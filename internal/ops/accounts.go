@@ -398,7 +398,10 @@ func detail(a store.Account, source string) AccountDetail {
 
 // --- accounts.set ----------------------------------------------------------
 
-// MaxAliases begrenzt die weiteren eigenen Adressen je Konto.
+// MaxAliases begrenzt die weiteren eigenen Adressen je Konto, gezählt nach
+// dem Entfernen von Dubletten und eigenen Adressen. Die Eingabe selbst darf
+// mehr Einträge haben, höchstens 200 (maxItems im Schema, Schutz vor
+// Riesenlisten); vorher griff maxItems 50 schon vor dem Entfernen.
 const MaxAliases = 50
 
 // AccountsSetInput ist die Eingabe von accounts.set. Fehlt ein Feld, bleibt
@@ -417,10 +420,14 @@ type AccountsSetOutput struct {
 }
 
 // normalizeAliases prüft die Adressen (RFC 5322, nur die Adresse ohne
-// Namen), schreibt sie klein, entfernt Dubletten und die Kontoadresse.
-func normalizeAliases(in []string, own string) ([]string, error) {
+// Namen), schreibt sie klein, entfernt Dubletten und die schon eigenen
+// Adressen des Kontos (Kontoadresse, Anmeldename; ohne Rücksicht auf
+// Groß- und Kleinschreibung). Die Grenze MaxAliases gilt danach.
+func normalizeAliases(in []string, own ...string) ([]string, error) {
 	out := []string{}
-	own = strings.ToLower(strings.TrimSpace(own))
+	for i := range own {
+		own[i] = strings.ToLower(strings.TrimSpace(own[i]))
+	}
 	for _, raw := range in {
 		s := strings.TrimSpace(raw)
 		addr, err := mail.ParseAddress(s)
@@ -428,7 +435,7 @@ func normalizeAliases(in []string, own string) ([]string, error) {
 			return nil, inputErr("invalid alias %q: give a plain e-mail address such as alias@example.org", raw)
 		}
 		a := strings.ToLower(addr.Address)
-		if a == own || slices.Contains(out, a) {
+		if slices.Contains(own, a) || slices.Contains(out, a) {
 			continue
 		}
 		out = append(out, a)
@@ -472,7 +479,7 @@ func AccountsSet(repo AccountRepo) Operation {
   "type": "object",
   "properties": {
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 50}
+    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 200}
   },
   "required": ["name"],
   "additionalProperties": false
@@ -502,7 +509,7 @@ func AccountsSet(repo AccountRepo) Operation {
 			if err != nil {
 				return nil, err
 			}
-			aliases, err := normalizeAliases(*in.Aliases, a.Email)
+			aliases, err := normalizeAliases(*in.Aliases, a.Email, a.Username)
 			if err != nil {
 				return nil, err
 			}
