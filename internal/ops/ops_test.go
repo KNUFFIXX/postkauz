@@ -141,6 +141,42 @@ func TestExecutorChain(t *testing.T) {
 	}
 }
 
+// A02, E2 (minimal in S2.0): Eine HumanOnly-Operation läuft nur für den
+// Menschen ohne Schlüssel; mit Schlüssel (jede Rolle, auch admin, auch als
+// Trockenlauf) ist sie verweigert, auditiert mit Grund human_only, und der
+// Handler läuft nie.
+func TestExecutorHumanOnly(t *testing.T) {
+	called := 0
+	reg := NewRegistry()
+	op := newTestOp("m.set", policy.ScopeAdmin, policy.R1, func(context.Context, Call) (any, error) { called++; return map[string]any{}, nil })
+	op.HumanOnly = true
+	if err := reg.Register(op); err != nil {
+		t.Fatal(err)
+	}
+	au := &audit.Memory{}
+	x := &Executor{Registry: reg, Audit: au}
+	yes := true
+	for _, role := range []string{"reader", "assistant", "operator", "admin"} {
+		for _, dry := range []*bool{nil, &yes} {
+			k := policy.Key{ID: "key:" + role, Scopes: policy.Roles[role]}
+			_, err := x.Execute(context.Background(), Request{Key: k, Actor: audit.ActorAgent, Operation: "m.set", DryRun: dry})
+			var pe *PolicyError
+			if !errors.Is(err, ErrDenied) || !errors.As(err, &pe) || pe.Decision.Reason != "human_only" {
+				t.Fatalf("%s: err = %v", role, err)
+			}
+			if last := au.Events()[len(au.Events())-1]; last.Result != audit.ResultDenied || last.Reason != "human_only" || last.KeyID != k.ID {
+				t.Fatalf("%s: audit = %+v", role, last)
+			}
+		}
+	}
+	if called != 0 {
+		t.Fatalf("handler ran %d times for API keys", called)
+	}
+	if _, err := x.Execute(context.Background(), Request{Key: adminKey, Actor: audit.ActorHuman, Operation: "m.set"}); err != nil || called != 1 {
+		t.Fatalf("human: err=%v called=%d", err, called)
+	}
+}
+
 type failingAudit struct{}
 
 func (failingAudit) Append(context.Context, audit.Event) error { return errors.New("disk full") }
@@ -339,7 +375,10 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 		t.Fatalf("NewDefaultRegistry: %v", err)
 	}
 
-	roles := []string{"none"}
+	// Rollen als API-Schlüssel, dazu "human": der Mensch an der CLI ohne
+	// Schlüssel (admin-Scopes, Human), der als Einziger HumanOnly-Operationen
+	// ausführen darf (A02, E2).
+	roles := []string{"none", "human"}
 	for r := range policy.Roles {
 		roles = append(roles, r)
 	}
@@ -367,6 +406,10 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					au := &audit.Memory{}
 					x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au}
 					key := policy.Key{ID: "key-" + role, Scopes: policy.Roles[role], DryRunDefault: mode.keyDefault}
+					human := role == "human"
+					if human {
+						key = policy.Key{ID: "cli", Scopes: policy.Roles["admin"], DryRunDefault: mode.keyDefault, Human: true}
+					}
 
 					// Erwartung, unabhängig von policy.Check formuliert
 					// (docs/sicherheit.md, Abschnitt 2).
@@ -375,8 +418,10 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 						dry = *mode.flag
 					}
 					effDry := dry && op.Risk > policy.R0
-					want := policy.Allow
+					want, wantReason := policy.Allow, ""
 					switch {
+					case op.HumanOnly && !human:
+						want, wantReason = policy.Deny, "human_only"
 					case op.Scope != policy.ScopeAny && !slices.Contains(key.Scopes, op.Scope):
 						want = policy.Deny
 					case op.Risk == policy.R3 && !dry:
@@ -422,6 +467,9 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					if ev.Operation != op.Name || ev.Scope != string(op.Scope) || ev.KeyID != key.ID ||
 						ev.ActorType != audit.ActorAgent || ev.Result != wantResult {
 						t.Fatalf("audit event = %+v, want result %s", ev, wantResult)
+					}
+					if wantReason != "" && ev.Reason != wantReason {
+						t.Fatalf("audit reason = %q, want %q", ev.Reason, wantReason)
 					}
 					if want == policy.Allow && ev.DryRun != effDry {
 						t.Fatalf("audit dry_run=%v, want %v", ev.DryRun, effDry)

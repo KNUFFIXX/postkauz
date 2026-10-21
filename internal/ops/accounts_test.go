@@ -108,7 +108,8 @@ func (e *accountsEnv) ref(t *testing.T, name string) string {
 	return secrets.AccountRef(id, name)
 }
 
-var adminKey = policy.Key{ID: "cli", Scopes: policy.Roles["admin"]}
+// adminKey ist der Mensch an der CLI ohne --key (wie cli.humanKey).
+var adminKey = policy.Key{ID: "cli", Scopes: policy.Roles["admin"], Human: true}
 
 func (e *accountsEnv) run(op string, input any, secret secrets.Secret, dry bool) (any, error) {
 	b, _ := json.Marshal(input)

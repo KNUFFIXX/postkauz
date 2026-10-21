@@ -34,6 +34,8 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 
 **Pseudo-Scope `any`** (seit S1.8, `policy.ScopeAny`): steht an Operationen, die nur über den aufrufenden Schlüssel selbst Auskunft geben (`policy.get`, MCP `mail_get_policy`). Jeder gültige Schlüssel darf sie aufrufen; kein Schlüssel trägt diesen Scope, keine Rolle enthält ihn (Test).
 
+**Operationen nur für Menschen** (`HumanOnly`, A02 Entscheid E2; seit S2.0 angelegt, vollständig ab S2.1): Trägt eine Operation `HumanOnly`, lehnt `policy.Check` jeden Aufruf mit API-Schlüssel ab, gleich welcher Rolle (auch `admin`), auch im Trockenlauf und auch über die CLI-Probe `--key`: Entscheidung `deny`, Grund `human_only`, auditiert, der Handler läuft nie. Diese Regel geht allen anderen vor. Nur die CLI ohne `--key` (der Mensch am Terminal, `policy.Key.Human`) darf sie; ein Schlüssel mit ID `key:<name>` gilt nie als Mensch, und ein Prüfschlüssel ohne die Angabe gilt als Schlüssel (fail closed). `policy.get` führt sie für Schlüssel nicht auf; sie haben kein MCP-Tool (`notOverMCP`, Test). Geprüft vom Vertragstest `TestContractEveryOperationRoleAndDryRun` (jede Operation mit jeder Rolle als Schlüssel und als Mensch ohne Schlüssel), `TestExecutorHumanOnly` und `TestCheckHumanOnly`. HumanOnly sind laut E2 `accounts.set` (S2.0, A6) sowie ab S2.3 `drafts.approve`, `drafts.reject`, `drafts.abandon`, `drafts.mark_sent` und `identities.*`.
+
 **Risikostufen:** R0 lesen · R1 lokal ändern · R2 serverseitig ändern, reversibel · R3 extern wirksam oder schwer umkehrbar. Ein höheres Risiko verlangt strengere Kontrolle: `policy.Check` liefert für R3 ohne Trockenlauf `needs_approval`.
 
 ## 3. API-Schlüssel

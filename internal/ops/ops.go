@@ -91,6 +91,12 @@ type Operation struct {
 	Handler Handler
 	// Redact ist optional; ohne sie stehen im Audit leere Parameter ({}).
 	Redact RedactFunc
+	// HumanOnly: nur der Mensch ohne API-Schlüssel darf die Operation
+	// ausführen (A02, E2). Mit Schlüssel, gleich welcher Rolle und auch über
+	// die CLI-Probe --key, lehnt die Policy mit Grund human_only ab; der
+	// Handler läuft nie, die Ablehnung steht im Audit. Solche Operationen
+	// haben kein MCP-Tool (notOverMCP).
+	HumanOnly bool
 
 	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
 	input *jsonschema.Resolved
@@ -98,7 +104,7 @@ type Operation struct {
 
 // Requirement übersetzt die Operation in das, was policy.Check braucht.
 func (o Operation) Requirement() policy.Requirement {
-	return policy.Requirement{Name: o.Name, Scope: o.Scope, Risk: o.Risk}
+	return policy.Requirement{Name: o.Name, Scope: o.Scope, Risk: o.Risk, HumanOnly: o.HumanOnly}
 }
 
 var nameRE = regexp.MustCompile(`^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$`)

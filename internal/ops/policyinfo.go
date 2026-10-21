@@ -31,6 +31,8 @@ type PolicyOutput struct {
 
 // PolicyGet beschreibt die Richtlinie des aufrufenden Schlüssels: Scopes,
 // erlaubte Operationen mit Risikostufe, Trockenlauf-Standard, Budget.
+// HumanOnly-Operationen stehen nur für den Menschen ohne Schlüssel in der
+// Liste (ein Schlüssel darf sie nie, A02 E2).
 // Jeder Schlüssel darf sie lesen (ScopeAny, R0).
 func PolicyGet() Operation {
 	return Operation{
@@ -72,7 +74,7 @@ func PolicyGet() Operation {
 			// Der Katalog ohne Abhängigkeiten dient hier nur als Liste der
 			// Namen, Scopes und Risikostufen; kein Handler läuft.
 			for _, op := range Catalog(Deps{}) {
-				if k.Covers(op.Scope) {
+				if k.Covers(op.Scope) && (!op.HumanOnly || k.IsHuman()) {
 					out.Operations = append(out.Operations, PolicyOperation{Name: op.Name, Scope: string(op.Scope),
 						Risk: op.Risk.String(), ReadOnly: op.Risk == policy.R0})
 				}

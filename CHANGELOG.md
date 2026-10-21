@@ -4,6 +4,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### Added
+
+- S2.0/A6: Operationen nur für Menschen (`HumanOnly`, A02 E2, minimal): Mit API-Schlüssel (jede Rolle, auch `admin`, auch `--key`) lehnt die Policy sie mit Grund `human_only` ab, auditiert, ohne Handler; nur die CLI ohne `--key` darf sie. `policy show` führt sie für Schlüssel nicht auf, MCP bietet sie nie an; der Vertragstest prüft jede Operation zusätzlich als Mensch ohne Schlüssel.
+
 ### Changed
 
 - S2.0/A2: Der Schlüsselbund-Eintrag eines Kontos heißt `account/<datadir-id>/<name>` statt `account/<name>`; `<datadir-id>` sind 8 Hex aus der Kennung des Datenverzeichnisses (`meta.datadir_id`, Migration 0008, Schema 8). Zwei Datenverzeichnisse (Profile) mit gleichem Kontonamen teilen sich keinen Eintrag mehr. Vorhandene Einträge zieht das erste Kommando um (lesen alt → schreiben neu → Verweis umstellen → löschen alt; nicht `mcp`); bleibt der alte Eintrag stehen, warnen das Kommando und `doctor`. `POSTKAUZ_PASSWORD_<NAME>` bleibt unverändert.

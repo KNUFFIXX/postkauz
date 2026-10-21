@@ -8,6 +8,7 @@ package policy
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -90,7 +91,16 @@ type Key struct {
 	// ExpiresAt ist das Ablaufdatum (Nullzeit = keins; nur zur Auskunft,
 	// abgelaufene Schlüssel weist schon die Anmeldung ab).
 	ExpiresAt time.Time
+	// Human: Der Aufruf kommt vom Menschen am Terminal ohne API-Schlüssel
+	// (CLI ohne --key). Nur dann laufen HumanOnly-Operationen. Der Standard
+	// false heißt „ein Schlüssel ist im Spiel" (fail closed): Wer einen Key
+	// baut und das Feld vergisst, bekommt keine Mensch-Rechte. Ein Schlüssel
+	// mit ID "key:<name>" gilt nie als Mensch, auch wenn Human gesetzt ist.
+	Human bool
 }
+
+// IsHuman meldet, ob ohne API-Schlüssel gehandelt wird (siehe Key.Human).
+func (k Key) IsHuman() bool { return k.Human && !strings.HasPrefix(k.ID, "key:") }
 
 // Has meldet, ob der Schlüssel den Scope besitzt. „admin" ersetzt keine
 // anderen Scopes: Er erlaubt Verwaltung, nicht Mailzugriff.
@@ -102,6 +112,9 @@ type Requirement struct {
 	Name  string
 	Scope Scope
 	Risk  Risk
+	// HumanOnly: nur für den Menschen ohne API-Schlüssel (A02, E2), gleich
+	// welche Rolle der Schlüssel hat, auch admin.
+	HumanOnly bool
 }
 
 // Roles bündelt Scopes zu den Standardrollen (docs/sicherheit.md).
@@ -126,6 +139,9 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 // Check ist der Policy-Schritt der Kette Scope → Policy → Freigabe → Audit →
 // Handler. Stub für Phase 0, Regeln:
 //
+//   - HumanOnly und ein API-Schlüssel im Spiel (Key.IsHuman false): Deny mit
+//     Grund human_only, vor allen anderen Regeln (A02, E2; S2.0 minimal,
+//     vollständig ab S2.1).
 //   - fehlender Scope: Deny (ScopeAny fehlt nie).
 //   - R0: Allow (lesen; ein Trockenlauf ist bedeutungslos).
 //   - R1/R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
@@ -133,6 +149,9 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 //   - R3: NeedsApproval. Es gibt im MVP keinen Weg, eine R3-Operation ohne
 //     Mensch auszuführen; die Freigabe-Zustandsmaschine folgt in Schnitt 2.
 func Check(key Key, op Requirement, dryRun bool) Decision {
+	if op.HumanOnly && !key.IsHuman() {
+		return Decision{Outcome: Deny, Reason: "human_only"}
+	}
 	if op.Scope != ScopeAny && !key.Has(op.Scope) {
 		return Decision{Outcome: Deny, Reason: "missing_scope"}
 	}

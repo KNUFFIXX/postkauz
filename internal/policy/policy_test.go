@@ -14,18 +14,18 @@ func TestCheck(t *testing.T) {
 		want   Outcome
 		wantDR bool
 	}{
-		{"read with scope", reader, Requirement{"messages.get", ScopeMailRead, R0}, false, Allow, false},
-		{"read without scope", Key{ID: "k0"}, Requirement{"messages.get", ScopeMailRead, R0}, false, Deny, false},
-		{"local write allowed", operator, Requirement{"drafts.create", ScopeMailDraft, R1}, false, Allow, false},
-		{"R1 dry run is honoured", operator, Requirement{"drafts.create", ScopeMailDraft, R1}, true, Allow, true},
-		{"R0 ignores dry run", reader, Requirement{"messages.get", ScopeMailRead, R0}, true, Allow, false},
-		{"R2 without scope", reader, Requirement{"messages.move", ScopeMailMove, R2}, false, Deny, false},
-		{"R2 with scope", operator, Requirement{"messages.move", ScopeMailMove, R2}, false, Allow, false},
-		{"R2 dry run", operator, Requirement{"messages.move", ScopeMailMove, R2}, true, Allow, true},
-		{"R3 needs approval", operator, Requirement{"messages.trash", ScopeMailTrash, R3}, false, NeedsApproval, false},
-		{"R3 dry run is allowed", operator, Requirement{"messages.trash", ScopeMailTrash, R3}, true, Allow, true},
-		{"R3 without scope is denied, not approvable", reader, Requirement{"messages.trash", ScopeMailTrash, R3}, false, Deny, false},
-		{"admin does not imply mail scopes", Key{Scopes: []Scope{ScopeAdmin}}, Requirement{"messages.get", ScopeMailRead, R0}, false, Deny, false},
+		{"read with scope", reader, Requirement{Name: "messages.get", Scope: ScopeMailRead, Risk: R0}, false, Allow, false},
+		{"read without scope", Key{ID: "k0"}, Requirement{Name: "messages.get", Scope: ScopeMailRead, Risk: R0}, false, Deny, false},
+		{"local write allowed", operator, Requirement{Name: "drafts.create", Scope: ScopeMailDraft, Risk: R1}, false, Allow, false},
+		{"R1 dry run is honoured", operator, Requirement{Name: "drafts.create", Scope: ScopeMailDraft, Risk: R1}, true, Allow, true},
+		{"R0 ignores dry run", reader, Requirement{Name: "messages.get", Scope: ScopeMailRead, Risk: R0}, true, Allow, false},
+		{"R2 without scope", reader, Requirement{Name: "messages.move", Scope: ScopeMailMove, Risk: R2}, false, Deny, false},
+		{"R2 with scope", operator, Requirement{Name: "messages.move", Scope: ScopeMailMove, Risk: R2}, false, Allow, false},
+		{"R2 dry run", operator, Requirement{Name: "messages.move", Scope: ScopeMailMove, Risk: R2}, true, Allow, true},
+		{"R3 needs approval", operator, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, false, NeedsApproval, false},
+		{"R3 dry run is allowed", operator, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, true, Allow, true},
+		{"R3 without scope is denied, not approvable", reader, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, false, Deny, false},
+		{"admin does not imply mail scopes", Key{Scopes: []Scope{ScopeAdmin}}, Requirement{Name: "messages.get", Scope: ScopeMailRead, Risk: R0}, false, Deny, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,6 +37,42 @@ func TestCheck(t *testing.T) {
 				t.Fatal("Reason must never be empty")
 			}
 		})
+	}
+}
+
+// A02, E2 (minimal in S2.0): Eine HumanOnly-Operation lehnt jeder
+// API-Schlüssel ab, gleich welcher Rolle (auch admin), auch im Trockenlauf,
+// mit Grund human_only; nur der Mensch ohne Schlüssel darf sie. Ein Key mit
+// ID "key:<name>" gilt nie als Mensch.
+func TestCheckHumanOnly(t *testing.T) {
+	op := Requirement{Name: "accounts.set", Scope: ScopeAdmin, Risk: R1, HumanOnly: true}
+	roles := []string{"none"}
+	for r := range Roles {
+		roles = append(roles, r)
+	}
+	for _, role := range roles {
+		for _, dry := range []bool{false, true} {
+			k := Key{ID: "key:" + role, Scopes: Roles[role]}
+			if got := Check(k, op, dry); got.Outcome != Deny || got.Reason != "human_only" {
+				t.Errorf("role %s dry=%v: %+v, want deny human_only", role, dry, got)
+			}
+		}
+	}
+	human := Key{ID: "cli", Scopes: Roles["admin"], Human: true}
+	if got := Check(human, op, false); got.Outcome != Allow {
+		t.Errorf("human: %+v", got)
+	}
+	if got := Check(human, op, true); got.Outcome != Allow || !got.DryRun {
+		t.Errorf("human dry run: %+v", got)
+	}
+	if got := Check(Key{ID: "key:x", Scopes: Roles["admin"], Human: true}, op, false); got.Reason != "human_only" {
+		t.Errorf("key: ID with Human set: %+v", got)
+	}
+	// Ohne HumanOnly ändert sich für Schlüssel nichts.
+	plain := op
+	plain.HumanOnly = false
+	if got := Check(Key{ID: "key:adm", Scopes: Roles["admin"]}, plain, false); got.Outcome != Allow {
+		t.Errorf("admin key, plain op: %+v", got)
 	}
 }
 

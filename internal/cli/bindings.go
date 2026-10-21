@@ -99,8 +99,8 @@ var bindings = []binding{
 }
 
 // humanKey ist der Schlüssel, unter dem die CLI ohne --key handelt: der
-// Mensch am Terminal mit allen Rechten.
-var humanKey = policy.Key{ID: "cli", Name: "cli (human)", Role: "admin", Scopes: policy.Roles["admin"]}
+// Mensch am Terminal mit allen Rechten, auch für HumanOnly-Operationen.
+var humanKey = policy.Key{ID: "cli", Name: "cli (human)", Role: "admin", Scopes: policy.Roles["admin"], Human: true}
 
 // observeRequest sieht jeden Aufruf vor dem Executor (nur Tests:
 // Vertragstest Register ↔ CLI prüft die gebaute Eingabe gegen das Schema;

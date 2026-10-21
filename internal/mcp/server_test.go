@@ -52,6 +52,10 @@ func TestEveryOperationIsBoundOrExcluded(t *testing.T) {
 		case bound[name] == 0 && !excluded:
 			t.Errorf("operation %s has no tool and no reason in notOverMCP", name)
 		}
+		// Mensch-only-Operationen (A02, E2) sind nie ein Tool.
+		if cat[name].HumanOnly && !excluded {
+			t.Errorf("operation %s is human only and must be listed in notOverMCP", name)
+		}
 	}
 	for name := range notOverMCP {
 		if _, ok := cat[name]; !ok {
