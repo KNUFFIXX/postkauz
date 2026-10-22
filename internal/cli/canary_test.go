@@ -35,19 +35,24 @@ import (
 // Prozess, wie beim Betreiber. Kanarienwerte:
 //
 //   - pw, pwBad: Passwörter zweier Konten (eines richtig, eines falsch);
-//   - key: ein echter API-Schlüssel aus `key create`, wrongKey ein falscher;
+//   - key: ein echter API-Schlüssel aus `key create` (Rolle reader),
+//     assistKey ein zweiter (Rolle assistant, S2.8), wrongKey ein falscher;
 //   - mail: ein Wort im Text einer Mail und ihres Anhangs;
 //   - draft: ein Wort in Betreff und Text eines Entwurfs (S2.3).
 //
-// Passwörter und der falsche Schlüssel dürfen nirgends erscheinen, der
-// Schlüssel nur in der Ausgabe von `key create`. Mailtext darf nur in den
+// Passwörter und der falsche Schlüssel dürfen nirgends erscheinen, die
+// Schlüssel nur in der Ausgabe ihres `key create`. Mailtext darf nur in den
 // lesenden Kommandos stehen (show, search, thread, attach text, mailbox
 // overview) und in MCP-Ergebnissen in der Untrusted-Hülle; nie im Audit,
 // im Log, in den --json-Ausgaben der Admin-Kommandos, in Fehlermeldungen,
 // in Absturzausgaben, im Audit-Export oder in doctor. Entwurfsinhalt darf
-// nur in den Ausgaben stehen, die den Entwurf zeigen (draft new|reply|edit
-// mit Vorschau, draft show, draft list), nie in Audit, Log, Fehlern,
-// Freigabe-Ausgaben, Abstürzen, MCP-Ergebnissen oder dem Audit-Export.
+// nur in den Ausgaben stehen, die den Entwurf zeigen: draft new|reply|edit
+// mit Vorschau, draft show, draft list und seit S2.8 die MCP-Entwurfstools
+// (mail_create_draft, mail_update_draft, mail_get_draft, mail_list_drafts)
+// und die Resource mail://{account}/draft/{id} einer assistant-Sitzung;
+// nie in Audit, Log, Fehlern, Freigabe-Ausgaben (auch mail_request_ready
+// und mail_get_approval), Abstürzen, übrigen MCP-Ergebnissen oder dem
+// Audit-Export (Gegenprüfung S2.8, K3).
 func TestCanaryAllChannels(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the program; skipped with -short")
@@ -217,6 +222,15 @@ func TestCanaryAllChannels(t *testing.T) {
 	// --- MCP über stdio (eigener Prozess) -----------------------------------
 	c.mcp(id, attID, "")
 	c.mcp(id, attID, "handler:messages.get")
+	// Sitzung mit Entwurfstools (S2.8): Schlüssel der Rolle assistant.
+	ak := c.mustRun("key create (assistant)", 0, "", "key", "create", "--name", "assistent", "--role", "assistant", "--json")
+	var akc ops.KeysCreateOutput
+	if err := json.Unmarshal([]byte(ak.stdout), &akc); err != nil || !strings.HasPrefix(akc.Secret, ops.KeyPrefix) {
+		t.Fatalf("key create (assistant): %v %s", err, ak.stdout)
+	}
+	ak.keyOK = true
+	c.assistKey = akc.Secret
+	c.mcpAssistant(id)
 
 	// --- Audit, Export, doctor --------------------------------------------
 	c.mustRun("audit", 0, "", "audit", "--since", "1h", "--limit", "1000", "--json")
@@ -292,6 +306,7 @@ type canaryEnv struct {
 	exportDir            string
 	env                  []string
 	pw, pwBad, mail, key string
+	assistKey            string // Schlüssel der Rolle assistant (S2.8)
 	draft                string
 	addr                 string // Kanarien-Adresse (klein geschrieben, aus draft)
 	wrongKey             string
@@ -418,6 +433,9 @@ func (c *canaryEnv) leaks(s string, mailOK, keyOK bool, draftOK ...bool) []strin
 	}
 	if c.key != "" && !keyOK && strings.Contains(s, c.key) {
 		out = append(out, "API key")
+	}
+	if c.assistKey != "" && !keyOK && strings.Contains(s, c.assistKey) {
+		out = append(out, "API key (assistant)")
 	}
 	if !mailOK && strings.Contains(s, c.mail) {
 		out = append(out, "mail text")
@@ -576,6 +594,94 @@ func (c *canaryEnv) mcp(id, attID, panicAt string) {
 	_ = cmd.Wait()
 	if l := c.leaks(stderr.String(), false, false); len(l) > 0 {
 		c.t.Errorf("mcp stderr (%s) contains %v:\n%s", panicAt, l, stderr.String())
+	}
+}
+
+// mcpAssistant startet `postkauz mcp` mit dem assistant-Schlüssel und legt
+// über die Entwurfstools einen Entwurf mit Kanarien-Betreff und -Text an
+// (Antwort mit Zitat der Kanarien-Mail). Der Entwurfsinhalt darf nur in den
+// Ergebnissen stehen, die den Entwurf zeigen, Mailtext nur in der Hülle;
+// Passwörter und Schlüssel nirgends (Gegenprüfung S2.8, K3).
+func (c *canaryEnv) mcpAssistant(id string) {
+	c.t.Helper()
+	cmd := exec.Command(c.bin, "mcp")
+	cmd.Env = append(append([]string(nil), c.env...), EnvKey+"="+c.assistKey)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cs, err := sdk.NewClient(&sdk.Implementation{Name: "canary", Version: "1"}, nil).Connect(ctx, &sdk.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		c.t.Fatalf("mcp connect (assistant): %v (%s)", err, stderr.String())
+	}
+	check := func(what, s string, draftOK bool) string {
+		c.t.Helper()
+		if l := c.leaks(s, true, false, draftOK); len(l) > 0 {
+			c.t.Errorf("mcp %s (assistant): result contains %v", what, l)
+		}
+		if strings.Contains(s, c.mail) && !strings.Contains(s, `"untrusted":true`) {
+			c.t.Errorf("mcp %s (assistant): mail text outside the envelope", what)
+		}
+		return s
+	}
+	call := func(tool string, args map[string]any, draftOK bool) map[string]any {
+		c.t.Helper()
+		res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: tool, Arguments: args})
+		if err != nil {
+			c.t.Fatalf("mcp %s (assistant): %v", tool, err)
+		}
+		var b strings.Builder
+		for _, ct := range res.Content {
+			if tc, ok := ct.(*sdk.TextContent); ok {
+				b.WriteString(tc.Text)
+			}
+		}
+		s := check(tool, b.String(), draftOK)
+		if res.IsError {
+			c.t.Fatalf("mcp %s (assistant): %s", tool, s)
+		}
+		var v map[string]any
+		_ = json.Unmarshal([]byte(s), &v)
+		return v
+	}
+	cr := call("mail_create_draft", map[string]any{"kind": "reply", "in_reply_to": json.Number(id), "subject": "Re: " + c.draft,
+		"body_markdown": "Antwort mit " + c.draft + " im Text.", "dry_run": false}, true)
+	did, _ := cr["draft_id"].(float64)
+	if did == 0 {
+		c.t.Fatalf("mcp mail_create_draft (assistant): %v", cr)
+	}
+	draftID := json.Number(fmt.Sprint(int64(did)))
+	for tool, args := range map[string]map[string]any{
+		"mail_get_draft":    {"draft_id": draftID},
+		"mail_list_drafts":  {},
+		"mail_update_draft": {"draft_id": draftID, "body_markdown": "Neu mit " + c.draft + ".", "dry_run": false},
+	} {
+		v := call(tool, args, true)
+		if b, _ := json.Marshal(v); !strings.Contains(string(b), c.draft) {
+			c.t.Errorf("mcp %s (assistant): draft content missing (the test would prove nothing): %s", tool, b)
+		}
+	}
+	if v := call("mail_get_draft", map[string]any{"draft_id": draftID}, true); v["original"] == nil {
+		c.t.Errorf("mcp mail_get_draft (assistant): no quoted original: %v", v)
+	}
+	res, err := cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: "mail://demo/draft/" + string(draftID)})
+	if err != nil || len(res.Contents) == 0 || !strings.Contains(res.Contents[0].Text, c.draft) {
+		c.t.Errorf("mcp draft resource (assistant): %v %+v", err, res)
+	} else {
+		check("draft resource", res.Contents[0].Text, true)
+	}
+	// Ohne Entwurfsinhalt: Vorlage, Freigabe, Policy.
+	rq := call("mail_request_ready", map[string]any{"draft_id": draftID, "dry_run": false}, false)
+	if aid, _ := rq["approval_id"].(float64); aid > 0 {
+		call("mail_get_approval", map[string]any{"approval_id": json.Number(fmt.Sprint(int64(aid)))}, false)
+	} else {
+		c.t.Errorf("mcp mail_request_ready (assistant): %v", rq)
+	}
+	call("mail_get_policy", map[string]any{}, false)
+	_ = cs.Close()
+	_ = cmd.Wait()
+	if l := c.leaks(stderr.String(), false, false); len(l) > 0 {
+		c.t.Errorf("mcp stderr (assistant) contains %v:\n%s", l, stderr.String())
 	}
 }
 
