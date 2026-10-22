@@ -541,6 +541,9 @@ func renderDraftRequest(w io.Writer, out any) error {
 	fmt.Fprintf(w, "%shook: %s\n", prefix, o.Hook)
 	if o.HookOutput != "" {
 		fmt.Fprintf(w, "%s\n", strings.TrimRight(termText(o.HookOutput), "\r\n"))
+		if o.HookOutputTruncated {
+			fmt.Fprintln(w, "(hook output cut after the first 4 KB)")
+		}
 	}
 	switch {
 	case o.Status == "pending_approval" && o.DryRun:

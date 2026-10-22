@@ -27,7 +27,7 @@ import (
 // Nachricht (Kopfzeilen, Zitat, Signatur, Anhänge), internal/drafts prüft
 // Grenzen und Zustandsmaschine und speichert in einer kurzen Transaktion
 // (mit Audit-Eintrag des Übergangs und dem Job draft_push), und der Prüf-Hook
-// (S2.4; bis dahin „bestanden") prüft vor der Vorlage. Nichts hier berührt
+// (internal/hook, S2.4) prüft vor der Vorlage. Nichts hier berührt
 // einen Server: Die Ablage im Entwürfe-Ordner macht der Job draft_push im
 // Prozess mit Zugangsdaten (E1, S2.5).
 //
@@ -71,20 +71,23 @@ type BlobStore interface {
 	Put(r io.Reader) (blob.Info, error)
 }
 
-// DraftChecker ist der Prüf-Hook vor der Vorlage (A02 E4). S2.4 liefert
-// die Umsetzung (internal/hook) und hängt sie über Deps.DraftCheck ein;
-// ohne ihn (nil) gilt der Entwurf als geprüft („pass"), wie bei leerem
-// check_hook.
+// DraftChecker ist der Prüf-Hook vor der Vorlage (A02 E4). Die Umsetzung
+// ist NewHookChecker (internal/hook, S2.4), eingehängt über
+// Deps.DraftCheck; ohne ihn (nil) gilt der Entwurf als geprüft („pass"),
+// wie bei leerem check_hook.
 type DraftChecker interface {
 	CheckDraft(ctx context.Context, in DraftCheckInput) (DraftCheckResult, error)
 }
 
 // DraftCheckInput ist, was der Hook prüft: der gespeicherte Entwurf, der
-// Kontoname und die fertige Nachricht (für {eml}).
+// Kontoname und die fertige Nachricht (EML für {eml}: genau die Bytes,
+// deren Hash die Freigabe bindet; Message mit Text, HTML, Kopffeldern und
+// Anhängen für {body_html}, {body_text}, {meta_json}).
 type DraftCheckInput struct {
 	Draft   store.Draft
 	Account string
 	EML     []byte
+	Message *compose.Message
 }
 
 // DraftCheckResult ist das Ergebnis des Hooks: pass | fail | timeout |
@@ -93,6 +96,8 @@ type DraftCheckInput struct {
 type DraftCheckResult struct {
 	Result string
 	Output string
+	// Truncated: Der Hook schrieb mehr als 4 KB.
+	Truncated bool
 }
 
 // RemoteNotePending ist der ehrliche Hinweis zur Serverkopie (A02 E1): Die
@@ -1356,10 +1361,13 @@ type DraftsRequestOutput struct {
 	// (compose.MessageHash); die Freigabe bindet ihn (W1).
 	MessageHash string `json:"message_hash"`
 	DryRun      bool   `json:"dry_run"`
+
+	// HookOutputTruncated: Die Ausgabe des Hooks war länger als 4 KB (S2.4).
+	HookOutputTruncated bool `json:"hook_output_truncated,omitempty"`
 }
 
 // DraftsRequestReady legt einen Entwurf zur Freigabe durch einen Menschen
-// vor (R1): erst der Prüf-Hook (S2.4; bis dahin „pass"), dann eine
+// vor (R1): erst der Prüf-Hook (internal/hook), dann eine
 // Freigabe (pending) mit dem preview_hash, Entwurf pending_approval.
 // Scheitert der Hook, bleibt der Entwurf draft (kein Fehler; hook und
 // hook_output im Ergebnis). Im Trockenlauf wird nur geprüft.
@@ -1383,7 +1391,7 @@ func DraftsRequestReady(d Deps) Operation {
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "previous_status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "hook": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
-    "hook_output": {"type": "string"}, "approval_id": {"type": "integer"},
+    "hook_output": {"type": "string"}, "hook_output_truncated": {"type": "boolean"}, "approval_id": {"type": "integer"},
     "expires_at": {"type": "string", "format": "date-time"}, "preview_hash": {"type": "string"},
     "message_hash": {"type": "string"}, "dry_run": {"type": "boolean"}
   },
@@ -1413,7 +1421,7 @@ func DraftsRequestReady(d Deps) Operation {
 			if err != nil {
 				return nil, err
 			}
-			hook, err := o.runCheck(ctx, dr, acc.Name, msg.Raw)
+			hook, err := o.runCheck(ctx, dr, acc.Name, msg)
 			if err != nil {
 				return nil, err
 			}
@@ -1427,7 +1435,7 @@ func DraftsRequestReady(d Deps) Operation {
 			out := DraftsRequestOutput{DraftID: res.Draft.ID, Status: string(res.To), PreviousStatus: string(res.From), Hook: hook.Result,
 				PreviewHash: res.Draft.PreviewHash, MessageHash: mh, DryRun: call.DryRun}
 			if hook.Result != drafts.HookPass {
-				out.HookOutput = hook.Output
+				out.HookOutput, out.HookOutputTruncated = hook.Output, hook.Truncated
 			}
 			if res.Approval != nil && !call.DryRun {
 				out.ApprovalID, out.ExpiresAt = res.Approval.ID, rfc3339(res.Approval.ExpiresAt)
@@ -1437,14 +1445,14 @@ func DraftsRequestReady(d Deps) Operation {
 	}
 }
 
-// runCheck ist die Stelle, an der S2.4 den Prüf-Hook einhängt
-// (Deps.DraftCheck): Er bekommt den Entwurf und die fertige Nachricht.
-// Ohne Hook gilt „pass" (wie ein leerer check_hook, A02 E4).
-func (o *draftOps) runCheck(ctx context.Context, dr store.Draft, account string, raw []byte) (DraftCheckResult, error) {
+// runCheck führt den Prüf-Hook aus (Deps.DraftCheck, S2.4): Er bekommt den
+// Entwurf und die fertige Nachricht. Ohne Hook gilt „pass" (wie ein leerer
+// check_hook, A02 E4). Die Ausgabe ist höchstens 4 KB lang.
+func (o *draftOps) runCheck(ctx context.Context, dr store.Draft, account string, msg *compose.Message) (DraftCheckResult, error) {
 	if o.check == nil {
 		return DraftCheckResult{Result: drafts.HookPass}, nil
 	}
-	r, err := o.check.CheckDraft(ctx, DraftCheckInput{Draft: dr, Account: account, EML: raw})
+	r, err := o.check.CheckDraft(ctx, DraftCheckInput{Draft: dr, Account: account, EML: msg.Raw, Message: msg})
 	if err != nil {
 		return DraftCheckResult{}, err
 	}
@@ -1454,7 +1462,7 @@ func (o *draftOps) runCheck(ctx context.Context, dr store.Draft, account string,
 		return DraftCheckResult{}, fmt.Errorf("check hook: unknown result %q", r.Result)
 	}
 	if out, cut := truncateBytes(r.Output, 4096); cut {
-		r.Output = out
+		r.Output, r.Truncated = out, true
 	}
 	return r, nil
 }
