@@ -413,7 +413,20 @@ func (c *Client) guard(f func() error, closeFn func()) error {
 }
 
 func (c *Client) run(f func() error) error {
-	return c.guard(f, func() { _ = c.c.Close() })
+	err := c.guard(f, func() { _ = c.c.Close() })
+	if err != nil && errors.Is(err, net.ErrClosed) {
+		// Wettlauf in go-imap (gemessen 22.10.2026, 13 von 4.000 Läufen):
+		// Findet der Lese-Goroutine eine unlesbare Antwort, schließt sie die
+		// Verbindung; schreibt das Kommando gerade, endet es mit „use of
+		// closed network connection" statt mit dem Decoder-Fehler. Close
+		// wartet auf die Lese-Goroutine und liefert deren Fehler: Ist es ein
+		// Decoder-Fehler („imapwire:"), gilt er (ErrProtocol, kein
+		// Wiederholen). Die Verbindung ist ohnehin schon zu.
+		if cerr := c.c.Close(); cerr != nil && strings.Contains(cerr.Error(), "imapwire:") {
+			return cerr
+		}
+	}
+	return err
 }
 
 // authErr unterscheidet abgelehnte Anmeldung (ErrAuth, nicht wiederholen)
