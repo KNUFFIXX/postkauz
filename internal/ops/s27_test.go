@@ -71,6 +71,7 @@ func TestOlderDraftCopies(t *testing.T) {
 		t.Fatalf("one copy: %+v, list %d", g, n)
 	}
 	e.must(t, assistant, "drafts.update", map[string]any{"draft_id": id, "subject": "Termin neu"})
+	e.settle(t) // Entscheid 43 (S2.6): 30 s Ruhe vor der neuen Ablage
 	e.push(t)
 	second := e.draft(t, id)
 	// Vor dem nächsten Sync kennt der Spiegel nur die alte Kopie: Sie ist

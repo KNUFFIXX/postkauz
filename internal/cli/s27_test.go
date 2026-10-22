@@ -161,7 +161,7 @@ func fetchDraftCopy(t *testing.T, addr string, uid int64) []byte {
 // Änderung sagt die Ausgabe, dass die Kopie älter ist, nach dem nächsten
 // Push gilt wieder Gleichheit. stdout enthält nur die Nachricht.
 func TestDraftShowEMLIsPushedCopy(t *testing.T) {
-	setupEnv(t)
+	dataDir, _ := setupEnv(t)
 	addr := s27Server(t)
 	dir := t.TempDir()
 	write := func(name, text string) string {
@@ -228,6 +228,8 @@ func TestDraftShowEMLIsPushedCopy(t *testing.T) {
 	if !strings.Contains(errs, "changed after the copy (uid 1) was put into the Drafts folder") {
 		t.Fatalf("eml after change: %q", errs)
 	}
+	// Entscheid 43 (S2.6): erst nach 30 s Ruhe wird die neue Kopie abgelegt.
+	settleDrafts(t, dataDir)
 	step(ExitOK, "sync", "-a", "demo")
 	var d ops.DraftDetail
 	js, _ := step(ExitOK, "draft", "show", "1", "--eml", "--json")
