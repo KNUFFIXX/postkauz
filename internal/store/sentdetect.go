@@ -56,16 +56,20 @@ type SentMessage struct {
 
 // SentCandidates liefert die gesendeten Nachrichten (siehe oben) des
 // Kontos mit Datum (Date-Kopfzeile, sonst INTERNALDATE) zwischen from und
-// to einschließlich, älteste zuerst.
+// to einschließlich, älteste zuerst. Die Auswahl nach Datum läuft über den
+// Index messages_account_date (zwei Teilabfragen statt OR, sonst liest
+// SQLite alle Nachrichten des Kontos; der Sync ruft das nach jedem Lauf).
 func (s *SQLite) SentCandidates(ctx context.Context, accountID int64, from, to time.Time) ([]SentMessage, error) {
 	f, t := from.UnixMilli(), to.UnixMilli()
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.subject, m.from_addr, m.to_addrs, m.cc_addrs,
 		COALESCE(m.date_header, m.internal_date, 0),
 		EXISTS (SELECT 1 FROM message_mailboxes il JOIN mailboxes ib ON ib.id = il.mailbox_id
 			WHERE il.message_id = m.id AND ib.role = 'sent')
-		FROM messages m WHERE m.account_id = ?
-		AND ((m.date_header BETWEEN ? AND ?) OR (m.date_header IS NULL AND m.internal_date BETWEEN ? AND ?))
-		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, f, t, f, t)
+		FROM messages m WHERE m.id IN (
+			SELECT id FROM messages WHERE account_id = ? AND date_header BETWEEN ? AND ?
+			UNION ALL
+			SELECT id FROM messages WHERE account_id = ? AND date_header IS NULL AND internal_date BETWEEN ? AND ?)
+		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, f, t, accountID, f, t)
 	if err != nil {
 		return nil, err
 	}
