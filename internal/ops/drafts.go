@@ -1186,6 +1186,7 @@ func DraftsGet(d Deps) Operation {
   "type": "object",
   "properties": {
     "draft_id": {"type": "integer", "minimum": 1},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the draft belongs to this account (otherwise not found)"},
     "eml": {"type": "boolean", "description": "also return the message as RFC 5322 text, byte for byte the copy put into the Drafts folder when it is still current (eml_matches_copy)"}
   },
   "required": ["draft_id"],
@@ -1229,11 +1230,30 @@ func DraftsGet(d Deps) Operation {
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				DraftID int64 `json:"draft_id"`
-				EML     bool  `json:"eml,omitempty"`
+				DraftID int64  `json:"draft_id"`
+				Account string `json:"account,omitempty"`
+				EML     bool   `json:"eml,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
+			}
+			if in.Account != "" {
+				// Konto genannt (Resource mail://{account}/draft/{id}): Ein
+				// Entwurf eines anderen Kontos ist „nicht gefunden", wie bei
+				// messages.get. Geprüft vor dem Lesen mit Ablauf (svc.Get),
+				// damit ein fremder Entwurf auch keinen Rückfall auslöst
+				// (Gegenprüfung S2.8, W2).
+				peek, err := o.svc.Store.Draft(ctx, in.DraftID)
+				if err != nil {
+					return nil, err
+				}
+				a, err := o.accountByID(ctx, peek.AccountID)
+				if err != nil {
+					return nil, err
+				}
+				if a.Name != in.Account {
+					return nil, fmt.Errorf("%w: %d", store.ErrDraftNotFound, in.DraftID)
+				}
 			}
 			dr, err := o.svc.Get(ctx, in.DraftID)
 			if err != nil {

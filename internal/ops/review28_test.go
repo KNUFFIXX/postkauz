@@ -1,10 +1,15 @@
 package ops
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // Gegenprüfung S2.8: Nachbesserungen an den Entwurfsausgaben.
@@ -57,5 +62,26 @@ func TestReviewK2StyleFileSymlinkRefused(t *testing.T) {
 	}
 	if out := e.must(t, assistant, "drafts.style", map[string]any{"identity": "1"}).(DraftsStyleOutput); out.Text != "Kurz und freundlich.\n" {
 		t.Fatalf("regular file: %+v", out)
+	}
+}
+
+// W2: drafts.get prüft das Konto selbst (nicht der MCP-Adapter): Ein
+// Entwurf eines anderen Kontos ist „nicht gefunden", und das Audit nennt
+// das angefragte Konto als Ziel.
+func TestReviewW2DraftsGetChecksAccount(t *testing.T) {
+	e := newDraftEnv(t, false)
+	out := e.must(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new", "to": []string{"a@example.org"}}).(DraftsWriteOutput)
+	if d := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID, "account": "demo"}).(DraftDetail); d.DraftID != out.DraftID {
+		t.Fatalf("own account: %+v", d)
+	}
+	_, err := e.do(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID, "account": "fremd"}, false)
+	if !errors.Is(err, store.ErrDraftNotFound) {
+		t.Fatalf("other account: %v", err)
+	}
+	evs, _ := e.auditJSON(t)
+	last := evs[len(evs)-1]
+	if last.Operation != "drafts.get" || last.Result == "ok" || !slices.Contains(last.Targets, "account:fremd") ||
+		!slices.Contains(last.Targets, "draft:"+strconv.FormatInt(out.DraftID, 10)) {
+		t.Fatalf("audit: %+v", last)
 	}
 }

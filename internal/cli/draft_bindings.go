@@ -42,8 +42,8 @@ var draftBindings = []binding{
 	{op: "drafts.update", path: []string{"draft", "edit"}, use: "<draft-id>", args: cobra.ExactArgs(1), flags: draftEditFlags,
 		input: draftEditInput, human: renderDraftWrite,
 		covers: []string{"draft_id", "to", "cc", "bcc", "subject", "body_markdown", "body_html", "attachments", "quote", "signature"}},
-	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
-		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "eml"}},
+	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [-a ACCOUNT] [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
+		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "account", "eml"}},
 	{op: "drafts.list", path: []string{"draft", "list"}, args: cobra.NoArgs, flags: draftListFlags, input: draftListInput,
 		human: renderDraftList, covers: []string{"account", "status", "limit"}},
 	{op: "drafts.request_ready", path: []string{"draft", "request"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
@@ -297,6 +297,9 @@ func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage,
 		return nil, "", err
 	}
 	m := map[string]any{"draft_id": id}
+	if v := accountFlag(cmd); v != "" {
+		m["account"] = v
+	}
 	if eml, _ := cmd.Flags().GetBool("eml"); eml {
 		m["eml"] = true
 	}
