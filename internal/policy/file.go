@@ -28,8 +28,8 @@ import (
 //
 // Ausgewertet werden ab S2.1 [agent_defaults] max_chars (ersetzt den festen
 // Standard 20.000) und [draft] require_approval_for_ready (nur true).
-// [draft] check_hook und check_hook_timeout liest und prüft S2.1, ausgeführt
-// wird der Hook ab S2.4; [delete], [move] und [agent_defaults]
+// [draft] check_hook und check_hook_timeout liest und prüft S2.1, seit S2.4
+// führt internal/hook den Hook aus; [delete], [move] und [agent_defaults]
 // dry_run_default werden gelesen und geprüft, ausgewertet erst in S3.
 
 // EnvPolicy überschreibt den Pfad der Policy-Datei.

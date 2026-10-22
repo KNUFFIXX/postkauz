@@ -26,7 +26,11 @@
 //   - Quote, Signature, IncludeAttachments: Schalter mit Standard true
 //     (NewInput setzt sie); Quote gilt für reply/reply_all,
 //     IncludeAttachments für forward. QuoteLine: Vorlage aus
-//     `[draft] quote_line` ({date}, {from}; leer = DefaultQuoteLine).
+//     `[draft] quote_line` (leer = DefaultQuoteLine) mit den Platzhaltern
+//     {date} (englisch, „Wed, 21 Oct 2026 09:15 +0200"), {date_numeric}
+//     („21.10.2026 09:15", gleiche Zeitzone; ohne Datum „??.??.???? ??:??")
+//     und {from}; eine deutsche Zeile ist z. B.
+//     „Am {date_numeric} schrieb {from}:".
 //   - Original: die Ausgangsnachricht (OriginalFrom aus mimeparse.Message;
 //     ihre Anhänge mit Blob-Bytes nur für forward).
 //   - Attachments: Blob-Bytes (Data, z. B. Anhang einer vorhandenen

@@ -81,8 +81,8 @@ type Draft struct {
 	MaxAttachmentBytes int64 `toml:"max_attachment_bytes"`
 	// Mailbox: Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts.
 	Mailbox string `toml:"mailbox"`
-	// QuoteLine: Einleitungszeile des Zitats mit {date} und {from};
-	// leer = "On {date}, {from} wrote:".
+	// QuoteLine: Einleitungszeile des Zitats mit {date}, {date_numeric}
+	// (21.10.2026 09:15) und {from}; leer = "On {date}, {from} wrote:".
 	QuoteLine string `toml:"quote_line"`
 }
 
@@ -370,9 +370,9 @@ func checkDraft(d *Draft) error {
 	if strings.ContainsAny(d.QuoteLine, "\r\n") {
 		return fmt.Errorf("config: draft.quote_line must be one line")
 	}
-	rest := strings.NewReplacer("{date}", "", "{from}", "").Replace(d.QuoteLine)
+	rest := strings.NewReplacer("{date}", "", "{date_numeric}", "", "{from}", "").Replace(d.QuoteLine)
 	if strings.ContainsAny(rest, "{}") {
-		return fmt.Errorf("config: draft.quote_line knows only the placeholders {date} and {from}")
+		return fmt.Errorf("config: draft.quote_line knows only the placeholders {date}, {date_numeric} and {from}")
 	}
 	return nil
 }

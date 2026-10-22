@@ -43,9 +43,11 @@ var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c co
 }
 
 // newDraftChecker liefert den Prüf-Hook vor der Vorlage eines Entwurfs
-// (A02 E4). S2.4 setzt hier internal/hook mit [draft] check_hook der
-// Policy-Datei ein; bis dahin keiner (nil = „pass"). In Tests ersetzbar.
-var newDraftChecker = func(*app) ops.DraftChecker { return nil }
+// (A02 E4, S2.4): [draft] check_hook und check_hook_timeout der
+// Policy-Datei; leere Liste = keiner (nil = „pass"). In Tests ersetzbar.
+var newDraftChecker = func(a *app) ops.DraftChecker {
+	return ops.NewHookChecker(a.policy.Doc.Draft.CheckHook, a.policy.Doc.Draft.CheckHookTimeout)
+}
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,
 // Datenbank, Log und Schlüsselbund werden erst geöffnet, wenn ein Kommando
