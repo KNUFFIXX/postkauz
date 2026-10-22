@@ -35,6 +35,8 @@ const DefaultJobsInterval = 10 * time.Second
 type DraftPusher interface {
 	EnsureJob(ctx context.Context, accountID int64) error
 	Pending(ctx context.Context, accountID int64, retry bool) (pending, withCopy int, err error)
+	// Waiting: geänderte Entwürfe in ihrer Ruhezeit (Entscheid 43).
+	Waiting(ctx context.Context, accountID int64) (int, error)
 	NoDraftsMailbox(ctx context.Context, accountID int64) error
 	Push(ctx context.Context, acc store.Account, mailboxID int64, app ops.DraftAppender, retry bool) (ops.DraftPushReport, error)
 	// AfterSync prüft die Entwürfe nach dem Spiegeln (S2.6): Ablauf der
@@ -145,8 +147,18 @@ func (e *Engine) pushDrafts(ctx context.Context, ensure, retry bool) (*ops.SyncD
 
 func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.SyncDrafts, error) {
 	n, withCopy, err := d.Pusher.Pending(ctx, e.AccountID, retry)
-	if err != nil || n == 0 {
-		return nil, err // nichts wartet
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		// Nichts ist fällig. Geänderte Entwürfe in ihrer Ruhezeit (Entscheid
+		// 43) meldet der Lauf ehrlich als noch nicht abgelegt; der Job
+		// bleibt fällig, sync --watch legt sie nach Ablauf ab.
+		w, err := d.Pusher.Waiting(ctx, e.AccountID)
+		if err != nil || w == 0 {
+			return nil, err
+		}
+		return &ops.SyncDrafts{DraftPushReport: ops.DraftPushReport{Waiting: w}}, nil
 	}
 	out := &ops.SyncDrafts{}
 	mb, err := e.draftsMailbox(ctx, d.Mailbox)

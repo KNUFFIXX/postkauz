@@ -179,12 +179,16 @@ func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
 		return
 	}
 	var parts []string
-	if d.Pushed > 0 || d.Error == "" {
+	if d.Pushed > 0 || (d.Error == "" && d.Waiting == 0) {
 		where := ""
 		if d.Mailbox != "" {
 			where = " into " + termLine(d.Mailbox)
 		}
 		parts = append(parts, fmt.Sprintf("%d put%s (flags \\Draft \\Seen; nothing is sent)", d.Pushed, where))
+	}
+	if d.Waiting > 0 {
+		parts = append(parts, fmt.Sprintf("%d changed less than 30 s ago, not put yet (a running sync --watch puts it once it has "+
+			"been unchanged for 30 s; otherwise the next sync)", d.Waiting))
 	}
 	if d.TakenOver > 0 {
 		parts = append(parts, fmt.Sprintf("%d taken over in the mail client (not pushed)", d.TakenOver))

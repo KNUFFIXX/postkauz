@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -171,5 +172,63 @@ func TestSyncExpiresApprovals(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM audit_events WHERE operation = 'drafts.expire' AND reason = 'approval_expired'`); n != 1 {
 		t.Fatalf("audit: %d", n)
+	}
+}
+
+// Entscheid 43: Ein einmaliger sync innerhalb von 30 s nach einer Änderung
+// legt nicht ab und meldet das (drafts.waiting); der Dauerläufer holt die
+// Ablage nach, sobald die Ruhezeit vorbei ist (Uhr des Pushs verstellt,
+// statt 30 s zu warten).
+func TestWatcherPushesChangedDraftAfterSettle(t *testing.T) {
+	e := newPushEnv(t, "Drafts")
+	var offset atomic.Int64
+	pusher := e.runner.Pusher.(*ops.DraftPusher)
+	pusher.Now = func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }
+	client := imapSession(t, e.addr)
+	d := e.pushed(t, "Termin Ruhe") // erste Ablage sofort
+	c := drafts.ContentOf(d)
+	c.BodyMarkdown = "Hallo geändert"
+	if _, err := e.svc.Update(context.Background(), d.ID, c, ""); err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.sync(t, ops.SyncOptions{})
+	if err != nil || out.Drafts == nil || out.Drafts.Waiting != 1 || out.Drafts.Pushed != 0 {
+		t.Fatalf("sync within 30 s: %+v, %v", out.Drafts, err)
+	}
+	if got := e.draft(t, d.ID); got.RemoteState != drafts.RemotePending {
+		t.Fatalf("remote = %s", got.RemoteState)
+	}
+	if n := len(serverCopies(t, client, "Drafts", d.MessageIDHeader)); n != 1 {
+		t.Fatalf("copies = %d", n)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var rounds atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.runner.Sync(ctx, e.account(t), testPass, ops.SyncOptions{Watch: true, Interval: time.Hour,
+			JobsInterval: 50 * time.Millisecond}, func(p ops.Progress) {
+			if p.Event == "round" {
+				rounds.Add(1)
+			}
+		})
+		done <- err
+	}()
+	waitFor(t, 10*time.Second, func() bool { return rounds.Load() == 1 })
+	// Mehrere Prüfungen des Watchers in der Ruhezeit: keine neue Kopie.
+	time.Sleep(300 * time.Millisecond)
+	if got := e.draft(t, d.ID); got.RemoteState != drafts.RemotePending {
+		t.Fatalf("pushed within 30 s: %s", got.RemoteState)
+	}
+	// Ruhezeit vorbei: Der Watcher legt ab (der Job blieb fällig).
+	offset.Store(int64(ops.DefaultChangeSettle + time.Second))
+	waitFor(t, 10*time.Second, func() bool { return e.draft(t, d.ID).RemoteState == drafts.RemotePushed })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := len(serverCopies(t, client, "Drafts", d.MessageIDHeader)); n != 2 {
+		t.Fatalf("copies = %d", n)
 	}
 }

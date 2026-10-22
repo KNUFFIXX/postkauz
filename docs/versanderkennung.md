@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: S2.6 (A02 E5, E6, E7; Entscheide 26, 38). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: S2.6 (A02 E5, E6, E7; Entscheide 26, 38, 43). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -59,7 +59,11 @@ Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human
 
 Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id` oder `fallback`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
-## 7. Gmail und andere Anbieter (nur dokumentiert, gemessen in D5)
+## 7. Ablage geänderter Entwürfe (Entscheid 43)
+
+Damit nicht jeder Zwischenstand eine weitere Kopie im Entwürfe-Ordner hinterlässt (PostKauz löscht keine alten Kopien), legt der Push einen **geänderten** Entwurf (er hat schon eine Kopie im Ordner) erst ab, wenn er **30 Sekunden unverändert** ist (gemessen an `updated_at`). Die **erste** Ablage eines neuen Entwurfs geschieht sofort (Festlegung S2.6: Entscheid 43 spricht nur von geänderten Entwürfen; ein neuer Entwurf hat noch keine Kopie, die sich vervielfachen könnte). `sync --watch` prüft alle 10 s und legt den Entwurf ab, sobald die 30 s um sind (also 30 bis 40 s nach der letzten Änderung). Ein einmaliges `postkauz sync` innerhalb der 30 s legt ihn nicht ab und sagt das: `drafts: … 1 changed less than 30 s ago, not put yet (a running sync --watch puts it once it has been unchanged for 30 s; otherwise the next sync)`, mit `--json` im Feld `drafts.waiting`.
+
+## 8. Gmail und andere Anbieter (nur dokumentiert, gemessen in D5)
 
 - Entwürfe-Ordner: `[Gmail]/Drafts` bzw. lokalisiert (`[Gmail]/Entwürfe`), Rolle `drafts` aus SPECIAL-USE `\Drafts`.
 - Gesendet: `[Gmail]/Sent Mail` (lokalisiert `[Gmail]/Gesendet`), Rolle `sent`; zugleich in `[Gmail]/All Mail` (Rolle `all`). Beide Rollen gelten für die Erkennung; dieselbe Nachricht in beiden Ordnern ist im Spiegel **eine** Nachricht (gleiche Message-ID und Größe) und schließt höchstens einen Entwurf.
@@ -67,7 +71,7 @@ Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `s
 - Server, die Nachrichten beim Ablegen umschreiben (Exchange, Archivlösungen), sind für die Versanderkennung unkritisch (sie vergleicht Message-ID bzw. Text, nicht Bytes), wohl aber für die Übernahme-Erkennung (docs/architektur.md, Abschnitt 3, Regel 5).
 - Ein Mailprogramm, das beim Senden **keine** Kopie in Gesendet ablegt (manche Mobil-Apps, SMTP ohne „Kopie speichern"), lässt beide Wege leer: Der Entwurf bleibt offen, `remote: missing`, der Mensch schließt ihn.
 
-## 8. Messtabelle (Abnahme D5, füllt der Betreiber)
+## 9. Messtabelle (Abnahme D5, füllt der Betreiber)
 
 Ablauf je Zeile (Anleitung in `docs/abnahme_D5.md`, S2.9): `draft reply` auf eine eigene Mail, `sync` (Ablage), im Mailprogramm den Entwurf öffnen und **unverändert** senden, danach `sync` und `draft list`. Spalten:
 
