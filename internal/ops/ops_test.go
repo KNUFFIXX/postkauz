@@ -527,6 +527,20 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 		{"key-default-dry", nil, true},
 		{"key-default-dry+dry-run=false", &no, true},
 	}
+	if raceDetector {
+		// Mit -race dauert die volle Matrix (jede Operation × jede Rolle ×
+		// fünf Varianten, je mit frischer Datenbank) auf zwei Kernen über
+		// 30 Minuten, zwei Varianten noch über 10 Minuten (gemessen
+		// 22.10.2026, Schema 12). Der Race-Detector sucht Wettläufe, nicht
+		// fehlende Kombinationen: Jede Operation läuft mit jeder Rolle einmal
+		// wirklich (dry-run=false); die volle Matrix läuft ohne -race in
+		// make check und im CI-Job test.
+		modes = []struct {
+			name       string
+			flag       *bool
+			keyDefault bool
+		}{modes[1]}
+	}
 
 	for _, op := range ops {
 		row := contractInputs[op.Name]
