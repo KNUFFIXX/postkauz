@@ -197,10 +197,11 @@ func validateAgainst(rs *jsonschema.Resolved, raw json.RawMessage) error {
 	}
 	var inst any
 	if err := json.Unmarshal(raw, &inst); err != nil {
-		return inputErr("invalid input: %v", err)
+		// Die Meldung von encoding/json zitiert Teile der Eingabe.
+		return inputErr("invalid input: not a valid JSON object")
 	}
 	if err := rs.Validate(inst); err != nil {
-		return inputErr("invalid input: %v", err)
+		return schemaError(rs, err) // Feld und Regel, nie der Wert (B1)
 	}
 	return nil
 }

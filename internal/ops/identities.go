@@ -155,7 +155,7 @@ func IdentitiesAdd(d Deps) Operation {
   "type": "object",
   "properties": {
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-    "name": {"type": "string", "maxLength": 200},
+    "name": {"type": "string", "description": "display name, at most 200 characters (longer: denied too_large)"},
     "email": {"type": "string", "minLength": 3},
     "reply_to": {"type": "string"},
     "signature_text": {"type": "string"},

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -81,14 +82,19 @@ func readInputFile(a *app, flag, path string) (string, error) {
 	} else {
 		f, err := os.Open(path)
 		if err != nil {
-			return "", usageError{fmt.Errorf("--%s: %w", flag, err)}
+			// Die Meldung des Betriebssystems nennt den Pfad; der Dateiname
+			// kommt nie in Fehler oder Log (B1).
+			if errors.Is(err, fs.ErrNotExist) {
+				return "", usageError{fmt.Errorf("--%s: file not found", flag)}
+			}
+			return "", usageError{fmt.Errorf("--%s: cannot open the file", flag)}
 		}
 		defer func() { _ = f.Close() }()
 		r = f
 	}
 	b, err := io.ReadAll(io.LimitReader(r, maxInputFile+1))
 	if err != nil {
-		return "", usageError{fmt.Errorf("--%s: %w", flag, err)}
+		return "", usageError{fmt.Errorf("--%s: cannot read the file", flag)}
 	}
 	if len(b) > maxInputFile {
 		return "", usageError{fmt.Errorf("--%s: file larger than %d bytes", flag, maxInputFile)}

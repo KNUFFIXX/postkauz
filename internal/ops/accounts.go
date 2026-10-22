@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -108,7 +109,9 @@ func decodeInput(raw json.RawMessage, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
-		return inputErr("invalid input: %v", err)
+		// Die Meldung von encoding/json nennt unbekannte Feldnamen und Teile
+		// der Eingabe; sie kommt weder in Fehler noch ins Log (B1).
+		return inputErr("invalid input: does not match the input schema of the operation")
 	}
 	return nil
 }
@@ -119,7 +122,7 @@ var AccountNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func validAccountName(name string) error {
 	if !AccountNameRE.MatchString(name) {
-		return inputErr("invalid account name %q: use lowercase letters, digits and '-' (max 63)", name)
+		return inputErr("invalid account name: use lowercase letters, digits and '-' (max 63)")
 	}
 	return nil
 }
@@ -130,18 +133,64 @@ func redactAccountInput(raw json.RawMessage) (json.RawMessage, []string) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return json.RawMessage(`{"invalid_input":true}`), nil
 	}
-	fields := make([]string, 0, len(m))
-	for k := range m {
-		fields = append(fields, k)
-	}
-	sort.Strings(fields)
 	var targets []string
 	var name string
 	if v, ok := m["name"]; ok && json.Unmarshal(v, &name) == nil && AccountNameRE.MatchString(name) {
 		targets = []string{"account:" + name}
 	}
-	b, _ := json.Marshal(map[string]any{"fields": fields})
+	b, _ := json.Marshal(redactFields(m))
 	return b, targets
+}
+
+// inputFieldNames ist die Menge aller Feldnamen der obersten Ebene in den
+// Eingabeschemas des Katalogs (einmal berechnet). Nur solche Namen kommen
+// ins Audit; sie stammen aus dem Schema, nicht vom Aufrufer (K1).
+// (Kein Paket-Initialisierer: Catalog verweist über die Redact-Funktionen
+// zurück hierher.)
+var (
+	inputFieldsOnce sync.Once
+	inputFields     map[string]bool
+)
+
+func inputFieldNames() map[string]bool {
+	inputFieldsOnce.Do(func() {
+		known := map[string]bool{}
+		for _, op := range Catalog(Deps{}) {
+			var s struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if json.Unmarshal(op.InputSchema, &s) == nil {
+				for k := range s.Properties {
+					known[k] = true
+				}
+			}
+		}
+		inputFields = known
+	})
+	return inputFields
+}
+
+// redactFields liefert die Parameter eines Audit-Eintrags mit den
+// genannten Feldnamen: nur bekannte (sortiert); unbekannte nur gezählt
+// (unknown_fields). Ein Schlüssel der Eingabe stammt vom Aufrufer und
+// kann Inhalt tragen; ins Audit kommt er deshalb nie (Gegenprüfung S2.3, K1).
+func redactFields(m map[string]json.RawMessage) map[string]any {
+	known := inputFieldNames()
+	fields := make([]string, 0, len(m))
+	unknown := 0
+	for k := range m {
+		if known[k] {
+			fields = append(fields, k)
+		} else {
+			unknown++
+		}
+	}
+	sort.Strings(fields)
+	params := map[string]any{"fields": fields}
+	if unknown > 0 {
+		params["unknown_fields"] = unknown
+	}
+	return params
 }
 
 const accountNameSchema = `{
@@ -448,11 +497,12 @@ func normalizeAliases(in []string, own ...string) ([]string, error) {
 	for i := range own {
 		own[i] = strings.ToLower(strings.TrimSpace(own[i]))
 	}
-	for _, raw := range in {
+	for i, raw := range in {
 		s := strings.TrimSpace(raw)
 		addr, err := mail.ParseAddress(s)
 		if err != nil || addr.Name != "" || addr.Address != s || !strings.Contains(s, "@") {
-			return nil, inputErr("invalid alias %q: give a plain e-mail address such as alias@example.org", raw)
+			// Nie die Adresse selbst nennen (B1), nur ihre Stelle.
+			return nil, inputErr("invalid alias (aliases[%d]): give a plain e-mail address such as alias@example.org", i)
 		}
 		a := strings.ToLower(addr.Address)
 		if slices.Contains(own, a) || slices.Contains(out, a) {

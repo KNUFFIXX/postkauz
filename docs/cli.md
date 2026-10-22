@@ -304,7 +304,7 @@ Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeicher
 - **Keine interaktiven Rückfragen im `--json`-Modus.** Fehlt eine nötige Bestätigung, endet der Aufruf mit Exit-Code 2 oder 4; er blockiert nie. Das ist wichtig für Agenten, die die CLI statt MCP nutzen.
 - **Keine Geheimnisse in der Ausgabe** (Test mit Kanarienwerten ab S1).
 - `--cursor` gibt es seit S1.7 bei `search` (Abschnitt 2d), `--fields id,subject,date` seit S1.8 (nur `search`); `--explain` ist seit S1.8 global (Abschnitt 2g).
-- **Eingaben prüft der Executor** gegen das `InputSchema` der Operation (seit S1.8, für CLI und MCP gleich): falscher Typ, Wert außerhalb der Grenzen, unbekanntes Feld → Exit 2, Code `invalid_input`; der Aufruf steht trotzdem im Audit (`error`, Grund `invalid_input`).
+- **Eingaben prüft der Executor** gegen das `InputSchema` der Operation (seit S1.8, für CLI und MCP gleich): falscher Typ, Wert außerhalb der Grenzen, unbekanntes Feld → Exit 2, Code `invalid_input`; der Aufruf steht trotzdem im Audit (`error`, Grund `invalid_input`). Die Meldung nennt nur Feld und Regel (z. B. `invalid input: account: does not have the expected form`, `kind: not an allowed value (one of: …)`), **nie den eingegebenen Wert** und nie den Namen eines unbekannten Felds; Zahlen und erlaubte Werte stammen aus dem Schema (seit der Gegenprüfung von S2.3). Grenzen der Entwurfsfelder (Betreff 500, `body_markdown`/`body_html` 200.000, Anzeigename 200, Begründung von `reject` 2.000 Zeichen) prüft der Handler: Überschreitung ist `denied` mit Grund `too_large` (Exit 3), wie A02 es vorgibt. Ins Log (`postkauz.log`) schreibt ein gescheiterter Aufruf nur Operation, Code und Grund, nie die Meldung.
 
 ## 4. Exit-Codes
 

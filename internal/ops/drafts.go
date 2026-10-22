@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -718,9 +717,9 @@ func DraftsCreate(d Deps) Operation {
     "to": ` + addrListSchema + `,
     "cc": ` + addrListSchema + `,
     "bcc": ` + addrListSchema + `,
-    "subject": {"type": "string", "maxLength": 500, "description": "default for reply/forward: the subject of the original with Re:/Fwd:"},
-    "body_markdown": {"type": "string", "maxLength": 200000},
-    "body_html": {"type": "string", "maxLength": 200000},
+    "subject": {"type": "string", "description": "at most 500 characters (longer: denied too_large); default for reply/forward: the subject of the original with Re:/Fwd:"},
+    "body_markdown": {"type": "string", "description": "at most 200000 characters (longer: denied too_large)"},
+    "body_html": {"type": "string", "description": "at most 200000 characters (longer: denied too_large)"},
     "attachments": ` + draftAttachmentInputSchema + `,
     "quote": {"type": "boolean", "description": "quote the original (reply, reply_all; default true)"},
     "signature": {"type": "boolean", "description": "append the signature of the identity (default true)"},
@@ -853,9 +852,9 @@ func DraftsUpdate(d Deps) Operation {
     "to": ` + addrListSchema + `,
     "cc": ` + addrListSchema + `,
     "bcc": ` + addrListSchema + `,
-    "subject": {"type": "string", "maxLength": 500, "description": "empty for reply/forward: derived from the original again"},
-    "body_markdown": {"type": "string", "maxLength": 200000, "description": "replaces the text (and a former body_html)"},
-    "body_html": {"type": "string", "maxLength": 200000, "description": "replaces the text (and a former body_markdown)"},
+    "subject": {"type": "string", "description": "at most 500 characters (longer: denied too_large); empty for reply/forward: derived from the original again"},
+    "body_markdown": {"type": "string", "description": "replaces the text (and a former body_html); at most 200000 characters (longer: denied too_large)"},
+    "body_html": {"type": "string", "description": "replaces the text (and a former body_markdown); at most 200000 characters (longer: denied too_large)"},
     "attachments": ` + draftAttachmentInputSchema + `,
     "quote": {"type": "boolean"},
     "signature": {"type": "boolean"}
@@ -1477,12 +1476,15 @@ func DraftsReject(d Deps) Operation {
 	return draftsDecide(d, "drafts.reject", "Reject a submitted draft (human only); it goes back to status draft.")
 }
 
+// MaxRejectReasonChars begrenzt die Begründung einer Ablehnung (Zeichen).
+const MaxRejectReasonChars = 2000
+
 func draftsDecide(d Deps, name, summary string) Operation {
 	o := newDraftOps(d)
 	reject := name == "drafts.reject"
 	props := `"approval_id": {"type": "integer", "minimum": 1}`
 	if reject {
-		props += `, "reason": {"type": "string", "maxLength": 2000, "description": "why (kept in the approval, not in the audit log)"}`
+		props += `, "reason": {"type": "string", "description": "why, at most 2000 characters (longer: denied too_large); kept in the approval, not in the audit log"}`
 	}
 	return Operation{
 		Name:      name,
@@ -1505,6 +1507,9 @@ func draftsDecide(d Deps, name, summary string) Operation {
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
+			}
+			if n := utf8.RuneCountInString(in.Reason); n > MaxRejectReasonChars {
+				return nil, &DeniedError{Reason: drafts.ReasonTooLarge, Msg: fmt.Sprintf("reason has %d characters (at most %d)", n, MaxRejectReasonChars)}
 			}
 			by := drafts.DecidedBy(o.cfg.Operator)
 			svc := o.as(call, name, policy.ScopeMailDraft)
@@ -1608,7 +1613,7 @@ var (
 	draftStatuses = []string{"draft", "pending_approval", "ready", "sent_by_human", "abandoned"}
 )
 
-// redactDraftInput: nur Feldnamen, IDs (Entwurf, Freigabe, Ausgangsnachricht,
+// redactDraftInput: nur bekannte Feldnamen (redactFields), IDs (Entwurf, Freigabe, Ausgangsnachricht,
 // Identität), Art, Zustände und Zähler (Empfänger, Anhänge); nie Betreff,
 // Adressen, Text, Dateinamen, Pfade oder die Begründung einer Ablehnung.
 func redactDraftInput(raw json.RawMessage) (json.RawMessage, []string) {
@@ -1616,12 +1621,7 @@ func redactDraftInput(raw json.RawMessage) (json.RawMessage, []string) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return json.RawMessage(`{"invalid_input":true}`), nil
 	}
-	fields := make([]string, 0, len(m))
-	for k := range m {
-		fields = append(fields, k)
-	}
-	sort.Strings(fields)
-	params := map[string]any{"fields": fields}
+	params := redactFields(m)
 	var targets []string
 	for _, k := range []struct{ field, target string }{{"draft_id", "draft"}, {"approval_id", "approval"}, {"in_reply_to", "message"}, {"id", "identity"}} {
 		var n int64
