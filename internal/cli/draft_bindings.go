@@ -41,8 +41,8 @@ var draftBindings = []binding{
 	{op: "drafts.update", path: []string{"draft", "edit"}, use: "<draft-id>", args: cobra.ExactArgs(1), flags: draftEditFlags,
 		input: draftEditInput, human: renderDraftWrite,
 		covers: []string{"draft_id", "to", "cc", "bcc", "subject", "body_markdown", "body_html", "attachments", "quote", "signature"}},
-	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
-		human: renderDraftShow, covers: []string{"draft_id"}},
+	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
+		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "eml"}},
 	{op: "drafts.list", path: []string{"draft", "list"}, args: cobra.NoArgs, flags: draftListFlags, input: draftListInput,
 		human: renderDraftList, covers: []string{"account", "status", "limit"}},
 	{op: "drafts.request_ready", path: []string{"draft", "request"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
@@ -274,6 +274,33 @@ func draftEditInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage,
 	return marshalInput(m)
 }
 
+// --- draft show --------------------------------------------------------------------
+
+func draftShowFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("eml", false, "print the message as RFC 5322 text (.eml) instead, byte for byte the copy in the Drafts folder")
+}
+
+func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := positiveID(args[0], "draft id")
+	if err != nil {
+		return nil, "", err
+	}
+	m := map[string]any{"draft_id": id}
+	if eml, _ := cmd.Flags().GetBool("eml"); eml {
+		m["eml"] = true
+	}
+	return marshalInput(m)
+}
+
+// draftShowNotes: Bei --eml gehört stdout allein der Nachricht (umleitbar in
+// eine .eml-Datei); was sie ist, steht auf stderr.
+func draftShowNotes(out any) []string {
+	if o, ok := out.(ops.DraftDetail); ok && o.EML != "" && o.EMLNote != "" {
+		return []string{"eml: " + o.EMLNote}
+	}
+	return nil
+}
+
 func draftIDArg(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	id, err := positiveID(args[0], "draft id")
 	if err != nil {
@@ -470,6 +497,11 @@ func renderDraftShow(w io.Writer, out any) error {
 	o, ok := out.(ops.DraftDetail)
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	if o.EML != "" {
+		// --eml: genau die Bytes der Nachricht (CRLF), nichts davor oder danach.
+		_, err := io.WriteString(w, o.EML)
+		return err
 	}
 	fmt.Fprintf(w, "draft %d (%s) in account %s, status %s\n", o.DraftID, strings.ReplaceAll(o.Kind, "_", " "), o.Account, o.Status)
 	if o.ApprovalID > 0 {

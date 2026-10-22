@@ -185,6 +185,7 @@ var cliSamples = []cliSample{
 		"--attach", "notiz.txt", "--quote=false", "--signature=true"}, false},
 	{"drafts.update", []string{"draft", "edit", "1", "--html-file", "{html-body}", "--no-attachments"}, false},
 	{"drafts.get", []string{"draft", "show", "1"}, false},
+	{"drafts.get", []string{"draft", "show", "1", "--eml"}, false},
 	{"drafts.list", []string{"draft", "list", "-a", "demo", "--status", "draft,pending_approval", "--limit", "5"}, false},
 	{"drafts.request_ready", []string{"draft", "request", "1"}, false},
 	{"approvals.get", []string{"approval", "show", "1"}, false},

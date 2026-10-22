@@ -1137,6 +1137,17 @@ type DraftDetail struct {
 	UpdatedAt     string `json:"updated_at"`
 	ClosedAt      string `json:"closed_at,omitempty"`
 	SentMessageID int64  `json:"sent_message_id,omitempty"`
+
+	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
+	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
+	// abgelegt: Zeitpunkt des Anlegens). EMLMatchesCopy: Sie ist Byte für
+	// Byte die Kopie, die PostKauz in den Entwürfe-Ordner gelegt hat
+	// (Nachrichten-Hash ohne Date gleich pushed_message_hash, Date gleich).
+	// EMLNote erklärt, was die Bytes sind.
+	EML            string `json:"eml,omitempty"`
+	EMLDate        string `json:"eml_date,omitempty"`
+	EMLMatchesCopy bool   `json:"eml_matches_copy,omitempty"`
+	EMLNote        string `json:"eml_note,omitempty"`
 }
 
 // DraftsGet zeigt einen Entwurf vollständig (R0). Eine abgelaufene
@@ -1151,7 +1162,10 @@ func DraftsGet(d Deps) Operation {
 		Summary:    "Show a draft: status, recipients, subject, text, attachments, approval and the state of its copy in the Drafts folder.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
-  "properties": {"draft_id": {"type": "integer", "minimum": 1}},
+  "properties": {
+    "draft_id": {"type": "integer", "minimum": 1},
+    "eml": {"type": "boolean", "description": "also return the message as RFC 5322 text, byte for byte the copy put into the Drafts folder when it is still current (eml_matches_copy)"}
+  },
   "required": ["draft_id"],
   "additionalProperties": false
 }`),
@@ -1161,6 +1175,7 @@ func DraftsGet(d Deps) Operation {
     "draft_id": {"type": "integer"}, "account": {"type": "string"},
     "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
+    "eml": {"type": "string"}, "eml_date": {"type": "string"}, "eml_matches_copy": {"type": "boolean"}, "eml_note": {"type": "string"},
     "message_id": {"type": "string"}, "original_id": {"type": "integer"},
     "in_reply_to": {"type": "string"}, "references": {"type": "string"},
     "from": {"type": "string"}, "to": {"type": "array", "items": {"type": "string"}},
@@ -1187,7 +1202,10 @@ func DraftsGet(d Deps) Operation {
 }`),
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
-			var in draftIDInput
+			var in struct {
+				DraftID int64 `json:"draft_id"`
+				EML     bool  `json:"eml,omitempty"`
+			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
 			}
@@ -1222,9 +1240,61 @@ func DraftsGet(d Deps) Operation {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)
 				}
 			}
+			if in.EML {
+				if err := o.eml(ctx, acc, dr, &out); err != nil {
+					return nil, err
+				}
+			}
 			return out, nil
 		},
 	}
+}
+
+// eml baut die Nachricht eines Entwurfs wie der Push (rebuildAt) mit dem
+// Date der abgelegten Kopie (S2.7, A02 S2.7: draft show --eml byte-gleich
+// mit der gepushten Kopie). Der Push merkt sich Date (pushed_date) und den
+// Nachrichten-Hash ohne Date (pushed_message_hash); stimmt der Hash des
+// Neubaus, sind die Bytes dieselben. Sonst hat sich seit der Ablage etwas
+// geändert (Entwurf, Identität, Ausgangsnachricht, Anhänge), und eml ist der
+// aktuelle Stand mit dem Date der alten Kopie; eml_note sagt das.
+func (o *draftOps) eml(ctx context.Context, acc store.Account, dr store.Draft, out *DraftDetail) error {
+	var date time.Time
+	if dr.PushedDate != "" {
+		if t, err := time.Parse(time.RFC1123Z, dr.PushedDate); err == nil {
+			date = t
+		}
+	}
+	pushed := !date.IsZero()
+	if !pushed {
+		// Nie abgelegt: E11, Date = Zeitpunkt des Anlegens (der Push setzt
+		// sein eigenes).
+		date = dr.CreatedAt.Truncate(time.Second)
+	}
+	msg, err := o.rebuildAt(ctx, acc, dr, date)
+	if err != nil {
+		return draftErr(err)
+	}
+	out.EML, out.EMLDate = string(msg.Raw), date.Format(time.RFC1123Z)
+	copyName := "the copy"
+	if dr.RemoteUID > 0 {
+		copyName = fmt.Sprintf("the copy (uid %d)", dr.RemoteUID)
+	}
+	switch {
+	case !pushed:
+		out.EMLNote = "not in the Drafts folder yet; Date is the time the draft was created, the push sets its own"
+	case dr.PushedMessageHash == "":
+		out.EMLNote = copyName + " in the Drafts folder was put there before its hash was recorded; it cannot be checked whether these bytes are the same"
+	case compose.MessageHash(msg.Raw) == dr.PushedMessageHash:
+		out.EMLMatchesCopy = true
+		out.EMLNote = "byte for byte " + copyName + " that postkauz put into the Drafts folder"
+		if dr.RemoteState == drafts.RemoteTakenOver || dr.RemoteState == drafts.RemoteMissing {
+			out.EMLNote += "; the mail client has changed or removed it since"
+		}
+	default:
+		out.EMLNote = "the draft (or its identity, signature, quoted original or attachments) changed after " + copyName +
+			" was put into the Drafts folder; this is the current draft with the Date of that copy"
+	}
+	return nil
 }
 
 // --- drafts.list --------------------------------------------------------------
