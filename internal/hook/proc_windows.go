@@ -80,6 +80,11 @@ func (t *tree) close() {
 	}
 }
 
+// ownedByUser: Unter Windows liegt %TEMP% im Profil des Nutzers, und jedes
+// Temp-Verzeichnis eines Hooks ist nur für seinen Nutzer zugänglich
+// (restrictDir); ein fremdes ließe sich ohnehin nicht löschen.
+func ownedByUser(os.FileInfo) bool { return true }
+
 // restrictDir setzt eine geschützte Zugriffsliste: Vollzugriff nur für den
 // angemeldeten Nutzer (vererbt an Dateien darin), keine geerbten Einträge.
 // %TEMP% liegt zwar im Profil des Nutzers, aber geerbte Rechte (etwa von

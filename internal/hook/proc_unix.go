@@ -17,6 +17,7 @@ func newTree() (*tree, error) { return &tree{}, nil }
 
 func (*tree) prepare(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setPdeathsig(cmd.SysProcAttr)
 }
 
 // attach: Die Gruppe entsteht schon beim Start (Setpgid).
@@ -40,3 +41,10 @@ func (*tree) close() {}
 // noch einmal ausdrücklich (gegen eine ungewöhnliche umask, die nur Bits
 // wegnimmt, schadet es nicht).
 func restrictDir(dir string) error { return os.Chmod(dir, 0o700) }
+
+// ownedByUser: Das Verzeichnis gehört dem Nutzer dieses Prozesses (nur
+// eigene liegen gebliebene Temp-Verzeichnisse werden gelöscht).
+func ownedByUser(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
+}

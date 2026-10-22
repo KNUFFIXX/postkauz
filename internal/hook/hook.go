@@ -50,6 +50,17 @@
 //     Audit oder Log (dort nur das Ergebnis pass|fail|timeout|error).
 //   - Bricht der Aufrufer ab (Kontext beendet, z. B. Strg+C), wird der Hook
 //     ebenso beendet und Run liefert den Fehler des Kontexts.
+//   - **Hart beendeter Aufrufer** (Gegenprüfung S2.4/S2.5, K1): Stirbt die
+//     CLI selbst (SIGKILL, Absturz), kann sie nicht aufräumen. Unter Linux
+//     bekommt der Hook dann SIGKILL vom Kernel (Pdeathsig); seine Kinder
+//     erreicht das nicht, sie laufen weiter, bis sie selbst enden (unter
+//     macOS gibt es kein Gegenstück; unter Windows beendet das Schließen
+//     des Job-Objekts beim Prozessende alle). Ein Kind, das mit setsid eine
+//     eigene Sitzung und Prozessgruppe öffnet, entkommt unter Unix auch dem
+//     Beenden der Gruppe nach Zeitüberschreitung; das ist eine Grenze,
+//     keine Sandbox (docs/sicherheit.md, Abschnitt 5). Liegen gebliebene
+//     Temp-Verzeichnisse (postkauz-hook-*, älter als StaleAge) löscht der
+//     nächste Lauf; ein Fehler beim Löschen steht im Log (ohne Pfad).
 //
 // Das Paket kennt weder Datenbank noch Entwürfe; die Abbildung eines
 // Entwurfs auf Input macht internal/ops (ops.NewHookChecker).
@@ -60,7 +71,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +101,11 @@ const (
 	// waitDelay: so lange wartet Run nach dem Ende des Hooks (oder dem
 	// Beenden) auf das Schließen der Ausgabekanäle.
 	waitDelay = 2 * time.Second
+	// StaleAge: So alt muss ein liegen gebliebenes Temp-Verzeichnis eines
+	// Hooks sein (etwa nach SIGKILL der CLI), bevor ein späterer Lauf es
+	// löscht. Die Zeitgrenze eines Hooks ist höchstens 10 Minuten; ein
+	// laufender Hook eines anderen Prozesses verliert so nie seine Dateien.
+	StaleAge = time.Hour
 )
 
 // Platzhalter in den Argumenten.
@@ -127,6 +145,16 @@ type Runner struct {
 	Timeout time.Duration
 	// TempDir: Ort für das Temp-Verzeichnis je Lauf; "" = os.TempDir().
 	TempDir string
+	// Log bekommt Fehler beim Aufräumen der Temp-Verzeichnisse (ohne Pfad,
+	// ohne Inhalt); nil = verwerfen.
+	Log *slog.Logger
+}
+
+func (r Runner) log() *slog.Logger {
+	if r.Log == nil {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	return r.Log
 }
 
 // Input ist, was der Hook prüft.
@@ -170,11 +198,21 @@ func (r Runner) Run(ctx context.Context, in Input) (Result, error) {
 	if err != nil {
 		return errResult(err.Error()), nil
 	}
-	dir, err := os.MkdirTemp(r.TempDir, brand.Name+"-hook-")
+	base := r.TempDir
+	if base == "" {
+		base = os.TempDir()
+	}
+	cleanupStale(base, time.Now(), r.log())
+	dir, err := os.MkdirTemp(base, tempPrefix)
 	if err != nil {
 		return errResult("could not create the temporary directory"), nil
 	}
-	defer removeAll(dir)
+	defer func() {
+		if err := removeAll(dir); err != nil {
+			r.log().Warn("check hook: its temporary directory could not be removed; a later run removes it after an hour",
+				"reason", pathless(err))
+		}
+	}()
 	if err := restrictDir(dir); err != nil {
 		return errResult("could not restrict the temporary directory to the current user"), nil
 	}
@@ -236,11 +274,21 @@ func resolveProgram(prog string) (string, error) {
 		}
 		return "", errors.New("program not found (check [draft] check_hook in policy.toml)")
 	}
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".bat", ".cmd":
+	if isBatch(prog) || isBatch(path) {
 		return "", errors.New("batch files (.bat, .cmd) run through cmd.exe, a shell; start powershell.exe -File or a program instead")
 	}
 	return path, nil
+}
+
+// isBatch erkennt Stapeldateien an der Endung. Windows entfernt Punkte und
+// Leerzeichen am Ende eines Dateinamens („lint.bat." und „lint.bat " sind
+// lint.bat), deshalb zählen sie hier nicht mit (Gegenprüfung S2.4/S2.5, K2).
+func isBatch(p string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimRight(p, ". "))) {
+	case ".bat", ".cmd":
+		return true
+	}
+	return false
 }
 
 // args ersetzt die Platzhalter in den Argumenten (ein Durchgang).
@@ -385,15 +433,65 @@ func cutUTF8(s string, n int) string {
 	return s[:n]
 }
 
+// tempPrefix beginnt den Namen jedes Temp-Verzeichnisses eines Hooks.
+var tempPrefix = brand.Name + "-hook-"
+
 // removeAll löscht das Temp-Verzeichnis. Unter Windows kann eine Datei
 // kurz nach dem Beenden eines Prozesses noch gesperrt sein; dann noch
-// einige Male versuchen.
-func removeAll(dir string) {
+// einige Male versuchen. Liefert den letzten Fehler.
+func removeAll(dir string) error {
 	var err error
 	for i := 0; i < 20; i++ {
 		if err = os.RemoveAll(dir); err == nil || errors.Is(err, fs.ErrNotExist) {
-			return
+			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	return err
+}
+
+// cleanupStale löscht in base liegen gebliebene Temp-Verzeichnisse von
+// Hooks (Name postkauz-hook-*, kein Symlink, älter als StaleAge, unter
+// Unix im Besitz des Nutzers), etwa nach SIGKILL der CLI (K1). Ein Versuch
+// je Verzeichnis; Fehler kommen ohne Pfad ins Log.
+func cleanupStale(base string, now time.Time, log *slog.Logger) {
+	ents, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	removed, failed := 0, 0
+	var reason string
+	for _, e := range ents {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), tempPrefix) {
+			continue
+		}
+		p := filepath.Join(base, e.Name())
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.IsDir() || now.Sub(fi.ModTime()) < StaleAge || !ownedByUser(fi) {
+			continue
+		}
+		if err := os.RemoveAll(p); err != nil {
+			failed++
+			reason = pathless(err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		log.Info("check hook: removed temporary directories left behind by earlier runs", "count", removed)
+	}
+	if failed > 0 {
+		log.Warn("check hook: temporary directories left behind by earlier runs could not be removed", "count", failed,
+			"reason", reason)
+	}
+}
+
+// pathless ist der Fehlertext ohne Pfad (der Pfad nennt den Nutzer und
+// gehört nicht ins Log).
+func pathless(err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Op + ": " + pe.Err.Error()
+	}
+	return "unknown error"
 }
