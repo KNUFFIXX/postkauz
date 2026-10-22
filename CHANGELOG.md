@@ -19,9 +19,18 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - S2.4: Prüf-Hook vor `draft request`: Programm aus `[draft] check_hook` der Policy-Datei, ohne Shell, Entwurf nur als Dateien (`{eml}`, `{body_html}`, `{body_text}`, `{meta_json}`), knappe Umgebung ohne Schlüssel und Passwörter, Zeitgrenze `check_hook_timeout` mit Beenden samt Kindprozessen. Bei `fail`, `timeout` oder `error` bleibt der Entwurf `draft`; die ersten 4 KB der Hook-Ausgabe zeigt `draft request`, nie Audit oder Log. Beispiel-Hooks `deploy/hooks/check-example.ps1` und `check-example.sh`.
 - S2.4: `[draft] quote_line` kennt `{date_numeric}` (`21.10.2026 09:15`), z. B. `'Am {date_numeric} schrieb {from}:'`.
 - S2.5: `sync` legt Entwürfe zu Beginn jedes Laufs im Entwürfe-Ordner ab (IMAP APPEND, `\Draft \Seen`), `sync --watch` zusätzlich alle `--jobs-interval` (Standard 10 s); der MCP-Server reiht nur ein. `draft show` nennt alle Kopien (aktuelle und frühere UID) und warum ein Entwurf nicht abgelegt wurde; `sync` zeigt eine Zeile `drafts:`, `--json` ein Objekt `drafts`.
+- S2.6: Versanderkennung nach jedem Sync (Message-ID, sonst Rückfall nach E5); Entwürfe werden `sent_by_human`. Freigaben verfallen nach `approval_ttl`; `remote: missing`/`taken_over` werden nach jedem Lauf aufgefrischt. Neue Doku `docs/versanderkennung.md`.
+- S2.7: CLI für Entwürfe vollständig (alle Optionen nach A02), `draft show --eml` liefert die abgelegte Kopie byte-gleich, `draft show`/`draft list` warnen vor älteren Kopien im Entwürfe-Ordner.
+- S2.8: Entwürfe über MCP für Schlüssel mit `mail:draft`: `mail_create_draft`, `mail_update_draft`, `mail_get_draft`, `mail_list_drafts`, `mail_request_ready`, `mail_get_approval`; Resources `mail://{account}/draft/{id}` und `mail://style/{identity}`; Prompt `draft_reply`; neue Operation `drafts.style` (CLI `draft style`).
+- Abnahme D4: `docs/abnahme_D4.ps1`, `docs/abnahme_D4_mcp.py`, `docs/abnahme_D4.md`, `scripts/abnahme-d4-trocken.sh`; Protokoll Windows `docs/protokolle/D4_windows.txt` (47 OK, 0 FAIL).
 
 ### Changed
 
+- Entscheid 43: Ein geänderter Entwurf wird erst nach 30 s ohne Änderung abgelegt (neue Entwürfe sofort).
+- Schema 16 (Migrationen 0015 `drafts.content_changed_at`, 0016 `sent_check_marks` und `drafts.fallback_checked_at`).
+- Ausgaben von Entwürfen: Zitat und Weiterleitung stehen in `original` (Untrusted-Hülle), `body_text` enthält nur eigenen Text und Signatur; Hook-Ausgabe als Objekt `hook_output` (statt `hook_output_truncated`); `derived_from_email` nennt aus der Mail übernommene Kopffelder; Anhang-Warnungen nennen den Index statt des Namens. `drafts.get` kennt `max_chars` und `account`.
+- Fehlende Scopes melden überall `denied (missing_scope): …`; Fehlermeldungen enthalten keine Eingabewerte mehr.
+- Stildateien müssen reguläre Dateien sein (kein Symlink, kein FIFO).
 - S2.1: Die eigenen Adressen eines Kontos umfassen jetzt auch seine Identitäten (Betreff-Rückfall der Threads).
 - Schema 12 (Migrationen 0010 bis 0012: Entwürfe, `drafts.compose_options`, `approvals.message_hash`). MIME-Grenzen werden aus dem Inhalt abgeleitet. Längen-Grenzen der Entwurfsfelder sind `denied too_large` statt `invalid_input`.
 - Unter `-race` prüft der Vertragstest eine Stichprobe (jede Operation mit jeder Rolle einmal); die volle Matrix läuft ohne `-race`.
@@ -31,6 +40,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- RFC-2047-kodierte Anhangnamen wurden doppelt dekodiert.
+- Ein Fehler der Versandprüfung beendet den Sync nicht mehr vor Extraktion und Jobs.
 - Gegenprüfung S2.1–S2.3: Eingabewerte (Betreff, Begründung, Adressen, Datei- und Kontonamen) stehen nicht mehr in Fehlermeldungen, `--json`-Fehlern, Log oder Audit-Feldnamen.
 - Eine Freigabe bindet die fertig gebaute Nachricht (`message_hash`); eine geänderte Signatur, Reply-To, ein anderes Zitat oder ein anderer Anhang lässt `approve` mit `approval_stale` scheitern.
 - Kein Wettlauf mit dem Prüf-Hook und keine verlorenen gleichzeitigen Änderungen an Entwürfen (`draft_changed`).
