@@ -192,7 +192,7 @@ Probe, was dieser Schlüssel darf (ohne MCP):
 .\postkauz.exe key list --key test-agent
 ```
 
-Erwartet: `policy show` nennt `role: reader`, die drei Scopes und eine Liste lesender Operationen (alle `R0`). Der zweite Befehl endet mit `error: … deny (missing_scope)` und Exit-Code 3 (`$LASTEXITCODE` zeigt `3`): Ein Leseschlüssel darf keine Schlüssel verwalten.
+Erwartet: `policy show` nennt `role: reader`, die drei Scopes und eine Liste lesender Operationen (alle `R0`). Der zweite Befehl endet mit `error: denied (missing_scope): …` (bis S2.6: `… deny (missing_scope)`) und Exit-Code 3 (`$LASTEXITCODE` zeigt `3`): Ein Leseschlüssel darf keine Schlüssel verwalten.
 
 ## D2.7 MCP: Claude sieht nur lesende Werkzeuge
 

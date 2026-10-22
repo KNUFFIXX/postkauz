@@ -120,12 +120,28 @@ type Result struct {
 // PolicyError wird geliefert, wenn die Policy den Handler nicht freigibt.
 type PolicyError struct {
 	Operation string
-	Decision  policy.Decision
-	AuditID   int64
+	// Scope ist der Scope der Operation (für die Meldung bei missing_scope).
+	Scope    policy.Scope
+	Decision policy.Decision
+	AuditID  int64
 }
 
+// Error hat dieselbe Form wie eine fachliche Ablehnung (DeniedError):
+// "denied (<grund>): …" bzw. "needs_approval (<grund>): …" (S2.7; vorher
+// "ops: <op>: deny (<grund>)", Befund der Teilabnahme S2.3). Die Meldung
+// nennt nur Operation und Scope, nie Eingaben.
 func (e *PolicyError) Error() string {
-	return fmt.Sprintf("ops: %s: %s (%s)", e.Operation, e.Decision.Outcome, e.Decision.Reason)
+	switch {
+	case e.Decision.Outcome == policy.NeedsApproval:
+		return fmt.Sprintf("needs_approval (%s): %s needs the approval of a human", e.Decision.Reason, e.Operation)
+	case e.Decision.Reason == "missing_scope" && e.Scope != "":
+		return fmt.Sprintf("denied (missing_scope): %s needs the scope %s, which the key does not have", e.Operation, e.Scope)
+	case e.Decision.Reason == "human_only":
+		return fmt.Sprintf("denied (human_only): %s is for a human without a key", e.Operation)
+	case e.Decision.Reason != "":
+		return fmt.Sprintf("denied (%s): %s", e.Decision.Reason, e.Operation)
+	}
+	return fmt.Sprintf("denied: %s", e.Operation)
 }
 
 // Sentinel-Fehler für errors.Is; die Oberflächen bilden sie auf Exit-Codes
@@ -215,7 +231,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("ops: audit: %w", err)
 		}
-		return Result{Decision: dec, AuditID: id}, &PolicyError{Operation: op.Name, Decision: dec, AuditID: id}
+		return Result{Decision: dec, AuditID: id}, &PolicyError{Operation: op.Name, Scope: op.Scope, Decision: dec, AuditID: id}
 	}
 
 	ev.Result = audit.ResultOK

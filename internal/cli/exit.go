@@ -5,7 +5,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -96,8 +95,11 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: deniedHint(de.Reason)}
 	case errors.As(err, &pe) && pe.Decision.Reason == "human_only":
 		// A02 E2 (D4.5): nur der Mensch ohne --key.
-		return ExitDenied, ErrorInfo{Code: "denied", Message: fmt.Sprintf("denied (human_only): %s is for a human without a key", pe.Operation),
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(),
 			Hint: "run it without --key; no API key may do this, whatever its role"}
+	case errors.As(err, &pe) && pe.Decision.Reason == "missing_scope":
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(),
+			Hint: "the key lacks the required scope; see what it may do with: policy show --key <name>"}
 	case errors.Is(err, ops.ErrDenied):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "the key lacks the required scope or the policy forbids this"}
 	case errors.Is(err, ops.ErrNeedsApproval):
