@@ -150,6 +150,20 @@ type MirrorCopy struct {
 	Skipped bool
 }
 
+// qMirrorCopySameID: neuere Kopie gleicher Message-ID, Kopie gleicher
+// Message-ID und gleichen Inhalts; Parameter je Teil Ordner, Ordner,
+// Message-ID, UID bzw. Inhalts-Hash (K6: mit Konto, siehe mailboxAccount).
+const qMirrorCopySameID = `SELECT
+	EXISTS (SELECT 1 FROM messages m CROSS JOIN message_mailboxes mm ON mm.message_id = m.id
+		WHERE mm.mailbox_id = ? AND m.account_id = ` + mailboxAccount + ` AND m.message_id_header = ? AND mm.uid > ?),
+	EXISTS (SELECT 1 FROM messages m CROSS JOIN message_mailboxes mm ON mm.message_id = m.id
+		WHERE mm.mailbox_id = ? AND m.account_id = ` + mailboxAccount + ` AND m.message_id_header = ? AND m.content_hash = ?)`
+
+// qMirrorOrphan: Parameter Ordner, Ordner, Message-ID, Inhalts-Hash.
+const qMirrorOrphan = `SELECT mm.uid FROM messages m CROSS JOIN message_mailboxes mm ON mm.message_id = m.id
+	WHERE mm.mailbox_id = ? AND m.account_id = ` + mailboxAccount + ` AND m.message_id_header = ? AND m.content_hash = ?
+	ORDER BY mm.uid DESC`
+
 // MirrorCopy liest den Spiegel zur Kopie eines Entwurfs: Ordner mailboxID,
 // UID uid (0 = unbekannt), Message-ID ohne <> und Inhalts-Hash der Kopie.
 func (x *DraftTx) MirrorCopy(mailboxID, uid int64, messageID, contentHash string) (MirrorCopy, error) {
@@ -183,12 +197,8 @@ func (x *DraftTx) MirrorCopy(mailboxID, uid int64, messageID, contentHash string
 			}
 		}
 	}
-	err = x.tx.QueryRowContext(x.ctx, `SELECT
-		EXISTS (SELECT 1 FROM message_mailboxes mm JOIN messages m ON m.id = mm.message_id
-			WHERE mm.mailbox_id = ? AND m.message_id_header = ? AND mm.uid > ?),
-		EXISTS (SELECT 1 FROM message_mailboxes mm JOIN messages m ON m.id = mm.message_id
-			WHERE mm.mailbox_id = ? AND m.message_id_header = ? AND m.content_hash = ?)`,
-		mailboxID, messageID, uid, mailboxID, messageID, contentHash).Scan(&mc.NewerSameID, &mc.SameIDAndHash)
+	err = x.tx.QueryRowContext(x.ctx, qMirrorCopySameID,
+		mailboxID, mailboxID, messageID, uid, mailboxID, mailboxID, messageID, contentHash).Scan(&mc.NewerSameID, &mc.SameIDAndHash)
 	return mc, err
 }
 
@@ -208,9 +218,7 @@ func (x *DraftTx) MirrorOrphan(mailboxID int64, messageID, contentHash string, k
 	if err != nil {
 		return 0, 0, err
 	}
-	rows, err := x.tx.QueryContext(x.ctx, `SELECT mm.uid FROM message_mailboxes mm JOIN messages m ON m.id = mm.message_id
-		WHERE mm.mailbox_id = ? AND m.message_id_header = ? AND m.content_hash = ? ORDER BY mm.uid DESC`,
-		mailboxID, messageID, contentHash)
+	rows, err := x.tx.QueryContext(x.ctx, qMirrorOrphan, mailboxID, mailboxID, messageID, contentHash)
 	if err != nil {
 		return 0, 0, err
 	}

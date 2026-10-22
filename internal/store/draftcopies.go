@@ -5,6 +5,21 @@ import (
 	"database/sql"
 )
 
+// Die Abfragen nach Kopien mit einer Message-ID im Entwürfe-Ordner filtern
+// zusätzlich nach dem Konto des Ordners (m.account_id): Nur so nutzt SQLite
+// den Index messages_message_id(account_id, message_id_header) und liest
+// nicht alle Nachrichten des Ordners (Gegenprüfung S2.6–S2.8, K6; geprüft
+// per EXPLAIN QUERY PLAN in review_r1_test.go). CROSS JOIN legt die
+// Reihenfolge fest (messages außen): Sonst wählt SQLite wegen ORDER BY uid
+// den Index (mailbox_id, uid) von message_mailboxes. mailboxAccount ist
+// das Konto des Ordners mit der ID im ersten Parameter.
+const mailboxAccount = `(SELECT account_id FROM mailboxes WHERE id = ?)`
+
+// qMirrorDraftCopies: Parameter Ordner, Ordner, Message-ID.
+const qMirrorDraftCopies = `SELECT mm.uid, b.uidvalidity FROM messages m
+	CROSS JOIN message_mailboxes mm ON mm.message_id = m.id JOIN mailboxes b ON b.id = mm.mailbox_id
+	WHERE mm.mailbox_id = ? AND m.account_id = ` + mailboxAccount + ` AND m.message_id_header = ? ORDER BY mm.uid`
+
 // MirrorDraftCopy ist eine gespiegelte Kopie eines Entwurfs: Ordner, UID
 // und die UIDVALIDITY des Ordners beim letzten Sync (S2.7, Entscheid 43).
 type MirrorDraftCopy struct {
@@ -25,9 +40,7 @@ func (s *SQLite) MirrorDraftCopies(ctx context.Context, mailboxIDs []int64, mess
 		if mb <= 0 || messageID == "" {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT mm.uid, b.uidvalidity FROM message_mailboxes mm
-			JOIN messages m ON m.id = mm.message_id JOIN mailboxes b ON b.id = mm.mailbox_id
-			WHERE mm.mailbox_id = ? AND m.message_id_header = ? ORDER BY mm.uid`, mb, messageID)
+		rows, err := s.db.QueryContext(ctx, qMirrorDraftCopies, mb, mb, messageID)
 		if err != nil {
 			return nil, err
 		}
