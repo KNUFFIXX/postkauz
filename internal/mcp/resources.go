@@ -46,7 +46,12 @@ var resources = []resourceBinding{
 		desc: "A thread in date order with the new text of each message (untrusted)."},
 	{uri: "mail://{account}/message/{id}/attachment/{n}", template: true, name: "attachment", ops: []string{"attachments.text"},
 		desc: "Extracted text of attachment n (attachment id from the message) of a message (untrusted)."},
-	{uri: "mail://style/{identity}", template: true, name: "style", ops: []string{"drafts.style"},
+	{uri: "mail://{account}/draft/{id}", template: true, name: "draft", ops: []string{"drafts.get"},
+		desc: "A draft with status, recipients, own text (source draft), the quoted or forwarded original (untrusted), " +
+			"approval and the state of its copy in the Drafts folder."},
+	// {+identity}: Reservierte Zeichen wie @ dürfen roh in der URI stehen
+	// (mail://style/demo@example.org); mit {identity} passte nur %40.
+	{uri: "mail://style/{+identity}", template: true, name: "style", ops: []string{"drafts.style"},
 		desc: "Style notes the user wrote for a sender identity (address or id), to match tone and form in drafts. " +
 			"Written by the user (source config), not mail content."},
 }
@@ -131,6 +136,12 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		}
 		op, in = "threads.get", map[string]any{"id": id, "account": u.Host, "text": true, "max_messages": threadMaxMessages,
 			"max_chars_per_message": threadMaxChars}
+	case len(seg) == 2 && seg[0] == "draft":
+		id, ok := positive(seg[1])
+		if !ok {
+			return nil, sdk.ResourceNotFoundError(uri)
+		}
+		op, in = "drafts.get", map[string]any{"draft_id": id}
 	case len(seg) == 4 && seg[0] == "message" && seg[2] == "attachment":
 		msg, ok1 := positive(seg[1])
 		att, ok2 := positive(seg[3])
@@ -144,6 +155,11 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 	res, err := h.callMap(ctx, op, in)
 	if err != nil {
 		return nil, resourceErr(uri, err)
+	}
+	// drafts.get kennt kein Konto in der Eingabe: Ein Entwurf eines anderen
+	// Kontos ist unter dieser URI „nicht gefunden" (wie bei Nachrichten).
+	if d, ok := res.Output.(ops.DraftDetail); ok && d.Account != u.Host {
+		return nil, sdk.ResourceNotFoundError(uri)
 	}
 	_, text, err := outputValue(res.Output)
 	if err != nil {

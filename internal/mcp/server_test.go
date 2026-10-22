@@ -64,8 +64,9 @@ func TestEveryOperationIsBoundOrExcluded(t *testing.T) {
 	}
 }
 
-// Schemas: Eingabe wie im Register (nur Zahlengrenzen dürfen enger sein),
-// Ausgabe gleich; Standardwerte nur für Felder des Schemas.
+// Schemas: Eingabe wie im Register (nur Zahlengrenzen dürfen enger sein,
+// weggelassene Felder sind optional, schreibende Tools haben zusätzlich
+// genau dry_run), Ausgabe gleich; Standardwerte nur für Felder des Schemas.
 func TestToolSchemasMatchRegistry(t *testing.T) {
 	cat := catalog()
 	for _, b := range tools {
@@ -86,6 +87,22 @@ func TestToolSchemasMatchRegistry(t *testing.T) {
 			delete(g, "maximum")
 			delete(w, "maximum")
 		}
+		// dry_run genau bei schreibenden Tools (docs/mcp.md, Grundsatz 5).
+		if b.dryRun != (op.Risk > policy.R0) {
+			t.Errorf("%s: dry_run field %v, risk %s", b.tool, b.dryRun, op.Risk)
+		}
+		if b.dryRun {
+			if d, ok := gp["dry_run"].(map[string]any); !ok || d["type"] != "boolean" {
+				t.Errorf("%s: dry_run = %v", b.tool, gp["dry_run"])
+			}
+			delete(gp, "dry_run")
+		}
+		for _, f := range b.omit {
+			if _, ok := wp[f]; !ok || slices.Contains(want["required"].([]any), any(f)) {
+				t.Errorf("%s: omits %q, which is not an optional field", b.tool, f)
+			}
+			delete(wp, f)
+		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: input schema differs from %s:\n tool %v\n op   %v", b.tool, b.op, got, want)
 		}
@@ -105,6 +122,11 @@ func TestToolSchemasMatchRegistry(t *testing.T) {
 		}
 		if !strings.Contains(tool.Description, "Risk "+op.Risk.String()) {
 			t.Errorf("%s: description lacks the risk level", b.tool)
+		}
+		if strings.HasPrefix(b.op, "drafts.") || strings.HasPrefix(b.op, "approvals.") {
+			if !strings.Contains(tool.Description, "never sends") {
+				t.Errorf("%s: description lacks %q", b.tool, "never sends")
+			}
 		}
 	}
 }
@@ -187,17 +209,85 @@ func TestToolListFollowsScopes(t *testing.T) {
 	if tl, _, _ := listTools(t, policy.Key{ID: "key:leer"}); !slices.Equal(tl, []string{"mail_get_policy"}) {
 		t.Fatalf("no scopes: %v", tl)
 	}
-	// Auch admin (alle Scopes) bekommt kein Tool, das sendet, löscht, entwirft
-	// oder verwaltet.
+	// Leser: kein Tool und keine Resource für Entwürfe.
+	for _, name := range append(slices.Clone(want), res...) {
+		if strings.Contains(name, "draft") || strings.Contains(name, "approval") || strings.Contains(name, "style") {
+			t.Fatalf("reader sees %s", name)
+		}
+	}
+
+	// S2.8: assistant (mit mail:draft) sieht dazu die sechs Entwurfs-Tools,
+	// die Resources für Entwurf und Stil und den Prompt draft_reply.
+	drafting := []string{"mail_create_draft", "mail_get_approval", "mail_get_draft", "mail_list_drafts", "mail_request_ready",
+		"mail_update_draft"}
+	wantAssistant := slices.Sorted(slices.Values(append(slices.Clone(want), drafting...)))
+	tl, res, pr = listTools(t, policy.Key{ID: "key:as", Scopes: policy.Roles["assistant"]})
+	if !slices.Equal(tl, wantAssistant) || len(tl) != 15 {
+		t.Fatalf("assistant tools = %v", tl)
+	}
+	if len(res) != 11 || !slices.Contains(res, "mail://{account}/draft/{id}") || !slices.Contains(res, "mail://style/{+identity}") ||
+		len(pr) != 5 || !slices.Contains(pr, "draft_reply") {
+		t.Fatalf("assistant resources = %v, prompts = %v", res, pr)
+	}
+	// Auch admin (alle Scopes) bekommt kein Tool, das freigibt, ablehnt,
+	// sendet, löscht, verschiebt oder verwaltet.
 	tl, _, _ = listTools(t, policy.Key{ID: "key:a", Scopes: policy.Roles["admin"]})
-	if !slices.Equal(tl, want) {
+	if !slices.Equal(tl, wantAssistant) {
 		t.Fatalf("admin tools = %v", tl)
 	}
 	for _, name := range tl {
-		for _, bad := range []string{"send", "delete", "trash", "draft", "move", "key", "account_add"} {
+		for _, bad := range []string{"send", "delete", "trash", "move", "approve", "reject", "abandon", "mark", "sent", "identit",
+			"key", "account_add", "account_set"} {
 			if strings.Contains(name, bad) {
-				t.Fatalf("tool %s looks like a write tool", name)
+				t.Fatalf("tool %s looks like a tool reserved for humans", name)
 			}
+		}
+	}
+}
+
+// Die Hinweise beim Verbindungsaufbau folgen dem Scope mail:draft.
+func TestInstructionsFollowDraftScope(t *testing.T) {
+	r, d := Instructions(false), Instructions(true)
+	if !strings.Contains(r, "untrusted") || !strings.Contains(r, "nothing is sent, deleted, moved or drafted") || strings.Contains(r, "can create drafts") {
+		t.Fatalf("reader instructions: %s", r)
+	}
+	if !strings.Contains(d, "can create drafts in the Drafts folder") || !strings.Contains(d, "a human approves and sends") ||
+		!strings.Contains(d, "Nothing is sent, deleted or moved") {
+		t.Fatalf("draft instructions: %s", d)
+	}
+}
+
+func TestTakeDryRun(t *testing.T) {
+	in, dry, err := takeDryRun(json.RawMessage(`{"draft_id":1,"dry_run":false}`))
+	if err != nil || dry == nil || *dry || string(in) != `{"draft_id":1}` {
+		t.Fatalf("false: %s %v %v", in, dry, err)
+	}
+	if in, dry, _ = takeDryRun(json.RawMessage(`{"draft_id":1}`)); dry != nil || string(in) != `{"draft_id":1}` {
+		t.Fatalf("missing: %s %v", in, dry)
+	}
+	// Kein Wahrheitswert: bleibt stehen, das Schema lehnt ab.
+	for _, v := range []string{`"no"`, `null`, `0`} {
+		if in, dry, _ = takeDryRun(json.RawMessage(`{"dry_run":` + v + `}`)); dry != nil || !strings.Contains(string(in), "dry_run") {
+			t.Fatalf("%s: %s %v", v, in, dry)
+		}
+	}
+}
+
+// Der Prompt draft_reply: Nachricht als lokale ID oder Message-ID,
+// Argumente ohne Steuerzeichen.
+func TestDraftReplyPrompt(t *testing.T) {
+	text, err := draftReplyText(map[string]string{"message_id": "42", "intent": "Termin passt", "tone": "freundlich"})
+	if err != nil || !strings.Contains(text, "mail_get_message with id 42") || !strings.Contains(text, "in_reply_to 42") ||
+		!strings.Contains(text, "mail://style/") || !strings.Contains(text, "dry_run=false") || !strings.Contains(text, "never sends") ||
+		!strings.Contains(text, "[...: reason]") || !strings.Contains(text, `"freundlich"`) {
+		t.Fatalf("prompt = %s (%v)", text, err)
+	}
+	if text, _ = draftReplyText(map[string]string{"message_id": "a@example.org", "intent": "ja"}); !strings.Contains(text, `in_reply_to_message_id "a@example.org"`) {
+		t.Fatalf("Message-ID: %s", text)
+	}
+	for _, bad := range []map[string]string{{"intent": "x"}, {"message_id": "1"}, {"message_id": "1", "intent": "a\x1b[2Jb"}} {
+		if _, err := draftReplyText(bad); err == nil {
+			t.Fatalf("accepted %v", bad)
 		}
 	}
 }

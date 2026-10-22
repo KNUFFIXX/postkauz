@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,19 @@ type toolBinding struct {
 	maxInt map[string]int
 	// mail: Die Ausgabe enthält Mailinhalt (Untrusted-Hülle).
 	mail bool
+	// dryRun: Das Tool hat das Feld dry_run (jedes schreibende Tool,
+	// docs/mcp.md Grundsatz 5). Der Adapter nimmt es aus der Eingabe und
+	// gibt es dem Executor als Trockenlauf; fehlt es, gilt der
+	// dry_run_default des Schlüssels.
+	dryRun bool
+	// omit nennt Felder des InputSchema, die das Tool Agenten nicht
+	// anbietet (engeres Schema, im Executor geprüft): eml bei
+	// mail_get_draft, weil die Rohnachricht Zitat und Anhänge ohne Hülle
+	// und ohne Budget enthielte.
+	omit []string
+	// destructive: Das Tool ersetzt gespeicherte Daten (MCP-Annotation
+	// destructiveHint); gelöscht wird nie etwas.
+	destructive bool
 	// maxChars ersetzt in defaults den Wert von max_chars und in desc den
 	// Platzhalter {max_chars} (Zeichenbudget aus der Policy-Datei, A02 E8;
 	// 0 = ops.DefaultMaxChars). Gesetzt von withMaxChars.
@@ -53,6 +67,15 @@ func (b toolBinding) budget() int {
 	}
 	return ops.DefaultMaxChars
 }
+
+// dryRunField ist die Eigenschaft dry_run schreibender Tools.
+const dryRunField = "dry_run"
+
+const dryRunSchema = `{"type": "boolean", "description": "true: check and preview only, nothing is saved or queued; ` +
+	`false: do it. Without dry_run the dry_run_default of the key applies (see mail_get_policy)."}`
+
+// neverSends steht in jeder Beschreibung eines Entwurfs-Tools (A02 S2.8).
+const neverSends = "This server never sends: a human checks the draft and sends it from the mail client."
 
 // Budgets für Agenten (docs/mcp.md, Grundsatz 7).
 const (
@@ -98,12 +121,52 @@ var tools = []toolBinding{
 	{tool: "mail_get_policy", op: "policy.get", title: "What may this key do?",
 		desc: "Describe the policy of the key this server runs with: scopes, allowed operations with risk level, dry-run default, " +
 			"character budget. This server is read-only and draft-only: it never sends or deletes mail."},
+
+	// Entwürfe (S2.8, A02 S2.8; Scope mail:draft). Freigeben, ablehnen,
+	// verwerfen, als gesendet markieren und Identitäten verwalten bleiben
+	// dem Menschen vorbehalten (notbound.go).
+	{tool: "mail_create_draft", op: "drafts.create", title: "Create a draft", mail: true, dryRun: true,
+		desc: "Create a draft for a human to send: kind new, reply, reply_all or forward. reply, reply_all and forward need the " +
+			"original message as in_reply_to (local id from mail_search) or in_reply_to_message_id; a reply takes recipients and " +
+			"subject (Re:) from the original unless you give them, quotes it (quote=false: no quote) and appends the signature " +
+			"of the identity. Write the text as body_markdown (or body_html), at most 200000 characters; recipients as " +
+			"\"Name <address>\" or address, at most 50 per field. The draft is saved locally and copied into the Drafts folder " +
+			"of the mailbox by the next sync of the user (result remote=pending; a running sync --watch within about 10 s). " +
+			"The result shows your own text with source=draft and the quoted or forwarded original separately in original " +
+			"(untrusted). dry_run=true returns the preview without saving. " + neverSends},
+	{tool: "mail_update_draft", op: "drafts.update", title: "Change a draft", mail: true, dryRun: true, destructive: true,
+		desc: "Change a draft by draft_id: every field you give replaces the stored one (to: the whole list, attachments: all " +
+			"attachments, body_markdown or body_html: the whole text); fields you leave out stay. A submitted or approved draft " +
+			"goes back to status draft and its approval is superseded; it must be submitted again. Refused with draft_closed after " +
+			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client. The changed " +
+			"copy reaches the Drafts folder with the next sync; the earlier copy stays there. " + neverSends},
+	{tool: "mail_get_draft", op: "drafts.get", title: "Read a draft", mail: true, omit: []string{"eml"},
+		desc: "Show a draft: status, recipients, subject, own text (body_text with signature, source=draft), the quoted or " +
+			"forwarded original (original, untrusted), attachments with warnings, approval, check hook result and the state of " +
+			"its copy in the Drafts folder (remote, remote_note). " + neverSends},
+	{tool: "mail_list_drafts", op: "drafts.list", title: "List drafts",
+		desc: "List drafts, last changed first: status (draft, pending_approval, ready, sent_by_human, abandoned), subject, " +
+			"number of recipients and attachments, approval and the state of the copy in the Drafts folder. Filter by account " +
+			"and status. " + neverSends},
+	{tool: "mail_request_ready", op: "drafts.request_ready", title: "Submit a draft for approval", mail: true, dryRun: true,
+		desc: "Submit a draft (draft_id) to the human for approval. The user's check hook runs first: hook=pass gives status " +
+			"pending_approval and an approval_id; any other result keeps status draft, and hook_output (untrusted, it may repeat " +
+			"mail content) says why. Only a human can approve or reject; you cannot. After approval (status ready) the human " +
+			"sends the draft from the mail client. Follow the decision with mail_get_approval. dry_run=true only checks. " + neverSends},
+	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
+		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +
+			"the reason of the human), superseded (the draft changed) or expired, with who decided and when. " + neverSends},
 }
 
+// narrows meldet, ob das Tool ein anderes Eingabeschema als die Operation
+// hat (engere Grenzen, weggelassene Felder, dry_run).
+func (b toolBinding) narrows() bool { return len(b.maxInt) > 0 || len(b.omit) > 0 || b.dryRun }
+
 // toolSchema liefert das InputSchema der Operation für das Tool, mit den
-// verengten Zahlengrenzen dieses Tools.
+// verengten Zahlengrenzen dieses Tools, ohne die weggelassenen Felder und
+// mit dry_run bei schreibenden Tools.
 func (b toolBinding) toolSchema(op ops.Operation) (json.RawMessage, error) {
-	if len(b.maxInt) == 0 {
+	if !b.narrows() {
 		return op.InputSchema, nil
 	}
 	var s map[string]any
@@ -111,6 +174,25 @@ func (b toolBinding) toolSchema(op ops.Operation) (json.RawMessage, error) {
 		return nil, err
 	}
 	props, _ := s["properties"].(map[string]any)
+	for _, field := range b.omit {
+		if _, ok := props[field]; !ok {
+			return nil, fmt.Errorf("mcp: %s: no field %q to omit", b.tool, field)
+		}
+		if req, _ := s["required"].([]any); slices.Contains(req, any(field)) {
+			return nil, fmt.Errorf("mcp: %s: required field %q cannot be omitted", b.tool, field)
+		}
+		delete(props, field)
+	}
+	if b.dryRun {
+		if _, ok := props[dryRunField]; ok {
+			return nil, fmt.Errorf("mcp: %s: operation already has a field %s", b.tool, dryRunField)
+		}
+		var d map[string]any
+		if err := json.Unmarshal([]byte(dryRunSchema), &d); err != nil {
+			return nil, err
+		}
+		props[dryRunField] = d
+	}
 	for field, max := range b.maxInt {
 		p, ok := props[field].(map[string]any)
 		if !ok {
