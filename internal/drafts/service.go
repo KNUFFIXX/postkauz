@@ -691,7 +691,7 @@ func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
 // message_id oder fallback. Der Audit-Eintrag (Akteur system) steht in
 // derselben Transaktion.
 func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason string) (Result, error) {
-	if reason != "message_id" && reason != "fallback" {
+	if reason != DetectMessageID && reason != DetectFallback {
 		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
 	}
 	return s.close(ctx, id, EvSentDetected, sentMessageID, reason)
@@ -722,7 +722,8 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		}
 		res.Draft, res.From, res.To = d, from, t.To
 		if ev == EvSentDetected {
-			_, err := x.AppendAudit(s.systemEvent(now, "drafts.sent_detected", reason, d, from, t.To))
+			// Nur IDs: die lokale ID der gesendeten Nachricht, nie ihr Inhalt.
+			_, err := x.AppendAudit(s.systemEvent(now, OpSentDetected, reason, d, from, t.To, map[string]any{"sent_message_id": sentMessageID}))
 			return err
 		}
 		var aid int64
@@ -734,10 +735,19 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 	return res, err
 }
 
+// OpSentDetected ist die Operation im Audit, wenn der Sync den Versand
+// eines Entwurfs erkannt hat (E5; Grund message_id oder fallback).
+const OpSentDetected = "drafts.sent_detected"
+
 // systemEvent baut den Audit-Eintrag eines Systemereignisses: Akteur
 // system, nur IDs und Zustände, nie Inhalt.
-func (s *Service) systemEvent(now time.Time, op, reason string, d store.Draft, from, to Status) audit.Event {
+func (s *Service) systemEvent(now time.Time, op, reason string, d store.Draft, from, to Status, extra ...map[string]any) audit.Event {
 	params := map[string]any{"draft_id": d.ID, "from": from, "to": to}
+	for _, e := range extra {
+		for k, v := range e {
+			params[k] = v
+		}
+	}
 	targets := []string{"draft:" + strconv.FormatInt(d.ID, 10)}
 	if d.ApprovalID > 0 {
 		params["approval_id"] = d.ApprovalID
