@@ -191,7 +191,7 @@ func IdentitiesAdd(d Deps) Operation {
 			if in.StyleFile != "" {
 				p, err := filepath.Abs(in.StyleFile)
 				if err != nil {
-					return nil, inputErr("style_file: %v", err)
+					return nil, inputErr("style_file: not a usable path")
 				}
 				if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
 					return nil, inputErr("style_file: not a readable regular file")

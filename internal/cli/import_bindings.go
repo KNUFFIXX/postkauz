@@ -27,7 +27,7 @@ func importFlags(cmd *cobra.Command) {
 // importInput: import <mbox|maildir> <pfad>.
 func importInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	if args[0] != "mbox" && args[0] != "maildir" {
-		return nil, "", usageError{fmt.Errorf("unknown format %q: use import mbox <file|folder> or import maildir <folder>", args[0])}
+		return nil, "", usageError{errors.New("unknown format: use import mbox <file|folder> or import maildir <folder>")}
 	}
 	f := cmd.Flags()
 	mailbox, _ := f.GetString("mailbox")

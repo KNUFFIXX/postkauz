@@ -333,7 +333,7 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return nil, "", usageError{fmt.Errorf("invalid --imap port %q", portStr)}
+		return nil, "", usageError{errors.New("invalid --imap port: give host:port with a port number")}
 	}
 	if tlsMode == "" {
 		tlsMode = defaultTLS(port, insecure)

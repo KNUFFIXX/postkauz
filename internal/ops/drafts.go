@@ -823,7 +823,7 @@ func DraftsCreate(d Deps) Operation {
 			}
 			kind := compose.Kind(in.Kind)
 			if !drafts.ValidKind(drafts.Kind(kind)) {
-				return nil, inputErr("unknown kind %q", in.Kind)
+				return nil, inputErr("unknown kind (new, reply, reply_all, forward)")
 			}
 			hasOrig := in.InReplyTo > 0 || in.InReplyToMessageID != ""
 			switch {

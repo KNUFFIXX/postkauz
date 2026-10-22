@@ -36,7 +36,7 @@ func parseExpiryDays(s string) (int, error) {
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
 	if err != nil || n < 0 {
-		return 0, usageError{fmt.Errorf("invalid --expires %q: use days like 90d, or never", s)}
+		return 0, usageError{errors.New("invalid --expires: use days like 90d, or never")}
 	}
 	if n == 0 {
 		return 0, usageError{errors.New("--expires 0d would never expire; write --expires never if you mean that")}

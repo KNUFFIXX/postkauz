@@ -220,12 +220,12 @@ func operator(key, val string, quoted, neg bool, loc *time.Location) (*Term, *Fi
 		if lv == "attachment" || lv == "attachments" {
 			return nil, &Filter{Kind: "has_attachment", Negated: neg}, nil
 		}
-		return nil, nil, qerr("has:%s is not supported; use has:attachment", v)
+		return nil, nil, qerr("has: only has:attachment is supported")
 	case "is":
 		canon := map[string]string{"unread": "unread", "read": "read", "seen": "read", "flagged": "flagged",
 			"starred": "flagged", "answered": "answered", "draft": "draft"}[lv]
 		if canon == "" {
-			return nil, nil, qerr("is:%s is not supported; use is:unread, is:read, is:flagged, is:answered or is:draft", v)
+			return nil, nil, qerr("is: not a supported value; use is:unread, is:read, is:flagged, is:answered or is:draft")
 		}
 		return nil, &Filter{Kind: "is", Value: canon, Negated: neg}, nil
 	case "in", "mailbox":
@@ -235,7 +235,7 @@ func operator(key, val string, quoted, neg bool, loc *time.Location) (*Term, *Fi
 	case "thread":
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
-			return nil, nil, qerr("thread:%s: give a thread id (a positive number)", v)
+			return nil, nil, qerr("thread: give a thread id (a positive number)")
 		}
 		return nil, &Filter{Kind: "thread", Value: v, ID: id, Negated: neg}, nil
 	case "after", "before":
@@ -244,7 +244,7 @@ func operator(key, val string, quoted, neg bool, loc *time.Location) (*Term, *Fi
 				return nil, &Filter{Kind: key, Value: t.Format("2006-01-02"), Time: t, Negated: neg}, nil
 			}
 		}
-		return nil, nil, qerr("%s:%s: give a date as YYYY-MM-DD", key, v)
+		return nil, nil, qerr("%s: give a date as YYYY-MM-DD", key)
 	}
 	return nil, nil, qerr("unknown operator %s:", key)
 }

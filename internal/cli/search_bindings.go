@@ -69,7 +69,7 @@ func hitFields(s string) ([]string, error) {
 			continue
 		}
 		if !slices.Contains(hitFieldNames, f) {
-			return nil, usageError{fmt.Errorf("unknown field %q for --fields (known: %s)", f, strings.Join(hitFieldNames, ","))}
+			return nil, usageError{fmt.Errorf("unknown field for --fields (known: %s)", strings.Join(hitFieldNames, ","))}
 		}
 		out = append(out, f)
 	}
