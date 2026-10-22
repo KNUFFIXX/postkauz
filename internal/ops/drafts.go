@@ -142,7 +142,8 @@ func remoteNote(d store.Draft) string {
 			if d.RemoteUID > 0 {
 				earlier = fmt.Sprintf("the earlier copy (uid %d)", d.RemoteUID)
 			}
-			return "changed after the push: a new copy is queued (a running sync --watch pushes it within 10 s); " +
+			return "changed after the push: a new copy is queued (it is put once the draft has been unchanged for 30 s: " +
+				"a running sync --watch does that, otherwise the next sync); " +
 				earlier + " stays in the Drafts folder, nothing is deleted"
 		}
 		return RemoteNotePending

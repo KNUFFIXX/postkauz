@@ -134,6 +134,15 @@ func (e *itDraftEnv) cleanup() {
 	}
 }
 
+// settle rückt die letzte Änderung aller Entwürfe 31 s zurück, als wäre
+// die Ruhezeit nach einer Änderung (Entscheid 43, S2.6) vorbei.
+func (e *itDraftEnv) settle() {
+	e.t.Helper()
+	if err := e.st.ExecForTest(`UPDATE drafts SET updated_at = updated_at - 31000`); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 func (e *itDraftEnv) do(key policy.Key, op string, in any) (any, error) {
 	b, _ := json.Marshal(in)
 	actor := audit.ActorAgent
@@ -248,6 +257,8 @@ func TestIntegrationDraftPush(t *testing.T) {
 		if _, err := e.do(itAssistant, "drafts.update", map[string]any{"draft_id": out.DraftID, "body_markdown": "Geänderter Text"}); err != nil {
 			t.Fatal(err)
 		}
+		// Entscheid 43 (S2.6): erst nach 30 s Ruhe; hier vorgerückt.
+		e.settle()
 		if res, err := e.sync(ops.SyncOptions{}); err != nil || res.Drafts == nil || res.Drafts.Pushed != 1 {
 			t.Fatalf("sync after change: %+v, %v", res.Drafts, err)
 		}

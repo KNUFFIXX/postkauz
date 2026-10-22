@@ -13,7 +13,22 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
+
+// settleDrafts rückt die letzte Änderung aller Entwürfe 31 s zurück, als
+// wäre die Ruhezeit nach einer Änderung (Entscheid 43) vorbei.
+func settleDrafts(t *testing.T, dataDir string) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(dataDir, "postkauz.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.ExecForTest(`UPDATE drafts SET updated_at = updated_at - 31000`); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // S2.5 über die CLI: draft new reiht ein, sync legt zuerst ab (Zeile
 // "drafts: …"), draft show nennt die Kopie; nach einer Änderung legt der
@@ -66,6 +81,14 @@ func TestSyncPushesDraftCLI(t *testing.T) {
 	if !strings.Contains(out, "remote pending") || !strings.Contains(out, "earlier copy (uid 1) stays") {
 		t.Fatalf("draft edit: %s", out)
 	}
+	// Entscheid 43 (S2.6): Ein geänderter Entwurf wird erst nach 30 s Ruhe
+	// abgelegt; ein sync davor sagt das ehrlich und legt nichts ab.
+	out = step(ExitOK, "", "sync", "-a", "demo")
+	if !strings.Contains(out, "drafts: 1 changed less than 30 s ago, not put yet (a running sync --watch puts it once it has been "+
+		"unchanged for 30 s; otherwise the next sync)\n") {
+		t.Fatalf("sync within 30 s: %s", out)
+	}
+	settleDrafts(t, dataDir)
 	step(ExitOK, "", "sync", "-a", "demo")
 	out = step(ExitOK, "", "draft", "show", "1")
 	if !strings.Contains(out, "copies:      uid 2, earlier uid 1") {

@@ -93,6 +93,15 @@ func (e *pushEnv) draft(t *testing.T, id int64) store.Draft {
 	return d
 }
 
+// settle rückt die letzte Änderung aller Entwürfe 31 s zurück, als wäre
+// die Ruhezeit nach einer Änderung (Entscheid 43, S2.6) vorbei.
+func (e *pushEnv) settle(t *testing.T) {
+	t.Helper()
+	if err := e.st.ExecForTest(`UPDATE drafts SET updated_at = updated_at - 31000`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // serverCopies liefert UID und Flags aller Nachrichten mit Message-ID mid
 // im Ordner (zweiter Client, wie ein Mailprogramm).
 func serverCopies(t *testing.T, c *imapclient.Client, mailbox, mid string) map[imap.UID][]imap.Flag {
@@ -181,6 +190,7 @@ func TestSyncPushesDraftsAndDetectsTakeOver(t *testing.T) {
 	if _, err := e.svc.Update(ctx, d.ID, c, ""); err != nil {
 		t.Fatal(err)
 	}
+	e.settle(t)
 	if out, err := e.sync(t, ops.SyncOptions{}); err != nil || out.Drafts == nil || out.Drafts.Pushed != 1 {
 		t.Fatalf("sync after change: %+v, %v", out.Drafts, err)
 	}

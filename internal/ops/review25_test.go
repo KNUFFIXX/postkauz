@@ -89,6 +89,7 @@ func TestReviewW1NoDuplicateAcrossCalls(t *testing.T) {
 	if d2.RemoteState != drafts.RemotePending || d2.RemoteUID != int64(uid2) || d2.PushAttempt != nil {
 		t.Fatalf("after update = %+v", d2)
 	}
+	e.settle(t)
 	if rep := e.push(t); rep.Pushed != 1 || rep.TakenOver != 0 {
 		t.Fatalf("push after update = %+v", rep)
 	}
@@ -207,6 +208,7 @@ func TestReviewW2ReadyMatchesTheCopy(t *testing.T) {
 		t.Fatalf("after approve = %s/%s", d.Status, d.RemoteState)
 	}
 	n := len(e.app.raws)
+	e.settle(t)
 	if rep := e.push(t); rep.Pushed != 1 || rep.Stale != 0 {
 		t.Fatalf("push = %+v", rep)
 	}

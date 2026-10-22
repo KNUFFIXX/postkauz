@@ -35,6 +35,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/crash"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
@@ -164,6 +165,9 @@ type Report struct {
 	// Drafts: Ablage wartender Entwürfe zu Beginn des Laufs (Job
 	// draft_push, S2.5); nil = nichts wartete.
 	Drafts *ops.SyncDrafts `json:"drafts,omitempty"`
+	// DraftCheck: Prüfung der Entwürfe nach dem Spiegeln (S2.6,
+	// drafts.go); nil = nichts geändert.
+	DraftCheck *drafts.CheckReport `json:"draft_check,omitempty"`
 }
 
 // failedMailboxes zählt die Ordner, die wegen eines Fehlers übersprungen
@@ -302,6 +306,12 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			rep.Duration = time.Since(start)
 			return rep, err
 		}
+	}
+	// S2.6: Entwürfe gegen den eben gespiegelten Stand prüfen (gesendet?
+	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?).
+	if rep.DraftCheck, err = e.checkDrafts(ctx); err != nil {
+		rep.Duration = time.Since(start)
+		return rep, err
 	}
 	if err := e.backlog(ctx); err != nil {
 		rep.Duration = time.Since(start)

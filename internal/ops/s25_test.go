@@ -91,6 +91,17 @@ func newPushEnv(t *testing.T) *pushEnv {
 	return e
 }
 
+// settle setzt die letzte Änderung aller Entwürfe auf 30 s vor die Uhr
+// des Pushs, als wäre die Ruhezeit nach einer Änderung (Entscheid 43,
+// S2.6) gerade vorbei (die Uhr der Tests liegt vor der echten Zeit, mit
+// der der Dienst updated_at schreibt).
+func (e *pushEnv) settle(t *testing.T) {
+	t.Helper()
+	if err := e.st.ExecForTest(`UPDATE drafts SET updated_at = ?`, e.now.Add(-DefaultChangeSettle).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (e *pushEnv) push(t *testing.T) DraftPushReport {
 	t.Helper()
 	rep, err := e.pusher.Push(context.Background(), e.acc, e.mb, e.app, true)
@@ -181,6 +192,11 @@ func TestDraftPushAndTakeOver(t *testing.T) {
 	d = e.draft(t, id)
 	// Der nächste Sync spiegelt die erste Kopie; sie ist unverändert da.
 	e.mirror(t, []store.NewMessage{mirrored(d)}, nil, 104)
+	// Entscheid 43 (S2.6): erst nach 30 s Ruhe.
+	if rep := e.push(t); rep.Pushed != 0 || rep.Waiting != 1 {
+		t.Fatalf("push within 30 s = %+v", rep)
+	}
+	e.settle(t)
 	if rep := e.push(t); rep.Pushed != 1 {
 		t.Fatalf("push after change = %+v", rep)
 	}

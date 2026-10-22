@@ -25,6 +25,10 @@ const draftPushPending = `remote_state = 'pending' AND status IN ('draft','pendi
 // postkauz sync erneut (im Dauerbetrieb der stündliche volle Abgleich),
 // nicht jede Prüfung alle 10 s, und sie halten den Job nicht fällig; eine
 // Änderung des Entwurfs löscht den Vermerk.
+//
+// Geänderte Entwürfe in ihrer Ruhezeit (Entscheid 43, S2.6; die Wartezeit
+// prüft internal/ops mit der Uhr des Pushs) zählen hier mit: Sie halten den
+// Job fällig, damit sync --watch sie nach Ablauf ablegt.
 const draftPushDue = draftPushPending + ` AND (push_note IS NULL OR push_note NOT IN ('push_rejected','push_failed'))`
 
 // DraftPushCandidates liefert die Entwürfe eines Kontos, deren Kopie
@@ -35,28 +39,56 @@ const draftPushDue = draftPushPending + ` AND (push_note IS NULL OR push_note NO
 // push_failed vermerkten (mailsync.Options.RetryDrafts), sonst nur die
 // fälligen.
 func (s *SQLite) DraftPushCandidates(ctx context.Context, accountID int64, retry bool) (ids []int64, withCopy int, err error) {
+	items, err := s.DraftPushQueue(ctx, accountID, retry)
+	for _, it := range items {
+		ids = append(ids, it.ID)
+		if it.HadCopy {
+			withCopy++
+		}
+	}
+	return ids, withCopy, err
+}
+
+// DraftPushItem ist ein Entwurf, dessen Kopie aussteht (DraftPushQueue).
+type DraftPushItem struct {
+	ID int64
+	// HadCopy: frühere Kopie oder Ablageversuch mit offenem Ausgang (die
+	// Prüfung vor dem Push liest dafür den Spiegel des Entwürfe-Ordners).
+	HadCopy bool
+	// Pushed: Der Entwurf wurde schon einmal abgelegt (pushed_content_hash);
+	// die nächste Kopie ist die eines geänderten Entwurfs (Entscheid 43).
+	Pushed bool
+	// UpdatedAt: letzte Änderung (drafts.updated_at).
+	UpdatedAt time.Time
+}
+
+// DraftPushQueue liefert die Entwürfe eines Kontos, deren Kopie aussteht,
+// älteste zuerst, mit dem, was der Push für die Wartezeit nach einer
+// Änderung (Entscheid 43) und die Prüfung des Spiegels braucht. retry wie
+// bei DraftPushCandidates.
+func (s *SQLite) DraftPushQueue(ctx context.Context, accountID int64, retry bool) ([]DraftPushItem, error) {
 	cond := draftPushDue
 	if retry {
 		cond = draftPushPending
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, remote_uid IS NOT NULL OR push_attempt IS NOT NULL FROM drafts
+	rows, err := s.db.QueryContext(ctx, `SELECT id, remote_uid IS NOT NULL OR push_attempt IS NOT NULL,
+		pushed_content_hash IS NOT NULL AND pushed_content_hash != '', updated_at FROM drafts
 		WHERE account_id = ? AND `+cond+` ORDER BY id`, accountID)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer rows.Close()
+	var out []DraftPushItem
 	for rows.Next() {
-		var id int64
-		var had bool
-		if err := rows.Scan(&id, &had); err != nil {
-			return nil, 0, err
+		var it DraftPushItem
+		var up int64
+		if err := rows.Scan(&it.ID, &it.HadCopy, &it.Pushed, &up); err != nil {
+			return nil, err
 		}
-		ids = append(ids, id)
-		if had {
-			withCopy++
-		}
+		it.UpdatedAt = time.UnixMilli(up).UTC()
+		out = append(out, it)
 	}
-	return ids, withCopy, rows.Err()
+	return out, rows.Err()
 }
 
 // EnsureDraftPushJob reiht den Job draft_push für ein Konto ein, wenn
