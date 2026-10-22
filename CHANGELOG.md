@@ -4,6 +4,20 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### Added
+
+- S2.1: Schema 10 (Migration 0010): Entwürfe, Freigaben, Identitäten neu gebaut, Job-Typ `draft_push`, `policies.sha256`, `policy_version` in jedem Audit-Eintrag.
+- S2.1: `internal/drafts`: Zustandsmaschine der Freigabe, `preview_hash`, Eingabegrenzen, Message-IDs, Identitäten und eigene Adressen, Ablauf von Freigaben (noch ohne Operationen).
+- S2.1: Policy-Datei `policy.toml` (oder `POSTKAUZ_POLICY`), bei jedem Start geprüft; `[agent_defaults] max_chars` setzt das Budget der Agenten; `doctor` zeigt Policy und `attach_dir`. Neuer Fehlercode `policy_invalid` (Exit 1).
+- S2.1: Konfiguration `[paths] attach_dir`, `[operator] name`, `[draft] approval_ttl`, `max_attachment_bytes`, `mailbox`, `quote_line`.
+- S2.1 (Entscheid 36): `account set <name> --password-stdin` ersetzt ein gespeichertes Passwort (nur für Menschen).
+- S2.2: `internal/compose` baut Entwurfsnachrichten (RFC 5322, `multipart/alternative` und `mixed`, Kopfzeilen nach E11, Markdown über goldmark, Zitat und Weiterleitung aus bereinigtem Text, Anhänge aus Blobs oder `attach_dir`, typisierte Ablehnungsgründe).
+- S2.2: `sanitize.CleanHTML`, Allowlist-Bereiniger für ausgehendes HTML. Neue Abhängigkeit `github.com/yuin/goldmark` v1.8.6 (MIT).
+
+### Changed
+
+- S2.1: Die eigenen Adressen eines Kontos umfassen jetzt auch seine Identitäten (Betreff-Rückfall der Threads).
+
 ## [0.1.0-rc2] – 2026-10-22
 
 **Erstes veröffentlichtes Release: Schnitt 1, abgenommen (D0–D3), plus S2.0 und A7.** Entscheid 35 (21.10.2026): kein Tag `v0.1.0-rc1` auf den alten Stand; dieses Release ersetzt ihn. Gebaut mit Go 1.27.3 (`make release VERSION=0.1.0-rc2`, `dist/`, `SHA256SUMS`, `VERSION`). Datenbank-Schema 9; ein Bestand aus 0.1.0-rc1 (Schema 7) wird beim ersten Kommando migriert (Sicherungskopie neben der Datenbank). Weiter draft-only, kein Versand (ADR-002). Die Einträge unten gelten seit 0.1.0-rc1.
