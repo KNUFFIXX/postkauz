@@ -43,7 +43,8 @@
 //
 // Das Ergebnis (Message) trägt die fertige Nachricht (Raw) und alles, was
 // S2.3 speichert und für preview_hash (E7) braucht: Kopffelder, BodyText,
-// BodyHTML, Anhänge mit SHA-256, InReplyTo, Hinweise.
+// BodyHTML, Anhänge mit SHA-256, InReplyTo, Hinweise; dazu Derived, die
+// Namen der aus der Ausgangsnachricht übernommenen Felder.
 //
 // # Regeln
 //
@@ -98,6 +99,7 @@ import (
 	"crypto/rand"
 	"io"
 	"net/mail"
+	"slices"
 	"strings"
 	"time"
 
@@ -334,7 +336,27 @@ type Message struct {
 	BodyText    string
 	Attachments []AttachmentInfo
 	Notes       []string
+	// Derived nennt die Felder, die aus der Ausgangsnachricht übernommen
+	// wurden (in dieser Reihenfolge, nur tatsächlich gesetzte): subject
+	// (abgeleiteter Betreff mit Präfix), to und cc (abgeleitete
+	// Empfänger samt Anzeigenamen), in_reply_to, references und
+	// attachments (weitergeleitete Anhänge mit ihren Namen). Sie sind
+	// Daten aus einer E-Mail (Gegenprüfung S2.8, W3).
+	Derived []string
 }
+
+// Namen der übernommenen Felder in Message.Derived.
+const (
+	DerivedSubject     = "subject"
+	DerivedTo          = "to"
+	DerivedCc          = "cc"
+	DerivedInReplyTo   = "in_reply_to"
+	DerivedReferences  = "references"
+	DerivedAttachments = "attachments"
+)
+
+// DerivedOrder ist die feste Reihenfolge der Feldnamen in Derived.
+var DerivedOrder = []string{DerivedSubject, DerivedTo, DerivedCc, DerivedInReplyTo, DerivedReferences, DerivedAttachments}
 
 // Build baut die Nachricht oder lehnt mit *Error ab.
 func Build(in Input) (*Message, error) {
@@ -352,6 +374,18 @@ type builder struct {
 	in  Input
 	lim Limits
 	msg Message
+}
+
+// derive merkt ein aus der Ausgangsnachricht übernommenes Feld (in der
+// Reihenfolge DerivedOrder).
+func (b *builder) derive(field string) {
+	if slices.Contains(b.msg.Derived, field) {
+		return
+	}
+	b.msg.Derived = append(b.msg.Derived, field)
+	slices.SortFunc(b.msg.Derived, func(x, y string) int {
+		return slices.Index(DerivedOrder, x) - slices.Index(DerivedOrder, y)
+	})
 }
 
 func (b *builder) note(n string) {
