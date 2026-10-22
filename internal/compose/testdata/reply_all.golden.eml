@@ -1,0 +1,82 @@
+Date: Thu, 22 Oct 2026 10:30:00 +0200
+From: =?utf-8?q?Muster_B=C3=BCro?= <buero@example.com>
+Reply-To: <antwort@example.com>
+To: "Erika Beispiel" <erika@example.org>
+Cc: <dritte@example.net>, <vierte@example.net>
+Subject: Re: Termin Treppenhausreinigung
+Message-Id: <pk.6ae6783f4fbde91b6eb8@example.com>
+In-Reply-To: <orig.42@example.org>
+References: <root@example.org> <parent@example.org> <orig.42@example.org>
+Mime-Version: 1.0
+Content-Type: multipart/mixed; boundary=pk-683432c1bfc525454add0cd8
+
+--pk-683432c1bfc525454add0cd8
+Content-Type: multipart/alternative; boundary=pk-8b73a48ed247dbe5882e2579
+
+--pk-8b73a48ed247dbe5882e2579
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hallo Frau Beispiel,
+
+der Donnerstag passt.
+Ich bringe das Angebot mit.
+
+- Treppenhaus
+- Keller
+
+Mit freundlichen Gr=C3=BC=C3=9Fen
+B=C3=BCro
+www.example.com
+
+On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel <erika@example.org> wrote:
+> Guten Tag,
+>
+> passt Ihnen der Donnerstag?
+>
+> Gru=C3=9F
+> Erika
+
+--pk-8b73a48ed247dbe5882e2579
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html><head><meta http-equiv=3D"Content-Type" content=3D"text/html; charset=
+=3Dutf-8"></head><body>
+<div><p>Hallo Frau Beispiel,</p>
+<p>der <strong>Donnerstag</strong> passt.<br>
+Ich bringe das Angebot mit.</p>
+<ul>
+<li>Treppenhaus</li>
+<li>Keller</li>
+</ul></div>
+<div><br></div>
+<div><p>Mit freundlichen Gr=C3=BC=C3=9Fen<br><b>B=C3=BCro</b><br><a href=3D=
+"https://www.example.com/">www.example.com</a></p></div>
+<div><br></div>
+<div>On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel &lt;erika@example.org&=
+gt; wrote:</div>
+<blockquote>Guten Tag,<br>
+<br>
+passt Ihnen der Donnerstag?<br>
+<br>
+Gru=C3=9F<br>
+Erika</blockquote>
+</body></html>
+
+--pk-8b73a48ed247dbe5882e2579--
+
+--pk-683432c1bfc525454add0cd8
+Content-Type: text/plain; charset=utf-8; name=Angebot.txt
+Content-Disposition: attachment; filename=Angebot.txt
+Content-Transfer-Encoding: base64
+
+QW5nZWJvdCBUcmVwcGVuaGF1c3JlaW5pZ3VuZzogMTIwIEVVUgo=
+--pk-683432c1bfc525454add0cd8
+Content-Type: application/pdf; name=Plan.pdf
+Content-Disposition: attachment; filename=Plan.pdf
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PD4+CmVuZG9iagp0cmFpbGVyCjw8Pj4KJSVFT0YK
+--pk-683432c1bfc525454add0cd8--
