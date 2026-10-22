@@ -90,8 +90,11 @@ func newITDraftEnv(t *testing.T, srv itServer, user string) *itDraftEnv {
 	e.runner = &Runner{Store: st, Blobs: b, Pusher: ops.NewDraftPusher(deps), CommandTimeout: 15 * time.Second}
 	e.client = itClient(t, srv, user)
 	if srv.name == "greenmail" {
-		// GreenMail legt keine Standardordner an: Drafts (Rolle per Name).
-		_ = e.client.Create("Drafts", nil).Wait()
+		// GreenMail legt keine Standardordner an und kennt kein SPECIAL-USE:
+		// Entwürfe (Rolle per Name), derselbe Ordner wie im Test der Rollen
+		// (internal/provider/imap); ein zweiter Ordner wie Drafts nähme ihm
+		// die Rolle.
+		_ = e.client.Create("Entwürfe", nil).Wait()
 	}
 	prov := itProvider(t, srv, user, 0)
 	boxes, err := prov.ListMailboxes(ctx)
