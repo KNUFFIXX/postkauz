@@ -98,13 +98,13 @@ func (draftAppender) ContentHash(raw []byte) string {
 
 // pushDrafts führt den fälligen Job draft_push des Kontos aus. ensure reiht
 // ihn vorher ein, wenn Entwürfe warten und keiner offen ist (Beginn eines
-// Laufs), und versucht dann auch Entwürfe erneut, deren Ablage der Server
+// Laufs); retry versucht auch Entwürfe erneut, deren Ablage der Server
 // abgelehnt hat oder die sich nicht bauen ließen (push_rejected,
-// push_failed; W3). nil = kein Job fällig oder nichts wartet. Ein Fehler kommt zurück
+// push_failed; W3; Options.RetryDrafts). nil = kein Job fällig oder nichts wartet. Ein Fehler kommt zurück
 // (der Job ist dann zurückgegeben bzw. als Fehler verbucht); der Aufrufer
 // entscheidet, ob der Lauf weitergeht (nur Verbindungs- und Anmeldefehler
 // beenden ihn).
-func (e *Engine) pushDrafts(ctx context.Context, ensure bool) (*ops.SyncDrafts, error) {
+func (e *Engine) pushDrafts(ctx context.Context, ensure, retry bool) (*ops.SyncDrafts, error) {
 	d := e.Drafts
 	if d == nil {
 		return nil, nil
@@ -120,7 +120,7 @@ func (e *Engine) pushDrafts(ctx context.Context, ensure bool) (*ops.SyncDrafts, 
 		// Push mit Fehler statt den Prozess.
 		return crash.Do("draft push", func() error {
 			var err error
-			out, err = e.pushPending(ctx, d, ensure)
+			out, err = e.pushPending(ctx, d, retry)
 			return err
 		})
 	})

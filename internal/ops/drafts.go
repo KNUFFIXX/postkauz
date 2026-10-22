@@ -112,9 +112,10 @@ var pushNotes = map[string]string{
 	drafts.PushNoteNoDraftsMailbox: "not pushed: the account has no Drafts folder (no mailbox with role drafts); " +
 		"set [draft] mailbox in the configuration",
 	drafts.PushNotePushFailed: "not pushed: the message could not be built (original message or attachment missing locally); " +
-		"the next sync tries again",
+		"the next sync (a running sync --watch: within the hour) tries again",
 	drafts.PushNotePushRejected: "not pushed: the mail server refused to store this draft in the Drafts folder (for example too large " +
-		"or mailbox full); the other drafts are pushed, the next sync tries this one again, a change to it queues it at once",
+		"or mailbox full); the other drafts are pushed, the next sync (a running sync --watch: within the hour) tries this one again, " +
+		"a change to it queues it at once",
 	drafts.PushNotePushedAfterClose: "a copy reached the Drafts folder just after the draft was closed; it stays there, nothing is " +
 		"deleted here (delete it in the mail client if it is not wanted)",
 }

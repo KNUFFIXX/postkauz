@@ -43,8 +43,9 @@ import (
 //     bauen, bekommt nur er einen Hinweis (push_rejected bzw. push_failed),
 //     und es geht mit den übrigen weiter. Nur Verbindungs-, Anmelde- und
 //     Protokollfehler, ein fehlender Ordner und Fehler der Datenbank beenden
-//     den Push. Vermerkte Entwürfe versucht erst der nächste Sync-Lauf
-//     erneut (retry), nicht jede Prüfung des Watchers.
+//     den Push. Vermerkte Entwürfe versucht erst der nächste postkauz sync
+//     erneut (retry; im Dauerbetrieb der stündliche volle Abgleich), nicht
+//     jede Prüfung des Watchers.
 
 // DraftAppender legt eine gebaute Nachricht im Entwürfe-Ordner ab, mit den
 // Flags \Draft und \Seen (E12), und liefert, was der Push vermerkt.
@@ -154,8 +155,9 @@ func (p *DraftPusher) NoDraftsMailbox(ctx context.Context, accountID int64) erro
 // den übrigen weiter (W3). Jeder andere Fehler (Verbindung, Anmeldung,
 // Protokoll, Ordner fehlt, Datenbank) beendet den Push sofort; die übrigen
 // Entwürfe bleiben pending. retry: auch Entwürfe mit push_rejected oder
-// push_failed erneut versuchen (Beginn eines Sync-Laufs); sonst nur die
-// fälligen (Prüfung des Watchers alle 10 s).
+// push_failed erneut versuchen (postkauz sync; im Dauerbetrieb der
+// stündliche volle Abgleich); sonst nur die fälligen (Prüfung des Watchers
+// alle 10 s, übrige Runden).
 func (p *DraftPusher) Push(ctx context.Context, acc store.Account, mailboxID int64, app DraftAppender, retry bool) (DraftPushReport, error) {
 	var rep DraftPushReport
 	ids, _, err := p.o.svc.Store.DraftPushCandidates(ctx, acc.ID, retry)

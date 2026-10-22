@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
@@ -36,7 +38,13 @@ type appendDropProxy struct {
 	target string
 	armed  atomic.Bool
 	drops  atomic.Int32
+	// refuse: Statt zu kappen, macht der Proxy aus der nächsten
+	// Bestätigung eine Ablehnung (NO [OVERQUOTA]), wie ein Server mit
+	// vollem Kontingent (W3).
+	refuse atomic.Bool
 }
+
+var appendOK = regexp.MustCompile(`(?m)^(\S+) OK \[APPENDUID[^\r\n]*`)
 
 func (p *appendDropProxy) serve(ln net.Listener) {
 	for {
@@ -62,7 +70,11 @@ func (p *appendDropProxy) serve(ln net.Listener) {
 						p.drops.Add(1)
 						return
 					}
-					if _, werr := c.Write(buf[:n]); werr != nil {
+					out := buf[:n]
+					if bytes.Contains(out, []byte("APPENDUID")) && p.refuse.CompareAndSwap(true, false) {
+						out = appendOK.ReplaceAll(out, []byte("$1 NO [OVERQUOTA] Quota exceeded (Mailbox full)"))
+					}
+					if _, werr := c.Write(out); werr != nil {
 						return
 					}
 				}
@@ -74,8 +86,10 @@ func (p *appendDropProxy) serve(ln net.Listener) {
 	}
 }
 
-func TestReviewW1NoDuplicateAfterInterruptedRun(t *testing.T) {
-	e := newPushEnv(t, "Drafts")
+// viaProxy lässt den Runner über einen appendDropProxy verbinden, mit
+// höchstens einem Versuch je Kommando (kein Wiederaufbau im selben Aufruf).
+func (e *pushEnv) viaProxy(t *testing.T) *appendDropProxy {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +108,12 @@ func TestReviewW1NoDuplicateAfterInterruptedRun(t *testing.T) {
 		}
 		return imapRemote{prov}, nil
 	}
+	return px
+}
+
+func TestReviewW1NoDuplicateAfterInterruptedRun(t *testing.T) {
+	e := newPushEnv(t, "Drafts")
+	px := e.viaProxy(t)
 	d := e.newDraft(t, "Abbruch")
 
 	px.armed.Store(true)
@@ -130,6 +150,53 @@ func TestReviewW1NoDuplicateAfterInterruptedRun(t *testing.T) {
 	}
 	if st, _ := e.jobState(t); st != "done" {
 		t.Fatalf("job = %s", st)
+	}
+}
+
+// W3 (Server im Prozess): Lehnt der Server das APPEND eines Entwurfs ab,
+// legt der Sync die übrigen trotzdem ab, der Job ist erledigt. Runden ohne
+// RetryDrafts (Dauerbetrieb zwischen den vollen Abgleichen) versuchen ihn
+// nicht erneut; postkauz sync schon.
+func TestReviewW3RejectedDraftSyncGoesOn(t *testing.T) {
+	e := newPushEnv(t, "Drafts")
+	px := e.viaProxy(t)
+	bad := e.newDraft(t, "Zu groß")
+	good := e.newDraft(t, "Passt")
+	px.refuse.Store(true)
+	out, err := e.sync(t, ops.SyncOptions{})
+	if err != nil || out.Drafts == nil || out.Drafts.Rejected != 1 || out.Drafts.Pushed != 1 || out.Drafts.Error != "" {
+		t.Fatalf("sync = %+v, %v", out.Drafts, err)
+	}
+	if d := e.draft(t, bad.ID); d.RemoteState != drafts.RemotePending || d.PushNote != drafts.PushNotePushRejected {
+		t.Fatalf("rejected draft = %+v", d)
+	}
+	if d := e.draft(t, good.ID); d.RemoteState != drafts.RemotePushed {
+		t.Fatalf("valid draft = %s", d.RemoteState)
+	}
+	if st, n := e.jobState(t); st != "done" || n != 0 {
+		t.Fatalf("job = %s, %d attempts", st, n)
+	}
+	// Eine Runde ohne RetryDrafts (Dauerbetrieb zwischen den vollen
+	// Abgleichen): kein neuer Versuch.
+	remote, err := e.runner.Connect(context.Background(), e.account(t), testPass, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	eng := e.engine(t, remote)
+	eng.Drafts = &Drafts{Pusher: e.runner.Pusher, Jobs: &jobs.Runner{Store: e.st, TakeOver: true}, Account: e.account(t)}
+	if rep, err := eng.SyncAll(context.Background(), Options{}); err != nil || (rep.Drafts != nil && rep.Drafts.Pushed+rep.Drafts.Rejected != 0) {
+		t.Fatalf("round without retry = %+v, %v", rep.Drafts, err)
+	}
+	if d := e.draft(t, bad.ID); d.RemoteState != drafts.RemotePending {
+		t.Fatalf("retried in a round without RetryDrafts: %s", d.RemoteState)
+	}
+	// postkauz sync versucht es erneut; jetzt nimmt der Server an.
+	if out, err := e.sync(t, ops.SyncOptions{}); err != nil || out.Drafts == nil || out.Drafts.Pushed != 1 {
+		t.Fatalf("sync = %+v, %v", out.Drafts, err)
+	}
+	if d := e.draft(t, bad.ID); d.RemoteState != drafts.RemotePushed || d.PushNote != "" {
+		t.Fatalf("after retry = %+v", d)
 	}
 }
 

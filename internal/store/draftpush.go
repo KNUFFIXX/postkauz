@@ -22,7 +22,7 @@ const draftPushPending = `remote_state = 'pending' AND status IN ('draft','pendi
 // draftPushDue ist die Bedingung für einen Entwurf, den der nächste Push
 // ablegt: wartend und nicht mit push_rejected oder push_failed vermerkt
 // (Gegenprüfung S2.4/S2.5, W3). Solche Entwürfe versucht erst der nächste
-// Lauf von postkauz sync erneut (bzw. der nächste Lauf von sync --watch),
+// postkauz sync erneut (im Dauerbetrieb der stündliche volle Abgleich),
 // nicht jede Prüfung alle 10 s, und sie halten den Job nicht fällig; eine
 // Änderung des Entwurfs löscht den Vermerk.
 const draftPushDue = draftPushPending + ` AND (push_note IS NULL OR push_note NOT IN ('push_rejected','push_failed'))`
@@ -32,7 +32,8 @@ const draftPushDue = draftPushPending + ` AND (push_note IS NULL OR push_note NO
 // wurden oder einen Ablageversuch mit offenem Ausgang haben (deren Kopien
 // die Übernahme-Erkennung bzw. die Suche nach einer verwaisten Kopie vor
 // dem Push im Spiegel prüft). retry: auch die mit push_rejected oder
-// push_failed vermerkten (Beginn eines Sync-Laufs), sonst nur die fälligen.
+// push_failed vermerkten (mailsync.Options.RetryDrafts), sonst nur die
+// fälligen.
 func (s *SQLite) DraftPushCandidates(ctx context.Context, accountID int64, retry bool) (ids []int64, withCopy int, err error) {
 	cond := draftPushDue
 	if retry {

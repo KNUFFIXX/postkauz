@@ -290,7 +290,8 @@ func (s *Service) Attempt(ctx context.Context, id int64, a store.PushAttempt) er
 // Rejected vermerkt, dass der Server das Ablegen eines Entwurfs abgelehnt
 // hat (NO/BAD auf APPEND; W3): push_note push_rejected, der Versuch ist
 // erledigt (abgelehnt heißt: nichts abgelegt). Der Entwurf bleibt pending;
-// erneut versucht wird im nächsten Sync-Lauf oder nach einer Änderung.
+// erneut versucht wird beim nächsten postkauz sync (im Dauerbetrieb beim
+// stündlichen vollen Abgleich) oder sofort nach einer Änderung.
 func (s *Service) Rejected(ctx context.Context, id int64) error {
 	return s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(id)

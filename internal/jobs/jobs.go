@@ -325,8 +325,8 @@ func (r *Runner) runIndex(ctx context.Context, accountID int64) (int, error) {
 // Ein abgelehntes APPEND oder ein nicht baubarer Entwurf ist kein Fehler
 // des Jobs (Gegenprüfung S2.4/S2.5, W3): Der Entwurf bekommt einen Hinweis
 // (push_rejected, push_failed), die übrigen werden abgelegt, und er hält den
-// Job nicht fällig (CompleteJob); der nächste Sync-Lauf versucht ihn
-// erneut.
+// Job nicht fällig (CompleteJob); der nächste postkauz sync (im
+// Dauerbetrieb der stündliche volle Abgleich) versucht ihn erneut.
 func (r *Runner) RunDraftPush(ctx context.Context, accountID int64, push func(context.Context) error) (ran bool, err error) {
 	j, ok, err := r.Store.ClaimJob(ctx, store.JobDraftPush, accountID, r.owner(), r.lease(), r.TakeOver)
 	if err != nil || !ok {
