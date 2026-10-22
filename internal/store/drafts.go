@@ -83,6 +83,11 @@ type Draft struct {
 	// Rückfall-Abgleichs (E5) hängt an ihr. Nullzeit beim Schreiben =
 	// UpdatedAt.
 	ContentChangedAt time.Time
+	// FallbackCheckedAt: content_changed_at bei der letzten Prüfung des
+	// ganzen Zeitfensters im Rückfall-Abgleich (Nullzeit = noch nie;
+	// Migration 0016, W2). Nur lesend: UpdateDraft schreibt es nicht, das
+	// tut SetFallbackChecked.
+	FallbackCheckedAt time.Time
 	// ComposeOptions: Schalter des Nachrichtenbaus als JSON-Objekt
 	// (quote, signature; Migration 0011, S2.3). "" = {}.
 	ComposeOptions string
@@ -198,18 +203,19 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(remote_mailbox_id, 0), COALESCE(remote_uid, 0), remote_state, COALESCE(pushed_content_hash, ''),
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
 	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
-	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, ''), content_changed_at`
+	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, ''), content_changed_at,
+	COALESCE(fallback_checked_at, 0)`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
 	var to, cc, bcc, atts, prev, attempt string
-	var created, updated, closed, uv, contentChanged int64
+	var created, updated, closed, uv, contentChanged, fallbackChecked int64
 	if err := sc.Scan(&d.ID, &d.AccountID, &d.IdentityID, &d.Kind, &d.InReplyToMsg, &d.MessageIDHeader,
 		&d.FromName, &d.FromEmail, &to, &cc, &bcc, &d.Subject, &d.BodyMarkdown, &d.BodyText,
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
 		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
-		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged); err != nil {
+		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked); err != nil {
 		return d, err
 	}
 	if attempt != "" {
@@ -230,6 +236,9 @@ func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	d.CreatedAt, d.UpdatedAt, d.ContentChangedAt = unixMilliUTC(created), unixMilliUTC(updated), unixMilliUTC(contentChanged)
 	if closed != 0 {
 		d.ClosedAt = unixMilliUTC(closed)
+	}
+	if fallbackChecked != 0 {
+		d.FallbackCheckedAt = unixMilliUTC(fallbackChecked)
 	}
 	return d, nil
 }

@@ -33,6 +33,13 @@ Manche Mailprogramme (erwartet: Gmail im Browser) bauen die Nachricht beim Sende
 
 Treffer → `sent_by_human` wie oben, Grund **`fallback`**.
 
+**Was der Rückfall bei jedem Lauf liest** (Gegenprüfung S2.6–S2.8, W2): nicht alle gesendeten Nachrichten im Zeitfenster aller offenen Entwürfe (offene `draft`-Entwürfe verfallen nie; bei Gmail wären das bald alle Nachrichten aus „Alle Nachrichten"), sondern nur
+
+- die seit der letzten Prüfung **neu gespiegelten** Nachrichten (lokale ID über der Hochwassermarke des Kontos, Tabelle `sent_check_marks`), verglichen mit allen offenen Entwürfen, und
+- für Entwürfe, die **neu** sind oder deren **Inhalt sich geändert hat**, die gesendeten Nachrichten in ihrem eigenen Zeitfenster (einmal; `drafts.fallback_checked_at`).
+
+Ein Lauf ohne neue Nachrichten und ohne geänderte Entwürfe liest keine einzige gesendete Nachricht (gemessen mit 22.000 Nachrichten in „Alle Nachrichten" und 30 offenen Entwürfen: etwa 4 ms statt 0,8 s je Lauf; `BenchmarkCheckAfterSync22k`). Die Marke steigt erst nach einer vollständigen Prüfung; scheitert sie, liest der nächste Lauf dieselben Nachrichten erneut. Der Weg über die Message-ID (Abschnitt 2) fragt weiterhin bei jedem Lauf für jeden offenen Entwurf den Index ab und braucht keine Marke.
+
 Ein paar Folgen, die man kennen sollte:
 
 - **Kleine Korrekturen beim Senden** (ein, zwei Wörter) fallen meist noch über 0,9: Bei zehn Wörtern ist ein zusätzliches Wort 10/11 ≈ 0,91, zwei zusätzliche 10/12 ≈ 0,83. Je kürzer der Text, desto eher kippt der Rückfall. Wer viel umschreibt, schließt den Entwurf selbst (Abschnitt 5).

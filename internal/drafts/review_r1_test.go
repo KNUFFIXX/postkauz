@@ -107,3 +107,82 @@ func TestSentDetectedChecksFingerprint(t *testing.T) {
 		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
 	}
 }
+
+// W2: Der Rückfall lädt nur neue Nachrichten und das Fenster neuer oder
+// geänderter Entwürfe. Eine zweite Runde ohne neue Nachrichten prüft 0
+// Kandidaten; eine neue Nachricht genau eine; eine Inhaltsänderung das
+// Fenster dieses Entwurfs; ohne Marke (Bestand vor Migration 0016) die
+// Fenster aller offenen Entwürfe. Erkannt wird weiterhin.
+func TestFallbackExaminesOnlyNewMessages(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	ctx := context.Background()
+	start := e.now
+	a := e.fallbackDraft("Wartung Aufzug")
+	e.fallbackDraft("Wartung Heizung")
+	for i := 0; i < 20; i++ {
+		m.put("sent", sentMsg{messageID: "alt-" + string(rune('a'+i)) + "@example.org", subject: "Anderes Thema",
+			from: "demo@example.org", to: []store.Addr{{Address: "x@example.org"}}, date: start.Add(time.Duration(i) * time.Minute), text: "egal"})
+	}
+	if rep := e.check(); rep.Examined != 20 || !rep.Empty() {
+		t.Fatalf("first check = %+v", rep)
+	}
+	if rep := e.check(); rep.Examined != 0 {
+		t.Fatalf("second check without new messages examined %d", rep.Examined)
+	}
+	m.put("sent", sentMsg{messageID: "neu@example.org", subject: "Noch ein Thema", from: "demo@example.org",
+		to: []store.Addr{{Address: "x@example.org"}}, date: start.Add(time.Hour), text: "egal"})
+	if rep := e.check(); rep.Examined != 1 {
+		t.Fatalf("one new message: examined %d", rep.Examined)
+	}
+	// Geänderter Inhalt: das ganze Fenster dieses Entwurfs, einmal.
+	e.now = start.Add(30 * time.Minute)
+	c := ContentOf(a)
+	c.BodyMarkdown = fbBody + "\n\nPS: bis Montag."
+	if _, err := e.svc.Update(ctx, a.ID, c, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rep := e.check(); rep.Examined != 21 {
+		t.Fatalf("changed draft: examined %d, want the 21 messages in its window", rep.Examined)
+	}
+	if rep := e.check(); rep.Examined != 0 {
+		t.Fatalf("after the changed draft: examined %d", rep.Examined)
+	}
+	// Ohne Marke: alle Fenster (Bestand vor 0016).
+	if err := e.st.ExecForTest(`DELETE FROM sent_check_marks`); err != nil {
+		t.Fatal(err)
+	}
+	if rep := e.check(); rep.Examined != 21 {
+		t.Fatalf("without a mark: examined %d", rep.Examined)
+	}
+	// Erkannt wird weiterhin, auch eine Nachricht, die erst nach der Marke kommt.
+	m.webmailSent("web-1@example.org", "Wartung Heizung", start.Add(2*time.Hour))
+	if rep := e.check(); rep.Examined != 1 || rep.SentByFallback != 1 {
+		t.Fatalf("new matching message: %+v", rep)
+	}
+}
+
+// K7: Ein Entwurf ohne Empfänger (der Rückfall kann ihn nie schließen)
+// spannt kein Zeitfenster auf; früher begann das Fenster beim ersten
+// offenen Entwurf, auch wenn er danach übersprungen wurde.
+func TestFallbackWindowIgnoresDraftsWithoutRecipients(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	start := e.now
+	if _, err := e.svc.Create(context.Background(), NewDraft{AccountID: e.acc, Kind: KindNew, CreatedBy: "key:agent",
+		Content: Content{Subject: "Notiz", BodyMarkdown: fbBody}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		m.put("sent", sentMsg{messageID: "alt-" + string(rune('a'+i)) + "@example.org", subject: "Anderes Thema",
+			from: "demo@example.org", to: []store.Addr{{Address: "x@example.org"}}, date: start.Add(time.Duration(i) * time.Hour), text: "egal"})
+	}
+	e.now = start.Add(30 * 24 * time.Hour)
+	e.fallbackDraft("Wartung Aufzug")
+	if err := e.st.ExecForTest(`DELETE FROM sent_check_marks`); err != nil {
+		t.Fatal(err)
+	}
+	if rep := e.check(); rep.Examined != 0 {
+		t.Fatalf("examined %d messages in the window of a draft without recipients", rep.Examined)
+	}
+}

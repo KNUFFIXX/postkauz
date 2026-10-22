@@ -92,3 +92,49 @@ func TestMigration0015ContentChangedAt(t *testing.T) {
 		t.Fatalf("after update: %v / %v", got.ContentChangedAt, got.UpdatedAt)
 	}
 }
+
+// W2: Die Hochwassermarke der Versanderkennung sinkt nie und verschwindet
+// mit dem Konto; fallback_checked_at gilt nur für den Stand, den die
+// Prüfung gesehen hat.
+func TestSentCheckMark(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acc, err := s.CreateAccount(ctx, Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143, TLS: "none",
+		Username: "demo@example.org", AuthType: "password", CredentialRef: "account/0a1b2c3d/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.SentCheckMark(ctx, acc); ok || err != nil {
+		t.Fatalf("mark before the first check: %v %v", ok, err)
+	}
+	for _, v := range []int64{7, 3} {
+		if err := s.SetSentCheckMark(ctx, acc, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if v, ok, err := s.SentCheckMark(ctx, acc); v != 7 || !ok || err != nil {
+		t.Fatalf("mark = %d %v %v", v, ok, err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO drafts(account_id,kind,message_id_header,status,created_at,updated_at,content_changed_at)
+		VALUES (?,'new','pk.1@example.org','draft',1,2000,1500)`, acc); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFallbackChecked(ctx, 1, time.UnixMilli(1400)); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := s.Draft(ctx, 1); !d.FallbackCheckedAt.IsZero() {
+		t.Fatalf("checked for another state: %v", d.FallbackCheckedAt)
+	}
+	if err := s.SetFallbackChecked(ctx, 1, time.UnixMilli(1500)); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := s.Draft(ctx, 1); d.FallbackCheckedAt.UnixMilli() != 1500 {
+		t.Fatalf("checked = %v", d.FallbackCheckedAt)
+	}
+	if _, err := s.db.Exec(`DELETE FROM accounts WHERE id = ?`, acc); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.QueryIntForTest(`SELECT count(*) FROM sent_check_marks`); n != 0 {
+		t.Fatalf("mark kept after the account was removed: %d", n)
+	}
+}
