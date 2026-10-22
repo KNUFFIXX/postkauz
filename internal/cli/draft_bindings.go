@@ -484,7 +484,16 @@ func renderDraftWrite(w io.Writer, out any) error {
 	if p.TextTruncated {
 		text += " […]"
 	}
-	fmt.Fprintf(w, "\n%s\n\n", strings.TrimRight(text, "\r\n"))
+	// Zitat bzw. Weiterleitung (S2.8: in der Untrusted-Hülle original)
+	// stehen wie in der Nachricht hinter dem eigenen Text.
+	if q := o.Original; q != nil && q.Text != "" {
+		qt := termText(q.Text)
+		if q.Truncated {
+			qt += " […]"
+		}
+		text = strings.TrimRight(text, "\r\n") + "\n\n" + qt
+	}
+	fmt.Fprintf(w, "\n%s\n\n", strings.Trim(text, "\r\n"))
 	renderDraftAttachments(w, o.Attachments)
 	for _, s := range o.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", termLine(s))
@@ -562,7 +571,11 @@ func renderDraftShow(w io.Writer, out any) error {
 		fmt.Fprintf(w, "in-reply-to: %s\nreferences:  %s\n", termLine(o.InReplyTo), termLine(o.References))
 	}
 	fmt.Fprintf(w, "created:     %s by %s, changed %s\n", o.CreatedAt, termLine(o.CreatedBy), o.UpdatedAt)
-	fmt.Fprintf(w, "\n%s\n\n", strings.TrimRight(termText(o.BodyText), "\r\n"))
+	body := strings.TrimRight(termText(o.BodyText), "\r\n")
+	if q := o.Original; q != nil && q.Text != "" {
+		body = strings.TrimLeft(body+"\n\n"+strings.TrimRight(termText(q.Text), "\r\n"), "\r\n")
+	}
+	fmt.Fprintf(w, "\n%s\n\n", body)
 	renderDraftAttachments(w, o.Attachments)
 	for _, s := range o.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", termLine(s))
@@ -614,9 +627,9 @@ func renderDraftRequest(w io.Writer, out any) error {
 		prefix = "dry run: "
 	}
 	fmt.Fprintf(w, "%shook: %s\n", prefix, o.Hook)
-	if o.HookOutput != "" {
-		fmt.Fprintf(w, "%s\n", strings.TrimRight(termText(o.HookOutput), "\r\n"))
-		if o.HookOutputTruncated {
+	if o.HookOutput != nil && o.HookOutput.Text != "" {
+		fmt.Fprintf(w, "%s\n", strings.TrimRight(termText(o.HookOutput.Text), "\r\n"))
+		if o.HookOutput.Truncated {
 			fmt.Fprintln(w, "(hook output cut after the first 4 KB)")
 		}
 	}

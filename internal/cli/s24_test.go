@@ -118,7 +118,7 @@ func TestDraftRequestRunsCheckHook(t *testing.T) {
 	out = step(ExitOK, "draft", "request", "1", "--json")
 	var r ops.DraftsRequestOutput
 	if err := json.Unmarshal([]byte(out), &r); err != nil || r.Hook != "fail" || r.Status != "draft" || r.ApprovalID != 0 ||
-		!strings.Contains(r.HookOutput, hookReasonCanary) || r.HookOutputTruncated {
+		r.HookOutput == nil || !r.HookOutput.Untrusted || !strings.Contains(r.HookOutput.Text, hookReasonCanary) || r.HookOutput.Truncated {
 		t.Fatalf("request --json: %v %s", err, out)
 	}
 	// Trockenlauf: Hook läuft mit (Festlegung S2.3), nichts wird gespeichert.
