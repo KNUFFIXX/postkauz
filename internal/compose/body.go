@@ -18,8 +18,17 @@ import (
 // (goldmark-Standard ohne WithUnsafe).
 var markdown = goldmark.New(goldmark.WithRendererOptions(ghtml.WithHardWraps()))
 
-// quoteDateLayout ist das Datum in Einleitungszeile und Weiterleitungskopf.
-const quoteDateLayout = "Mon, 2 Jan 2006 15:04 -0700"
+// quoteDateLayout ist das Datum in Einleitungszeile ({date}) und
+// Weiterleitungskopf; quoteDateNumeric das Datum für {date_numeric}
+// (Tag.Monat.Jahr Stunde:Minute, z. B. für „Am {date_numeric} schrieb
+// {from}:"), beide in derselben Zeitzone.
+const (
+	quoteDateLayout  = "Mon, 2 Jan 2006 15:04 -0700"
+	quoteDateNumeric = "02.01.2006 15:04"
+	// unknownDateNumeric steht für {date_numeric}, wenn die
+	// Ausgangsnachricht kein Datum hat.
+	unknownDateNumeric = "??.??.???? ??:??"
+)
 
 func (b *builder) checkBody() error {
 	in := b.in
@@ -108,6 +117,15 @@ func (b *builder) quoteDate(t time.Time) string {
 	return t.In(b.msg.Date.Location()).Format(quoteDateLayout)
 }
 
+// quoteDateNum ist {date_numeric}: Zeitzone wie {date} (die der Uhr des
+// Nachrichtenbaus), ohne Angabe der Zeitzone.
+func (b *builder) quoteDateNum(t time.Time) string {
+	if t.IsZero() {
+		return unknownDateNumeric
+	}
+	return t.In(b.msg.Date.Location()).Format(quoteDateNumeric)
+}
+
 // quoteLine füllt die Vorlage der Einleitungszeile.
 func (b *builder) quoteLine(o *Original) string {
 	tpl := b.in.QuoteLine
@@ -118,7 +136,7 @@ func (b *builder) quoteLine(o *Original) string {
 	if len(o.From) > 0 {
 		from = formatAddrs(o.From)
 	}
-	r := strings.NewReplacer("{date}", b.quoteDate(o.Date), "{from}", headerText(from))
+	r := strings.NewReplacer("{date}", b.quoteDate(o.Date), "{date_numeric}", b.quoteDateNum(o.Date), "{from}", headerText(from))
 	return headerText(r.Replace(tpl))
 }
 
