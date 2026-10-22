@@ -19,6 +19,9 @@ import (
 const (
 	JobIndex   = "index"
 	JobExtract = "extract"
+	// JobDraftPush legt Entwürfe per APPEND im Entwürfe-Ordner ab (A02 E1;
+	// Typ seit Migration 0010, eingereiht ab S2.3, ausgeführt ab S2.5).
+	JobDraftPush = "draft_push"
 )
 
 // Job ist ein offener Eintrag der Warteschlange.

@@ -28,14 +28,14 @@ type AuditFilter struct {
 }
 
 const auditCols = `id, ts, actor_type, COALESCE(api_key_id,''), COALESCE(scope,''), operation, params_redacted, targets,
-	result, COALESCE(reason,''), dry_run, COALESCE(duration_ms, 0)`
+	result, COALESCE(reason,''), dry_run, COALESCE(duration_ms, 0), COALESCE(policy_version, 0)`
 
 func scanAudit(sc interface{ Scan(...any) error }) (AuditRecord, error) {
 	var r AuditRecord
 	var ts, dur int64
 	var actor, params, targets, result string
 	var dry int
-	if err := sc.Scan(&r.ID, &ts, &actor, &r.KeyID, &r.Scope, &r.Operation, &params, &targets, &result, &r.Reason, &dry, &dur); err != nil {
+	if err := sc.Scan(&r.ID, &ts, &actor, &r.KeyID, &r.Scope, &r.Operation, &params, &targets, &result, &r.Reason, &dry, &dur, &r.PolicyVersion); err != nil {
 		return r, err
 	}
 	r.TS = unixMilliUTC(ts)
@@ -174,15 +174,29 @@ func (w sqliteAudit) AppendID(ctx context.Context, e audit.Event) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	return appendAudit(ctx, w.s.db, e, params, tj)
+}
+
+// appendAudit schreibt einen geprüften Eintrag; q ist die Datenbank oder
+// eine Transaktion (Systemereignisse der Entwürfe stehen in derselben
+// Transaktion wie ihr Übergang, DraftTx.AppendAudit).
+func appendAudit(ctx context.Context, q querier, e audit.Event, params []byte, targets []byte) (int64, error) {
 	var id int64
-	err = w.s.db.QueryRowContext(ctx, `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation,
-		params_redacted, targets, result, reason, dry_run, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-		e.TS.UnixMilli(), string(e.ActorType), nullStr(e.KeyID), nullStr(e.Scope), e.Operation, string(params), string(tj),
-		string(e.Result), nullStr(e.Reason), boolInt(e.DryRun), durationMilli(e.Duration)).Scan(&id)
+	err := q.QueryRowContext(ctx, `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation,
+		params_redacted, targets, result, reason, dry_run, duration_ms, policy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		e.TS.UnixMilli(), string(e.ActorType), nullStr(e.KeyID), nullStr(e.Scope), e.Operation, string(params), string(targets),
+		string(e.Result), nullStr(e.Reason), boolInt(e.DryRun), durationMilli(e.Duration), nullInt(e.PolicyVersion)).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: audit append: %w", err)
 	}
 	return id, nil
+}
+
+func nullInt(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 func durationMilli(d time.Duration) any {

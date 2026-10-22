@@ -50,6 +50,10 @@ type Event struct {
 	Reason   string
 	DryRun   bool
 	Duration time.Duration
+	// PolicyVersion ist die Version der Richtlinie (policy.toml), unter der
+	// die Entscheidung fiel (A02, E8; Tabelle policies). 0 = unbekannt
+	// (Einträge vor S2.1, Werkzeuge ohne Richtlinie).
+	PolicyVersion int64
 }
 
 // Writer schreibt Ereignisse. Implementierungen dürfen nur anhängen.

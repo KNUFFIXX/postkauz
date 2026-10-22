@@ -37,12 +37,17 @@ type AuditEventOutput struct {
 	Reason     string          `json:"reason,omitempty"`
 	DryRun     bool            `json:"dry_run"`
 	DurationMS int64           `json:"duration_ms,omitempty"`
+	// PolicyVersion: Version der Richtlinie bei der Entscheidung (seit
+	// S2.1; fehlt bei älteren Einträgen, damit frühere Exporte Byte für
+	// Byte gleich bleiben).
+	PolicyVersion int64 `json:"policy_version,omitempty"`
 }
 
 func auditEventOut(r store.AuditRecord) AuditEventOutput {
 	o := AuditEventOutput{ID: r.ID, TS: r.TS.UTC().Format("2006-01-02T15:04:05.000Z07:00"), Actor: string(r.ActorType), Key: r.KeyID,
 		Scope: r.Scope, Operation: r.Operation, Params: json.RawMessage(r.ParamsRedacted), Targets: r.Targets,
-		Result: string(r.Result), Reason: r.Reason, DryRun: r.DryRun, DurationMS: r.Duration.Milliseconds()}
+		Result: string(r.Result), Reason: r.Reason, DryRun: r.DryRun, DurationMS: r.Duration.Milliseconds(),
+		PolicyVersion: r.PolicyVersion}
 	if len(o.Params) == 0 || !json.Valid(o.Params) {
 		o.Params = json.RawMessage(`{}`)
 	}
@@ -58,7 +63,7 @@ const auditEventSchema = `{"type": "object", "properties": {
       "scope": {"type": "string"}, "operation": {"type": "string"}, "params": {"type": "object"},
       "targets": {"type": "array", "items": {"type": "string"}},
       "result": {"type": "string", "enum": ["ok", "denied", "needs_approval", "error"]}, "reason": {"type": "string"},
-      "dry_run": {"type": "boolean"}, "duration_ms": {"type": "integer"}},
+      "dry_run": {"type": "boolean"}, "duration_ms": {"type": "integer"}, "policy_version": {"type": "integer"}},
       "required": ["id", "ts", "actor", "operation", "params", "targets", "result", "dry_run"]}`
 
 // ParseSince liest eine Zeitangabe: Dauer rückwärts ab now ("10m", "24h",

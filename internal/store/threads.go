@@ -150,19 +150,26 @@ func participants(from string, to, cc json.RawMessage, self []string) []string {
 }
 
 // selfAddresses liefert die eigenen Adressen des Kontos: E-Mail,
-// Benutzername (wenn er eine Adresse ist) und die Aliasse (seit S2.0/A6).
+// Benutzername (wenn er eine Adresse ist), die Aliasse (seit S2.0/A6) und
+// seit S2.1 die Adressen und Reply-To der Identitäten (A02, E9).
 func selfAddresses(ctx context.Context, q querier, account int64) ([]string, error) {
-	var email, user, aliases string
-	err := q.QueryRowContext(ctx, `SELECT email, username, aliases FROM accounts WHERE id = ?`, account).Scan(&email, &user, &aliases)
+	var email, user, aliases, idents string
+	err := q.QueryRowContext(ctx, `SELECT email, username, aliases,
+		(SELECT json_group_array(x) FROM (SELECT email AS x FROM identities WHERE account_id = a.id
+		 UNION ALL SELECT reply_to FROM identities WHERE account_id = a.id AND reply_to IS NOT NULL))
+		FROM accounts a WHERE id = ?`, account).Scan(&email, &user, &aliases, &idents)
 	if err != nil {
 		return nil, fmt.Errorf("store: account %d: %w", account, err)
 	}
-	var more []string
+	var more, fromIdents []string
 	if err := json.Unmarshal([]byte(aliases), &more); err != nil {
 		return nil, fmt.Errorf("store: account %d: aliases are corrupt", account)
 	}
+	if err := json.Unmarshal([]byte(idents), &fromIdents); err != nil {
+		return nil, fmt.Errorf("store: account %d: identities: %w", account, err)
+	}
 	var out []string
-	for _, s := range append([]string{email, user}, more...) {
+	for _, s := range append(append([]string{email, user}, more...), fromIdents...) {
 		if a := thread.NormalizeAddress(s); a != "" && !slices.Contains(out, a) {
 			out = append(out, a)
 		}
