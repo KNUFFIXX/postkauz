@@ -225,6 +225,23 @@ func (e *itDraftEnv) copies(mid string) []itCopy {
 // vergebenen Message-ID; der Spiegel erkennt die Kopie (Inhalts-Hash); nach
 // einer Änderung eine neue Kopie, die alte bleibt; ein Mailprogramm ersetzt
 // die Kopie → drafts.update draft_taken_over.
+// emlMatchesServerCopy prüft drafts.get mit eml (draft show --eml) gegen
+// die Kopie im Entwürfe-Ordner, geholt per FETCH vom Server (Gegenprüfung
+// S2.6–S2.8, K9; vorher nur gegen den IMAP-Server im Prozess belegt).
+func (e *itDraftEnv) emlMatchesServerCopy(id int64) {
+	e.t.Helper()
+	got, err := e.do(itHuman, "drafts.get", map[string]any{"draft_id": id, "eml": true})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	dd := got.(ops.DraftDetail)
+	raw := e.rawCopy(e.draft(id))
+	if !dd.EMLMatchesCopy || dd.EML != string(raw) {
+		e.t.Fatalf("%s: draft %d --eml (matches copy: %v) differs from the copy on the server (uid %d)\n--- eml ---\n%s\n--- server ---\n%s",
+			e.srv.name, id, dd.EMLMatchesCopy, dd.RemoteUID, dd.EML, raw)
+	}
+}
+
 func TestIntegrationDraftPush(t *testing.T) {
 	itRun(t, func(t *testing.T, srv itServer, user string) {
 		e := newITDraftEnv(t, srv, user)
@@ -252,6 +269,9 @@ func TestIntegrationDraftPush(t *testing.T) {
 			WHERE mm.mailbox_id = ? AND mm.uid = ? AND m.content_hash = ?`, d.RemoteMailboxID, d.RemoteUID, d.PushedContentHash).Scan(&n); err != nil || n != 1 {
 			t.Fatalf("mirrored copy with the pushed content hash: %d, %v", n, err)
 		}
+		// K9 (Gegenprüfung S2.6–S2.8): draft show --eml ist Byte für Byte
+		// die Kopie, wie der echte Server sie per FETCH liefert.
+		e.emlMatchesServerCopy(out.DraftID)
 
 		// Änderung: neue Kopie, die alte bleibt.
 		if _, err := e.do(itAssistant, "drafts.update", map[string]any{"draft_id": out.DraftID, "body_markdown": "Geänderter Text"}); err != nil {
@@ -271,6 +291,7 @@ func TestIntegrationDraftPush(t *testing.T) {
 		if err != nil || len(got.(ops.DraftDetail).RemotePreviousUIDs) != 1 {
 			t.Fatalf("drafts.get = %+v, %v", got, err)
 		}
+		e.emlMatchesServerCopy(out.DraftID) // K9: auch die zweite Kopie
 
 		// Ein Mailprogramm übernimmt: neue Fassung (gleiche Message-ID),
 		// die Kopie von PostKauz verschwindet.
