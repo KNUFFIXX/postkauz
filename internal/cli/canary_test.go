@@ -71,6 +71,17 @@ func TestCanaryAllChannels(t *testing.T) {
 	created.keyOK = true
 	c.key = kc.Secret
 	c.mustRun("key list", 0, "", "key", "list", "--json")
+	// Entscheid 36 (S2.1): Passwort neu setzen nur über stdin; mit Schlüssel
+	// verweigert (das Kanarien-Passwort auf stdin darf nirgends auftauchen),
+	// im Trockenlauf ohne Wirkung, danach meldet sich "bad" mit dem
+	// richtigen Passwort an.
+	c.mustRun("account set --password-stdin (key)", ExitDenied, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--key", "agent", "--json")
+	c.mustRun("account set --password-stdin (dry run)", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--dry-run", "--json")
+	c.mustRun("account test (still wrong)", ExitError, "", "account", "test", "bad", "--json")
+	c.mustRun("account set --password-stdin", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--json")
+	c.mustRun("account set --password-stdin (text)", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin")
+	c.mustRun("account test (password replaced)", 0, "", "account", "test", "bad", "--json")
+	c.mustRun("account set --password-stdin (empty)", ExitUsage, "", "account", "set", "bad", "--password-stdin", "--json")
 	c.mustRun("policy show", 0, "", "policy", "show", "--key", "agent", "--json")
 	c.mustRun("import", 0, "", "import", "mbox", c.writeMbox(), "-a", "demo", "--mailbox", "Kanarien-Import", "--json")
 	c.mustRun("import (text)", 0, "", "import", "mbox", c.writeMbox(), "-a", "demo", "--mailbox", "Kanarien-Import")

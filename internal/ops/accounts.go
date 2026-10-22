@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/mail"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
@@ -64,6 +65,9 @@ type AccountRepo interface {
 	DataDirID(ctx context.Context) (string, error)
 	// SetAccountAliases ersetzt die weiteren eigenen Adressen (S2.0/A6).
 	SetAccountAliases(ctx context.Context, id int64, aliases []string) error
+	// SetCredentialRef stellt den Schlüsselbund-Verweis um (S2.0/A2,
+	// accounts.set mit neuem Passwort, Entscheid 36).
+	SetCredentialRef(ctx context.Context, id int64, ref string) error
 }
 
 // ProbeMailbox ist ein Ordner im Ergebnis von accounts.test.
@@ -410,13 +414,29 @@ type AccountsSetInput struct {
 	Name string `json:"name"`
 	// Aliases ersetzt die Liste vollständig ([] leert sie).
 	Aliases *[]string `json:"aliases,omitempty"`
+	// ReplacePassword: Das neue Passwort steht in Call.Secret (CLI:
+	// --password-stdin) und ersetzt das gespeicherte (Entscheid 36). Das
+	// Passwort selbst steht nie in der Eingabe.
+	ReplacePassword bool `json:"replace_password,omitempty"`
 }
 
-// AccountsSetOutput ist die Ausgabe von accounts.set.
+// AccountsSetOutput ist die Ausgabe von accounts.set. Sie enthält nie ein
+// Passwort, nur wohin es geschrieben wurde.
 type AccountsSetOutput struct {
 	Account string   `json:"account"`
 	Aliases []string `json:"aliases"`
-	DryRun  bool     `json:"dry_run"`
+	// AliasesChanged: Die Eingabe enthielt aliases.
+	AliasesChanged bool `json:"aliases_changed"`
+	// Password: "" (unverändert) | replaced | would_replace (Trockenlauf).
+	Password string `json:"password,omitempty"`
+	// CredentialRef und SecretStore: wohin das Passwort ging (Verweis im
+	// Schlüsselbund; keyring | insecure-file).
+	CredentialRef string `json:"credential_ref,omitempty"`
+	SecretStore   string `json:"secret_store,omitempty"`
+	// EnvOverride nennt POSTKAUZ_PASSWORD_<NAME>, wenn die Variable gesetzt
+	// ist: Sie geht dem gespeicherten Passwort zur Laufzeit vor.
+	EnvOverride string `json:"env_override,omitempty"`
+	DryRun      bool   `json:"dry_run"`
 }
 
 // normalizeAliases prüft die Adressen (RFC 5322, nur die Adresse ohne
@@ -463,23 +483,33 @@ func redactAccountSet(raw json.RawMessage) (json.RawMessage, []string) {
 	return params, targets
 }
 
-// AccountsSet ändert Einstellungen eines Kontos; seit S2.0 die weiteren
-// eigenen Adressen (Aliasse). R1 (lokal), Scope admin, nur für Menschen
-// (A02, E2): kein Schlüssel, auch nicht admin, darf eigene Adressen
-// umdefinieren (sie steuern ab S2, wen „Allen antworten" weglässt).
-func AccountsSet(repo AccountRepo) Operation {
+// AccountsSet ändert Einstellungen eines Kontos: die weiteren eigenen
+// Adressen (Aliasse, S2.0) und seit S2.1 das gespeicherte Passwort
+// (Entscheid 36). R1 (lokal), Scope admin, nur für Menschen (A02, E2):
+// Kein Schlüssel, auch nicht admin, darf eigene Adressen umdefinieren (sie
+// steuern ab S2, wen „Allen antworten" weglässt) oder Zugangsdaten setzen.
+//
+// Das neue Passwort kommt nur über Call.Secret (nie in der Eingabe, also
+// nie im Audit) und geht in den Schlüsselbund bzw. den gewählten Speicher
+// unter account/<datadir-id>/<name>; danach wird es zurückgelesen und
+// verglichen. Hatte das Konto noch einen anderen Verweis (alter Name von
+// vor S2.0, Umzug ausstehend), zeigt es danach auf den neuen; der alte
+// Eintrag bleibt unangetastet (ein anderes Datenverzeichnis einer älteren
+// Version kann ihn noch nutzen; doctor meldet ihn).
+func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 	return Operation{
 		Name:       "accounts.set",
 		Scope:      policy.ScopeAdmin,
 		Risk:       policy.R1,
 		Idempotent: true,
 		HumanOnly:  true,
-		Summary:    "Change account settings: the further own addresses (aliases) of an account. Human only.",
+		Summary:    "Change account settings: the further own addresses (aliases) and the stored password. Human only.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
-    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 200}
+    "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
+    "replace_password": {"type": "boolean", "description": "replace the stored password with the secret passed separately (CLI: --password-stdin); the password is never part of the input"}
   },
   "required": ["name"],
   "additionalProperties": false
@@ -489,9 +519,14 @@ func AccountsSet(repo AccountRepo) Operation {
   "properties": {
     "account": {"type": "string"},
     "aliases": {"type": "array", "items": {"type": "string"}},
+    "aliases_changed": {"type": "boolean"},
+    "password": {"type": "string", "enum": ["replaced", "would_replace"]},
+    "credential_ref": {"type": "string"},
+    "secret_store": {"type": "string"},
+    "env_override": {"type": "string"},
     "dry_run": {"type": "boolean"}
   },
-  "required": ["account", "aliases", "dry_run"]
+  "required": ["account", "aliases", "aliases_changed", "dry_run"]
 }`),
 		Redact: redactAccountSet,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -502,27 +537,79 @@ func AccountsSet(repo AccountRepo) Operation {
 			if err := validAccountName(in.Name); err != nil {
 				return nil, err
 			}
-			if in.Aliases == nil {
-				return nil, inputErr("nothing to change: give aliases (an empty list removes them)")
+			switch {
+			case in.Aliases == nil && !in.ReplacePassword:
+				return nil, inputErr("nothing to change: give aliases (an empty list removes them) or a new password")
+			case in.ReplacePassword && call.Secret.IsZero():
+				return nil, inputErr("replace_password needs the new password (CLI: --password-stdin)")
+			case !in.ReplacePassword && !call.Secret.IsZero():
+				return nil, inputErr("a password was passed without replace_password")
 			}
 			a, err := repo.AccountByName(ctx, in.Name)
 			if err != nil {
 				return nil, err
 			}
-			aliases, err := normalizeAliases(*in.Aliases, a.Email, a.Username)
-			if err != nil {
-				return nil, err
+			out := AccountsSetOutput{Account: a.Name, Aliases: a.Aliases, DryRun: call.DryRun}
+			if out.Aliases == nil {
+				out.Aliases = []string{}
 			}
-			out := AccountsSetOutput{Account: a.Name, Aliases: aliases, DryRun: call.DryRun}
+			if in.Aliases != nil {
+				if out.Aliases, err = normalizeAliases(*in.Aliases, a.Email, a.Username); err != nil {
+					return nil, err
+				}
+				out.AliasesChanged = true
+			}
+			if in.ReplacePassword {
+				dirID, err := repo.DataDirID(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out.CredentialRef, out.SecretStore, out.Password = secrets.AccountRef(dirID, a.Name), sec.Status().Backend, "would_replace"
+				if v, ok := os.LookupEnv(secrets.EnvName(out.CredentialRef)); ok && v != "" {
+					out.EnvOverride = secrets.EnvName(out.CredentialRef)
+				}
+			}
 			if call.DryRun {
 				return out, nil
 			}
-			if err := repo.SetAccountAliases(ctx, a.ID, aliases); err != nil {
-				return nil, err
+			// Erst das Passwort (scheitert eher, z. B. ohne Schlüsselbund),
+			// dann die Aliasse: Scheitert das Passwort, ändert sich nichts.
+			if in.ReplacePassword {
+				if err := replacePassword(ctx, repo, sec, a, out.CredentialRef, call.Secret); err != nil {
+					return nil, scrub(err, call.Secret)
+				}
+				out.Password = "replaced"
+			}
+			if in.Aliases != nil {
+				if err := repo.SetAccountAliases(ctx, a.ID, out.Aliases); err != nil {
+					return nil, err
+				}
 			}
 			return out, nil
 		},
 	}
+}
+
+// replacePassword schreibt das neue Passwort unter ref, liest es zurück
+// (unter der Umgebungsschicht, secrets.Stored) und stellt danach den
+// Verweis des Kontos um, falls er noch anders lautet.
+func replacePassword(ctx context.Context, repo AccountRepo, sec secrets.Store, a store.Account, ref string, pw secrets.Secret) error {
+	base := secrets.Stored(sec)
+	if err := base.Set(ref, pw); err != nil {
+		return fmt.Errorf("account %s: password not stored: %w", a.Name, err)
+	}
+	if got, err := base.Get(ref); err != nil || got.Reveal() != pw.Reveal() {
+		if err == nil {
+			err = errors.New("value differs after writing")
+		}
+		return fmt.Errorf("account %s: stored password could not be verified (%s): %w", a.Name, ref, err)
+	}
+	if a.CredentialRef != ref {
+		if err := repo.SetCredentialRef(ctx, a.ID, ref); err != nil {
+			return fmt.Errorf("account %s: password stored as %s, but the account still points to %s: %w", a.Name, ref, a.CredentialRef, err)
+		}
+	}
+	return nil
 }
 
 // --- accounts.remove -------------------------------------------------------

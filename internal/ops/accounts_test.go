@@ -360,7 +360,7 @@ func insertMessage(st *store.SQLite, accountID int64) error {
 // es (HumanOnly, auch admin).
 func TestAccountsSetAliases(t *testing.T) {
 	e := newAccountsEnv(t)
-	if err := e.x.Registry.Register(AccountsSet(e.st)); err != nil {
+	if err := e.x.Registry.Register(AccountsSet(e.st, e.sec)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.run("accounts.add", demoInput(), canary, false); err != nil {
@@ -427,7 +427,7 @@ func TestAccountsSetAliases(t *testing.T) {
 // Eingabe ab).
 func TestAccountsSetAliasesDropsOwnAddressesAndCountsAfterDedup(t *testing.T) {
 	e := newAccountsEnv(t)
-	if err := e.x.Registry.Register(AccountsSet(e.st)); err != nil {
+	if err := e.x.Registry.Register(AccountsSet(e.st, e.sec)); err != nil {
 		t.Fatal(err)
 	}
 	in := demoInput()
@@ -457,5 +457,98 @@ func TestAccountsSetAliasesDropsOwnAddressesAndCountsAfterDedup(t *testing.T) {
 	}
 	if _, err := e.run("accounts.set", map[string]any{"name": "demo", "aliases": many}, "", false); err == nil || !strings.Contains(err.Error(), "too many aliases") {
 		t.Fatalf("51 aliases: %v", err)
+	}
+}
+
+// Entscheid 36 (S2.1): accounts.set ersetzt das gespeicherte Passwort. Es
+// kommt nur über Call.Secret, wird unter account/<datadir-id>/<name>
+// geschrieben und zurückgelesen; ein alter Verweis wird umgestellt, der
+// alte Eintrag bleibt. Nie im Audit, in der Ausgabe oder einer
+// Fehlermeldung; Trockenlauf ändert nichts; ohne Schlüsselbund scheitert
+// es ohne Änderung (auch an den Aliassen); kein API-Schlüssel darf es.
+func TestAccountsSetPassword(t *testing.T) {
+	ctx := context.Background()
+	e := newAccountsEnv(t)
+	if err := e.x.Registry.Register(AccountsSet(e.st, e.sec)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.add", demoInput(), canary, false); err != nil {
+		t.Fatal(err)
+	}
+	ref := e.ref(t, "demo")
+	const newPW = secrets.Secret("NeuesKanarienPasswort-36")
+	in := map[string]any{"name": "demo", "replace_password": true}
+
+	out, err := e.run("accounts.set", in, newPW, true)
+	if o, _ := out.(AccountsSetOutput); err != nil || o.Password != "would_replace" || o.CredentialRef != ref || o.SecretStore != "keyring" ||
+		!o.DryRun || o.AliasesChanged {
+		t.Fatalf("dry run: %+v %v", out, err)
+	}
+	if e.sec.m[ref] != canary {
+		t.Fatal("dry run replaced the password")
+	}
+	out, err = e.run("accounts.set", in, newPW, false)
+	if o, _ := out.(AccountsSetOutput); err != nil || o.Password != "replaced" || o.EnvOverride != "" || len(o.Aliases) != 0 {
+		t.Fatalf("replace: %+v %v", out, err)
+	}
+	if e.sec.m[ref] != newPW || len(e.sec.m) != 1 {
+		t.Fatalf("keyring = %v", e.sec.m)
+	}
+
+	// Eingabefehler: ohne Passwort, Passwort ohne replace_password.
+	if _, err := e.run("accounts.set", in, "", false); err == nil || !strings.Contains(err.Error(), "--password-stdin") {
+		t.Fatalf("no secret: %v", err)
+	}
+	if _, err := e.run("accounts.set", map[string]any{"name": "demo", "aliases": []string{}}, newPW, false); err == nil {
+		t.Fatal("secret without replace_password accepted")
+	}
+
+	// Alter Verweis (Umzug ausstehend): neuer Eintrag, Verweis umgestellt,
+	// alter Eintrag unberührt.
+	if err := e.st.SetCredentialRef(ctx, 1, "account/demo"); err != nil {
+		t.Fatal(err)
+	}
+	e.sec.m["account/demo"] = "alt"
+	if _, err := e.run("accounts.set", in, canary, false); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := e.st.AccountByName(ctx, "demo"); a.CredentialRef != ref || e.sec.m[ref] != canary || e.sec.m["account/demo"] != "alt" {
+		t.Fatalf("legacy ref: %s %v", a.CredentialRef, e.sec.m)
+	}
+
+	// Umgebungsvariable geht vor: Hinweis in der Ausgabe.
+	t.Setenv(secrets.EnvName(ref), "aus-der-umgebung")
+	if out, err := e.run("accounts.set", in, newPW, false); err != nil || out.(AccountsSetOutput).EnvOverride != "POSTKAUZ_PASSWORD_DEMO" {
+		t.Fatalf("env override: %+v %v", out, err)
+	}
+
+	// Ohne Schlüsselbund: Fehler, nichts geändert (auch die Aliasse nicht).
+	e.sec.down = true
+	both := map[string]any{"name": "demo", "replace_password": true, "aliases": []string{"alias@example.org"}}
+	if _, err := e.run("accounts.set", both, canary, false); !errors.Is(err, secrets.ErrUnavailable) || strings.Contains(err.Error(), string(canary)) {
+		t.Fatalf("keyring down: %v", err)
+	}
+	if a, _ := e.st.AccountByName(ctx, "demo"); len(a.Aliases) != 0 || e.sec.m[ref] != newPW {
+		t.Fatalf("keyring down changed state: %v %v", a.Aliases, e.sec.m)
+	}
+	e.sec.down = false
+
+	// HumanOnly: admin-Schlüssel abgewiesen, Passwort unverändert.
+	b, _ := json.Marshal(in)
+	_, err = e.x.Execute(ctx, Request{Key: policy.Key{ID: "key:adm", Scopes: policy.Roles["admin"]}, Actor: audit.ActorAgent,
+		Operation: "accounts.set", Input: b, Secret: canary})
+	var pe *PolicyError
+	if !errors.As(err, &pe) || pe.Decision.Reason != "human_only" || e.sec.m[ref] != newPW {
+		t.Fatalf("admin key: %v, keyring %v", err, e.sec.m)
+	}
+
+	// Weder Audit noch Ausgaben enthalten ein Passwort.
+	for _, ev := range e.au.Events() {
+		bb, _ := json.Marshal(ev)
+		for _, pw := range []string{string(canary), string(newPW), "aus-der-umgebung"} {
+			if strings.Contains(string(bb), pw) {
+				t.Fatalf("password in audit: %s", bb)
+			}
+		}
 	}
 }

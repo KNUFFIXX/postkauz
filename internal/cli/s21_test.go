@@ -40,6 +40,76 @@ func TestDoctorKnowsSchema10(t *testing.T) {
 	}
 }
 
+// Entscheid 36 (S2.1): `account set <name> --password-stdin` ersetzt das
+// gespeicherte Passwort (Fake-Schlüsselbund). Vorher scheitert die
+// Anmeldung mit dem falschen Passwort, danach gelingt sie. Das Passwort
+// steht in keiner Ausgabe, keinem Audit-Eintrag und keiner Fehlermeldung;
+// mit --key (auch admin) Exit 3 human_only ohne Wirkung; ohne Eingabe
+// Exit 2; nie als Argument.
+func TestAccountSetPasswordStdin(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	const wrong, right = "FalschesKanarienPasswort-36", "RichtigesKanarienPasswort-36"
+	host, port := fakeIMAP(t, right)
+	if code, _, errs := runIn(t, wrong+"\n", "account", "add", "demo", "--imap", host+":"+port, "--user", "tester@example.invalid",
+		"--tls", "none", "--insecure-test-server", "--password-stdin"); code != ExitOK {
+		t.Fatalf("account add: %s", errs)
+	}
+	var all strings.Builder
+	step := func(stdin string, want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := runIn(t, stdin, args...)
+		all.WriteString(out + errs)
+		if code != want {
+			t.Fatalf("%v: code=%d out=%q err=%q", args, code, out, errs)
+		}
+		return out, errs
+	}
+	step("", ExitError, "account", "test", "demo")
+
+	// Ein Schlüssel darf es nicht, auch admin nicht.
+	run(t, "key", "create", "--name", "adm", "--role", "admin")
+	_, errs := step(right+"\n", ExitDenied, "account", "set", "demo", "--password-stdin", "--key", "adm")
+	if !strings.Contains(errs, "human_only") {
+		t.Fatalf("--key: %s", errs)
+	}
+	// Trockenlauf ändert nichts.
+	out, _ := step(right+"\n", ExitOK, "account", "set", "demo", "--password-stdin", "--dry-run")
+	if !strings.Contains(out, "dry run: would replace the password of account demo in the OS keyring as account/") {
+		t.Fatalf("dry run: %s", out)
+	}
+	step("", ExitError, "account", "test", "demo")
+
+	out, _ = step(right+"\n", ExitOK, "account", "set", "demo", "--password-stdin", "--json")
+	var o ops.AccountsSetOutput
+	if json.Unmarshal([]byte(out), &o) != nil || o.Password != "replaced" || o.SecretStore != "keyring" || o.AliasesChanged {
+		t.Fatalf("account set --json: %s", out)
+	}
+	if refs := keyringRefs(kr); len(refs) != 1 || refs[o.CredentialRef] != right {
+		t.Fatalf("keyring = %v", refs)
+	}
+	step("", ExitOK, "account", "test", "demo")
+
+	// Zusammen mit --aliases; Textausgabe nennt beides.
+	out, _ = step(right+"\n", ExitOK, "account", "set", "demo", "--aliases", "alias@example.org", "--password-stdin")
+	if !strings.Contains(out, "account demo: aliases alias@example.org") || !strings.Contains(out, "account demo: password replaced") {
+		t.Fatalf("aliases + password: %s", out)
+	}
+	// Eingabefehler.
+	step("", ExitUsage, "account", "set", "demo", "--password-stdin")
+	step("", ExitUsage, "account", "set", "demo")
+	step("", ExitUsage, "account", "set", "demo", "--password-stdin", right)
+	step("", ExitUsage, "account", "set", "demo", "--password", right)
+
+	if strings.Contains(all.String(), right) || strings.Contains(all.String(), wrong) {
+		t.Fatalf("password in output:\n%s", all.String())
+	}
+	code, aud, _ := run(t, "audit", "--since", "1h", "--limit", "1000", "--json")
+	logb, _ := os.ReadFile(filepath.Join(dataDir, "postkauz.log"))
+	if code != ExitOK || !strings.Contains(aud, `"replace_password"`) || strings.Contains(aud+string(logb), right) || strings.Contains(aud+string(logb), wrong) {
+		t.Fatalf("audit/log: %s", aud)
+	}
+}
+
 // lastAuditPolicyVersion liest die policy_version des letzten Audit-Eintrags.
 func lastAuditPolicyVersion(t *testing.T) int64 {
 	t.Helper()
