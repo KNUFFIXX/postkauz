@@ -295,10 +295,18 @@ func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage,
 // draftShowNotes: Bei --eml gehört stdout allein der Nachricht (umleitbar in
 // eine .eml-Datei); was sie ist, steht auf stderr.
 func draftShowNotes(out any) []string {
-	if o, ok := out.(ops.DraftDetail); ok && o.EML != "" && o.EMLNote != "" {
-		return []string{"eml: " + o.EMLNote}
+	o, ok := out.(ops.DraftDetail)
+	if !ok || o.EML == "" {
+		return nil
 	}
-	return nil
+	var notes []string
+	if o.EMLNote != "" {
+		notes = append(notes, "eml: "+o.EMLNote)
+	}
+	if o.OlderCopies > 0 {
+		notes = append(notes, ops.OlderCopiesWarning(o.OlderCopies))
+	}
+	return notes
 }
 
 func draftIDArg(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
@@ -572,7 +580,18 @@ func renderDraftList(w io.Writer, out any) error {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", d.DraftID, d.Account, d.Kind, d.Status, ap, d.Remote, d.Recipients,
 			d.Attachments, d.UpdatedAt, termLine(d.Subject))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	// Entscheid 43: ältere Kopien im Entwürfe-Ordner, je Entwurf eine Zeile.
+	for _, d := range o.Drafts {
+		if d.OlderCopies > 0 {
+			if _, err := fmt.Fprintf(w, "warning: draft %d: %s\n", d.DraftID, ops.OlderCopiesWarning(d.OlderCopies)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func renderDraftRequest(w io.Writer, out any) error {

@@ -241,4 +241,58 @@ func TestDraftShowEMLIsPushedCopy(t *testing.T) {
 	if js, _ := step(ExitOK, "draft", "show", "1", "--json"); strings.Contains(js, `"eml"`) {
 		t.Fatalf("eml without --eml: %s", js)
 	}
+
+	// Entscheid 43: Nach dem zweiten Push liegen zwei Kopien von Entwurf 1
+	// im Ordner (uid 1 und 4); draft show und draft list warnen, auch in
+	// --json, bis der Mensch die alte Kopie im Mailclient löscht.
+	const warn = "older copies in Drafts: 1 (delete them in your mail client; postkauz never deletes)"
+	out, _ = step(ExitOK, "draft", "show", "1")
+	if !strings.Contains(out, "warning: "+warn) {
+		t.Fatalf("draft show without the warning:\n%s", out)
+	}
+	if !strings.Contains(js, `"older_copies":1`) || !strings.Contains(js, `"older_copy_uids":[1]`) || !strings.Contains(js, warn) {
+		t.Fatalf("draft show --json: %s", js)
+	}
+	out, _ = step(ExitOK, "draft", "list")
+	if !strings.Contains(out, "warning: draft 1: "+warn) || strings.Contains(out, "warning: draft 2") || strings.Contains(out, "warning: draft 3") {
+		t.Fatalf("draft list:\n%s", out)
+	}
+	if out, _ = step(ExitOK, "draft", "list", "--json"); !strings.Contains(out, `"draft_id":1,`) || strings.Count(out, `"older_copies":1`) != 1 {
+		t.Fatalf("draft list --json: %s", out)
+	}
+	if _, errs = step(ExitOK, "draft", "show", "1", "--eml"); !strings.Contains(errs, "note: "+warn) {
+		t.Fatalf("draft show --eml: %q", errs)
+	}
+	deleteDraftCopy(t, addr, 1)
+	step(ExitOK, "sync", "-a", "demo")
+	if out, _ = step(ExitOK, "draft", "show", "1"); strings.Contains(out, "older copies") {
+		t.Fatalf("warning after the old copy was deleted:\n%s", out)
+	}
+	if out, _ = step(ExitOK, "draft", "list"); strings.Contains(out, "warning:") {
+		t.Fatalf("draft list after the old copy was deleted:\n%s", out)
+	}
+}
+
+// deleteDraftCopy löscht im Fake-Server die Kopie uid im Entwürfe-Ordner,
+// wie es der Mensch im Mailclient täte (PostKauz selbst löscht nie).
+func deleteDraftCopy(t *testing.T, addr string, uid int64) {
+	t.Helper()
+	c, err := imapclient.DialInsecure(addr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Login("tester@example.invalid", canary).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Select("Drafts", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	set := imap.UIDSetNum(imap.UID(uid))
+	if err := c.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted}}, nil).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UIDExpunge(set).Close(); err != nil {
+		t.Fatal(err)
+	}
 }
