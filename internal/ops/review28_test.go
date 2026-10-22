@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -83,5 +84,32 @@ func TestReviewW2DraftsGetChecksAccount(t *testing.T) {
 	if last.Operation != "drafts.get" || last.Result == "ok" || !slices.Contains(last.Targets, "account:fremd") ||
 		!slices.Contains(last.Targets, "draft:"+strconv.FormatInt(out.DraftID, 10)) {
 		t.Fatalf("audit: %+v", last)
+	}
+}
+
+// W1: drafts.get hält ein Zeichenbudget ein: body_text und original.text
+// je höchstens max_chars Zeichen (mit Markierung), body_markdown/body_html
+// fehlen, wenn sie länger sind (nie gekürzt zurückschreiben). Ohne
+// max_chars (CLI) bleibt alles ungekürzt.
+func TestReviewW1DraftsGetBudget(t *testing.T) {
+	e := newDraftEnv(t, false)
+	own := strings.Repeat("Eigener Text. ", 20)
+	out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": 1, "body_markdown": own}).(DraftsWriteOutput)
+	full := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID}).(DraftDetail)
+	if full.BodyTextTruncated || full.BodySourceOmitted || full.BodyMarkdown != own || full.Original == nil || full.Original.Truncated ||
+		utf8.RuneCountInString(full.Original.Text) <= 20 {
+		t.Fatalf("without max_chars: %+v / %+v", full, full.Original)
+	}
+	const max = 20
+	cut := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID, "max_chars": max}).(DraftDetail)
+	if !cut.BodyTextTruncated || utf8.RuneCountInString(cut.BodyText) != max || !strings.HasPrefix(full.BodyText, cut.BodyText) ||
+		cut.Original == nil || !cut.Original.Truncated || utf8.RuneCountInString(cut.Original.Text) != max ||
+		cut.BodyMarkdown != "" || cut.BodyHTML != "" || !cut.BodySourceOmitted {
+		t.Fatalf("max_chars %d: %+v / %+v", max, cut, cut.Original)
+	}
+	// Passt der Quelltext ins Budget, bleibt er (zum Ändern) vollständig.
+	if fit := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID, "max_chars": 100000}).(DraftDetail); fit.BodyMarkdown != own ||
+		fit.BodySourceOmitted || fit.BodyTextTruncated || fit.Original.Truncated {
+		t.Fatalf("large budget: %+v", fit)
 	}
 }

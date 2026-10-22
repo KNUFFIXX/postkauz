@@ -42,8 +42,8 @@ var draftBindings = []binding{
 	{op: "drafts.update", path: []string{"draft", "edit"}, use: "<draft-id>", args: cobra.ExactArgs(1), flags: draftEditFlags,
 		input: draftEditInput, human: renderDraftWrite,
 		covers: []string{"draft_id", "to", "cc", "bcc", "subject", "body_markdown", "body_html", "attachments", "quote", "signature"}},
-	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [-a ACCOUNT] [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
-		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "account", "eml"}},
+	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [-a ACCOUNT] [--max-chars N] [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
+		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "account", "max_chars", "eml"}},
 	{op: "drafts.list", path: []string{"draft", "list"}, args: cobra.NoArgs, flags: draftListFlags, input: draftListInput,
 		human: renderDraftList, covers: []string{"account", "status", "limit"}},
 	{op: "drafts.request_ready", path: []string{"draft", "request"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
@@ -289,6 +289,7 @@ func draftEditInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage,
 
 func draftShowFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("eml", false, "print the message as RFC 5322 text (.eml) instead, byte for byte the copy in the Drafts folder")
+	cmd.Flags().Int("max-chars", 0, "cut the own text and the quote after this many characters each (0 = no limit)")
 }
 
 func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
@@ -299,6 +300,9 @@ func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage,
 	m := map[string]any{"draft_id": id}
 	if v := accountFlag(cmd); v != "" {
 		m["account"] = v
+	}
+	if err := setMaxChars(cmd, m, "max_chars", "max-chars"); err != nil {
+		return nil, "", err
 	}
 	if eml, _ := cmd.Flags().GetBool("eml"); eml {
 		m["eml"] = true
@@ -584,6 +588,9 @@ func renderDraftShow(w io.Writer, out any) error {
 		body = strings.TrimLeft(body+"\n\n"+strings.TrimRight(termText(q.Text), "\r\n"), "\r\n")
 	}
 	fmt.Fprintf(w, "\n%s\n\n", body)
+	if o.BodyTextTruncated || (o.Original != nil && o.Original.Truncated) {
+		fmt.Fprintln(w, "[cut after --max-chars]")
+	}
 	renderDraftAttachments(w, o.Attachments)
 	for _, s := range o.Warnings {
 		fmt.Fprintf(w, "warning: %s\n", termLine(s))

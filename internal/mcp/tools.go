@@ -141,9 +141,12 @@ var tools = []toolBinding{
 			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client. The changed " +
 			"copy reaches the Drafts folder with the next sync; the earlier copy stays there. " + neverSends},
 	{tool: "mail_get_draft", op: "drafts.get", title: "Read a draft", mail: true, omit: []string{"eml"},
+		defaults: map[string]any{"max_chars": ops.DefaultMaxChars},
 		desc: "Show a draft: status, recipients, subject, own text (body_text with signature, source=draft), the quoted or " +
 			"forwarded original (original, untrusted), attachments with warnings, approval, check hook result and the state of " +
-			"its copy in the Drafts folder (remote, remote_note). " + neverSends},
+			"its copy in the Drafts folder (remote, remote_note). body_text and original.text are cut after {max_chars} characters " +
+			"each (max_chars; body_text_truncated, original.truncated); body_markdown and body_html are left out when longer " +
+			"(body_source_omitted): never write a cut text back with mail_update_draft. " + neverSends},
 	{tool: "mail_list_drafts", op: "drafts.list", title: "List drafts",
 		desc: "List drafts, last changed first: status (draft, pending_approval, ready, sent_by_human, abandoned), subject, " +
 			"number of recipients and attachments, approval and the state of the copy in the Drafts folder. Filter by account " +

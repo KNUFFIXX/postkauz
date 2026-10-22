@@ -141,7 +141,7 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if !ok {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "drafts.get", map[string]any{"draft_id": id, "account": u.Host}
+		op, in = "drafts.get", map[string]any{"draft_id": id, "account": u.Host, "max_chars": h.o.MaxChars}
 	case len(seg) == 4 && seg[0] == "message" && seg[2] == "attachment":
 		msg, ok1 := positive(seg[1])
 		att, ok2 := positive(seg[3])

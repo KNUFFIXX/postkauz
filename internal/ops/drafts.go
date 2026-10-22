@@ -1108,24 +1108,31 @@ type DraftDetail struct {
 	// Source: "draft" (S2.8): Kopf, body_text, body_markdown und body_html
 	// sind für den Entwurf geschrieben (body_text: eigener Text und
 	// Signatur); Zitat bzw. weitergeleiteter Text stehen in Original.
-	Source            string                  `json:"source"`
-	DraftID           int64                   `json:"draft_id"`
-	Account           string                  `json:"account"`
-	Kind              string                  `json:"kind"`
-	Status            string                  `json:"status"`
-	MessageID         string                  `json:"message_id"`
-	OriginalID        int64                   `json:"original_id,omitempty"`
-	InReplyTo         string                  `json:"in_reply_to,omitempty"`
-	References        string                  `json:"references,omitempty"`
-	From              string                  `json:"from"`
-	To                []string                `json:"to"`
-	Cc                []string                `json:"cc"`
-	Bcc               []string                `json:"bcc"`
-	Subject           string                  `json:"subject"`
-	BodyText          string                  `json:"body_text"`
-	Original          *OriginalEnvelope       `json:"original,omitempty"`
-	BodyMarkdown      string                  `json:"body_markdown,omitempty"`
-	BodyHTML          string                  `json:"body_html,omitempty"`
+	Source     string   `json:"source"`
+	DraftID    int64    `json:"draft_id"`
+	Account    string   `json:"account"`
+	Kind       string   `json:"kind"`
+	Status     string   `json:"status"`
+	MessageID  string   `json:"message_id"`
+	OriginalID int64    `json:"original_id,omitempty"`
+	InReplyTo  string   `json:"in_reply_to,omitempty"`
+	References string   `json:"references,omitempty"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	Cc         []string `json:"cc"`
+	Bcc        []string `json:"bcc"`
+	Subject    string   `json:"subject"`
+	BodyText   string   `json:"body_text"`
+	// BodyTextTruncated: body_text wurde auf max_chars gekürzt (W1).
+	BodyTextTruncated bool              `json:"body_text_truncated,omitempty"`
+	Original          *OriginalEnvelope `json:"original,omitempty"`
+	BodyMarkdown      string            `json:"body_markdown,omitempty"`
+	BodyHTML          string            `json:"body_html,omitempty"`
+	// BodySourceOmitted: body_markdown bzw. body_html war länger als
+	// max_chars und fehlt (W1). Gekürzt würden sie zur Falle: Ein Agent,
+	// der den gekürzten Quelltext ändert und mit drafts.update
+	// zurückschreibt, schnitte den Entwurf still ab.
+	BodySourceOmitted bool                    `json:"body_source_omitted,omitempty"`
 	Quote             bool                    `json:"quote"`
 	Signature         bool                    `json:"signature"`
 	Attachments       []DraftAttachmentOutput `json:"attachments"`
@@ -1187,6 +1194,7 @@ func DraftsGet(d Deps) Operation {
   "properties": {
     "draft_id": {"type": "integer", "minimum": 1},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the draft belongs to this account (otherwise not found)"},
+    "max_chars": {"type": "integer", "minimum": 1, "description": "cut body_text and original.text after this many characters each (body_text_truncated, original.truncated); body_markdown and body_html are left out when longer (body_source_omitted). Default: no limit"},
     "eml": {"type": "boolean", "description": "also return the message as RFC 5322 text, byte for byte the copy put into the Drafts folder when it is still current (eml_matches_copy)"}
   },
   "required": ["draft_id"],
@@ -1206,8 +1214,10 @@ func DraftsGet(d Deps) Operation {
     "cc": {"type": "array", "items": {"type": "string"}}, "bcc": {"type": "array", "items": {"type": "string"}},
     "subject": {"type": "string"},
     "body_text": {"type": "string", "description": "own text and signature; the quoted or forwarded original is in original"},
+    "body_text_truncated": {"type": "boolean"},
     "original": ` + originalEnvelopeSchema + `,
     "body_markdown": {"type": "string"}, "body_html": {"type": "string"},
+    "body_source_omitted": {"type": "boolean", "description": "body_markdown or body_html was longer than max_chars and is left out"},
     "quote": {"type": "boolean"}, "signature": {"type": "boolean"},
     "attachments": ` + draftAttachmentsSchema + `,
     "warnings": {"type": "array", "items": {"type": "string"}},
@@ -1230,9 +1240,10 @@ func DraftsGet(d Deps) Operation {
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				DraftID int64  `json:"draft_id"`
-				Account string `json:"account,omitempty"`
-				EML     bool   `json:"eml,omitempty"`
+				DraftID  int64  `json:"draft_id"`
+				Account  string `json:"account,omitempty"`
+				MaxChars int    `json:"max_chars,omitempty"`
+				EML      bool   `json:"eml,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -1264,14 +1275,18 @@ func DraftsGet(d Deps) Operation {
 				return nil, err
 			}
 			opts := parseOptions(dr.ComposeOptions)
-			own, orig, err := o.textParts(ctx, dr, 0)
+			// Zeichenbudget (Gegenprüfung S2.8, W1; docs/mcp.md Grundsatz 7):
+			// MCP setzt immer max_chars, die CLI nur mit --max-chars.
+			own, orig, err := o.textParts(ctx, dr, in.MaxChars)
 			if err != nil {
 				return nil, err
 			}
+			own, ownCut := truncateRunes(own, in.MaxChars)
+			md, html, omitted := budgetSource(dr.BodyMarkdown, dr.BodyHTML, in.MaxChars)
 			out := DraftDetail{Source: DraftSource, DraftID: dr.ID, Account: acc.Name, Kind: dr.Kind, Status: dr.Status, MessageID: dr.MessageIDHeader,
 				OriginalID: dr.InReplyToMsg, From: formatAddr(store.Addr{Name: dr.FromName, Address: dr.FromEmail}),
 				To: formatAddrs(dr.To), Cc: formatAddrs(dr.Cc), Bcc: formatAddrs(dr.Bcc), Subject: dr.Subject, BodyText: own, Original: orig,
-				BodyMarkdown: dr.BodyMarkdown, BodyHTML: dr.BodyHTML, Quote: opts.Quote, Signature: opts.Signature,
+				BodyTextTruncated: ownCut, BodyMarkdown: md, BodyHTML: html, BodySourceOmitted: omitted, Quote: opts.Quote, Signature: opts.Signature,
 				HookResult: dr.HookResult, ApprovalID: dr.ApprovalID, Remote: dr.RemoteState, RemoteNote: remoteNote(dr),
 				RemoteMailboxID: dr.RemoteMailboxID, RemoteUID: dr.RemoteUID, PreviewHash: dr.PreviewHash, CreatedBy: dr.CreatedBy,
 				CreatedAt: rfc3339(dr.CreatedAt), UpdatedAt: rfc3339(dr.UpdatedAt), ClosedAt: rfc3339(dr.ClosedAt), SentMessageID: dr.SentMessageID}
@@ -1306,6 +1321,23 @@ func DraftsGet(d Deps) Operation {
 			return out, nil
 		},
 	}
+}
+
+// budgetSource wendet das Zeichenbudget auf den Quelltext des Entwurfs an
+// (body_markdown, body_html): Was länger als max ist, fehlt (omitted),
+// statt gekürzt zu werden (max 0 = unbegrenzt).
+func budgetSource(md, html string, max int) (string, string, bool) {
+	if max <= 0 {
+		return md, html, false
+	}
+	omitted := false
+	if utf8.RuneCountInString(md) > max {
+		md, omitted = "", true
+	}
+	if utf8.RuneCountInString(html) > max {
+		html, omitted = "", true
+	}
+	return md, html, omitted
 }
 
 // OlderCopiesWarning ist die Warnung zu älteren Kopien im Entwürfe-Ordner

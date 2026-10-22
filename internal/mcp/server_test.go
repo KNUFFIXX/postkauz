@@ -369,7 +369,7 @@ func TestToolBudgetFollowsPolicy(t *testing.T) {
 			t.Errorf("%s: default description %q", b.tool, d)
 		}
 	}
-	if n != 2 {
-		t.Fatalf("%d tools with max_chars, want 2 (mail_get_message, mail_get_attachment_text)", n)
+	if n != 3 {
+		t.Fatalf("%d tools with max_chars, want 3 (mail_get_message, mail_get_attachment_text, mail_get_draft)", n)
 	}
 }
