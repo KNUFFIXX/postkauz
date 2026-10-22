@@ -1,0 +1,171 @@
+package ops
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// drafts.style (S2.8, A02 E9): Stilhinweise einer Identität für Agenten,
+// die Entwürfe schreiben (Resource mail://style/{identity}). Der Mensch
+// hinterlegt sie als Datei (identity add --style-file); gelesen wird der
+// Inhalt beim Aufruf, höchstens max_chars Zeichen. Quelle ist die
+// Konfiguration des Menschen, nicht eine E-Mail: Die Ausgabe trägt
+// source "config" und steht nicht in der Untrusted-Hülle.
+//
+// Absichtlich nicht identities.*: Die Identitätsoperationen sind nur für
+// Menschen (A02 E2); diese hier liest nur und gehört zum Scope mail:draft
+// wie das Schreiben von Entwürfen.
+
+// DraftsStyleOutput ist die Ausgabe von drafts.style.
+type DraftsStyleOutput struct {
+	Source     string `json:"source"` // config
+	Account    string `json:"account"`
+	IdentityID int64  `json:"identity_id"`
+	Identity   string `json:"identity"` // Adresse der Identität
+	// HasStyleFile: Für die Identität ist eine Stildatei hinterlegt.
+	HasStyleFile bool   `json:"has_style_file"`
+	Text         string `json:"text"`
+	Truncated    bool   `json:"truncated"`
+}
+
+// DraftsStyle liest die Stildatei einer Identität (R0, mail:draft).
+func DraftsStyle(d Deps) Operation {
+	o := newDraftOps(d)
+	budget := d.MaxChars
+	if budget <= 0 {
+		budget = DefaultMaxChars
+	}
+	return Operation{
+		Name:       "drafts.style",
+		Scope:      policy.ScopeMailDraft,
+		Risk:       policy.R0,
+		Idempotent: true,
+		Summary:    "Show the style notes of a sender identity (the file the user set with identity add --style-file), as a guide for writing drafts.",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "identity": {"type": "string", "description": "address or id of the identity (default: the default identity of the account)"},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "account name (default: the account of the identity, or the only account)"},
+    "max_chars": {"type": "integer", "minimum": 1, "maximum": 1000000, "description": "cut the text after this many characters (default: the character budget of the policy file)"}
+  },
+  "additionalProperties": false
+}`),
+		OutputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "source": {"type": "string", "enum": ["config"]}, "account": {"type": "string"},
+    "identity_id": {"type": "integer"}, "identity": {"type": "string"},
+    "has_style_file": {"type": "boolean"}, "text": {"type": "string"}, "truncated": {"type": "boolean"}
+  },
+  "required": ["source", "account", "identity_id", "identity", "has_style_file", "text", "truncated"]
+}`),
+		Redact: redactDraftInput,
+		Handler: func(ctx context.Context, call Call) (any, error) {
+			var in struct {
+				Identity string `json:"identity,omitempty"`
+				Account  string `json:"account,omitempty"`
+				MaxChars int    `json:"max_chars,omitempty"`
+			}
+			if err := decodeInput(call.Input, &in); err != nil {
+				return nil, err
+			}
+			max := in.MaxChars
+			if max == 0 {
+				max = budget
+			}
+			ident, err := o.styleIdentity(ctx, in.Account, in.Identity)
+			if err != nil {
+				return nil, err
+			}
+			acc, err := o.accountByID(ctx, ident.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			out := DraftsStyleOutput{Source: "config", Account: acc.Name, IdentityID: ident.ID, Identity: ident.Email,
+				HasStyleFile: ident.StyleFile != ""}
+			if ident.StyleFile != "" {
+				if out.Text, out.Truncated, err = readStyleFile(ident.StyleFile, max); err != nil {
+					// Ohne Pfad: Er nennt Ordner des Nutzers und geht über MCP an Agenten.
+					return nil, fmt.Errorf("the style file of identity %d cannot be read; check it with: identity list", ident.ID)
+				}
+			}
+			return out, nil
+		},
+	}
+}
+
+// styleIdentity wählt die Identität für drafts.style: mit Konto wie beim
+// Anlegen eines Entwurfs (Adresse, ID oder Standard); ohne Konto über alle
+// Konten, solange die Wahl eindeutig ist.
+func (o *draftOps) styleIdentity(ctx context.Context, account, sel string) (store.Identity, error) {
+	sel = strings.ToLower(strings.TrimSpace(sel))
+	if account != "" || sel == "" {
+		acc, err := ResolveAccount(ctx, o.accounts, account)
+		if err != nil {
+			return store.Identity{}, err
+		}
+		list, err := o.svc.Store.Identities(ctx, acc.ID)
+		if err != nil {
+			return store.Identity{}, err
+		}
+		for _, i := range list {
+			if (sel == "" && i.IsDefault) || (sel != "" && (strings.ToLower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel)) {
+				return i, nil
+			}
+		}
+		return store.Identity{}, store.ErrIdentityNotFound
+	}
+	list, err := o.svc.Store.Identities(ctx, 0)
+	if err != nil {
+		return store.Identity{}, err
+	}
+	var found []store.Identity
+	for _, i := range list {
+		if strings.ToLower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel {
+			found = append(found, i)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return store.Identity{}, store.ErrIdentityNotFound
+	case 1:
+		return found[0], nil
+	}
+	return store.Identity{}, inputErr("the identity exists in %d accounts; choose one with account", len(found))
+}
+
+// readStyleFile liest höchstens max Zeichen der Stildatei (nur eine
+// gewöhnliche Datei; ungültiges UTF-8 wird ersetzt).
+func readStyleFile(path string, max int) (string, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return "", false, fmt.Errorf("not a regular file")
+	}
+	// Ein Zeichen hat in UTF-8 höchstens 4 Bytes: Ist die Datei länger als
+	// limit, enthalten die gelesenen Bytes mehr als max Zeichen, und
+	// truncateRunes meldet die Kürzung. Mehr wird nie gelesen.
+	limit := int64(max)*utf8.UTFMax + 1
+	b, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		return "", false, err
+	}
+	text, cut := truncateRunes(strings.ToValidUTF8(string(b), string(utf8.RuneError)), max)
+	return text, cut, nil
+}

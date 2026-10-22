@@ -79,6 +79,7 @@ func Catalog(d Deps) []Operation {
 		DraftsAbandon(d),
 		DraftsMarkSent(d),
 		ApprovalsGet(d),
+		DraftsStyle(d),
 		IdentitiesAdd(d),
 		IdentitiesList(d),
 		IdentitiesSetDefault(d),

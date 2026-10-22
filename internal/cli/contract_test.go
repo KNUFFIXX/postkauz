@@ -175,6 +175,7 @@ var cliSamples = []cliSample{
 		"--signature-file", "{sigtext}", "--signature-html-file", "{sightml}", "--style-file", "{sigtext}", "--reply-prefix", "AW: ",
 		"--forward-prefix", "WG: ", "--default"}, false},
 	{"identities.list", []string{"identity", "list", "-a", "demo"}, false},
+	{"drafts.style", []string{"draft", "style", "demo@example.org", "-a", "demo", "--max-chars", "100"}, false},
 	{"identities.set_default", []string{"identity", "set-default", "1"}, false},
 	{"drafts.create", []string{"draft", "reply", "{html}", "--all", "--to", "Zweit <zweit@example.net>", "--cc", "c@example.net", "--bcc",
 		"b@example.net", "--subject", "Re: Rechnung", "--body-file", "{body}", "--attach", "{att}", "--no-quote", "--no-signature",

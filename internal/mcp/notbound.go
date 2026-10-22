@@ -36,5 +36,6 @@ var notOverMCP = map[string]string{
 	"identities.set_default": "admin, human only (A02 E2); CLI identity set-default",
 	"identities.remove":      "admin, human only (A02 E2); CLI identity remove",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
+	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
 }

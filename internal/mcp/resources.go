@@ -46,6 +46,9 @@ var resources = []resourceBinding{
 		desc: "A thread in date order with the new text of each message (untrusted)."},
 	{uri: "mail://{account}/message/{id}/attachment/{n}", template: true, name: "attachment", ops: []string{"attachments.text"},
 		desc: "Extracted text of attachment n (attachment id from the message) of a message (untrusted)."},
+	{uri: "mail://style/{identity}", template: true, name: "style", ops: []string{"drafts.style"},
+		desc: "Style notes the user wrote for a sender identity (address or id), to match tone and form in drafts. " +
+			"Written by the user (source config), not mail content."},
 }
 
 func (h *handler) covers(names []string) bool {
@@ -100,6 +103,10 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if v := q.Get("since"); v != "" {
 			in["since"] = v
 		}
+	case u.Host == "style" && len(seg) == 1 && identityRef(seg[0]):
+		// Vor den Konto-URIs: Ein Konto namens style hat mail://style/mailboxes;
+		// eine Identität ist eine Adresse (mit @) oder eine ID.
+		op, in = "drafts.style", map[string]any{"identity": seg[0], "max_chars": h.o.MaxChars}
 	case len(seg) == 1 && seg[0] == "mailboxes":
 		op, in["account"] = "mailboxes.list", u.Host
 	case len(seg) == 3 && seg[0] == "mailbox" && seg[2] == "overview":
@@ -151,6 +158,12 @@ func (h *handler) callMap(ctx context.Context, op string, in map[string]any) (op
 		return ops.Result{}, err
 	}
 	return h.call(ctx, op, b)
+}
+
+// identityRef: Adresse (mit @) oder ID einer Identität.
+func identityRef(s string) bool {
+	_, num := positive(s)
+	return num || strings.Contains(s, "@")
 }
 
 func positive(s string) (int64, bool) {

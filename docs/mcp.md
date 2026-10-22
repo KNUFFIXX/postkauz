@@ -93,7 +93,9 @@ Lesequellen für `@`-Verweise; sie laufen durch dieselben Scopes und dieselbe Un
 | `mail://policy` | die Richtlinie des aktuellen Schlüssels (JSON wie `mail_get_policy`) | S1.9 ✓ |
 | `mail://audit?since=` | Audit-Auszug (nur mit `audit:read`; ohne `since` 24 Stunden) | S1.9 ✓ |
 | `mail://{account}/draft/{id}` | Entwurf mit Status und Vorschau | S2 |
-| `mail://style/{identity}` | vom Nutzer hinterlegtes Stilprofil (Datei in der Konfiguration), damit Entwürfe den Ton treffen | S2 |
+| `mail://style/{identity}` | vom Nutzer hinterlegtes Stilprofil (Datei in der Konfiguration), damit Entwürfe den Ton treffen | S2.8 ✓ |
+
+**`mail://style/{identity}` (S2.8):** `{identity}` ist die Adresse (z. B. `mail://style/demo@example.org`) oder die ID einer Identität. Dahinter steht die Operation `drafts.style` (R0, Scope `mail:draft`, kein HumanOnly: Sie liest nur; die Identitätsverwaltung `identities.*` bleibt dem Menschen vorbehalten; CLI `draft style`): der Inhalt der Datei aus `identity add --style-file`, beim Lesen frisch gelesen, höchstens `max_chars` Zeichen (`truncated`), ungültiges UTF-8 ersetzt. Die Ausgabe trägt `source: "config"` und **keine** Untrusted-Hülle: Der Text stammt vom Nutzer, nicht aus einer E-Mail. Ohne Datei `has_style_file: false` und leerer Text; ist die Datei nicht lesbar, ein Fehler ohne Pfad. Eine Adresse, die es in mehreren Konten gibt, verlangt die ID. Ein Konto namens `style` bleibt erreichbar (`mail://style/mailboxes`): Als Identität gilt nur ein Segment mit `@` oder eine Zahl.
 
 ## 4. Prompts
 

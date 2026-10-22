@@ -1,8 +1,14 @@
 package ops
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // S2.8: Herkunft der Texte eines Entwurfs. Eigener Text und Signatur
@@ -67,5 +73,46 @@ func TestDraftOutputsSeparateOriginal(t *testing.T) {
 	}
 	if l := e.must(t, assistant, "drafts.list", map[string]any{}).(DraftsListOutput); l.Source != "draft" || len(l.Drafts) == 0 {
 		t.Fatalf("list = %+v", l)
+	}
+}
+
+// drafts.style liest die Stildatei einer Identität (Quelle config, keine
+// Hülle), gekürzt auf max_chars; ohne Datei leer, unbekannt = nicht gefunden.
+func TestDraftsStyle(t *testing.T) {
+	e := newDraftEnv(t, false)
+	f := filepath.Join(t.TempDir(), "stil.md")
+	if err := os.WriteFile(f, []byte("Kurz, freundlich, Sie-Form. Grüße: „Viele Grüße“.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.ExecForTest(`UPDATE identities SET style_file = ? WHERE id = 1`, f); err != nil {
+		t.Fatal(err)
+	}
+	out := e.must(t, assistant, "drafts.style", map[string]any{"identity": "Demo@Example.org"}).(DraftsStyleOutput)
+	if out.Source != "config" || out.Account != "demo" || out.IdentityID != 1 || !out.HasStyleFile || out.Truncated ||
+		!strings.HasPrefix(out.Text, "Kurz, freundlich") {
+		t.Fatalf("style = %+v", out)
+	}
+	// Standardidentität des einzigen Kontos, gekürzt.
+	if out = e.must(t, assistant, "drafts.style", map[string]any{"account": "demo", "max_chars": 4}).(DraftsStyleOutput); out.Text != "Kurz" || !out.Truncated {
+		t.Fatalf("cut = %+v", out)
+	}
+	if out = e.must(t, assistant, "drafts.style", map[string]any{"identity": "2"}).(DraftsStyleOutput); out.HasStyleFile || out.Text != "" {
+		t.Fatalf("no style file = %+v", out)
+	}
+	if _, err := e.do(t, assistant, "drafts.style", map[string]any{"identity": "fremd@example.net"}, false); !errors.Is(err, store.ErrIdentityNotFound) {
+		t.Fatalf("unknown identity: %v", err)
+	}
+	// Datei verschwunden: Fehler ohne Pfad.
+	_ = os.Remove(f)
+	if _, err := e.do(t, assistant, "drafts.style", map[string]any{"identity": "1"}, false); err == nil || strings.Contains(err.Error(), f) {
+		t.Fatalf("missing file: %v", err)
+	}
+	// Ohne mail:draft: nicht erlaubt.
+	reader := policy.Key{ID: "key:leser", Scopes: policy.Roles["reader"]}
+	if _, err := e.do(t, reader, "drafts.style", map[string]any{}, false); !errors.Is(err, ErrDenied) {
+		t.Fatalf("reader: %v", err)
+	}
+	if _, all := e.auditJSON(t); strings.Contains(all, "Kurz, freundlich") || strings.Contains(all, "fremd@example.net") {
+		t.Fatal("style text or identity address in the audit")
 	}
 }
