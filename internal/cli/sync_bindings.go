@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -158,6 +159,7 @@ func renderSync(w io.Writer, out any) error {
 	// Entwürfe (S2.5) und Suchindex (S1.7) vor den beiden Schlusszeilen,
 	// die Skripte auswerten.
 	renderSyncDrafts(w, o.Drafts)
+	renderDraftCheck(w, o.DraftCheck)
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {
@@ -204,6 +206,41 @@ func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
 	}
 	if d.Error != "" {
 		parts = append(parts, "error: "+termLine(d.Error))
+	}
+	fmt.Fprintf(w, "drafts: %s\n", strings.Join(parts, "; "))
+}
+
+// renderDraftCheck nennt, was die Prüfung nach dem Spiegeln an Entwürfen
+// geändert hat (S2.6): Zähler und Draft-IDs, keine Inhalte.
+func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
+	if c == nil || c.Empty() {
+		return
+	}
+	var parts []string
+	if n := c.SentByMessageID + c.SentByFallback; n > 0 {
+		how := []string{}
+		if c.SentByMessageID > 0 {
+			how = append(how, fmt.Sprintf("%d by Message-ID", c.SentByMessageID))
+		}
+		if c.SentByFallback > 0 {
+			how = append(how, fmt.Sprintf("%d by recipients, subject and text", c.SentByFallback))
+		}
+		ids := make([]string, 0, len(c.SentDraftIDs))
+		for _, id := range c.SentDraftIDs {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		parts = append(parts, fmt.Sprintf("%d sent in the mail client, now sent_by_human (%s; draft %s)", n, strings.Join(how, ", "),
+			strings.Join(ids, ", ")))
+	}
+	if c.Expired > 0 {
+		parts = append(parts, fmt.Sprintf("%d approval(s) ran out, back to status draft", c.Expired))
+	}
+	if c.Missing > 0 {
+		parts = append(parts, fmt.Sprintf("%d copy/copies gone from the Drafts folder without a matching sent message "+
+			"(close with draft mark-sent or draft abandon)", c.Missing))
+	}
+	if c.TakenOver > 0 {
+		parts = append(parts, fmt.Sprintf("%d edited in the mail client (taken over)", c.TakenOver))
 	}
 	fmt.Fprintf(w, "drafts: %s\n", strings.Join(parts, "; "))
 }

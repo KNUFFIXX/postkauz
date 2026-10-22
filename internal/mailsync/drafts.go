@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/crash"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -36,6 +37,9 @@ type DraftPusher interface {
 	Pending(ctx context.Context, accountID int64, retry bool) (pending, withCopy int, err error)
 	NoDraftsMailbox(ctx context.Context, accountID int64) error
 	Push(ctx context.Context, acc store.Account, mailboxID int64, app ops.DraftAppender, retry bool) (ops.DraftPushReport, error)
+	// AfterSync prüft die Entwürfe nach dem Spiegeln (S2.6): Ablauf der
+	// Freigabe, Versanderkennung, Stand der Serverkopie.
+	AfterSync(ctx context.Context, accountID int64) (drafts.CheckReport, error)
 }
 
 var _ DraftPusher = (*ops.DraftPusher)(nil)
@@ -183,6 +187,47 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.S
 		e.log().Info("copies of interrupted pushes found in the Drafts folder and recorded", "count", rep.Adopted)
 	}
 	return out, err
+}
+
+// checkDrafts prüft nach dem Spiegeln die Entwürfe des Kontos (S2.6; A02
+// E5, E6, E7): Freigaben, die abgelaufen sind, fallen auf draft zurück;
+// Entwürfe, deren Nachricht in Gesendet bzw. „Alle Nachrichten" liegt,
+// werden sent_by_human; eine abgelegte Kopie, die aus dem Entwürfe-Ordner
+// verschwunden ist oder bearbeitet wurde, wird missing bzw. taken_over.
+// Grundlage ist der Spiegel nach diesem Lauf; der Server wird dafür nicht
+// gefragt. nil = nichts geändert (oder kein Push konfiguriert).
+func (e *Engine) checkDrafts(ctx context.Context) (*drafts.CheckReport, error) {
+	if e.Drafts == nil {
+		return nil, nil
+	}
+	var rep drafts.CheckReport
+	// crash.Do (A02 A5): Ein Panic im Abgleich beendet den Lauf mit Fehler.
+	err := crash.Do("draft check", func() error {
+		var err error
+		rep, err = e.Drafts.Pusher.AfterSync(ctx, e.AccountID)
+		return err
+	})
+	if n := rep.SentByMessageID + rep.SentByFallback; n > 0 {
+		e.log().Info("drafts sent by the human detected", "count", n, "by_message_id", rep.SentByMessageID,
+			"by_fallback", rep.SentByFallback, "draft_ids", rep.SentDraftIDs)
+	}
+	if rep.Expired > 0 {
+		e.log().Info("approvals ran out; drafts back to status draft", "count", rep.Expired)
+	}
+	if rep.Missing+rep.TakenOver > 0 {
+		e.log().Info("copies in the Drafts folder gone or edited", "missing", rep.Missing, "taken_over", rep.TakenOver)
+	}
+	if err != nil {
+		return nilIfEmpty(rep), fmt.Errorf("drafts: %w", err)
+	}
+	return nilIfEmpty(rep), nil
+}
+
+func nilIfEmpty(r drafts.CheckReport) *drafts.CheckReport {
+	if r.Empty() {
+		return nil
+	}
+	return &r
 }
 
 // draftsMailbox liefert den Entwürfe-Ordner: path aus [draft] mailbox,

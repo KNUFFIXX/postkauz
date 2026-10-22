@@ -173,7 +173,7 @@ func TestFallbackMatch(t *testing.T) {
 func TestFallbackIgnoresQuoteAndSignature(t *testing.T) {
 	short := "Passt, danke."
 	d := fbDraft(short)
-	sig := "Max Muster\nMusterstraße 1\n41460 Neustadt\nTelefon 0000 111111\nwww.example.org"
+	sig := "Max Muster\nMusterstraße 1\n00000 Beispielstadt\nTelefon 0000 111111\nwww.example.org"
 	fd := NewFallbackDraft(d, compose.OwnText(short, ""), sig)
 	m := fbSent("Re: Termin am Montag", d.UpdatedAt)
 	if _, ok := fd.Match(m, short+"\n\n"+sig); !ok {

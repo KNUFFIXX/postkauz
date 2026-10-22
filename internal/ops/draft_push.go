@@ -249,6 +249,14 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	return nil
 }
 
+// AfterSync prüft die Entwürfe des Kontos nach dem Spiegeln (S2.6;
+// drafts.Service.CheckAfterSync): abgelaufene Freigaben (E7), vom Menschen
+// gesendete Entwürfe (E5) und verschwundene oder bearbeitete Kopien im
+// Entwürfe-Ordner (E6). Der Sync ruft sie am Ende jedes Laufs auf.
+func (p *DraftPusher) AfterSync(ctx context.Context, accountID int64) (drafts.CheckReport, error) {
+	return p.o.svc.CheckAfterSync(ctx, accountID)
+}
+
 // approvedMessage meldet, ob die gebaute Nachricht (Hash ohne Date) die
 // ist, die der Mensch freigegeben hat: erteilte Freigabe des Entwurfs mit
 // demselben message_hash.

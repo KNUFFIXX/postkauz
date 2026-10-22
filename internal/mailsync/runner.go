@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
@@ -156,6 +157,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 			out.MessagesIndexed += round.MessagesIndexed
 			out.IndexPending = round.IndexPending
 			addDrafts(&out, round.Drafts)
+			addDraftCheck(&out, round.DraftCheck)
 			if err != nil {
 				out.Errors++
 			}
@@ -199,6 +201,22 @@ func fill(out *ops.SyncOutput, rep Report) {
 		d := *rep.Drafts
 		out.Drafts = &d
 	}
+	if rep.DraftCheck != nil {
+		c := *rep.DraftCheck
+		out.DraftCheck = &c
+	}
+}
+
+// addDraftCheck zählt die Prüfung einer Runde zum Gesamtergebnis des
+// Dauerbetriebs.
+func addDraftCheck(out *ops.SyncOutput, c *drafts.CheckReport) {
+	if c == nil {
+		return
+	}
+	if out.DraftCheck == nil {
+		out.DraftCheck = &drafts.CheckReport{}
+	}
+	out.DraftCheck.Add(*c)
 }
 
 // addDrafts zählt das Ergebnis einer Ablage zum Gesamtergebnis des

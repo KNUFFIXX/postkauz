@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -66,6 +67,11 @@ type SyncOutput struct {
 	// Drafts: Ablage der Entwürfe im Entwürfe-Ordner (Job draft_push, S2.5);
 	// nil = nichts zu tun.
 	Drafts *SyncDrafts `json:"drafts,omitempty"`
+	// DraftCheck: Prüfung der Entwürfe nach dem Spiegeln (S2.6): als
+	// gesendet erkannt (E5), Freigabe abgelaufen (E7), Kopie im
+	// Entwürfe-Ordner verschwunden oder bearbeitet (E6); nil = nichts
+	// geändert.
+	DraftCheck *drafts.CheckReport `json:"draft_check,omitempty"`
 }
 
 // SyncDrafts ist das Ergebnis des Jobs draft_push in einem Sync.
