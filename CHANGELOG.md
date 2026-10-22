@@ -13,10 +13,24 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - S2.1 (Entscheid 36): `account set <name> --password-stdin` ersetzt ein gespeichertes Passwort (nur für Menschen).
 - S2.2: `internal/compose` baut Entwurfsnachrichten (RFC 5322, `multipart/alternative` und `mixed`, Kopfzeilen nach E11, Markdown über goldmark, Zitat und Weiterleitung aus bereinigtem Text, Anhänge aus Blobs oder `attach_dir`, typisierte Ablehnungsgründe).
 - S2.2: `sanitize.CleanHTML`, Allowlist-Bereiniger für ausgehendes HTML. Neue Abhängigkeit `github.com/yuin/goldmark` v1.8.6 (MIT).
+- S2.3: Entwürfe über die CLI: `draft new|reply|forward|edit|show|list|request|abandon|mark-sent`, `approve`, `reject`, `approval show`, `identity add|list|set-default|remove`. Entwürfe liegen lokal und werden für den Entwürfe-Ordner vorgemerkt (`remote: pending`); nichts wird je gesendet.
+- S2.3: Nur ein Mensch ohne `--key` darf freigeben, ablehnen, verwerfen, als gesendet markieren und Identitäten verwalten (`denied (human_only)`, Exit 3); `policy show --key` führt diese Operationen unter `human_only`.
+- S2.3: Jeder Übergang eines Entwurfs wird auditiert (Draft-ID, Zustand, Zähler, Freigabe, Hook), nie Betreff, Adressen oder Text. Anhänge mit Typ-Widerspruch sind erlaubt und werden mit Warnung gezeigt.
 
 ### Changed
 
 - S2.1: Die eigenen Adressen eines Kontos umfassen jetzt auch seine Identitäten (Betreff-Rückfall der Threads).
+- Schema 12 (Migrationen 0010 bis 0012: Entwürfe, `drafts.compose_options`, `approvals.message_hash`). MIME-Grenzen werden aus dem Inhalt abgeleitet. Längen-Grenzen der Entwurfsfelder sind `denied too_large` statt `invalid_input`.
+- Unter `-race` prüft der Vertragstest eine Stichprobe (jede Operation mit jeder Rolle einmal); die volle Matrix läuft ohne `-race`.
+
+### Fixed
+
+- Gegenprüfung S2.1–S2.3: Eingabewerte (Betreff, Begründung, Adressen, Datei- und Kontonamen) stehen nicht mehr in Fehlermeldungen, `--json`-Fehlern, Log oder Audit-Feldnamen.
+- Eine Freigabe bindet die fertig gebaute Nachricht (`message_hash`); eine geänderte Signatur, Reply-To, ein anderes Zitat oder ein anderer Anhang lässt `approve` mit `approval_stale` scheitern.
+- Kein Wettlauf mit dem Prüf-Hook und keine verlorenen gleichzeitigen Änderungen an Entwürfen (`draft_changed`).
+- Ausgehendes HTML erlaubt nur eine Positivliste von Stilangaben; `title`/`bgcolor` entfernt, `alt` als sichtbarer Text.
+- Betreffs und Namen mit `=?` werden immer RFC-2047-kodiert. Anhänge werden innerhalb des Restbudgets gelesen. Antworten mit langem Zitat sind nicht mehr `too_large` (Zitat gekürzt mit Hinweis).
+- Policy-Datei: `0`/leere Werte sind Fehler, Meldungen nennen keine Werte. Trockenläufe speichern keinen Rückfall einer abgelaufenen Freigabe.
 
 ## [0.1.0-rc2] – 2026-10-22
 
