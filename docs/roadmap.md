@@ -351,6 +351,10 @@ Auflagen aus dem Nachtrag 16.10.2026 zu A01 (Programmierstand des Betreibers):
 
 ## S2: Entwürfe (draft-only)
 
+### Teilabnahme S2.3 auf Windows (22.10.2026, bestanden)
+
+Durchgeführt von Claude per PowerShell auf dem Büro-PC (Entscheid 35), Testbau `0.2.0-dev-s23-31d7643`, Abnahme-Datenbank D2 (Schema 6 → 12 beim ersten Kommando). Protokoll und Skript: [protokolle/S23_windows.txt](protokolle/S23_windows.txt), [protokolle/S23_windows.ps1](protokolle/S23_windows.ps1). Alle 29 Schritte wie erwartet: Migration, `doctor` (Schema 12, Policy-Standard, `attach_dir`), `identity add`, `draft reply` (Re:, In-Reply-To, References, Signatur, Zitat), `draft request` → `approve` → `ready`, Änderung → `draft` und Freigabe `superseded`, alte Freigabe `approval_stale` (Exit 3), `policy show --key` mit Liste `human_only`, `approve --key` → `human_only` (Exit 3), `reject`, Trockenlauf ohne Spuren, versteckter Text → `hidden_text_in_draft`, Anhang außerhalb `attach_dir` → `attach_outside_dir`, Anhang in `attach_dir` ok, `abandon` → `draft_closed`, Schlüssel ohne `mail:draft` → `missing_scope`; im Audit (36 Einträge) und im Log kein Kanarienwort, kein Betreff, keine Adresse. Befunde (klein): Die Meldung bei fehlendem Scope hat noch die alte Form `ops: drafts.update: deny (missing_scope)` statt `denied (missing_scope): …`; die Zitatzeile ist englisch (`On …, … wrote:`), deutsch über `[draft] quote_line` einstellbar — für den Betreiber vor D5 als Beispiel in die Anleitung.
+
 ### Stand S2.3, Nachbesserung nach der Gegenprüfung (22.10.2026, erledigt)
 
 Gegenprüfung des Stands `630a084` (opus-pruefer): PASS mit Auflagen — 1 Blocker, 4 Wichtig, 8 Klein; die harten Grenzen (nur Menschen geben frei, draft-only, keine Datenverluste in den Migrationen) hielten. Nachbesserung in einem Opus-Subagenten, Commits `e6b1205`, `946aa94`, `c67875c`, `23a63ac`, `11d4eab` (Merge `0ab6305`).

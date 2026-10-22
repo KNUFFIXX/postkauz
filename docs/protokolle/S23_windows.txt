@@ -1,0 +1,294 @@
+S2.3-Probe auf Windows 11 (Büro-PC), 22.10.2026, durchgeführt von Claude per PowerShell (Entscheid 35).
+Programm: Testbau 0.2.0-dev-s23-31d7643 (Stand main 31d7643), Daten: Abnahme-Datenbank D2 (Schema 6 -> 12 beim ersten Kommando), Datenverzeichnis C:\Claude\postkauz-s23probe.
+Skript: docs/protokolle/S23_windows.ps1. API-Schlüssel maskiert.
+
+S2.3-Probe gestartet 22.10.2026 15:00:38
+
+> 01 version
+postkauz 0.2.0-dev-s23-31d7643 (go1.27.3 windows/amd64)
+[exit 0]
+
+> 02 accounts list (migriert D2-Bestand auf Schema 12)
+ID  NAME  EMAIL  PROVIDER  UNREAD  LAST SYNC             ALIASES
+1   demo         imap      156     2026-10-16T10:42:22Z  -
+[exit 0]
+
+> 03 doctor (erwartet schema 12, attach_dir, keine Policy-Datei)
+version:   0.2.0-dev-s23-31d7643
+config:    C:\Claude\postkauz-s23probe-config\config.toml (exists: false)
+data dir:  C:\Claude\postkauz-s23probe
+log:       C:\Claude\postkauz-s23probe\postkauz.log
+database:  ok (C:\Claude\postkauz-s23probe\postkauz.db)
+schema:    12 (program knows 12)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+policy:    C:\Claude\postkauz-s23probe-config\policy.toml (not found, built-in defaults; version 1)
+attach:    C:\Claude\postkauz-s23probe\attach [paths.attach_dir]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+search:    0 messages waiting for the index (index version 2)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 2 days not exported yet [audit.export_dir = not set]
+accounts:
+  demo: password missing, status new (env override: POSTKAUZ_PASSWORD_DEMO)
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+  - account demo has no password (keyring entry account/demo or POSTKAUZ_PASSWORD_DEMO)
+  - account demo still uses the old keyring entry account/demo, which holds no readable password; it moves to account/189c2f20/demo once the entry can be read (e.g. keyring unlocked) or POSTKAUZ_PASSWORD_DEMO is set
+[exit 0]
+
+> 04 search Rechnung --limit 1 --json
+{"id":196,"account":"demo","thread_id":155,"date":"2026-09-28T04:45:00Z","from":"Sören Straßburger \u003csoeren@strasse.example.org\u003e","subject":"Rechnungen für das Erdgeschoss","snippet":"Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen. Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig. Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin. Ä","flags":[],"has_attachments":false,"deleted_remote":false,"score":3.1035396620790543,"cursor":"eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTI2NzQwNjU5MjAsInMiOjMuMTAzNTM5NjYyMDc5MDU0MywiaSI6MTk2fQ","untrusted":true,"source":"email"}
+[exit 0]
+Nachricht fuer die Antwort: id 196
+
+> 05 identity add (erwartet ok)
+identity 1 of account demo: Demo Buero <demo@example.org> (signature text, default)
+[exit 0]
+
+> 06 draft reply (erwartet: draft 1 created, status draft, remote pending)
+draft 1 created (status draft, remote pending)
+message-id:  <pk.0688b654abdea292d76c@example.org>
+from:        Demo Buero <demo@example.org>
+to:          Sören Straßburger <soeren@strasse.example.org>
+subject:     Re: Rechnungen für das Erdgeschoss
+in-reply-to: <pk.00893.abb4c5c3@corpus.example.org>
+
+Danke, der Termin passt. KANARIENWORT
+
+Viele Gruesse
+Demo Buero
+
+On Mon, 28 Sep 2026 06:45 +0200, Sören Straßburger <soeren@strasse.example.org> wrote:
+> Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen.
+> Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig.
+> Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin.
+> Äpfel, Öfen und Übergrößen: Umlaute müssen überall korrekt ankommen.
+
+remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+nothing is sent: a human sends the draft in the mail client
+[exit 0]
+
+> 07 draft show 1 (erwartet Re:, Zitat, Signatur)
+draft 1 (reply) in account demo, status draft
+remote:      pending (the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s)
+message-id:  <pk.0688b654abdea292d76c@example.org>
+from:        Demo Buero <demo@example.org>
+to:          Sören Straßburger <soeren@strasse.example.org>
+subject:     Re: Rechnungen für das Erdgeschoss
+in-reply-to: <pk.00893.abb4c5c3@corpus.example.org>
+references:  <pk.00893.abb4c5c3@corpus.example.org>
+created:     2026-10-22T13:01:06Z by cli, changed 2026-10-22T13:01:06Z
+
+Danke, der Termin passt. KANARIENWORT
+
+Viele Gruesse
+Demo Buero
+
+On Mon, 28 Sep 2026 06:45 +0200, Sören Straßburger <soeren@strasse.example.org> wrote:
+> Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen.
+> Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig.
+> Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin.
+> Äpfel, Öfen und Übergrößen: Umlaute müssen überall korrekt ankommen.
+
+preview hash: 24aab1e6c59dc02e60bd986de08af53219ea92e22834b71791301d9ae84e3401
+[exit 0]
+
+> 08 draft request 1 (erwartet hook pass, pending_approval, approval 1)
+hook: pass
+draft 1: status pending_approval, approval 1 (until 2026-10-29T13:01:06Z); a human approves with: approve 1
+[exit 0]
+
+> 09 approve 1 (erwartet ready)
+approval 1 approved by DRACO\Admin: draft 1 is ready (valid until 2026-10-29T13:01:07Z); send it in your mail client, postkauz never sends
+[exit 0]
+
+> 10 draft edit 1 --subject TODO (erwartet Status draft, Freigabe superseded)
+draft 1 changed (status ready -> draft, remote pending)
+approval 1 superseded: the draft changed, submit it again with: draft request 1
+message-id:  <pk.0688b654abdea292d76c@example.org>
+from:        Demo Buero <demo@example.org>
+to:          Sören Straßburger <soeren@strasse.example.org>
+subject:     TODO Re: Rechnung
+in-reply-to: <pk.00893.abb4c5c3@corpus.example.org>
+
+Danke, der Termin passt. KANARIENWORT
+
+Viele Gruesse
+Demo Buero
+
+On Mon, 28 Sep 2026 06:45 +0200, Sören Straßburger <soeren@strasse.example.org> wrote:
+> Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen.
+> Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig.
+> Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin.
+> Äpfel, Öfen und Übergrößen: Umlaute müssen überall korrekt ankommen.
+
+remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+nothing is sent: a human sends the draft in the mail client
+[exit 0]
+
+> 11 approve 1 nach Aenderung (erwartet denied approval_stale oder approval_decided, Exit 3)
+postkauz-s23.exe : error: denied (approval_stale): approval 1 is superseded; the draft changed or the approval ran out, request a new one
+ 
+hint: the draft changed after it was submitted; submit it again with: draft request <id>
+[exit 3]
+
+> 12 key create test-agent reader
+key test-agent created (role reader: mail:read, mail:search, audit:read; writing calls run as dry run by default; expires 2027-01-20)
+This is the only time the key is shown. Store it now (e.g. in the MCP configuration as POSTKAUZ_KEY):
+
+  pk_key_***MASKIERT***
+
+Only its hash is stored. Lost it? Revoke it (key revoke test-agent) and create a new one.
+[exit 0]
+
+> 13 policy show --key test-agent (erwartet Liste human_only mit drafts.approve)
+key:             key:test-agent
+role:            reader
+scopes:          audit:read, mail:read, mail:search
+dry-run default: true
+expires:         2027-01-20
+max chars:       20000 per text for agents
+draft-only:      true (nothing is ever sent)
+operations:
+  accounts.list       mail:read    R0
+  mailboxes.list      mail:read    R0
+  mailboxes.overview  mail:read    R0
+  messages.get        mail:read    R0
+  messages.search     mail:search  R0
+  threads.get         mail:read    R0
+  attachments.list    mail:read    R0
+  attachments.text    mail:read    R0
+  audit.list          audit:read   R0
+  audit.verify        audit:read   R0
+  policy.get          any          R0
+never with a key (human only):
+  accounts.set: human_only
+  drafts.approve: human_only
+  drafts.reject: human_only
+  drafts.abandon: human_only
+  drafts.mark_sent: human_only
+  identities.add: human_only
+  identities.list: human_only
+  identities.set_default: human_only
+  identities.remove: human_only
+[exit 0]
+
+> 14 draft request 1 (erwartet approval 2)
+hook: pass
+draft 1: status pending_approval, approval 2 (until 2026-10-29T13:01:08Z); a human approves with: approve 2
+[exit 0]
+
+> 15 approve 2 --key test-agent (erwartet denied human_only, Exit 3)
+postkauz-s23.exe : error: denied (human_only): drafts.approve is for a human without a key
+ 
+hint: run it without --key; no API key may do this, whatever its role
+[exit 3]
+
+> 16 draft list --json (erwartet Entwurf 1 pending_approval)
+{"drafts":[{"draft_id":1,"account":"demo","kind":"reply","status":"pending_approval","subject":"TODO Re: Rechnung","recipients":1,"attachments":0,"remote":"pending","approval_id":2,"hook_result":"pass","updated_at":"2026-10-22T13:01:08Z"}]}
+[exit 0]
+
+> 17 reject 2 --reason (erwartet ok, Entwurf draft)
+approval 2 rejected by DRACO\Admin: draft 1 is draft
+[exit 0]
+
+> 18 draft new --dry-run (erwartet Vorschau, nichts angelegt)
+dry run: would create a draft (new) in account demo, status draft; nothing saved
+from:        Demo Buero <demo@example.org>
+to:          a@example.org
+subject:     Probe
+
+Neuer Text KANARIENWORT
+
+Viele Gruesse
+Demo Buero
+
+remote: dry run: nothing was saved or queued
+nothing is sent: a human sends the draft in the mail client
+[exit 0]
+
+> 19 draft list (erwartet nur Entwurf 1)
+ID  ACCOUNT  KIND   STATUS  APPROVAL  REMOTE   TO  ATT  CHANGED               SUBJECT
+1   demo     reply  draft   2         pending  1   0    2026-10-22T13:01:08Z  TODO Re: Rechnung
+[exit 0]
+
+> 20 draft new mit verstecktem Text (erwartet denied hidden_text_in_draft, Exit 3)
+postkauz-s23.exe : error: denied (hidden_text_in_draft): body_html: html contains text a human would not see
+ 
+hint: the HTML contains text a reader would not see; remove it
+[exit 3]
+
+> 21 draft new mit Anhang ausserhalb attach_dir (erwartet denied attach_outside_dir, Exit 3)
+postkauz-s23.exe : error: denied (attach_outside_dir): attachments[0]: path is outside attach_dir
+ 
+hint: attach files only from attach_dir (see: doctor)
+[exit 3]
+
+> 22 draft new mit Anhang in attach_dir (erwartet created)
+draft 2 created (status draft, remote pending)
+message-id:  <pk.2e8869db57fa51e89822@example.org>
+from:        Demo Buero <demo@example.org>
+to:          a@example.org
+subject:     Anhang ok
+
+Neuer Text KANARIENWORT
+
+Viele Gruesse
+Demo Buero
+
+attachments:
+  notiz.txt  text/plain  38 bytes
+remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+nothing is sent: a human sends the draft in the mail client
+[exit 0]
+
+> 23 draft abandon 1 (erwartet abandoned)
+draft 1: abandoned (was draft)
+[exit 0]
+
+> 24 draft edit 1 nach abandon (erwartet denied draft_closed, Exit 3)
+postkauz-s23.exe : error: denied (draft_closed): the draft is abandoned; it can no longer be changed
+ 
+hint: the draft is sent or abandoned; create a new one
+[exit 3]
+
+> 25 draft edit 2 --key test-agent (erwartet denied, reader hat kein mail:draft)
+postkauz-s23.exe : error: ops: drafts.update: deny (missing_scope)
+ 
+hint: the key lacks the required scope or the policy forbids this
+[exit 3]
+
+> 26 audit --since 30m --json (nur Zaehlung)
+36
+[exit 0]
+
+> 27 Kanarienwort im Audit (erwartet 0 Treffer)
+0
+[exit 0]
+
+> 28 Kanarienwort im Log (erwartet 0 Treffer)
+0
+[exit 0]
+
+> 29 doctor am Ende
+version:   0.2.0-dev-s23-31d7643
+config:    C:\Claude\postkauz-s23probe-config\config.toml (exists: false)
+data dir:  C:\Claude\postkauz-s23probe
+log:       C:\Claude\postkauz-s23probe\postkauz.log
+database:  ok (C:\Claude\postkauz-s23probe\postkauz.db)
+schema:    12 (program knows 12)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+policy:    C:\Claude\postkauz-s23probe-config\policy.toml (not found, built-in defaults; version 1)
+attach:    C:\Claude\postkauz-s23probe\attach [paths.attach_dir]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+search:    0 messages waiting for the index (index version 2)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 2 days not exported yet [audit.export_dir = not set]
+accounts:
+  demo: password missing, status new (env override: POSTKAUZ_PASSWORD_DEMO)
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+  - account demo has no password (keyring entry account/demo or POSTKAUZ_PASSWORD_DEMO)
+  - account demo still uses the old keyring entry account/demo, which holds no readable password; it moves to account/189c2f20/demo once the entry can be read (e.g. keyring unlocked) or POSTKAUZ_PASSWORD_DEMO is set
+[exit 0]
+S2.3-Probe beendet 22.10.2026 15:01:11
+ENDE
