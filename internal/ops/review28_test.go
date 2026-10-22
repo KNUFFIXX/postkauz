@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,5 +23,39 @@ func TestReviewK1QuoteStaysWrappedWithoutOriginalPointer(t *testing.T) {
 	if d.OriginalID != 0 || strings.Contains(d.BodyText, "> ") || d.Original == nil || d.Original.Part != "quote" ||
 		d.Original.Source != "email" || !strings.Contains(d.Original.Text, "\n> ") {
 		t.Fatalf("without pointer: body_text %q, original %+v", d.BodyText, d.Original)
+	}
+}
+
+// K2: Die Stildatei muss eine gewöhnliche Datei sein. Ein Symlink wird
+// weder beim Anlegen der Identität noch beim Lesen angenommen; der Fehler
+// nennt den Grund, nie den Pfad.
+func TestReviewK2StyleFileSymlinkRefused(t *testing.T) {
+	e := newDraftEnv(t, false)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "stil.md")
+	if err := os.WriteFile(target, []byte("Kurz und freundlich.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "verweis.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := e.st.ExecForTest(`UPDATE identities SET style_file = ? WHERE id = 1`, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.do(t, assistant, "drafts.style", map[string]any{"identity": "1"}, false)
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") || strings.Contains(err.Error(), dir) {
+		t.Fatalf("symlink: %v", err)
+	}
+	_, err = e.do(t, humanCLI, "identities.add", map[string]any{"account": "demo", "email": "stil@example.org", "style_file": link}, false)
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("identity add with a symlink: %v", err)
+	}
+	// Die Datei selbst geht.
+	if err := e.st.ExecForTest(`UPDATE identities SET style_file = ? WHERE id = 1`, target); err != nil {
+		t.Fatal(err)
+	}
+	if out := e.must(t, assistant, "drafts.style", map[string]any{"identity": "1"}).(DraftsStyleOutput); out.Text != "Kurz und freundlich.\n" {
+		t.Fatalf("regular file: %+v", out)
 	}
 }
