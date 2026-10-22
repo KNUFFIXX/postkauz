@@ -676,28 +676,35 @@ func applyApproval(x *store.DraftTx, d *store.Draft, eff ApprovalEffect, now tim
 // offene oder erteilte Freigabe superseded. Die Serverkopie bleibt (kein
 // Expunge im MVP).
 func (s *Service) Abandon(ctx context.Context, id int64) (Result, error) {
-	return s.close(ctx, id, EvAbandon, 0, "")
+	return s.close(ctx, id, EvAbandon, 0, "", "")
 }
 
 // MarkSent erklärt einen Entwurf für gesendet (nur Mensch, `draft
 // mark-sent`): sent_by_human, closed_at gesetzt, eine noch offene Freigabe
 // superseded (eine erteilte bleibt approved).
 func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
-	return s.close(ctx, id, EvMarkSent, 0, "")
+	return s.close(ctx, id, EvMarkSent, 0, "", "")
 }
 
 // SentDetected schließt einen Entwurf, dessen Versand der Sync erkannt hat
 // (E5, S2.6): sent_by_human mit der gesendeten Nachricht; reason ist
 // message_id oder fallback. Der Audit-Eintrag (Akteur system) steht in
 // derselben Transaktion.
-func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason string) (Result, error) {
+//
+// expect ist der Fingerprint des Stands, gegen den die Erkennung verglichen
+// hat ("" = ohne Prüfung, etwa beim Weg über die Message-ID, die sich nie
+// ändert). Der Rückfall-Abgleich liest die offenen Entwürfe vor dieser
+// Transaktion; hat ein anderer Schreiber den Inhalt seitdem geändert, passt
+// der Vergleich nicht mehr: draft_changed, nichts wird geschrieben, die
+// nächste Prüfung vergleicht den neuen Stand (Gegenprüfung S2.6–S2.8, K4).
+func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason, expect string) (Result, error) {
 	if reason != DetectMessageID && reason != DetectFallback {
 		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
 	}
-	return s.close(ctx, id, EvSentDetected, sentMessageID, reason)
+	return s.close(ctx, id, EvSentDetected, sentMessageID, reason, expect)
 }
 
-func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason string) (Result, error) {
+func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason, expect string) (Result, error) {
 	now := s.now()
 	var res Result
 	err := s.tx(ctx, func(x *store.DraftTx) error {
@@ -709,6 +716,9 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		t, err := Next(from, ev)
 		if err != nil {
 			return err
+		}
+		if expect != "" && Fingerprint(d) != expect {
+			return changed(d.ID)
 		}
 		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
 			return err

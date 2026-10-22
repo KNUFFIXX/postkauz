@@ -104,7 +104,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 			}
 			if ok && !claimed[mid] {
 				claimed[mid] = true
-				if done, err := s.markSent(ctx, d.ID, mid, DetectMessageID); err != nil {
+				if done, err := s.markSent(ctx, d.ID, mid, DetectMessageID, ""); err != nil {
 					return err
 				} else if done {
 					rep.SentByMessageID++
@@ -123,6 +123,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 
 func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, rep *CheckReport) error {
 	fds := make([]FallbackDraft, 0, len(open))
+	fps := map[int64]string{} // Fingerprint des verglichenen Stands (K4)
 	from, to := open[0].ContentChangedAt, open[0].ContentChangedAt
 	sigs := map[int64]string{}
 	for _, d := range open {
@@ -142,6 +143,7 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 			continue // nichts, woran sich der Rückfall festhalten könnte
 		}
 		fds = append(fds, fd)
+		fps[d.ID] = Fingerprint(d)
 		if d.ContentChangedAt.Before(from) {
 			from = d.ContentChangedAt
 		}
@@ -221,7 +223,7 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 		}
 		usedDraft[p.d], claimed[c.ID] = true, true
 		id := fds[p.d].ID
-		done, err := s.markSent(ctx, id, c.ID, DetectFallback)
+		done, err := s.markSent(ctx, id, c.ID, DetectFallback, fps[id])
 		if err != nil {
 			return err
 		}
@@ -248,11 +250,12 @@ func sentText(b store.Body) string {
 
 // markSent schließt einen Entwurf als gesendet (SentDetected). Ist er
 // inzwischen abgeschlossen (ein anderer Prozess war schneller: mark-sent,
-// abandon), ist das kein Fehler; done ist dann false.
-func (s *Service) markSent(ctx context.Context, id, messageID int64, reason string) (bool, error) {
-	_, err := s.SentDetected(ctx, id, messageID, reason)
+// abandon) oder sein Inhalt nicht mehr der verglichene (expect, K4), ist
+// das kein Fehler; done ist dann false.
+func (s *Service) markSent(ctx context.Context, id, messageID int64, reason, expect string) (bool, error) {
+	_, err := s.SentDetected(ctx, id, messageID, reason, expect)
 	switch ReasonOf(err) {
-	case ReasonDraftClosed, ReasonInvalidTransition:
+	case ReasonDraftClosed, ReasonInvalidTransition, ReasonDraftChanged:
 		return false, nil
 	}
 	return err == nil, err

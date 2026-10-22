@@ -71,3 +71,39 @@ func TestDetectSentBeforeExpiry(t *testing.T) {
 		}
 	}
 }
+
+// K4: Der Rückfall-Abgleich liest die offenen Entwürfe vor der
+// Transaktion. Hat ein anderer Schreiber den Inhalt seitdem geändert,
+// schließt SentDetected den Entwurf nicht (draft_changed), und markSent
+// zählt das nicht als Fehler; mit dem aktuellen Fingerprint schließt er.
+func TestSentDetectedChecksFingerprint(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	ctx := context.Background()
+	d := e.fallbackDraft("Wartung Aufzug")
+	seen := Fingerprint(d)
+	mid := m.webmailSent("web-1@example.org", "Wartung Aufzug", e.now.Add(time.Minute))
+	c := ContentOf(d)
+	c.BodyMarkdown = "Ganz anderer Text, geändert nach dem Lesen."
+	if _, err := e.svc.Update(ctx, d.ID, c, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.SentDetected(ctx, d.ID, mid, DetectFallback, seen); ReasonOf(err) != ReasonDraftChanged {
+		t.Fatalf("stale fingerprint: %v", err)
+	}
+	if done, err := e.svc.markSent(ctx, d.ID, mid, DetectFallback, seen); done || err != nil {
+		t.Fatalf("markSent with a stale fingerprint = %v, %v", done, err)
+	}
+	if got := e.draft(d.ID); got.Status != string(StatusDraft) || got.SentMessageID != 0 {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+	if _, ok := e.lastAudit(OpSentDetected); ok {
+		t.Fatal("sent_detected audited for a changed draft")
+	}
+	if _, err := e.svc.SentDetected(ctx, d.ID, mid, DetectFallback, Fingerprint(e.draft(d.ID))); err != nil {
+		t.Fatalf("current fingerprint: %v", err)
+	}
+	if got := e.draft(d.ID); got.Status != string(StatusSentByHuman) || got.SentMessageID != mid {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+}
