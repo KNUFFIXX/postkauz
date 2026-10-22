@@ -3,6 +3,7 @@ package compose
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -110,9 +111,47 @@ func MessageHash(raw []byte) string {
 func addrList(l []Address) string {
 	s := make([]string, len(l))
 	for i, a := range l {
+		if strings.Contains(a.Name, "=?") {
+			// Wie beim Betreff (K4): ein Name, der wie ein encoded-word
+			// aussieht, wird selbst kodiert, sonst dekodiert ihn der Client.
+			s[i] = encodeWords(a.Name) + " <" + a.Address + ">"
+			continue
+		}
 		s[i] = (&mail.Address{Name: a.Name, Address: a.Address}).String()
 	}
 	return strings.Join(s, ", ")
+}
+
+// headerWord kodiert einen Kopfzeilentext nach RFC 2047, wenn nötig
+// (Nicht-ASCII). Enthält er wörtlich "=?", wird er immer kodiert
+// (Gegenprüfung S2.3, K4): Ein Betreff wie "=?utf-8?q?=E2=80=AE?=" ginge
+// sonst unkodiert durch, und der Mailclient des Empfängers dekodierte ihn
+// zu Zeichen wie U+202E (Schreibrichtung umkehren), die der Mensch beim
+// Prüfen nicht sah.
+func headerWord(v string) string {
+	if strings.Contains(v, "=?") {
+		return encodeWords(v)
+	}
+	return mime.QEncoding.Encode("utf-8", v)
+}
+
+// encodeWords kodiert v vollständig als Folge von encoded-words (Base64,
+// UTF-8), jedes höchstens 75 Zeichen lang, getrennt durch Leerzeichen (die
+// ein Decoder zwischen encoded-words entfernt). Ein Wort endet nie mitten
+// in einem Zeichen.
+func encodeWords(v string) string {
+	const prefix, suffix, max = "=?utf-8?b?", "?=", 75
+	maxBytes := (max - len(prefix) - len(suffix)) / 4 * 3
+	var words []string
+	for len(v) > 0 {
+		n := min(len(v), maxBytes)
+		for n < len(v) && n > 0 && !utf8.RuneStart(v[n]) {
+			n--
+		}
+		words = append(words, prefix+base64.StdEncoding.EncodeToString([]byte(v[:n]))+suffix)
+		v = v[n:]
+	}
+	return strings.Join(words, " ")
 }
 
 func idList(ids []string) string {
@@ -145,7 +184,7 @@ func (b *builder) write(w io.Writer, atts []loadedAttachment) error {
 		[2]string{"To", addrList(m.To)},
 		[2]string{"Cc", addrList(m.Cc)},
 		[2]string{"Bcc", addrList(m.Bcc)},
-		[2]string{"Subject", mime.QEncoding.Encode("utf-8", m.Subject)},
+		[2]string{"Subject", headerWord(m.Subject)},
 		[2]string{"Message-ID", "<" + m.MessageID + ">"},
 		[2]string{"In-Reply-To", inReplyTo},
 		[2]string{"References", idList(m.References)},

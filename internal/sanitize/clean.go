@@ -60,13 +60,21 @@ var cleanAllowed = map[atom.Atom]bool{
 var cleanVoid = map[atom.Atom]bool{atom.Br: true, atom.Hr: true, atom.Img: true, atom.Col: true, atom.Wbr: true}
 
 // cleanAttrs sind die erlaubten Attribute (für alle erlaubten Elemente);
-// href und src prüft cleanURL, style prüft cleanStyle.
+// href und src prüft cleanURL, style prüft cleanStyle, color wie die
+// Eigenschaft color (cleanstyle.go). Nicht erlaubt (Gegenprüfung S2.3, W3):
+// title (Tooltip-Text, den niemand liest), bgcolor (Hintergrund: Text in
+// Hintergrundfarbe), alt (wird als sichtbarer Text hinter das Bild gesetzt).
 var cleanAttrs = map[string]bool{
-	"title": true, "dir": true, "lang": true, "align": true, "valign": true, "width": true,
+	"dir": true, "lang": true, "align": true, "valign": true, "width": true,
 	"height": true, "colspan": true, "rowspan": true, "border": true, "cellpadding": true,
-	"cellspacing": true, "bgcolor": true, "color": true, "face": true, "size": true, "start": true,
-	"type": true, "alt": true, "style": true, "href": true, "src": true,
+	"cellspacing": true, "color": true, "face": true, "size": true, "start": true,
+	"type": true, "style": true, "href": true, "src": true,
 }
+
+// cleanShrinking sind Elemente, die die Schrift verkleinern; sie wirken nur
+// eine Ebene tief (verschachtelt wird ausgepackt), sonst ließe sich Text
+// durch Verschachteln unlesbar klein machen (W3).
+var cleanShrinking = map[atom.Atom]bool{atom.Small: true, atom.Sub: true, atom.Sup: true}
 
 // CleanHTML bereinigt HTML für eine ausgehende Nachricht mit einer
 // Allowlist (A02 E3): keine Skripte, Stile, Formulare, eingebetteten
@@ -97,8 +105,9 @@ func CleanHTML(src string) CleanResult {
 }
 
 type cleaner struct {
-	out strings.Builder
-	res CleanResult
+	out    strings.Builder
+	res    CleanResult
+	shrink int // Tiefe der offenen small/sub/sup
 }
 
 func findBody(n *html.Node, depth int) *html.Node {
@@ -133,7 +142,7 @@ func (c *cleaner) node(n *html.Node, depth int) {
 		c.res.RemovedElements++
 		return
 	}
-	if !cleanAllowed[n.DataAtom] {
+	if !cleanAllowed[n.DataAtom] || (cleanShrinking[n.DataAtom] && c.shrink > 0) {
 		c.res.RemovedElements++
 		c.children(n, depth)
 		return
@@ -152,8 +161,21 @@ func (c *cleaner) node(n *html.Node, depth int) {
 		c.out.WriteString(" " + a.Key + `="` + html.EscapeString(a.Val) + `"`)
 	}
 	c.out.WriteString(">")
+	if n.DataAtom == atom.Img {
+		// Der Alternativtext zeigt ein Mailclient nur, wenn das Bild fehlt;
+		// er bleibt sichtbar und gekürzt hinter dem Bild (W3).
+		if v, ok := attr(n, "alt"); ok {
+			if alt := cleanAlt(v); alt != "" {
+				c.out.WriteString(" [" + html.EscapeString(alt) + "]")
+			}
+		}
+	}
 	if cleanVoid[n.DataAtom] {
 		return
+	}
+	if cleanShrinking[n.DataAtom] {
+		c.shrink++
+		defer func() { c.shrink-- }()
 	}
 	c.children(n, depth)
 	c.out.WriteString("</" + n.DataAtom.String() + ">")
@@ -172,6 +194,9 @@ func (c *cleaner) attributes(n *html.Node) ([]html.Attribute, bool) {
 	hasHref, hasSrc := false, false
 	for _, a := range n.Attr {
 		key := strings.ToLower(a.Key)
+		if key == "alt" && n.DataAtom == atom.Img && a.Namespace == "" {
+			continue // wird sichtbarer Text hinter dem Bild (node)
+		}
 		if a.Namespace != "" || !cleanAttrs[key] {
 			c.res.RemovedAttributes++
 			continue
@@ -200,12 +225,20 @@ func (c *cleaner) attributes(n *html.Node) ([]html.Attribute, bool) {
 			hasSrc = true
 			out = append(out, html.Attribute{Key: key, Val: u})
 		case "style":
-			v, ok := cleanStyle(a.Val)
-			if !ok {
+			v, ok, dropped := cleanStyleDecls(a.Val)
+			if dropped {
 				c.res.RemovedAttributes++
+			}
+			if !ok {
 				continue
 			}
 			out = append(out, html.Attribute{Key: key, Val: v})
+		case "color":
+			if !readableColor(strings.ToLower(strings.TrimSpace(a.Val))) {
+				c.res.RemovedAttributes++
+				continue
+			}
+			out = append(out, html.Attribute{Key: key, Val: Text(a.Val)})
 		default:
 			out = append(out, html.Attribute{Key: key, Val: Text(a.Val)})
 		}
@@ -252,23 +285,4 @@ func cleanURL(v string, schemes ...string) (string, bool) {
 		return u.String(), true
 	}
 	return "", false
-}
-
-// cleanStyle lässt Stilangaben ohne Remote-Inhalt und ohne Tricks durch.
-// Angaben mit url(), image-set(), @import, expression(), behavior,
-// -moz-binding, javascript:, Kommentaren oder CSS-Escapes (mit denen sich
-// all das verschleiern ließe) fallen als Ganzes weg.
-func cleanStyle(v string) (string, bool) {
-	v = Text(v)
-	low := strings.ToLower(v)
-	for _, bad := range []string{"url(", "image-set(", "image(", "@import", "expression", "behavior",
-		"-moz-binding", "javascript:", "/*", `\`, "<", ">"} {
-		if strings.Contains(low, bad) {
-			return "", false
-		}
-	}
-	if strings.ContainsFunc(v, unicode.IsControl) {
-		return "", false
-	}
-	return strings.TrimSpace(v), true
 }

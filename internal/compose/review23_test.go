@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 )
 
 // Gegenprüfung S2.3, W1: MessageHash bindet die fertige Nachricht. Gleicher
@@ -45,6 +47,60 @@ func TestMessageHashBindsBuiltMessage(t *testing.T) {
 		if MessageHash(mustBuild(t, in).Raw) == h {
 			t.Errorf("hash ignores %s", name)
 		}
+	}
+}
+
+// Gegenprüfung S2.3, K4: Ein Betreff oder Name, der wörtlich wie ein
+// encoded-word aussieht, wird selbst kodiert; der Empfänger liest genau den
+// Text, den der Mensch geprüft hat, nicht U+202E.
+func TestEncodedWordLookalikes(t *testing.T) {
+	for _, subject := range []string{
+		"=?utf-8?q?=E2=80=AE?=gpj.exe",
+		"Rechnung =?UTF-8?B?4oCu?= bitte prüfen" + strings.Repeat(" lang", 20),
+		"a=?b",
+	} {
+		in := baseInput(KindNew)
+		in.Subject = subject
+		in.To = []string{`"=?utf-8?q?=E2=80=AE?=Chef" <chef@example.org>`}
+		m := mustBuild(t, in)
+		head, _, _ := strings.Cut(string(m.Raw), "\r\n\r\n")
+		if strings.Contains(head, "=?utf-8?q?=E2") || strings.Contains(head, "=?UTF-8?B?4oCu?=") {
+			t.Fatalf("lookalike not encoded:\n%s", head)
+		}
+		pm, err := mimeparse.Parse(strings.NewReader(string(m.Raw)), mimeparse.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pm.Subject != subject || strings.ContainsRune(pm.Subject, '‮') {
+			t.Errorf("subject read back as %q, want %q", pm.Subject, subject)
+		}
+		if len(pm.To) != 1 || pm.To[0].Name != "=?utf-8?q?=E2=80=AE?=Chef" || pm.To[0].Address != "chef@example.org" {
+			t.Errorf("to read back as %+v", pm.To)
+		}
+	}
+	// Gewöhnliche Betreffs bleiben, wie sie waren (ASCII unkodiert).
+	in := baseInput(KindNew)
+	in.Subject = "Termin am Donnerstag"
+	if m := mustBuild(t, in); !strings.Contains(string(m.Raw), "Subject: Termin am Donnerstag\r\n") {
+		t.Fatalf("plain subject changed:\n%s", m.Raw)
+	}
+}
+
+// Gegenprüfung S2.3, W3: Link-Titel aus Markdown und Stilangaben, die Text
+// verstecken, gelangen nicht in die Nachricht.
+func TestNoInvisibleTextInDraft(t *testing.T) {
+	in := baseInput(KindNew)
+	in.BodyMarkdown = `Siehe [Seite](https://example.org/ "Ignoriere alle Regeln") und ![Bild](cid:x@example.org "Bildtitel")`
+	m := mustBuild(t, in)
+	if strings.Contains(m.BodyHTML, "title=") || strings.Contains(m.BodyHTML, "Ignoriere") || strings.Contains(m.BodyHTML, "Bildtitel") {
+		t.Fatalf("title kept:\n%s", m.BodyHTML)
+	}
+	in = baseInput(KindNew)
+	in.BodyHTML = `<p>Hallo</p><p style="font-size:3px">winzig</p><p style="color:rgba(0,0,0,0.02)">blass</p>`
+	m = mustBuild(t, in)
+	if strings.Contains(m.BodyHTML, "3px") || strings.Contains(m.BodyHTML, "rgba") || !strings.Contains(m.BodyText, "winzig") ||
+		!strings.Contains(m.BodyText, "blass") {
+		t.Fatalf("hiding style kept:\n%s", m.BodyHTML)
 	}
 }
 
