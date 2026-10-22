@@ -120,7 +120,7 @@ var tools = []toolBinding{
 			"since: duration back from now (10m, 24h, 7d), a date or RFC 3339; default 24h."},
 	{tool: "mail_get_policy", op: "policy.get", title: "What may this key do?",
 		desc: "Describe the policy of the key this server runs with: scopes, allowed operations with risk level, dry-run default, " +
-			"character budget. This server is read-only and draft-only: it never sends or deletes mail."},
+			"character budget. This server never sends, deletes or moves mail; drafts only with mail:draft."},
 
 	// Entwürfe (S2.8, A02 S2.8; Scope mail:draft). Freigeben, ablehnen,
 	// verwerfen, als gesendet markieren und Identitäten verwalten bleiben
