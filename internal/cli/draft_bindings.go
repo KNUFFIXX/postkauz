@@ -144,6 +144,10 @@ func draftEditFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-attachments", false, "remove all attachments")
 	cmd.Flags().Bool("quote", true, "quote the original message (--quote=false removes the quote)")
 	cmd.Flags().Bool("signature", true, "append the signature (--signature=false removes it)")
+	// Wie bei draft new|reply (S2.7: "Felder wie new"): --no-quote und
+	// --no-signature sind dasselbe wie --quote=false bzw. --signature=false.
+	cmd.Flags().Bool("no-quote", false, "remove the quote of the original message (same as --quote=false)")
+	cmd.Flags().Bool("no-signature", false, "remove the signature (same as --signature=false)")
 }
 
 // addrFlag liest eine wiederholbare Adressoption; leere Einträge fallen weg
@@ -264,7 +268,13 @@ func draftEditInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage,
 		m["attachments"] = []any{}
 	}
 	for _, n := range []string{"quote", "signature"} {
-		if f.Changed(n) {
+		no, _ := f.GetBool("no-" + n)
+		switch {
+		case no && f.Changed(n):
+			return nil, "", usageError{fmt.Errorf("use either --%s or --no-%s", n, n)}
+		case no:
+			m[n] = false
+		case f.Changed(n):
 			m[n], _ = f.GetBool(n)
 		}
 	}

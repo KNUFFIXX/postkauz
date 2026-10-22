@@ -296,3 +296,105 @@ func deleteDraftCopy(t *testing.T, addr string, uid int64) {
 		t.Fatal(err)
 	}
 }
+
+// S2.7: identity add|list|set-default|remove über die CLI (Text und
+// --json), nur für den Menschen; unbekannte ID ist not_found.
+func TestIdentityCommands(t *testing.T) {
+	setupEnv(t)
+	seedS16(t)
+	step := func(want int, args ...string) (string, string) {
+		t.Helper()
+		code, out, errs := run(t, args...)
+		if code != want {
+			t.Fatalf("%v: exit %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errs)
+		}
+		return out, errs
+	}
+	out, _ := step(ExitOK, "identity", "add", "-a", "demo", "--email", "demo@example.org", "--name", "Demo Büro")
+	if !strings.Contains(out, "identity 1 of account demo: Demo Büro <demo@example.org> (signature none, default)") {
+		t.Fatalf("add: %s", out)
+	}
+	out, _ = step(ExitOK, "identity", "add", "-a", "demo", "--email", "verwaltung@example.org", "--reply-prefix", "AW: ", "--json")
+	var r ops.IdentityResultOutput
+	if err := json.Unmarshal([]byte(out), &r); err != nil || r.Identity.ID != 2 || r.Identity.Default {
+		t.Fatalf("add --json: %v %s", err, out)
+	}
+	out, _ = step(ExitOK, "identity", "set-default", "2")
+	if !strings.Contains(out, "identity 2 of account demo: verwaltung@example.org (signature none, default)") {
+		t.Fatalf("set-default: %s", out)
+	}
+	out, _ = step(ExitOK, "identity", "list", "-a", "demo")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[2], "2 ") || !strings.Contains(lines[2], "yes") || strings.Contains(lines[1], "yes") ||
+		!strings.Contains(lines[2], `"AW: "`) {
+		t.Fatalf("list:\n%s", out)
+	}
+	if _, errs := step(ExitError, "identity", "remove", "1", "--key", "unbekannt-s27"); strings.Contains(errs, "unbekannt-s27") ||
+		!strings.Contains(errs, "api key not found") {
+		t.Fatalf("unknown key: %s", errs)
+	}
+	step(ExitOK, "key", "create", "--name", "verwalter", "--role", "admin")
+	var errs string
+	if _, errs = step(ExitDenied, "identity", "remove", "1", "--key", "verwalter"); !strings.Contains(errs, "denied (human_only)") {
+		t.Fatalf("remove --key: %s", errs)
+	}
+	out, _ = step(ExitOK, "identity", "remove", "1", "--dry-run")
+	if !strings.HasPrefix(out, "dry run: identity 1") {
+		t.Fatalf("remove --dry-run: %s", out)
+	}
+	step(ExitOK, "identity", "remove", "1")
+	out, _ = step(ExitOK, "identity", "list", "--json")
+	var l ops.IdentitiesListOutput
+	if err := json.Unmarshal([]byte(out), &l); err != nil || len(l.Identities) != 1 || l.Identities[0].ID != 2 {
+		t.Fatalf("list --json after remove: %v %s", err, out)
+	}
+	if _, errs = step(ExitError, "identity", "remove", "1", "--json"); !strings.Contains(errs, `"code":"not_found"`) {
+		t.Fatalf("remove twice: %s", errs)
+	}
+}
+
+// S2.7: draft edit kennt die Optionen von draft new|reply (--no-quote,
+// --no-signature) zusätzlich zu --quote=false/--signature=false;
+// widersprüchliche Angaben sind Eingabefehler.
+func TestDraftEditNoQuoteNoSignature(t *testing.T) {
+	setupEnv(t)
+	seedS16(t)
+	dir := t.TempDir()
+	sig := filepath.Join(dir, "sig.txt")
+	if err := os.WriteFile(sig, []byte("Signaturzeile-S27"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := run(t, "identity", "add", "-a", "demo", "--email", "demo@example.org", "--signature-file", sig); code != ExitOK {
+		t.Fatalf("identity add: %d %s %s", code, out, errs)
+	}
+	if code, out, errs := run(t, "draft", "reply", "frage@example.org", "-a", "demo"); code != ExitOK {
+		t.Fatalf("reply: %d %s %s", code, out, errs)
+	}
+	show := func() ops.DraftDetail {
+		t.Helper()
+		_, out, _ := run(t, "draft", "show", "1", "--json")
+		var d ops.DraftDetail
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("show: %v %s", err, out)
+		}
+		return d
+	}
+	if d := show(); !d.Quote || !d.Signature || !strings.Contains(d.BodyText, "Signaturzeile-S27") || !strings.Contains(d.BodyText, "> Die Heizung") {
+		t.Fatalf("before: %+v", d)
+	}
+	if code, _, errs := run(t, "draft", "edit", "1", "--no-quote", "--quote=true"); code != ExitUsage || !strings.Contains(errs, "--quote or --no-quote") {
+		t.Fatalf("contradiction: %d %s", code, errs)
+	}
+	if code, out, errs := run(t, "draft", "edit", "1", "--no-quote", "--no-signature"); code != ExitOK || !strings.Contains(out, "draft 1 changed") {
+		t.Fatalf("edit: %d %s %s", code, out, errs)
+	}
+	if d := show(); d.Quote || d.Signature || strings.Contains(d.BodyText, "Signaturzeile-S27") || strings.Contains(d.BodyText, "> Die Heizung") {
+		t.Fatalf("after: %+v", d)
+	}
+	if code, out, errs := run(t, "draft", "edit", "1", "--signature=true"); code != ExitOK || !strings.Contains(out, "draft 1 changed") {
+		t.Fatalf("signature back: %d %s %s", code, out, errs)
+	}
+	if d := show(); !d.Signature || d.Quote {
+		t.Fatalf("signature back: %+v", d)
+	}
+}

@@ -71,7 +71,8 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, store.ErrKeyExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
 	case errors.Is(err, store.ErrKeyNotFound):
-		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list keys with: key list"}
+		// Ohne den Namen (S2.7: keine Eingabewerte in Fehlermeldungen).
+		return ExitError, ErrorInfo{Code: "not_found", Message: "api key not found", Hint: "list keys with: key list"}
 	case errors.Is(err, ops.ErrKeyMissing), errors.Is(err, ops.ErrKeyInvalid), errors.Is(err, ops.ErrKeyRevoked),
 		errors.Is(err, ops.ErrKeyExpired):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "create a key with: key create --name <name> --role reader"}
