@@ -11,6 +11,16 @@
         postkauz.exe audit export --quiet [--to <ExportDir>] [--profile <Profile>]
 
     once a day. Missed runs (PC switched off) are started as soon as possible.
+
+    The task gets the data directory and the configuration file that
+    "postkauz.exe doctor" shows right now, as --data-dir and --config. So it
+    works on exactly the same data as your PowerShell window, even if
+    POSTKAUZ_DATA_DIR is only set in that window. If Windows redirects the
+    data directory into the folder of an app package (this happens when
+    PostKauz is started from a packaged app such as the Claude desktop app
+    and the data directory is under %LOCALAPPDATA% or %APPDATA%), the script
+    stops: the Task Scheduler would see a different, empty folder. Use a data
+    directory outside these folders, for example with -DataDir C:\PostKauz\data.
     The task runs only while you are logged on, so that drive letters of
     Google Drive and network shares are available. By default it runs without
     a console window (conhost.exe --headless).
@@ -26,6 +36,11 @@
 .PARAMETER ExePath
     Full path to postkauz.exe. Default: postkauz.exe next to this script,
     otherwise C:\PostKauz\postkauz.exe.
+
+.PARAMETER DataDir
+    PostKauz data directory (--data-dir). Default: the data directory that
+    "postkauz.exe doctor" shows (POSTKAUZ_DATA_DIR, data_dir in the
+    configuration, otherwise %LOCALAPPDATA%\postkauz).
 
 .PARAMETER ExportDir
     Folder for the export files (a second location, not the data directory).
@@ -54,11 +69,15 @@
     powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -ExportDir "G:\My Drive\PostKauz-Audit"
 
 .EXAMPLE
+    powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -DataDir "C:\PostKauz\data" -ExportDir "G:\My Drive\PostKauz-Audit"
+
+.EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -Unregister
 #>
 [CmdletBinding()]
 param(
     [string]$ExePath = "",
+    [string]$DataDir = "",
     [string]$ExportDir = "",
     [string]$At = "12:30",
     [string]$TaskName = "PostKauz audit export",
@@ -90,11 +109,8 @@ function Get-QuotedArgument {
 }
 
 function Get-DoctorReport {
-    param([string]$Exe, [string]$ProfileName)
-    $doctorArgs = @("doctor", "--json")
-    if ($ProfileName -ne "") {
-        $doctorArgs += @("--profile", $ProfileName)
-    }
+    param([string]$Exe, [string[]]$PathArgs)
+    $doctorArgs = @("doctor", "--json") + $PathArgs
     $raw = & $Exe @doctorArgs
     if ($null -eq $raw) {
         throw "postkauz.exe doctor --json printed nothing"
@@ -145,14 +161,59 @@ if (-not [datetime]::TryParseExact($At, "HH:mm", [Globalization.CultureInfo]::In
     throw ("-At must be a time like 12:30, not '" + $At + "'")
 }
 
-# 3. Exportziel pruefen: Parameter oder [audit] export_dir
-$report = Get-DoctorReport -Exe $ExePath -ProfileName $ProfileName
+# 3. Datenverzeichnis und Konfiguration aufloesen (A7, Befund D3.3c): Die
+# Aufgabe bekommt genau die Pfade, die doctor jetzt zeigt, als --data-dir und
+# --config. Leitet Windows sie in einen Paketordner um (MSIX), sieht die
+# Aufgabenplanung einen anderen Ordner: dann abbrechen.
+$pathArgs = @()
+if ($ProfileName -ne "") {
+    $pathArgs += @("--profile", $ProfileName)
+}
+if ($DataDir -ne "") {
+    $pathArgs += @("--data-dir", $DataDir)
+}
+$report = Get-DoctorReport -Exe $ExePath -PathArgs $pathArgs
+if ((Get-ReportValue -Report $report -Name "config_error") -ne "") {
+    throw ("PostKauz configuration error: " + (Get-ReportValue -Report $report -Name "config_error"))
+}
+$redirectedData = Get-ReportValue -Report $report -Name "data_dir_real"
+$redirectedConfig = Get-ReportValue -Report $report -Name "config_path_real"
+$appPackage = Get-ReportValue -Report $report -Name "app_package"
+if ($redirectedData -ne "" -or $redirectedConfig -ne "" -or $appPackage -ne "") {
+    if ($redirectedData -eq "" -and $redirectedConfig -eq "") {
+        Write-Warning ("This window runs inside the app package " + $appPackage + "; a new data directory " + (Get-ReportValue -Report $report -Name "data_dir") + " would be redirected into the package folder.")
+    }
+    if ($redirectedData -ne "") {
+        Write-Warning ("Windows redirects the data directory " + (Get-ReportValue -Report $report -Name "data_dir") + " to " + $redirectedData)
+    }
+    if ($redirectedConfig -ne "") {
+        Write-Warning ("Windows redirects the configuration file " + (Get-ReportValue -Report $report -Name "config_path") + " to " + $redirectedConfig)
+    }
+    Write-Warning "The Task Scheduler would see a different folder. Use a data directory (and configuration file) outside %LOCALAPPDATA% and %APPDATA%, for example -DataDir C:\PostKauz\data, or run this script from a normal PowerShell window."
+    throw "Not registered: data directory or configuration is redirected (see warnings above)"
+}
+$resolvedDataDir = Get-ReportValue -Report $report -Name "data_dir"
+$resolvedConfig = Get-ReportValue -Report $report -Name "config_path"
+if ($resolvedDataDir -eq "" -or $resolvedConfig -eq "") {
+    throw "postkauz.exe doctor --json did not report data_dir and config_path (program too old? use 0.1.0-rc2 or later)"
+}
+# Ab hier immer mit den aufgeloesten Pfaden, ohne --profile (es steckt schon
+# in den Pfaden).
+$pathArgs = @("--data-dir", $resolvedDataDir, "--config", $resolvedConfig)
+Write-Step ("Data directory: " + $resolvedDataDir)
+if ($report.config_exists) {
+    Write-Step ("Configuration: " + $resolvedConfig)
+} else {
+    Write-Step ("Configuration: " + $resolvedConfig + " (does not exist; defaults)")
+}
+
+# 4. Exportziel pruefen: Parameter oder [audit] export_dir
 if ($ExportDir -ne "") {
     if (-not (Test-Path -LiteralPath $ExportDir -PathType Container)) {
         New-Item -ItemType Directory -Path $ExportDir -Force | Out-Null
     }
     $ExportDir = (Resolve-Path -LiteralPath $ExportDir).ProviderPath
-    if ($ExportDir.TrimEnd("\").ToLowerInvariant() -eq (Get-ReportValue -Report $report -Name "data_dir").TrimEnd("\").ToLowerInvariant()) {
+    if ($ExportDir.TrimEnd("\").ToLowerInvariant() -eq $resolvedDataDir.TrimEnd("\").ToLowerInvariant()) {
         throw "-ExportDir must be a second location, not the PostKauz data directory"
     }
     Write-Step ("Export folder: " + $ExportDir)
@@ -162,13 +223,10 @@ if ($ExportDir -ne "") {
     throw "No export folder: give -ExportDir or set [audit] export_dir in the PostKauz configuration"
 }
 
-# 4. Aufgabe anlegen (ersetzt eine vorhandene gleichen Namens)
-$exportArgs = "audit export --quiet"
+# 5. Aufgabe anlegen (ersetzt eine vorhandene gleichen Namens)
+$exportArgs = "audit export --quiet --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + " --config " + (Get-QuotedArgument -Value $resolvedConfig)
 if ($ExportDir -ne "") {
     $exportArgs = $exportArgs + " --to " + (Get-QuotedArgument -Value $ExportDir)
-}
-if ($ProfileName -ne "") {
-    $exportArgs = $exportArgs + " --profile " + (Get-QuotedArgument -Value $ProfileName)
 }
 if ($ShowWindow) {
     $action = New-ScheduledTaskAction -Execute $ExePath -Argument $exportArgs
@@ -188,7 +246,7 @@ if ($NoTest) {
     exit 0
 }
 
-# 5. Einmal starten und pruefen, dass der Export wirklich lief
+# 6. Einmal starten und pruefen, dass der Export wirklich lief
 Write-Step "Starting the task once to check it ..."
 $startLocal = (Get-Date).AddSeconds(-5)
 $before = $startLocal.ToUniversalTime()
@@ -202,7 +260,7 @@ do {
     $info = Get-ScheduledTaskInfo -TaskName $TaskName
     $started = ($info.LastRunTime -ge $startLocal)
 } while ((-not $started -or $state -eq "Running") -and (Get-Date) -lt $deadline)
-$report = Get-DoctorReport -Exe $ExePath -ProfileName $ProfileName
+$report = Get-DoctorReport -Exe $ExePath -PathArgs $pathArgs
 $last = [datetime]::MinValue
 $ok = $false
 $lastText = Get-ReportValue -Report $report -Name "audit_last_export"
@@ -212,7 +270,7 @@ if ($lastText -ne "") {
 }
 if ($ok) {
     Write-Step ("OK: export written to " + (Get-ReportValue -Report $report -Name "audit_export_location") + " (task result " + $info.LastTaskResult + ")")
-    Write-Step ("Check it any time with: " + (Get-QuotedArgument -Value $ExePath) + " audit verify")
+    Write-Step ("Check it any time with: " + (Get-QuotedArgument -Value $ExePath) + " audit verify --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + " --config " + (Get-QuotedArgument -Value $resolvedConfig))
     exit 0
 }
 Write-Warning ("The task ran (result " + $info.LastTaskResult + ") but no new export was found.")

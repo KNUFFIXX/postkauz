@@ -1,8 +1,8 @@
 // Package config lädt die Konfiguration (TOML) und bestimmt die Pfade für
 // Konfiguration, Datenverzeichnis, Datenbank, Blob-Store und Log.
 //
-// Reihenfolge je Wert: Umgebungsvariable vor Konfigurationsdatei vor
-// Standard. Die Konfigurationsdatei enthält nie Geheimnisse, nur Verweise
+// Reihenfolge je Wert: Kommandozeile (--config, --data-dir) vor
+// Umgebungsvariable vor Konfigurationsdatei vor Standard. Die Konfigurationsdatei enthält nie Geheimnisse, nur Verweise
 // (docs/sicherheit.md, Abschnitt 4).
 package config
 
@@ -146,7 +146,20 @@ func DefaultDataDir() (string, error) {
 // Load liest die Konfigurationsdatei (falls vorhanden), wendet
 // Umgebungsvariablen und Standards an und bestimmt die Pfade. Unbekannte
 // Schlüssel in der Datei sind ein Fehler (Tippfehler sollen auffallen).
-func Load() (Config, Paths, error) { return LoadProfile("") }
+func Load() (Config, Paths, error) { return LoadWith(LoadOptions{}) }
+
+// LoadOptions übersteuert die Pfade für einen Aufruf (globale Flags
+// --profile, --config, --data-dir). Leere Felder = nicht gesetzt.
+type LoadOptions struct {
+	// Profile: getrennte Instanz (siehe LoadProfile).
+	Profile string
+	// ConfigFile ersetzt POSTKAUZ_CONFIG bzw. den Standardpfad der
+	// Konfigurationsdatei (gleiche Bedeutung, höhere Priorität).
+	ConfigFile string
+	// DataDir ersetzt POSTKAUZ_DATA_DIR (gleiche Bedeutung, höhere
+	// Priorität; mit Profil also <DataDir>/profiles/<name>).
+	DataDir string
+}
 
 // ProfileRE: erlaubte Profilnamen (wie Kontonamen).
 var ProfileRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
@@ -157,14 +170,33 @@ var ProfileRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // POSTKAUZ_DATA_DIR). data_dir in der Profil-Konfiguration ersetzt den
 // Datenordner ganz. Leerer Name = ohne Profil.
 func LoadProfile(profile string) (Config, Paths, error) {
+	return LoadWith(LoadOptions{Profile: profile})
+}
+
+// LoadWith ist Load mit Übersteuerung durch die Kommandozeile. Damit kann
+// eine geplante Aufgabe (Windows-Aufgabenplanung, systemd) genau das
+// Datenverzeichnis und die Konfigurationsdatei benutzen, die `doctor` im
+// interaktiven Fenster gezeigt hat (A7, Befund D3.3c).
+func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	var cfg Config
 	var p Paths
+	profile := opts.Profile
 	if profile != "" && !ProfileRE.MatchString(profile) {
 		return cfg, p, fmt.Errorf("config: invalid profile name %q: use lowercase letters, digits and '-' (max 63)", profile)
 	}
-	path, err := ConfigPath()
-	if err != nil {
-		return cfg, p, err
+	path := opts.ConfigFile
+	if path == "" {
+		var err error
+		if path, err = ConfigPath(); err != nil {
+			return cfg, p, err
+		}
+	}
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return cfg, p, err
+		}
+		path = abs
 	}
 	if profile != "" {
 		path = filepath.Join(filepath.Dir(path), "profiles", profile, "config.toml")
@@ -189,8 +221,12 @@ func LoadProfile(profile string) (Config, Paths, error) {
 	}
 
 	fileDataDir := cfg.DataDir
+	overridden := false
 	if d := os.Getenv(EnvDataDir); d != "" {
-		cfg.DataDir = d
+		cfg.DataDir, overridden = d, true
+	}
+	if opts.DataDir != "" {
+		cfg.DataDir, overridden = opts.DataDir, true
 	}
 	if b := os.Getenv(EnvSecretsBackend); b != "" {
 		cfg.Secrets.Backend = b
@@ -225,11 +261,12 @@ func LoadProfile(profile string) (Config, Paths, error) {
 		return cfg, p, fmt.Errorf("config: imap.max_message_bytes %d is out of range (%d to %d; 0 = default)", v, MinMessageBytes, MaxMessageBytesLimit)
 	}
 	if cfg.DataDir == "" {
+		var err error
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {
 			return cfg, p, err
 		}
 	}
-	if profile != "" && (fileDataDir == "" || os.Getenv(EnvDataDir) != "") {
+	if profile != "" && (fileDataDir == "" || overridden) {
 		cfg.DataDir = filepath.Join(cfg.DataDir, "profiles", profile)
 	}
 	if !filepath.IsAbs(cfg.DataDir) {

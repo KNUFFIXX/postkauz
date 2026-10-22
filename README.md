@@ -228,7 +228,9 @@ export_dir = 'G:\My Drive\PostKauz-Audit'
 powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -ExePath C:\PostKauz\postkauz.exe -ExportDir "G:\My Drive\PostKauz-Audit"
 ```
 
-It registers the task "PostKauz audit export" (daily at 12:30, runs as soon as possible after a missed run, only while you are logged on, without a console window), starts it once and checks that the export arrived. Options: `-At 08:15`, `-ProfileName <name>`, `-ShowWindow` (if the hidden console is blocked), `-Unregister`. If Windows refuses to run a downloaded script, run `Unblock-File .\Register-AuditExport.ps1` first.
+It registers the task "PostKauz audit export" (daily at 12:30, runs as soon as possible after a missed run, only while you are logged on, without a console window), starts it once and checks that the export arrived. The task gets the data directory and configuration file that `postkauz doctor` shows at that moment (`--data-dir`, `--config`), so it works on the same data as your window even if `POSTKAUZ_DATA_DIR` is only set there. Options: `-DataDir C:\PostKauz\data`, `-At 08:15`, `-ProfileName <name>`, `-ShowWindow` (if the hidden console is blocked), `-Unregister`.
+
+If you start PostKauz from a packaged Windows app (for example from a terminal inside the Claude desktop app), Windows may redirect new folders under `%LOCALAPPDATA%` and `%APPDATA%` into that app's package folder, where the Task Scheduler does not see them. `postkauz doctor` warns about this (`really: …`), and the script refuses to register the task. Use a data directory outside these folders, for example `-DataDir C:\PostKauz\data` (and `--data-dir` or `POSTKAUZ_DATA_DIR` for your own commands). If Windows refuses to run a downloaded script, run `Unblock-File .\Register-AuditExport.ps1` first.
 
 **Linux** (systemd user timer, daily at 12:30 with `Persistent=true`):
 

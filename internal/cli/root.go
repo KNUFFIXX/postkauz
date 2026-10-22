@@ -53,12 +53,24 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 	pf.String("key", "", "act with the rights of this API key (its name, never the key itself) to test the policy")
 	pf.BoolP("quiet", "q", false, "no progress output")
 	pf.String("profile", "", "separate instance: own configuration and data in profiles/<name>")
+	pf.String("config", "", "configuration file to use (like "+config.EnvConfig+"; takes precedence)")
+	pf.String("data-dir", "", "data directory to use (like "+config.EnvDataDir+"; takes precedence)")
 	pf.Bool("explain", false, "show the policy decision and the audit event id on stderr (search: also the query translation)")
-	// --profile wirkt vor jedem Kommando: Konfiguration und Pfade neu laden
-	// (newApp hat sie ohne Profil geladen, bevor die Flags gelesen waren).
+	// --profile, --config und --data-dir wirken vor jedem Kommando:
+	// Konfiguration und Pfade neu laden (newApp hat sie ohne Flags geladen,
+	// bevor die Flags gelesen waren).
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		if p, _ := cmd.Flags().GetString("profile"); p != "" {
-			a.cfg, a.paths, a.cfgErr = config.LoadProfile(p)
+		var opts config.LoadOptions
+		opts.Profile, _ = cmd.Flags().GetString("profile")
+		opts.ConfigFile, _ = cmd.Flags().GetString("config")
+		opts.DataDir, _ = cmd.Flags().GetString("data-dir")
+		for name, v := range map[string]string{"config": opts.ConfigFile, "data-dir": opts.DataDir} {
+			if cmd.Flags().Changed(name) && strings.TrimSpace(v) == "" {
+				return usageError{fmt.Errorf("--%s must not be empty", name)}
+			}
+		}
+		if opts != (config.LoadOptions{}) {
+			a.cfg, a.paths, a.cfgErr = config.LoadWith(opts)
 			if a.cfgErr != nil && strings.Contains(a.cfgErr.Error(), "invalid profile name") {
 				return usageError{a.cfgErr}
 			}

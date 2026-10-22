@@ -22,11 +22,17 @@ import (
 // DoctorReport ist die Ausgabe von `doctor`. Sie enthält Pfade, Zustände und
 // Verweise, nie Geheimnisse.
 type DoctorReport struct {
-	Version        string `json:"version"`
-	ConfigPath     string `json:"config_path"`
-	ConfigExists   bool   `json:"config_exists"`
-	ConfigError    string `json:"config_error,omitempty"`
-	DataDir        string `json:"data_dir"`
+	Version      string `json:"version"`
+	ConfigPath   string `json:"config_path"`
+	ConfigExists bool   `json:"config_exists"`
+	ConfigError  string `json:"config_error,omitempty"`
+	DataDir      string `json:"data_dir"`
+	// Windows (A7): echter Pfad, wenn Windows Datenverzeichnis bzw.
+	// Konfigurationsdatei in den Ordner eines App-Pakets umleitet, und der
+	// Name des Pakets, in dem doctor läuft. Leer = nicht umgeleitet.
+	DataDirReal    string `json:"data_dir_real,omitempty"`
+	ConfigPathReal string `json:"config_path_real,omitempty"`
+	AppPackage     string `json:"app_package,omitempty"`
 	DatabasePath   string `json:"database_path"`
 	LogPath        string `json:"log_path"`
 	Database       string `json:"database"` // ok | missing | needs_migration | too_new | error
@@ -116,6 +122,9 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
 	}
+	redir := config.CheckRedirects(a.paths)
+	rep.DataDirReal, rep.ConfigPathReal, rep.AppPackage = redir.DataDirReal, redir.ConfigReal, redir.Package
+	rep.Warnings = append(rep.Warnings, redir.Warnings...)
 
 	sec, err := openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir)
 	switch {
@@ -331,10 +340,19 @@ func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now t
 func printDoctor(w io.Writer, r DoctorReport) {
 	fmt.Fprintf(w, "version:   %s\n", r.Version)
 	fmt.Fprintf(w, "config:    %s (exists: %v)\n", r.ConfigPath, r.ConfigExists)
+	if r.ConfigPathReal != "" {
+		fmt.Fprintf(w, "           really: %s (redirected by Windows)\n", r.ConfigPathReal)
+	}
 	if r.ConfigError != "" {
 		fmt.Fprintf(w, "           error: %s\n", r.ConfigError)
 	}
 	fmt.Fprintf(w, "data dir:  %s\n", r.DataDir)
+	if r.DataDirReal != "" {
+		fmt.Fprintf(w, "           really: %s (redirected by Windows)\n", r.DataDirReal)
+	}
+	if r.AppPackage != "" {
+		fmt.Fprintf(w, "package:   %s (runs inside a Windows app package)\n", r.AppPackage)
+	}
 	fmt.Fprintf(w, "log:       %s\n", r.LogPath)
 	fmt.Fprintf(w, "database:  %s (%s)\n", r.Database, r.DatabasePath)
 	fmt.Fprintf(w, "schema:    %d (program knows %d)\n", r.SchemaVersion, r.SchemaKnown)

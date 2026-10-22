@@ -6,11 +6,16 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- S2.0/A7: globale Optionen `--config <datei>` und `--data-dir <ordner>` (wie `POSTKAUZ_CONFIG`/`POSTKAUZ_DATA_DIR`, mit Vorrang; `config.LoadWith`).
+- S2.0/A7 (Befund D3.3c): `doctor` erkennt unter Windows, dass Datenverzeichnis oder Konfigurationsdatei in den Ordner eines App-Pakets (MSIX, `…\Packages\<Paket>\LocalCache\…`) umgeleitet werden, meldet den echten Pfad (`really:`, `data_dir_real`, `config_path_real`), den Paketnamen (`app_package`) und warnt; läuft er in einem Paket und fehlt das Datenverzeichnis unter `%LOCALAPPDATA%`/`%APPDATA%` noch, warnt er vorab.
+
 - S2.0/A6: Operationen nur für Menschen (`HumanOnly`, A02 E2, minimal): Mit API-Schlüssel (jede Rolle, auch `admin`, auch `--key`) lehnt die Policy sie mit Grund `human_only` ab, auditiert, ohne Handler; nur die CLI ohne `--key` darf sie. `policy show` führt sie für Schlüssel nicht auf, MCP bietet sie nie an; der Vertragstest prüft jede Operation zusätzlich als Mensch ohne Schlüssel.
 - S2.0/A6: Aliasse (weitere eigene Adressen) am Konto: Spalte `accounts.aliases` (Migration 0008), Operation `accounts.set` (`admin`, HumanOnly) mit `account set <name> --aliases a@…,b@…`; `accounts list` zeigt sie (Spalte `ALIASES`, Feld `aliases`, auch MCP). Der Betreff-Rückfall der Threads zählt Aliasse als eigene Adressen; ein Fremder, der an denselben Alias schreibt, landet nicht mehr im fremden Gespräch.
 - S2.0/A5: `crash.Go(name, fn)` und `crash.Do(name, fn)` (`internal/crash`): `recover`, bereinigter Bericht ins Log, Fehlerweitergabe als `*crash.PanicError`.
 
 ### Changed
+
+- S2.0/A7: `Register-AuditExport.ps1` schreibt die aufgelösten Pfade aus `doctor` als `--data-dir` und `--config` in die Aufgabe (statt `--profile`), hat dafür `-DataDir`, und bricht ab, wenn Windows Datenverzeichnis oder Konfiguration umleitet; vorher sah die Aufgabe bei einer Sitzung aus einem App-Paket ein anderes Datenverzeichnis als das Fenster (D3.3c).
 
 - S2.0: Builds mit Go 1.27.3 (`toolchain go1.27.3` in `go.mod`; Entscheid des Betreibers 21.10.2026, Roadmap Frage 34) — mit 1.27.0 meldete `govulncheck` neun erreichbare Schwachstellen der Standardbibliothek, mit 1.27.3 keine.
 - S2.0/A2: Der Schlüsselbund-Eintrag eines Kontos heißt `account/<datadir-id>/<name>` statt `account/<name>`; `<datadir-id>` sind 8 Hex aus der Kennung des Datenverzeichnisses (`meta.datadir_id`, Migration 0008, Schema 8). Zwei Datenverzeichnisse (Profile) mit gleichem Kontonamen teilen sich keinen Eintrag mehr. Vorhandene Einträge zieht das erste Kommando um (lesen alt → schreiben neu → Verweis umstellen → löschen alt; nicht `mcp`); bleibt der alte Eintrag stehen, warnen das Kommando und `doctor`. `POSTKAUZ_PASSWORD_<NAME>` bleibt unverändert.
