@@ -176,6 +176,11 @@ func TestLoadWithOverrides(t *testing.T) {
 	if err != nil || p.ConfigFile != envCfg || p.DataDir != filepath.Join(dir, "env-data") {
 		t.Fatalf("defaults: %v %+v", err, p)
 	}
+	// Abschließender Trenner fällt weg (Quoting unter Windows).
+	_, p, err = LoadWith(LoadOptions{ConfigFile: flagCfg + string(filepath.Separator), DataDir: filepath.Join(dir, "flag-data") + string(filepath.Separator)})
+	if err != nil || p.ConfigFile != flagCfg || p.DataDir != filepath.Join(dir, "flag-data") {
+		t.Fatalf("trailing separator: %v %+v", err, p)
+	}
 	// Relativer Pfad wird absolut.
 	t.Chdir(dir)
 	_, p, err = LoadWith(LoadOptions{ConfigFile: "flag.toml", DataDir: "rel-data"})
@@ -187,3 +192,66 @@ func TestLoadWithOverrides(t *testing.T) {
 // tomlString schreibt einen Pfad als TOML-Literal-String (Backslashes unter
 // Windows bleiben so unverändert).
 func tomlString(s string) string { return "'" + s + "'" }
+
+// Außerhalb des Pakets (normales Fenster): Die Daten hat ein Programm im
+// Paket angelegt; doctor zeigt die verborgene Kopie (Gegenprüfung A7).
+func TestCheckRedirectsShadowCopy(t *testing.T) {
+	local, roaming := fakeAppData(t)
+	shadow := filepath.Join(local, "Packages", "Claude_abc", "LocalCache", "Local", "postkauz")
+	if err := os.MkdirAll(shadow, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := Paths{DataDir: filepath.Join(local, "postkauz")}
+	if r := CheckRedirects(p); r.DataDirShadow != "" || len(r.Warnings) != 0 {
+		t.Fatalf("copy without database: %+v", r)
+	}
+	if err := os.WriteFile(filepath.Join(shadow, "postkauz.db"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, exists := range []bool{false, true} {
+		if exists {
+			if err := os.MkdirAll(p.DataDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := CheckRedirects(p)
+		if r.DataDirShadow != shadow || r.DataDirReal != "" || len(r.Warnings) == 0 || !strings.Contains(r.Warnings[0], "copy the folder") || !strings.Contains(r.Warnings[0], "Claude_abc") {
+			t.Fatalf("shadow (data dir exists: %v): %+v", exists, r)
+		}
+	}
+	// Unter %APPDATA% (Roaming) gilt dasselbe mit LocalCache\Roaming.
+	q := Paths{DataDir: filepath.Join(roaming, "pk-data")}
+	redirect(t, q.DataDir, filepath.Join(local, "Packages", "Claude_abc", "LocalCache", "Roaming", "pk-data"), false)
+	if r := CheckRedirects(q); r.DataDirReal != filepath.Join(local, "Packages", "Claude_abc", "LocalCache", "Roaming", "pk-data") {
+		t.Fatalf("roaming redirect: %+v", r)
+	}
+}
+
+func TestUnderBaseAndRelTo(t *testing.T) {
+	sep := string(filepath.Separator)
+	base := filepath.Join(sep+"Users", "x", "AppData", "Local")
+	for _, c := range []struct {
+		path  string
+		under bool
+		rel   string
+	}{
+		{filepath.Join(base, "postkauz"), true, "postkauz"},
+		{strings.ToUpper(filepath.Join(base, "postkauz")), true, "POSTKAUZ"},
+		{filepath.Join(base, "a", "b") + sep, true, filepath.Join("a", "b")},
+		{base, true, ""},
+		{base + "2" + sep + "x", false, ""},
+		{filepath.Join(sep+"Users", "x"), false, ""},
+	} {
+		if got := underBase(c.path, base); got != c.under {
+			t.Errorf("underBase(%q) = %v", c.path, got)
+		}
+		if c.under {
+			if got := relTo(base, c.path); got != c.rel {
+				t.Errorf("relTo(%q) = %q, want %q", c.path, got, c.rel)
+			}
+		}
+	}
+	if underBase("", base) || underBase(base, "") {
+		t.Error("empty paths must not match")
+	}
+}

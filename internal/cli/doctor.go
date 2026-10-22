@@ -33,6 +33,9 @@ type DoctorReport struct {
 	DataDirReal    string `json:"data_dir_real,omitempty"`
 	ConfigPathReal string `json:"config_path_real,omitempty"`
 	AppPackage     string `json:"app_package,omitempty"`
+	// DataDirShadow: Datenverzeichnis gleichen Namens mit Datenbank im
+	// Paketordner, das doctor nicht sieht (A7, Gegenprüfung).
+	DataDirShadow  string `json:"data_dir_shadow,omitempty"`
 	DatabasePath   string `json:"database_path"`
 	LogPath        string `json:"log_path"`
 	Database       string `json:"database"` // ok | missing | needs_migration | too_new | error
@@ -124,6 +127,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	redir := config.CheckRedirects(a.paths)
 	rep.DataDirReal, rep.ConfigPathReal, rep.AppPackage = redir.DataDirReal, redir.ConfigReal, redir.Package
+	rep.DataDirShadow = redir.DataDirShadow
 	rep.Warnings = append(rep.Warnings, redir.Warnings...)
 
 	sec, err := openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir)

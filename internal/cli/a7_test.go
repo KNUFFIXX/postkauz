@@ -55,7 +55,21 @@ func TestDataDirAndConfigFlags(t *testing.T) {
 		t.Fatalf("doctor without flags must use POSTKAUZ_DATA_DIR: %s", out)
 	}
 
-	for _, args := range [][]string{{"key", "list", "--data-dir", ""}, {"key", "list", "--config", " "}} {
+	// --profile mit --data-dir: <data-dir>/profiles/<name>.
+	if code, _, errs := run(t, "key", "create", "--name", "profile-key", "--data-dir", other, "--profile", "probe"); code != ExitOK {
+		t.Fatalf("--data-dir with --profile: %d %s", code, errs)
+	}
+	if _, err := os.Stat(filepath.Join(other, "profiles", "probe", "postkauz.db")); err != nil {
+		t.Fatalf("profile under --data-dir: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"key", "list", "--data-dir", ""},
+		{"key", "list", "--config", " "},
+		{"key", "list", "--config", filepath.Join(dir, "missing.toml")}, // muss existieren
+		{"key", "list", "--config", dir},                                // Ordner statt Datei
+		{"key", "list", "--config", cfgFile, "--profile", "probe"},      // nicht kombinierbar
+	} {
 		if code, _, _ := run(t, args...); code != ExitUsage {
 			t.Fatalf("%v: exit %d, want usage error", args, code)
 		}

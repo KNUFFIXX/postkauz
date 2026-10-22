@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 )
 
 // Prüfung auf umgeleitete Pfade (A7, Befund D3.3c): Ein Programm, das aus
@@ -24,6 +26,9 @@ import (
 // redirectCheck: nur unter Windows (in Tests einschaltbar).
 var redirectCheck = runtime.GOOS == "windows"
 
+// brandDB: Name der Datenbankdatei im Datenverzeichnis.
+var brandDB = brand.Name + ".db"
+
 // maxProbeEntries begrenzt die Einträge je Paketordner, die
 // packageView vergleicht (doctor soll schnell bleiben).
 const maxProbeEntries = 64
@@ -38,6 +43,10 @@ type Redirects struct {
 	// umleitet ("" = nicht umgeleitet).
 	DataDirReal string
 	ConfigReal  string
+	// DataDirShadow: ein anderes Datenverzeichnis gleichen Namens mit
+	// Datenbank im Paketordner, das dieser Prozess nicht sieht (er läuft
+	// außerhalb des Pakets, die Daten hat ein Programm im Paket angelegt).
+	DataDirShadow string
 	// Warnings: fertige Texte für doctor (Englisch).
 	Warnings []string
 }
@@ -59,6 +68,12 @@ func CheckRedirects(p Paths) Redirects {
 		if rp, pkg, ok := redirectTarget(p.ConfigFile, local, roaming); ok {
 			r.ConfigReal, r.Package = rp, pkg
 			r.Warnings = append(r.Warnings, fmt.Sprintf("configuration file is redirected by Windows to %s (this program runs inside the app package %s); the Task Scheduler and other programs do not see it; move it outside %%LOCALAPPDATA%% and %%APPDATA%% and point to it with --config or %s", rp, pkg, EnvConfig))
+		}
+	}
+	if r.DataDirReal == "" {
+		if sh, pkg := shadowCopy(p.DataDir, local, roaming); sh != "" {
+			r.DataDirShadow = sh
+			r.Warnings = append(r.Warnings, fmt.Sprintf("another data directory with a database exists in the folder of the app package %s: %s; a program started from that app (e.g. the Claude desktop app) wrote it there, and this window does not see it; to keep that data, copy the folder to a place outside %%LOCALAPPDATA%% and %%APPDATA%% and use --data-dir or %s", pkg, sh, EnvDataDir))
 		}
 	}
 	if r.DataDirReal == "" && (underBase(p.DataDir, local) || underBase(p.DataDir, roaming)) {
@@ -111,6 +126,45 @@ func redirectTarget(path, local, roaming string) (target, pkg string, ok bool) {
 	return "", "", false
 }
 
+// shadowCopy sucht das Gegenstück von path im LocalCache jedes Pakets, das
+// eine Datenbank enthält und nicht path selbst ist (os.SameFile).
+func shadowCopy(path, local, roaming string) (shadow, pkg string) {
+	if path == "" || local == "" || isPackageCachePath(path) {
+		return "", ""
+	}
+	var sub, rel string
+	switch {
+	case underBase(path, local):
+		sub, rel = "Local", relTo(local, path)
+	case underBase(path, roaming):
+		sub, rel = "Roaming", relTo(roaming, path)
+	default:
+		return "", ""
+	}
+	if rel == "" {
+		return "", ""
+	}
+	own, ownErr := os.Stat(path)
+	pkgs, err := os.ReadDir(filepath.Join(local, "Packages"))
+	if err != nil {
+		return "", ""
+	}
+	for _, d := range pkgs {
+		if !d.IsDir() {
+			continue
+		}
+		cand := filepath.Join(local, "Packages", d.Name(), "LocalCache", sub, rel)
+		ci, err := os.Stat(cand)
+		if err != nil || (ownErr == nil && os.SameFile(own, ci)) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(cand, brandDB)); err == nil {
+			return cand, d.Name()
+		}
+	}
+	return "", ""
+}
+
 // packageView: Sieht dieser Prozess die Umleitung eines Pakets? Dann ist ein
 // Eintrag unter %LOCALAPPDATA% dieselbe Datei wie der gleichnamige im
 // LocalCache des Pakets. Liefert den Paketnamen oder "".
@@ -161,14 +215,17 @@ func isPackageCachePath(path string) bool {
 }
 
 // underBase: liegt path unter base (ohne Rücksicht auf Groß-/Kleinschreibung,
-// wie unter Windows)?
+// wie unter Windows)? Verglichen wird der gleich lange Anfang, damit relTo
+// danach an derselben Stelle schneidet.
 func underBase(path, base string) bool {
 	if base == "" || path == "" {
 		return false
 	}
-	low := strings.ToLower(filepath.Clean(path))
-	b := strings.ToLower(filepath.Clean(base))
-	return low == b || strings.HasPrefix(low, b+string(filepath.Separator))
+	cp, cb := filepath.Clean(path), filepath.Clean(base)
+	if len(cp) < len(cb) || !strings.EqualFold(cp[:len(cb)], cb) {
+		return false
+	}
+	return len(cp) == len(cb) || cp[len(cb)] == filepath.Separator || strings.HasSuffix(cb, string(filepath.Separator))
 }
 
 // relTo: path relativ zu base (base ist per underBase geprüft).

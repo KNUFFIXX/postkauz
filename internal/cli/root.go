@@ -53,7 +53,7 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 	pf.String("key", "", "act with the rights of this API key (its name, never the key itself) to test the policy")
 	pf.BoolP("quiet", "q", false, "no progress output")
 	pf.String("profile", "", "separate instance: own configuration and data in profiles/<name>")
-	pf.String("config", "", "configuration file to use (like "+config.EnvConfig+"; takes precedence)")
+	pf.String("config", "", "configuration file to use (must exist; like "+config.EnvConfig+", takes precedence; not with --profile)")
 	pf.String("data-dir", "", "data directory to use (like "+config.EnvDataDir+"; takes precedence)")
 	pf.Bool("explain", false, "show the policy decision and the audit event id on stderr (search: also the query translation)")
 	// --profile, --config und --data-dir wirken vor jedem Kommando:
@@ -67,6 +67,14 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 		for name, v := range map[string]string{"config": opts.ConfigFile, "data-dir": opts.DataDir} {
 			if cmd.Flags().Changed(name) && strings.TrimSpace(v) == "" {
 				return usageError{fmt.Errorf("--%s must not be empty", name)}
+			}
+		}
+		if opts.ConfigFile != "" {
+			if opts.Profile != "" {
+				return usageError{fmt.Errorf("--config and --profile cannot be combined: --profile uses profiles/<name>/config.toml next to the normal configuration file")}
+			}
+			if fi, err := os.Stat(opts.ConfigFile); err != nil || fi.IsDir() {
+				return usageError{fmt.Errorf("--config %s: no such configuration file", opts.ConfigFile)}
 			}
 		}
 		if opts != (config.LoadOptions{}) {

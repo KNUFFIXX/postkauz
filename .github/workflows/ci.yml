@@ -34,12 +34,15 @@ jobs:
         run: |
           # Fehlerzeilen zusätzlich als Annotation: Die ist über die
           # öffentliche API lesbar (check-runs/<id>/annotations), das Log nur
-          # mit Anmeldung (Befund 22.10.2026, Lauf zu a93aa9c).
+          # mit Anmeldung (Befund 22.10.2026, Lauf zu a93aa9c). GitHub startet
+          # bash mit -e und pipefail; deshalb set +e und grep in eine Datei.
+          set +e
           go test ./... 2>&1 | tee go-test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            msg=$(grep -E -e '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:' go-test.log | head -n 40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
-            echo "::error title=go test failed::${msg}"
+            grep -E -e '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:' go-test.log > go-test-fail.log
+            msg=$(head -n 40 go-test-fail.log | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=go test failed::${msg:-see log}"
           fi
           exit "$status"
       - name: guards (no SMTP code, PII gate)
@@ -56,11 +59,13 @@ jobs:
       - name: go test -race
         shell: bash
         run: |
+          set +e
           make race 2>&1 | tee go-race.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            msg=$(grep -E -e '--- FAIL|^FAIL|panic:|WARNING: DATA RACE|_test\.go:[0-9]+:' go-race.log | head -n 40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
-            echo "::error title=go test -race failed::${msg}"
+            grep -E -e '--- FAIL|^FAIL|panic:|WARNING: DATA RACE|_test\.go:[0-9]+:' go-race.log > go-race-fail.log
+            msg=$(head -n 40 go-race-fail.log | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=go test -race failed::${msg:-see log}"
           fi
           exit "$status"
 

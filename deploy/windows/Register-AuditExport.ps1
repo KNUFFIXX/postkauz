@@ -8,19 +8,24 @@
     location, for example a Google Drive folder or another disk. This script
     registers a scheduled task for the current user that runs
 
-        postkauz.exe audit export --quiet [--to <ExportDir>] [--profile <Profile>]
+        postkauz.exe audit export --quiet --data-dir <DataDir> [--config <ConfigFile>] [--to <ExportDir>]
 
     once a day. Missed runs (PC switched off) are started as soon as possible.
 
     The task gets the data directory and the configuration file that
-    "postkauz.exe doctor" shows right now, as --data-dir and --config. So it
-    works on exactly the same data as your PowerShell window, even if
-    POSTKAUZ_DATA_DIR is only set in that window. If Windows redirects the
-    data directory into the folder of an app package (this happens when
-    PostKauz is started from a packaged app such as the Claude desktop app
-    and the data directory is under %LOCALAPPDATA% or %APPDATA%), the script
-    stops: the Task Scheduler would see a different, empty folder. Use a data
-    directory outside these folders, for example with -DataDir C:\PostKauz\data.
+    "postkauz.exe doctor" shows right now, as --data-dir and --config (the
+    latter only if the file exists). So it works on exactly the same data as
+    your PowerShell window, even if POSTKAUZ_DATA_DIR is only set in that
+    window. The script stops without registering anything if
+    - Windows redirects the data directory or the configuration file into
+      the folder of an app package (this happens when PostKauz is started
+      from a packaged app such as the Claude desktop app and the folder is
+      under %LOCALAPPDATA% or %APPDATA%): the Task Scheduler would see a
+      different folder. Use a data directory outside these folders, for
+      example -DataDir C:\PostKauz\data; to keep existing data, copy the
+      folder there first (doctor shows the real path, line "really:");
+    - the data directory has no database yet: run a command first, for
+      example "postkauz.exe accounts list --data-dir <folder>".
     The task runs only while you are logged on, so that drive letters of
     Google Drive and network shares are available. By default it runs without
     a console window (conhost.exe --headless).
@@ -40,7 +45,8 @@
 .PARAMETER DataDir
     PostKauz data directory (--data-dir). Default: the data directory that
     "postkauz.exe doctor" shows (POSTKAUZ_DATA_DIR, data_dir in the
-    configuration, otherwise %LOCALAPPDATA%\postkauz).
+    configuration, otherwise %LOCALAPPDATA%\postkauz). Together with
+    -ProfileName the task uses <DataDir>\profiles\<ProfileName>.
 
 .PARAMETER ExportDir
     Folder for the export files (a second location, not the data directory).
@@ -102,10 +108,22 @@ function Get-QuotedArgument {
     param([string]$Value)
     # Argument fuer die Kommandozeile der Aufgabe; Anfuehrungszeichen im Pfad
     # sind unter Windows nicht erlaubt, deshalb reicht einfaches Einschliessen.
+    # Abschliessende Backslashes vor dem schliessenden Anfuehrungszeichen
+    # muessen verdoppelt werden (sonst wird \" zu einem Zeichen im Wert).
     if ($Value -match '[\s;&]') {
-        return '"' + $Value + '"'
+        $trail = $Value.Length - $Value.TrimEnd('\').Length
+        return '"' + $Value + ('\' * $trail) + '"'
     }
     return $Value
+}
+
+function Get-TrimmedPath {
+    param([string]$Value)
+    # Abschliessenden Backslash entfernen, ausser bei einer Laufwerkswurzel.
+    if ($Value -match '^[A-Za-z]:\\$') {
+        return $Value
+    }
+    return $Value.TrimEnd('\')
 }
 
 function Get-DoctorReport {
@@ -170,6 +188,7 @@ if ($ProfileName -ne "") {
     $pathArgs += @("--profile", $ProfileName)
 }
 if ($DataDir -ne "") {
+    $DataDir = Get-TrimmedPath -Value $DataDir
     $pathArgs += @("--data-dir", $DataDir)
 }
 $report = Get-DoctorReport -Exe $ExePath -PathArgs $pathArgs
@@ -178,33 +197,40 @@ if ((Get-ReportValue -Report $report -Name "config_error") -ne "") {
 }
 $redirectedData = Get-ReportValue -Report $report -Name "data_dir_real"
 $redirectedConfig = Get-ReportValue -Report $report -Name "config_path_real"
-$appPackage = Get-ReportValue -Report $report -Name "app_package"
-if ($redirectedData -ne "" -or $redirectedConfig -ne "" -or $appPackage -ne "") {
-    if ($redirectedData -eq "" -and $redirectedConfig -eq "") {
-        Write-Warning ("This window runs inside the app package " + $appPackage + "; a new data directory " + (Get-ReportValue -Report $report -Name "data_dir") + " would be redirected into the package folder.")
-    }
+if ($redirectedData -ne "" -or $redirectedConfig -ne "") {
     if ($redirectedData -ne "") {
         Write-Warning ("Windows redirects the data directory " + (Get-ReportValue -Report $report -Name "data_dir") + " to " + $redirectedData)
     }
     if ($redirectedConfig -ne "") {
         Write-Warning ("Windows redirects the configuration file " + (Get-ReportValue -Report $report -Name "config_path") + " to " + $redirectedConfig)
     }
-    Write-Warning "The Task Scheduler would see a different folder. Use a data directory (and configuration file) outside %LOCALAPPDATA% and %APPDATA%, for example -DataDir C:\PostKauz\data, or run this script from a normal PowerShell window."
+    Write-Warning "The Task Scheduler would see a different folder. Use a data directory (and configuration file) outside %LOCALAPPDATA% and %APPDATA%, for example -DataDir C:\PostKauz\data. To keep the existing data, copy the redirected folder there first."
     throw "Not registered: data directory or configuration is redirected (see warnings above)"
+}
+$shadow = Get-ReportValue -Report $report -Name "data_dir_shadow"
+if ($shadow -ne "") {
+    Write-Warning ("Another data directory with a database exists in an app package folder and is not seen here: " + $shadow + " (copy it if you want to keep that data)")
 }
 $resolvedDataDir = Get-ReportValue -Report $report -Name "data_dir"
 $resolvedConfig = Get-ReportValue -Report $report -Name "config_path"
 if ($resolvedDataDir -eq "" -or $resolvedConfig -eq "") {
     throw "postkauz.exe doctor --json did not report data_dir and config_path (program too old? use 0.1.0-rc2 or later)"
 }
+if ((Get-ReportValue -Report $report -Name "database") -eq "missing") {
+    throw ("Not registered: no database in " + $resolvedDataDir + " yet. Run a command first, for example: " + (Get-QuotedArgument -Value $ExePath) + " accounts list --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir))
+}
 # Ab hier immer mit den aufgeloesten Pfaden, ohne --profile (es steckt schon
-# in den Pfaden).
-$pathArgs = @("--data-dir", $resolvedDataDir, "--config", $resolvedConfig)
+# in den Pfaden); --config nur, wenn die Datei existiert (sonst gilt in der
+# Aufgabe wie im Fenster der Standard).
+$pathArgs = @("--data-dir", $resolvedDataDir)
+$configArg = ""
 Write-Step ("Data directory: " + $resolvedDataDir)
 if ($report.config_exists) {
+    $pathArgs += @("--config", $resolvedConfig)
+    $configArg = " --config " + (Get-QuotedArgument -Value $resolvedConfig)
     Write-Step ("Configuration: " + $resolvedConfig)
 } else {
-    Write-Step ("Configuration: " + $resolvedConfig + " (does not exist; defaults)")
+    Write-Step ("Configuration: none (" + $resolvedConfig + " does not exist; defaults)")
 }
 
 # 4. Exportziel pruefen: Parameter oder [audit] export_dir
@@ -212,7 +238,7 @@ if ($ExportDir -ne "") {
     if (-not (Test-Path -LiteralPath $ExportDir -PathType Container)) {
         New-Item -ItemType Directory -Path $ExportDir -Force | Out-Null
     }
-    $ExportDir = (Resolve-Path -LiteralPath $ExportDir).ProviderPath
+    $ExportDir = Get-TrimmedPath -Value ((Resolve-Path -LiteralPath $ExportDir).ProviderPath)
     if ($ExportDir.TrimEnd("\").ToLowerInvariant() -eq $resolvedDataDir.TrimEnd("\").ToLowerInvariant()) {
         throw "-ExportDir must be a second location, not the PostKauz data directory"
     }
@@ -224,7 +250,7 @@ if ($ExportDir -ne "") {
 }
 
 # 5. Aufgabe anlegen (ersetzt eine vorhandene gleichen Namens)
-$exportArgs = "audit export --quiet --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + " --config " + (Get-QuotedArgument -Value $resolvedConfig)
+$exportArgs = "audit export --quiet --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + $configArg
 if ($ExportDir -ne "") {
     $exportArgs = $exportArgs + " --to " + (Get-QuotedArgument -Value $ExportDir)
 }
@@ -238,7 +264,7 @@ $trigger = New-ScheduledTaskTrigger -Daily -At $time
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-$description = "PostKauz: daily export of the audit log with checksums to a second location (audit export). Check with: postkauz.exe audit verify"
+$description = "PostKauz: daily export of the audit log with checksums to a second location (audit export). Check with: postkauz.exe audit verify --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + $configArg
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $description -Force | Out-Null
 Write-Step ("Task '" + $TaskName + "' registered: daily at " + $At + " for " + $user + " (missed runs start as soon as possible)")
 
@@ -270,7 +296,7 @@ if ($lastText -ne "") {
 }
 if ($ok) {
     Write-Step ("OK: export written to " + (Get-ReportValue -Report $report -Name "audit_export_location") + " (task result " + $info.LastTaskResult + ")")
-    Write-Step ("Check it any time with: " + (Get-QuotedArgument -Value $ExePath) + " audit verify --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + " --config " + (Get-QuotedArgument -Value $resolvedConfig))
+    Write-Step ("Check it any time with: " + (Get-QuotedArgument -Value $ExePath) + " audit verify --data-dir " + (Get-QuotedArgument -Value $resolvedDataDir) + $configArg)
     exit 0
 }
 Write-Warning ("The task ran (result " + $info.LastTaskResult + ") but no new export was found.")

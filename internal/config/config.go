@@ -198,6 +198,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		}
 		path = abs
 	}
+	// Clean auch absolut: ein abschließender Trenner (C:\x\) zerstört unter
+	// Windows das Quoting in der Kommandozeile einer Aufgabe (Gegenprüfung A7).
+	path = filepath.Clean(path)
 	if profile != "" {
 		path = filepath.Join(filepath.Dir(path), "profiles", profile, "config.toml")
 	}
@@ -276,6 +279,7 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		}
 		cfg.DataDir = abs
 	}
+	cfg.DataDir = filepath.Clean(cfg.DataDir)
 	p.DataDir = cfg.DataDir
 	p.Database = filepath.Join(p.DataDir, brand.Name+".db")
 	p.Blobs = filepath.Join(p.DataDir, "blobs")
