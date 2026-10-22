@@ -53,6 +53,7 @@ Ein paar Folgen, die man kennen sollte:
 - Nachrichten mit dem Flag **`\Draft`** in irgendeinem Ordner.
 - Nachrichten, die (auch) in einem **Entwürfe-Ordner** liegen: Rolle `drafts` oder ein Ordner, in den PostKauz Entwürfe abgelegt hat (`[draft] mailbox`).
 - Nachrichten, die nur in anderen Ordnern liegen (Posteingang, eigene Ordner, Papierkorb).
+- Nachrichten, die **Byte für Byte eine Kopie sind, die PostKauz abgelegt hat** (gleicher Inhalts-Hash wie die aktuelle, eine frühere oder die gerade abgelegte Kopie irgendeines Entwurfs des Kontos; `pushed_content_hash`, `remote_previous[].content_hash`, `push_attempt`). Das gilt auch, wenn der Spiegel sie nicht im Entwürfe-Ordner sieht, etwa nur in „All Mail", weil der Entwürfe-Ordner im Lauf fehlte (Gegenprüfung S2.6–S2.8, K3). Ein Mailprogramm, das beim Senden die Kopie unverändert nach Gesendet verschiebt, wird deshalb nicht erkannt; bekannte Programme bauen die Nachricht beim Senden neu (Messtabelle unten). Frühere Kopien aus der Zeit vor dieser Regel haben keinen Hash; für sie gilt nur der Ordner-Ausschluss.
 
 Grund (Befund K8 der Gegenprüfung von S2.4/S2.5): **Gmail führt jede Entwurfskopie zusätzlich in `[Gmail]/All Mail`**, mit der Message-ID des Entwurfs. Ohne diesen Ausschluss gälte jeder abgelegte Entwurf sofort als gesendet. Sendet der Mensch, entfernt Gmail die Kopie aus den Entwürfen; die gesendete Nachricht trägt kein `\Draft` und zählt dann.
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -136,5 +137,29 @@ func TestSentCheckMark(t *testing.T) {
 	}
 	if n, _ := s.QueryIntForTest(`SELECT count(*) FROM sent_check_marks`); n != 0 {
 		t.Fatalf("mark kept after the account was removed: %d", n)
+	}
+}
+
+// K3: DraftCopyHashes nennt die Hashes der aktuellen, früheren und gerade
+// abgelegten Kopien aller Entwürfe des Kontos, ohne leere Werte.
+func TestDraftCopyHashes(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acc, err := s.CreateAccount(ctx, Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143, TLS: "none",
+		Username: "demo@example.org", AuthType: "password", CredentialRef: "account/0a1b2c3d/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO drafts(account_id,kind,message_id_header,status,created_at,updated_at,closed_at,
+		pushed_content_hash,remote_previous,push_attempt) VALUES
+		(?,'new','pk.1@example.org','draft',1,1,NULL,'h-current','[{"mailbox_id":1,"uid":2,"content_hash":"h-old"},{"mailbox_id":1,"uid":1}]',
+			'{"mailbox_id":1,"content_hash":"h-attempt"}'),
+		(?,'new','pk.2@example.org','abandoned',1,1,1,'h-closed','[]',NULL)`, acc, acc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.DraftCopyHashes(ctx, acc)
+	slices.Sort(got)
+	if want := []string{"h-attempt", "h-closed", "h-current", "h-old"}; err != nil || !slices.Equal(got, want) {
+		t.Fatalf("hashes = %q, %v", got, err)
 	}
 }

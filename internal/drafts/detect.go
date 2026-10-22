@@ -104,11 +104,17 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 		return err
 	}
 	sort.Slice(open, func(i, j int) bool { return open[i].ID < open[j].ID })
+	// K3: Kopien, die PostKauz abgelegt hat, sind nie gesendete Nachrichten,
+	// auch wenn der Spiegel sie nicht im Entwürfe-Ordner sieht.
+	copies, err := s.Store.DraftCopyHashes(ctx, accountID)
+	if err != nil {
+		return err
+	}
 	claimed := map[int64]bool{}
 	var rest []store.Draft
 	for _, d := range open {
 		if d.MessageIDHeader != "" {
-			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader)
+			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader, copies)
 			if err != nil {
 				return err
 			}
@@ -125,7 +131,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 		}
 		rest = append(rest, d)
 	}
-	return s.detectFallback(ctx, accountID, rest, claimed, rep)
+	return s.detectFallback(ctx, accountID, rest, claimed, copies, rep)
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe
@@ -151,7 +157,12 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 // Prüfung steigen Marke und fallback_checked_at; ein Fehler lässt beides,
 // und der nächste Lauf prüft dieselben Nachrichten erneut (zugeordnete
 // zählen dann nicht mehr).
-func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, rep *CheckReport) error {
+func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, copies []string,
+	rep *CheckReport) error {
+	isCopy := map[string]bool{}
+	for _, h := range copies {
+		isCopy[h] = true
+	}
 	last, marked, err := s.Store.SentCheckMark(ctx, accountID)
 	if err != nil {
 		return err
@@ -179,7 +190,7 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 	seen := map[int64]bool{}
 	add := func(list []store.SentMessage) {
 		for _, c := range list {
-			if !seen[c.ID] {
+			if !seen[c.ID] && !(c.ContentHash != "" && isCopy[c.ContentHash]) {
 				seen[c.ID] = true
 				cands = append(cands, c)
 			}

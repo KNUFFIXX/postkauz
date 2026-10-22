@@ -186,3 +186,54 @@ func TestFallbackWindowIgnoresDraftsWithoutRecipients(t *testing.T) {
 		t.Fatalf("examined %d messages in the window of a draft without recipients", rep.Examined)
 	}
 }
+
+// K3: Eine Nachricht mit dem Inhalts-Hash einer von PostKauz abgelegten
+// Kopie (aktuelle, frühere) ist nie eine gesendete Nachricht, auch wenn der
+// Spiegel sie nur in „All Mail" ohne \Draft sieht (etwa weil der
+// Entwürfe-Ordner im Lauf fehlte): weder über die Message-ID noch im
+// Rückfall für einen gleichlautenden anderen Entwurf. Eine wirklich
+// gesendete Nachricht (andere Bytes) zählt weiter.
+func TestDetectSentIgnoresOwnCopiesByHash(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	ctx := context.Background()
+	a := e.fallbackDraft("Wartung Aufzug")
+	b := e.fallbackDraft("Wartung Aufzug")
+	copyOf := func(d store.Draft, text string, uid int64) {
+		t.Helper()
+		if _, _, err := e.svc.Pushed(ctx, d.ID, Fingerprint(e.draft(d.ID)), PushedCopy{MailboxID: m.boxes["drafts"], UIDValidity: 1,
+			UID: uid, ContentHash: d.MessageIDHeader + text}); err != nil {
+			t.Fatal(err)
+		}
+		m.put("all", sentMsg{messageID: d.MessageIDHeader, subject: "Re: Wartung Aufzug", from: "demo@example.org",
+			to: []store.Addr{{Address: "anna@example.org"}}, cc: []store.Addr{{Address: "bob@example.org"}}, date: e.now, text: text})
+	}
+	copyOf(a, fbBody, 50)
+	// Frühere Kopie: Der Entwurf wurde geändert und erneut abgelegt.
+	c := ContentOf(e.draft(a.ID))
+	c.BodyMarkdown = fbBody + "\n\nPS: bis Montag."
+	if _, err := e.svc.Update(ctx, a.ID, c, ""); err != nil {
+		t.Fatal(err)
+	}
+	copyOf(a, fbBody+" PS: bis Montag.", 51)
+	if got := e.draft(a.ID); len(got.RemotePrevious) != 1 || got.RemotePrevious[0].ContentHash != a.MessageIDHeader+fbBody {
+		t.Fatalf("previous copies = %+v", got.RemotePrevious)
+	}
+	if rep := e.check(); rep.SentByMessageID+rep.SentByFallback != 0 {
+		t.Fatalf("own copies detected as sent: %+v", rep)
+	}
+	for _, d := range []store.Draft{a, b} {
+		if got := e.draft(d.ID); got.Status != string(StatusDraft) {
+			t.Fatalf("draft %d = %s", d.ID, got.Status)
+		}
+	}
+	// Der Mailclient sendet A mit seiner Message-ID (andere Bytes): zählt.
+	sent := m.put("sent", sentMsg{messageID: a.MessageIDHeader, subject: "Re: Wartung Aufzug", from: "demo@example.org",
+		to: []store.Addr{{Address: "anna@example.org"}}, date: e.now, text: "gesendet"})
+	if rep := e.check(); rep.SentByMessageID != 1 {
+		t.Fatalf("sent message: %+v", rep)
+	}
+	if got := e.draft(a.ID); got.Status != string(StatusSentByHuman) || got.SentMessageID != sent {
+		t.Fatalf("a = %s, sent %d", got.Status, got.SentMessageID)
+	}
+}

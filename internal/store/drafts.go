@@ -126,6 +126,10 @@ type RemoteCopy struct {
 	MailboxID   int64  `json:"mailbox_id"`
 	UID         int64  `json:"uid"`
 	UIDValidity uint32 `json:"uidvalidity,omitempty"`
+	// ContentHash der Kopie wie messages.content_hash (seit der
+	// Gegenprüfung S2.6–S2.8, K3: Die Versanderkennung zählt eine Nachricht
+	// mit diesem Hash nie als gesendet); "" bei Kopien von vorher.
+	ContentHash string `json:"content_hash,omitempty"`
 }
 
 // Approval ist eine Zeile der Tabelle approvals.

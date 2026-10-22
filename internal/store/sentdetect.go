@@ -18,6 +18,10 @@ import (
 //     hat; Befund K8: Gmail führt jede Entwurfskopie auch in „All Mail"),
 //   - und noch keinem Entwurf als gesendete Nachricht zugeordnet ist
 //     (drafts.sent_message_id).
+//
+// Dazu schließt die Versanderkennung Nachrichten aus, deren Inhalts-Hash
+// der einer von PostKauz abgelegten Entwurfskopie ist (DraftCopyHashes,
+// K3).
 
 // sentMessageCond ist die Bedingung oben für die Nachricht m.
 const sentMessageCond = `EXISTS (SELECT 1 FROM message_mailboxes sl JOIN mailboxes sb ON sb.id = sl.mailbox_id
@@ -28,14 +32,54 @@ const sentMessageCond = `EXISTS (SELECT 1 FROM message_mailboxes sl JOIN mailbox
 	AND NOT EXISTS (SELECT 1 FROM drafts cd WHERE cd.sent_message_id = m.id)`
 
 // SentByMessageID liefert die kleinste ID einer gesendeten Nachricht (siehe
-// oben) des Kontos mit dieser Message-ID (ohne <>); ok false = keine.
-func (s *SQLite) SentByMessageID(ctx context.Context, accountID int64, messageID string) (id int64, ok bool, err error) {
+// oben) des Kontos mit dieser Message-ID (ohne <>), deren Inhalts-Hash
+// nicht in exclude steht (Kopien, die PostKauz abgelegt hat; K3); ok false
+// = keine.
+func (s *SQLite) SentByMessageID(ctx context.Context, accountID int64, messageID string, exclude []string) (id int64, ok bool, err error) {
+	if exclude == nil {
+		exclude = []string{}
+	}
+	ex, err := json.Marshal(exclude)
+	if err != nil {
+		return 0, false, err
+	}
 	err = s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m WHERE m.account_id = ? AND m.message_id_header = ?
-		AND `+sentMessageCond+` ORDER BY m.id LIMIT 1`, accountID, messageID).Scan(&id)
+		AND COALESCE(m.content_hash, '') NOT IN (SELECT value FROM json_each(?))
+		AND `+sentMessageCond+` ORDER BY m.id LIMIT 1`, accountID, messageID, string(ex)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}
 	return id, err == nil, err
+}
+
+// DraftCopyHashes liefert die Inhalts-Hashes aller Kopien, die PostKauz für
+// Entwürfe des Kontos abgelegt hat oder gerade ablegt: die zuletzt
+// abgelegte (pushed_content_hash), frühere (remote_previous, seit K3 mit
+// Hash) und die eines Ablageversuchs mit offenem Ausgang (push_attempt).
+// Eine Nachricht mit einem dieser Hashes ist eine Entwurfskopie, keine
+// gesendete Nachricht, auch wenn der Spiegel sie (noch) nicht im
+// Entwürfe-Ordner sieht, etwa nur in Gmail „Alle Nachrichten"
+// (Gegenprüfung S2.6–S2.8, K3).
+func (s *SQLite) DraftCopyHashes(ctx context.Context, accountID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT pushed_content_hash FROM drafts
+			WHERE account_id = ? AND COALESCE(pushed_content_hash, '') != ''
+		UNION SELECT json_extract(push_attempt, '$.content_hash') FROM drafts
+			WHERE account_id = ? AND push_attempt IS NOT NULL AND COALESCE(json_extract(push_attempt, '$.content_hash'), '') != ''
+		UNION SELECT json_extract(p.value, '$.content_hash') FROM drafts d, json_each(d.remote_previous) p
+			WHERE d.account_id = ? AND COALESCE(json_extract(p.value, '$.content_hash'), '') != ''`, accountID, accountID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
 }
 
 // SentMessage ist eine gesendete Nachricht als Kandidat des
