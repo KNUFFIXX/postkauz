@@ -1,0 +1,199 @@
+S2.4-Probe (Prüf-Hook) auf Windows 11 (Büro-PC), 22.10.2026, durchgeführt von Claude per PowerShell (Entscheid 35).
+Programm: Testbau 0.2.0-dev-s25-fcdc7ad (Stand main fcdc7ad: S2.4, S2.5 und Nachbesserung), Daten: Abnahme-Datenbank D2 (Schema 6 -> 14), Datenverzeichnis C:\Claude\postkauz-s24probe.
+Skript: docs/protokolle/S24_windows.ps1; Hilfs-Hooks und Policy-Beispiel unten. Schritt 13 lief zuerst mit einem fehlerhaften Hilfsskript (Syntaxfehler im Testskript, nicht in PostKauz) und wurde mit korrigiertem Skript wiederholt (Abschnitt „Wiederholung Schritt 13“).
+
+S2.4-Probe gestartet 22.10.2026 17:32:13
+
+> 01 version
+postkauz 0.2.0-dev-s25-fcdc7ad (go1.27.3 windows/amd64)
+[exit 0, 1 s]
+
+> 02 accounts list (Migration D2 -> Schema 14)
+ID  NAME  EMAIL  PROVIDER  UNREAD  LAST SYNC             ALIASES
+1   demo         imap      156     2026-10-16T10:42:22Z  -
+[exit 0, 0 s]
+
+> 03 doctor (erwartet Schema 14, Policy-Datei pass.toml geladen)
+version:   0.2.0-dev-s25-fcdc7ad
+config:    C:\Users\Admin\AI\Cowork_Temp\PostKauz\s24\cfg\config.toml (exists: true)
+data dir:  C:\Claude\postkauz-s24probe
+log:       C:\Claude\postkauz-s24probe\postkauz.log
+database:  ok (C:\Claude\postkauz-s24probe\postkauz.db)
+schema:    14 (program knows 14)
+keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+policy:    C:\Users\Admin\AI\Cowork_Temp\PostKauz\s24\pass.toml (found; version 1)
+attach:    C:\Claude\postkauz-s24probe\attach [paths.attach_dir]
+pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+search:    0 messages waiting for the index (index version 2)
+extract:   0 attachments waiting for text extraction
+audit:     never exported; 2 days not exported yet [audit.export_dir = not set]
+accounts:
+  demo: password missing, status new (env override: POSTKAUZ_PASSWORD_DEMO)
+warnings:
+  - audit: days older than two days are not exported; set up the daily audit export (README, "Daily audit export")
+  - account demo has no password (keyring entry account/demo or POSTKAUZ_PASSWORD_DEMO)
+  - account demo still uses the old keyring entry account/demo, which holds no readable password; it moves to account/26977f64/demo once the entry can be read (e.g. keyring unlocked) or POSTKAUZ_PASSWORD_DEMO is set
+[exit 0, 0 s]
+
+> 04 search Rechnung --limit 1 --json
+{"id":196,"account":"demo","thread_id":155,"date":"2026-09-28T04:45:00Z","from":"Sören Straßburger \u003csoeren@strasse.example.org\u003e","subject":"Rechnungen für das Erdgeschoss","snippet":"Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen. Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig. Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin. Ä","flags":[],"has_attachments":false,"deleted_remote":false,"score":3.1022829818538873,"cursor":"eyJxIjoiZTU4NTkyYThjOTJiY2Q4NiIsIm4iOjE3OTI2ODMxNTcwMjEsInMiOjMuMTAyMjgyOTgxODUzODg3MywiaSI6MTk2fQ","untrusted":true,"source":"email"}
+[exit 0, 0 s]
+Nachricht: id 196
+
+> 05 identity add
+identity 1 of account demo: Demo Buero <demo@example.org> (signature none, default)
+[exit 0, 0 s]
+
+> 06 draft reply mit Anrede (erwartet deutsche Zitatzeile "Am ... schrieb ...:")
+draft 1 created (status draft, remote pending)
+message-id:  <pk.6c286386195bd09813b4@example.org>
+from:        Demo Buero <demo@example.org>
+to:          Sören Straßburger <soeren@strasse.example.org>
+subject:     Re: Rechnungen für das Erdgeschoss
+in-reply-to: <pk.00893.abb4c5c3@corpus.example.org>
+
+Guten Tag,
+
+danke, der Termin passt.
+
+Am 28.09.2026 05:45 schrieb Sören Straßburger <soeren@strasse.example.org>:
+> Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen.
+> Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig.
+> Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin.
+> Äpfel, Öfen und Übergrößen: Umlaute müssen überall korrekt ankommen.
+
+remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+nothing is sent: a human sends the draft in the mail client
+[exit 0, 0 s]
+
+> 07 draft request 1 mit Beispiel-Hook (Pruefpunkt 1: PowerShell 5.1 mit knapper Umgebung; erwartet hook: pass)
+hook: pass
+draft 1: status pending_approval, approval 1 (until 2026-10-29T15:32:38Z); a human approves with: approve 1
+[exit 0, 1 s]
+
+> 07b Temp-Ordner postkauz-hook-* danach (erwartet keiner; alter Probe-Ordner ebenfalls weg)
+0
+[exit 0, 0 s]
+
+> 08 draft edit 1 --subject TODO
+draft 1 changed (status pending_approval -> draft, remote pending)
+approval 1 superseded: the draft changed, submit it again with: draft request 1
+message-id:  <pk.6c286386195bd09813b4@example.org>
+from:        Demo Buero <demo@example.org>
+to:          Sören Straßburger <soeren@strasse.example.org>
+subject:     TODO Re: Rechnung
+in-reply-to: <pk.00893.abb4c5c3@corpus.example.org>
+
+Guten Tag,
+
+danke, der Termin passt.
+
+Am 28.09.2026 05:45 schrieb Sören Straßburger <soeren@strasse.example.org>:
+> Ich bitte um Zusendung einer Kopie des Mietvertrags inklusive Anlagen.
+> Straßenreinigung und Winterdienst sind laut Vertrag umlagefähig.
+> Anbei übersende ich Ihnen die Zählerstände vom Übergabetermin.
+> Äpfel, Öfen und Übergrößen: Umlaute müssen überall korrekt ankommen.
+
+remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+nothing is sent: a human sends the draft in the mail client
+[exit 0, 0 s]
+
+> 09 draft request 1 (erwartet hook: fail, subject contains TODO, Entwurf bleibt draft)
+hook: fail
+subject contains TODO
+draft 1: status stays draft; fix the draft and request again
+[exit 0, 1 s]
+
+> 10 draft reply ohne Anrede + request (erwartet hook: fail, Anrede fehlt)
+hook: fail
+greeting missing: the first line of the text must start with Hallo, Guten Tag, Sehr geehrte, Liebe, Lieber, Dear or Hi
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 1 s]
+
+> 11 Umlaut-Hook (Pruefpunkt 2: erwartet "Anrede fehlt: Gruesse" mit echten Umlauten aeoeuess)
+hook: fail
+Anrede fehlt: Grüße äöüß
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 1 s]
+
+> 12 Zeitueberschreitung 3 s (erwartet hook: timeout nach ca. 3 s)
+hook: timeout
+check hook timed out after 3s (process and its children ended); its output so far:
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 3 s]
+
+> 12b neue powershell-Prozesse seit 12 (erwartet 0)
+0
+[exit 0, 0 s]
+
+> 13 Hook startet Kindprozess und endet normal (Pruefpunkt 3; erwartet hook: pass)
+hook: fail
+Missing argument in parameter list.
+Missing argument in parameter list.
+ 
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 1 s]
+
+> 13b neue powershell-Prozesse seit 13 (erwartet 0: Kind mit beendet)
+0
+[exit 0, 0 s]
+
+> 14 Programm fehlt (erwartet hook: error, ohne Pfad)
+hook: error
+check hook error: program not found (check [draft] check_hook in policy.toml)
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 0 s]
+
+> 15 lint.bat. (Pruefpunkt 5; erwartet hook: error)
+hook: error
+check hook error: batch files (.bat, .cmd) run through cmd.exe, a shell; start powershell.exe -File or a program instead
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 0 s]
+
+> 16 lint.bat mit Leerzeichen (erwartet hook: error)
+hook: error
+check hook error: batch files (.bat, .cmd) run through cmd.exe, a shell; start powershell.exe -File or a program instead
+draft 2: status stays draft; fix the draft and request again
+[exit 0, 0 s]
+
+> 17 Audit: Hook-Ausgabe und Betreff (erwartet 0)
+0
+[exit 0, 0 s]
+
+> 18 Log: Hook-Ausgabe (erwartet 0)
+0
+[exit 0, 0 s]
+
+> 19 draft list
+ID  ACCOUNT  KIND   STATUS  APPROVAL  REMOTE   TO  ATT  CHANGED               SUBJECT
+2   demo     reply  draft   -         pending  1   0    2026-10-22T15:32:48Z  Re: Rechnungen für das Erdgeschoss
+1   demo     reply  draft   1         pending  1   0    2026-10-22T15:32:39Z  TODO Re: Rechnung
+[exit 0, 0 s]
+
+> 20 Temp-Ordner am Ende (erwartet 0)
+0
+[exit 0, 0 s]
+S2.4-Probe beendet 22.10.2026 17:32:49
+ENDE
+
+== Wiederholung Schritt 13 (child-hook.ps1 korrigiert)
+13 neu: hook: pass
+draft 2: status pending_approval, approval 2 (until 2026-10-29T15:34:14Z); a human approves with: approve 2 [exit 0]
+13b neue powershell-Prozesse (erwartet 0): 0
+ENDE
+
+== child-hook.ps1
+Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep 120') -WindowStyle Hidden
+Start-Sleep -Seconds 1
+exit 0
+
+== umlaut-hook.ps1
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
+$u = [string][char]0x00E4 + [char]0x00F6 + [char]0x00FC + [char]0x00DF
+Write-Output ("Anrede fehlt: Gr" + [char]0x00FC + [char]0x00DF + "e " + $u)
+exit 1
+
+== pass.toml (Policy-Datei mit dem Beispiel-Hook)
+[draft]
+check_hook = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'C:\Users\Admin\AI\Cowork_Temp\PostKauz\s24\check-example.ps1', '{meta_json}', '{body_text}']
+check_hook_timeout = '30s'

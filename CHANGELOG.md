@@ -16,12 +16,18 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - S2.3: Entwürfe über die CLI: `draft new|reply|forward|edit|show|list|request|abandon|mark-sent`, `approve`, `reject`, `approval show`, `identity add|list|set-default|remove`. Entwürfe liegen lokal und werden für den Entwürfe-Ordner vorgemerkt (`remote: pending`); nichts wird je gesendet.
 - S2.3: Nur ein Mensch ohne `--key` darf freigeben, ablehnen, verwerfen, als gesendet markieren und Identitäten verwalten (`denied (human_only)`, Exit 3); `policy show --key` führt diese Operationen unter `human_only`.
 - S2.3: Jeder Übergang eines Entwurfs wird auditiert (Draft-ID, Zustand, Zähler, Freigabe, Hook), nie Betreff, Adressen oder Text. Anhänge mit Typ-Widerspruch sind erlaubt und werden mit Warnung gezeigt.
+- S2.4: Prüf-Hook vor `draft request`: Programm aus `[draft] check_hook` der Policy-Datei, ohne Shell, Entwurf nur als Dateien (`{eml}`, `{body_html}`, `{body_text}`, `{meta_json}`), knappe Umgebung ohne Schlüssel und Passwörter, Zeitgrenze `check_hook_timeout` mit Beenden samt Kindprozessen. Bei `fail`, `timeout` oder `error` bleibt der Entwurf `draft`; die ersten 4 KB der Hook-Ausgabe zeigt `draft request`, nie Audit oder Log. Beispiel-Hooks `deploy/hooks/check-example.ps1` und `check-example.sh`.
+- S2.4: `[draft] quote_line` kennt `{date_numeric}` (`21.10.2026 09:15`), z. B. `'Am {date_numeric} schrieb {from}:'`.
+- S2.5: `sync` legt Entwürfe zu Beginn jedes Laufs im Entwürfe-Ordner ab (IMAP APPEND, `\Draft \Seen`), `sync --watch` zusätzlich alle `--jobs-interval` (Standard 10 s); der MCP-Server reiht nur ein. `draft show` nennt alle Kopien (aktuelle und frühere UID) und warum ein Entwurf nicht abgelegt wurde; `sync` zeigt eine Zeile `drafts:`, `--json` ein Objekt `drafts`.
 
 ### Changed
 
 - S2.1: Die eigenen Adressen eines Kontos umfassen jetzt auch seine Identitäten (Betreff-Rückfall der Threads).
 - Schema 12 (Migrationen 0010 bis 0012: Entwürfe, `drafts.compose_options`, `approvals.message_hash`). MIME-Grenzen werden aus dem Inhalt abgeleitet. Längen-Grenzen der Entwurfsfelder sind `denied too_large` statt `invalid_input`.
 - Unter `-race` prüft der Vertragstest eine Stichprobe (jede Operation mit jeder Rolle einmal); die volle Matrix läuft ohne `-race`.
+- S2.5: Ein Entwurf, dessen Kopie im Mailprogramm geändert oder entfernt wurde, ist `taken_over`/`missing`; Änderungen werden mit `draft_taken_over` abgelehnt (vorher wurde `missing` erneut abgelegt). Ein `ready`-Entwurf, dessen gebaute Nachricht nicht mehr zur Freigabe passt, wird nicht abgelegt und geht zurück auf `draft`.
+- Schema 14 (Migrationen 0013 und 0014: Ablage, Ablageversuch, Nachrichten-Hash der abgelegten Kopie); neue `push_note`-Werte `push_rejected` und `pushed_after_close`; `sync --json` mit `rejected` und `adopted`. `make guard` prüft auch `deploy/hooks/*.ps1`.
+- Zitat- und Weiterleitungsdatum stehen in der Zeitzone der Ausgangsnachricht.
 
 ### Fixed
 
@@ -31,6 +37,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Ausgehendes HTML erlaubt nur eine Positivliste von Stilangaben; `title`/`bgcolor` entfernt, `alt` als sichtbarer Text.
 - Betreffs und Namen mit `=?` werden immer RFC-2047-kodiert. Anhänge werden innerhalb des Restbudgets gelesen. Antworten mit langem Zitat sind nicht mehr `too_large` (Zitat gekürzt mit Hinweis).
 - Policy-Datei: `0`/leere Werte sind Fehler, Meldungen nennen keine Werte. Trockenläufe speichern keinen Rückfall einer abgelaufenen Freigabe.
+- Gegenprüfung S2.4/S2.5: keine doppelte Entwurfskopie mehr nach einem Abbruch zwischen APPEND und Vermerk; ein vom Server abgelehnter Entwurf hält die übrigen nicht mehr auf; nach `approve` liegt im Entwürfe-Ordner die freigegebene Fassung; der Freigabe-Hash hängt nicht mehr von der Zeitzone des Rechners ab; Hook-Temp-Ordner werden nach einem harten Abbruch aufgeräumt; `lint.bat.` wird als Stapeldatei abgelehnt.
 - IMAP: Eine unlesbare Serverantwort, die mit dem Schreiben eines Kommandos zusammenfällt, gilt jetzt verlässlich als Protokollfehler (kein Wiederholen); vorher wurde sie gelegentlich als Verbindungsfehler wiederholt (wackliger Test, CI rot für `a93aa9c` und `31d7643`).
 
 ## [0.1.0-rc2] – 2026-10-22
