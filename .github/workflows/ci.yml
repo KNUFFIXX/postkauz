@@ -30,7 +30,18 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go test
-        run: go test ./...
+        shell: bash
+        run: |
+          # Fehlerzeilen zusätzlich als Annotation: Die ist über die
+          # öffentliche API lesbar (check-runs/<id>/annotations), das Log nur
+          # mit Anmeldung (Befund 22.10.2026, Lauf zu a93aa9c).
+          go test ./... 2>&1 | tee go-test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            msg=$(grep -E -e '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:' go-test.log | head -n 40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=go test failed::${msg}"
+          fi
+          exit "$status"
       - name: guards (no SMTP code, PII gate)
         run: make guard pii-check
 
@@ -43,7 +54,15 @@ jobs:
         with:
           go-version: "1.27.x"
       - name: go test -race
-        run: make race
+        shell: bash
+        run: |
+          make race 2>&1 | tee go-race.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            msg=$(grep -E -e '--- FAIL|^FAIL|panic:|WARNING: DATA RACE|_test\.go:[0-9]+:' go-race.log | head -n 40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=go test -race failed::${msg}"
+          fi
+          exit "$status"
 
   # Bekannte Schwachstellen (A01 N2): govulncheck in der Version aus dem Makefile.
   vuln:
