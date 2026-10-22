@@ -473,7 +473,7 @@ func threadFlags(cmd *cobra.Command) {
 func threadInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	id, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil || id <= 0 {
-		return nil, "", usageError{fmt.Errorf("thread id must be a positive number, got %q", args[0])}
+		return nil, "", usageError{errors.New("thread id must be a positive number")}
 	}
 	m := map[string]any{"id": id}
 	if byMsg, _ := cmd.Flags().GetBool("message"); byMsg {
@@ -544,7 +544,7 @@ func renderThread(w io.Writer, out any) error {
 func positiveID(arg, what string) (int64, error) {
 	id, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil || id <= 0 {
-		return 0, usageError{fmt.Errorf("%s must be a positive number, got %q", what, arg)}
+		return 0, usageError{fmt.Errorf("%s must be a positive number", what)}
 	}
 	return id, nil
 }

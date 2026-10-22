@@ -306,3 +306,29 @@ func hasProblem(m *Message, sub string) bool {
 	}
 	return false
 }
+
+// S2.7: Dateinamen werden genau einmal dekodiert (RFC 2231 bzw. RFC 2047),
+// wie in Mailclients. Ein kodierter Name, der wörtlich wie ein encoded-word
+// aussieht, bleibt dieser Text (vorher dekodierte der Parser ein zweites
+// Mal, z. B. zu U+202E).
+func TestFilenameDecodedOnce(t *testing.T) {
+	part := func(disp, ct string) string {
+		return "--b\r\nContent-Type: " + ct + "\r\nContent-Disposition: " + disp + "\r\nContent-Transfer-Encoding: base64\r\n\r\nSW5oYWx0\r\n"
+	}
+	raw := "From: a@example.org\r\nTo: b@example.org\r\nSubject: x\r\nMessage-ID: <m@example.org>\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nText\r\n" +
+		part(`attachment; filename="=?utf-8?b?PT91dGYtOD9xPz1FMj04MD1BRT89Z3BqLmV4ZQ==?="`, "application/octet-stream") +
+		part(`attachment; filename="=?utf-8?q?Gr=C3=BC=C3=9Fe.txt?="`, "text/plain") +
+		part(`attachment; filename*=utf-8''Gr%C3%BC%C3%9Fe2.txt`, "text/plain") +
+		part(`attachment`, `application/pdf; name="Brief.pdf"`) +
+		"--b--\r\n"
+	m := parse(t, raw, Options{})
+	var got []string
+	for _, a := range m.Attachments {
+		got = append(got, a.Filename)
+	}
+	want := []string{"=?utf-8?q?=E2=80=AE?=gpj.exe", "Grüße.txt", "Grüße2.txt", "Brief.pdf"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("file names %q, want %q", got, want)
+	}
+}

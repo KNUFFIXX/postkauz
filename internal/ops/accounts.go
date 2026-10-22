@@ -306,7 +306,7 @@ func (in *AccountsAddInput) normalize() error {
 	}
 	in.Host = strings.TrimSpace(in.Host)
 	if in.Host == "" || strings.ContainsAny(in.Host, " /\\@") {
-		return inputErr("invalid host %q", in.Host)
+		return inputErr("invalid host: give a host name or IP address, without spaces, '/', '\\' or '@'")
 	}
 	if in.Port < 1 || in.Port > 65535 {
 		return inputErr("invalid port %d", in.Port)
@@ -321,10 +321,10 @@ func (in *AccountsAddInput) normalize() error {
 			return inputErr("tls=none sends the password in plain text; only allowed with insecure_test_server for a local test server")
 		}
 	default:
-		return inputErr("invalid tls mode %q (expected tls, starttls or none)", in.TLS)
+		return inputErr("invalid tls mode (expected tls, starttls or none)")
 	}
 	if in.InsecureTestServer && !IsLoopbackHost(in.Host) {
-		return inputErr("insecure_test_server is only allowed for localhost test servers, not %q", in.Host)
+		return inputErr("insecure_test_server is only allowed for localhost test servers (localhost, 127.0.0.1, ::1)")
 	}
 	if in.AuthType == "" {
 		in.AuthType = "password"
@@ -334,7 +334,7 @@ func (in *AccountsAddInput) normalize() error {
 	case "oauth2":
 		return inputErr("auth_type oauth2 is not supported yet (planned: bring your own OAuth client)")
 	default:
-		return inputErr("invalid auth_type %q (expected password or app_password)", in.AuthType)
+		return inputErr("invalid auth_type (expected password or app_password)")
 	}
 	if in.Email == "" && strings.Contains(in.Username, "@") {
 		in.Email = in.Username

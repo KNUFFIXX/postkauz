@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,7 +75,7 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 				return usageError{fmt.Errorf("--config and --profile cannot be combined: --profile uses profiles/<name>/config.toml next to the normal configuration file")}
 			}
 			if fi, err := os.Stat(opts.ConfigFile); err != nil || fi.IsDir() {
-				return usageError{fmt.Errorf("--config %s: no such configuration file", opts.ConfigFile)}
+				return usageError{errors.New("--config: no such configuration file")}
 			}
 		}
 		if opts != (config.LoadOptions{}) {

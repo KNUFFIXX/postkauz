@@ -824,7 +824,7 @@ func DraftsCreate(d Deps) Operation {
 			}
 			kind := compose.Kind(in.Kind)
 			if !drafts.ValidKind(drafts.Kind(kind)) {
-				return nil, inputErr("unknown kind %q", in.Kind)
+				return nil, inputErr("unknown kind (new, reply, reply_all, forward)")
 			}
 			hasOrig := in.InReplyTo > 0 || in.InReplyToMessageID != ""
 			switch {
@@ -1130,14 +1130,30 @@ type DraftDetail struct {
 	// PushNote: Hinweis des Pushs als Code (approval_stale,
 	// no_drafts_mailbox, push_failed, push_rejected, pushed_after_close)
 	// und seine Erklärung.
-	PushNote      string `json:"push_note,omitempty"`
-	PushNoteText  string `json:"push_note_text,omitempty"`
-	PreviewHash   string `json:"preview_hash"`
-	CreatedBy     string `json:"created_by"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
-	ClosedAt      string `json:"closed_at,omitempty"`
-	SentMessageID int64  `json:"sent_message_id,omitempty"`
+	PushNote     string `json:"push_note,omitempty"`
+	PushNoteText string `json:"push_note_text,omitempty"`
+	// OlderCopies: ältere Kopien desselben Entwurfs (gleiche Message-ID,
+	// ältere UID) im Entwürfe-Ordner laut Spiegel (Entscheid 43, S2.7);
+	// OlderCopyUIDs nennt sie. Die Warnung steht zusätzlich in warnings.
+	OlderCopies   int     `json:"older_copies,omitempty"`
+	OlderCopyUIDs []int64 `json:"older_copy_uids,omitempty"`
+	PreviewHash   string  `json:"preview_hash"`
+	CreatedBy     string  `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	ClosedAt      string  `json:"closed_at,omitempty"`
+	SentMessageID int64   `json:"sent_message_id,omitempty"`
+
+	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
+	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
+	// abgelegt: Zeitpunkt des Anlegens). EMLMatchesCopy: Sie ist Byte für
+	// Byte die Kopie, die PostKauz in den Entwürfe-Ordner gelegt hat
+	// (Nachrichten-Hash ohne Date gleich pushed_message_hash, Date gleich).
+	// EMLNote erklärt, was die Bytes sind.
+	EML            string `json:"eml,omitempty"`
+	EMLDate        string `json:"eml_date,omitempty"`
+	EMLMatchesCopy bool   `json:"eml_matches_copy,omitempty"`
+	EMLNote        string `json:"eml_note,omitempty"`
 }
 
 // DraftsGet zeigt einen Entwurf vollständig (R0). Eine abgelaufene
@@ -1152,7 +1168,10 @@ func DraftsGet(d Deps) Operation {
 		Summary:    "Show a draft: status, recipients, subject, text, attachments, approval and the state of its copy in the Drafts folder.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
-  "properties": {"draft_id": {"type": "integer", "minimum": 1}},
+  "properties": {
+    "draft_id": {"type": "integer", "minimum": 1},
+    "eml": {"type": "boolean", "description": "also return the message as RFC 5322 text, byte for byte the copy put into the Drafts folder when it is still current (eml_matches_copy)"}
+  },
   "required": ["draft_id"],
   "additionalProperties": false
 }`),
@@ -1162,6 +1181,7 @@ func DraftsGet(d Deps) Operation {
     "draft_id": {"type": "integer"}, "account": {"type": "string"},
     "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
+    "eml": {"type": "string"}, "eml_date": {"type": "string"}, "eml_matches_copy": {"type": "boolean"}, "eml_note": {"type": "string"},
     "message_id": {"type": "string"}, "original_id": {"type": "integer"},
     "in_reply_to": {"type": "string"}, "references": {"type": "string"},
     "from": {"type": "string"}, "to": {"type": "array", "items": {"type": "string"}},
@@ -1179,6 +1199,7 @@ func DraftsGet(d Deps) Operation {
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
     "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
+    "older_copies": {"type": "integer"}, "older_copy_uids": {"type": "array", "items": {"type": "integer"}},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
@@ -1188,7 +1209,10 @@ func DraftsGet(d Deps) Operation {
 }`),
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
-			var in draftIDInput
+			var in struct {
+				DraftID int64 `json:"draft_id"`
+				EML     bool  `json:"eml,omitempty"`
+			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
 			}
@@ -1223,9 +1247,124 @@ func DraftsGet(d Deps) Operation {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)
 				}
 			}
+			older, err := o.olderCopies(ctx, dr)
+			if err != nil {
+				return nil, err
+			}
+			if out.OlderCopies = len(older); out.OlderCopies > 0 {
+				out.OlderCopyUIDs = older
+				out.Warnings = append(out.Warnings, OlderCopiesWarning(out.OlderCopies))
+			}
+			if in.EML {
+				if err := o.eml(ctx, acc, dr, &out); err != nil {
+					return nil, err
+				}
+			}
 			return out, nil
 		},
 	}
+}
+
+// OlderCopiesWarning ist die Warnung zu älteren Kopien im Entwürfe-Ordner
+// (Entscheid 43): Der Push legt nach jeder Änderung eine neue Kopie ab, die
+// alte bleibt, weil PostKauz nichts löscht (kein Expunge im MVP).
+func OlderCopiesWarning(n int) string {
+	return fmt.Sprintf("older copies in Drafts: %d (delete them in your mail client; postkauz never deletes)", n)
+}
+
+// olderCopies liefert die UIDs älterer Kopien eines Entwurfs im
+// Entwürfe-Ordner laut Spiegel (Entscheid 43): alle Kopien mit seiner
+// Message-ID in den Ordnern seiner Kopien (aktuelle und frühere), außer der
+// neuesten im Ordner der aktuellen Kopie. Die neueste ist die zuletzt
+// abgelegte (remote_uid) oder eine noch neuere, die ein Mailclient
+// gespeichert hat (Übernahme); gilt die UIDVALIDITY der abgelegten Kopie
+// nicht mehr, zählt nur der Spiegel. Was der Spiegel noch nicht gesehen hat
+// (Sync steht aus), zählt nicht: Die Warnung meldet nur, was belegt ist.
+func (o *draftOps) olderCopies(ctx context.Context, d store.Draft) ([]int64, error) {
+	cur := d.RemoteMailboxID
+	boxes := []int64{}
+	if cur > 0 {
+		boxes = append(boxes, cur)
+	}
+	for _, c := range d.RemotePrevious {
+		if c.MailboxID > 0 && !slices.Contains(boxes, c.MailboxID) {
+			boxes = append(boxes, c.MailboxID)
+		}
+	}
+	if len(boxes) == 0 || d.MessageIDHeader == "" {
+		return nil, nil
+	}
+	if cur == 0 {
+		cur = boxes[len(boxes)-1]
+	}
+	copies, err := o.svc.Store.MirrorDraftCopies(ctx, boxes, d.MessageIDHeader)
+	if err != nil {
+		return nil, err
+	}
+	var newest int64
+	for _, c := range copies {
+		if c.MailboxID != cur {
+			continue
+		}
+		newest = max(newest, c.UID)
+		if c.MailboxID == d.RemoteMailboxID && (d.RemoteUIDValidity == 0 || c.UIDValidity == d.RemoteUIDValidity) {
+			newest = max(newest, d.RemoteUID)
+		}
+	}
+	var older []int64
+	for _, c := range copies {
+		if c.MailboxID != cur || c.UID < newest {
+			older = append(older, c.UID)
+		}
+	}
+	return older, nil
+}
+
+// eml baut die Nachricht eines Entwurfs wie der Push (rebuildAt) mit dem
+// Date der abgelegten Kopie (S2.7, A02 S2.7: draft show --eml byte-gleich
+// mit der gepushten Kopie). Der Push merkt sich Date (pushed_date) und den
+// Nachrichten-Hash ohne Date (pushed_message_hash); stimmt der Hash des
+// Neubaus, sind die Bytes dieselben. Sonst hat sich seit der Ablage etwas
+// geändert (Entwurf, Identität, Ausgangsnachricht, Anhänge), und eml ist der
+// aktuelle Stand mit dem Date der alten Kopie; eml_note sagt das.
+func (o *draftOps) eml(ctx context.Context, acc store.Account, dr store.Draft, out *DraftDetail) error {
+	var date time.Time
+	if dr.PushedDate != "" {
+		if t, err := time.Parse(time.RFC1123Z, dr.PushedDate); err == nil {
+			date = t
+		}
+	}
+	pushed := !date.IsZero()
+	if !pushed {
+		// Nie abgelegt: E11, Date = Zeitpunkt des Anlegens (der Push setzt
+		// sein eigenes).
+		date = dr.CreatedAt.Truncate(time.Second)
+	}
+	msg, err := o.rebuildAt(ctx, acc, dr, date)
+	if err != nil {
+		return draftErr(err)
+	}
+	out.EML, out.EMLDate = string(msg.Raw), date.Format(time.RFC1123Z)
+	copyName := "the copy"
+	if dr.RemoteUID > 0 {
+		copyName = fmt.Sprintf("the copy (uid %d)", dr.RemoteUID)
+	}
+	switch {
+	case !pushed:
+		out.EMLNote = "not in the Drafts folder yet; Date is the time the draft was created, the push sets its own"
+	case dr.PushedMessageHash == "":
+		out.EMLNote = copyName + " in the Drafts folder was put there before its hash was recorded; it cannot be checked whether these bytes are the same"
+	case compose.MessageHash(msg.Raw) == dr.PushedMessageHash:
+		out.EMLMatchesCopy = true
+		out.EMLNote = "byte for byte " + copyName + " that postkauz put into the Drafts folder"
+		if dr.RemoteState == drafts.RemoteTakenOver || dr.RemoteState == drafts.RemoteMissing {
+			out.EMLNote += "; the mail client has changed or removed it since"
+		}
+	default:
+		out.EMLNote = "the draft (or its identity, signature, quoted original or attachments) changed after " + copyName +
+			" was put into the Drafts folder; this is the current draft with the Date of that copy"
+	}
+	return nil
 }
 
 // --- drafts.list --------------------------------------------------------------
@@ -1243,6 +1382,8 @@ type DraftSummary struct {
 	ApprovalID  int64  `json:"approval_id,omitempty"`
 	HookResult  string `json:"hook_result,omitempty"`
 	UpdatedAt   string `json:"updated_at"`
+	// OlderCopies: ältere Kopien im Entwürfe-Ordner (Entscheid 43, S2.7).
+	OlderCopies int `json:"older_copies,omitempty"`
 }
 
 // DraftsListOutput ist die Ausgabe von drafts.list.
@@ -1286,7 +1427,7 @@ func DraftsList(d Deps) Operation {
       "recipients": {"type": "integer"}, "attachments": {"type": "integer"},
       "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
       "approval_id": {"type": "integer"}, "hook_result": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
-      "updated_at": {"type": "string", "format": "date-time"}},
+      "updated_at": {"type": "string", "format": "date-time"}, "older_copies": {"type": "integer"}},
       "required": ["draft_id", "account", "kind", "status", "subject", "recipients", "attachments", "remote", "updated_at"]}}
   },
   "required": ["drafts"]
@@ -1322,9 +1463,14 @@ func DraftsList(d Deps) Operation {
 			}
 			out := DraftsListOutput{Drafts: []DraftSummary{}}
 			for _, dr := range list {
+				older, err := o.olderCopies(ctx, dr)
+				if err != nil {
+					return nil, err
+				}
 				out.Drafts = append(out.Drafts, DraftSummary{DraftID: dr.ID, Account: names[dr.AccountID], Kind: dr.Kind, Status: dr.Status,
 					Subject: dr.Subject, Recipients: len(dr.To) + len(dr.Cc) + len(dr.Bcc), Attachments: len(dr.Attachments),
-					Remote: dr.RemoteState, ApprovalID: dr.ApprovalID, HookResult: dr.HookResult, UpdatedAt: rfc3339(dr.UpdatedAt)})
+					Remote: dr.RemoteState, ApprovalID: dr.ApprovalID, HookResult: dr.HookResult, UpdatedAt: rfc3339(dr.UpdatedAt),
+					OlderCopies: len(older)})
 			}
 			return out, nil
 		},

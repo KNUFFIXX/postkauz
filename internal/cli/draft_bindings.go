@@ -41,8 +41,8 @@ var draftBindings = []binding{
 	{op: "drafts.update", path: []string{"draft", "edit"}, use: "<draft-id>", args: cobra.ExactArgs(1), flags: draftEditFlags,
 		input: draftEditInput, human: renderDraftWrite,
 		covers: []string{"draft_id", "to", "cc", "bcc", "subject", "body_markdown", "body_html", "attachments", "quote", "signature"}},
-	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
-		human: renderDraftShow, covers: []string{"draft_id"}},
+	{op: "drafts.get", path: []string{"draft", "show"}, use: "<draft-id> [--eml]", args: cobra.ExactArgs(1), flags: draftShowFlags,
+		input: draftShowInput, human: renderDraftShow, notes: draftShowNotes, covers: []string{"draft_id", "eml"}},
 	{op: "drafts.list", path: []string{"draft", "list"}, args: cobra.NoArgs, flags: draftListFlags, input: draftListInput,
 		human: renderDraftList, covers: []string{"account", "status", "limit"}},
 	{op: "drafts.request_ready", path: []string{"draft", "request"}, use: "<draft-id>", args: cobra.ExactArgs(1), input: draftIDArg,
@@ -144,6 +144,10 @@ func draftEditFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("no-attachments", false, "remove all attachments")
 	cmd.Flags().Bool("quote", true, "quote the original message (--quote=false removes the quote)")
 	cmd.Flags().Bool("signature", true, "append the signature (--signature=false removes it)")
+	// Wie bei draft new|reply (S2.7: "Felder wie new"): --no-quote und
+	// --no-signature sind dasselbe wie --quote=false bzw. --signature=false.
+	cmd.Flags().Bool("no-quote", false, "remove the quote of the original message (same as --quote=false)")
+	cmd.Flags().Bool("no-signature", false, "remove the signature (same as --signature=false)")
 }
 
 // addrFlag liest eine wiederholbare Adressoption; leere Einträge fallen weg
@@ -264,7 +268,13 @@ func draftEditInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage,
 		m["attachments"] = []any{}
 	}
 	for _, n := range []string{"quote", "signature"} {
-		if f.Changed(n) {
+		no, _ := f.GetBool("no-" + n)
+		switch {
+		case no && f.Changed(n):
+			return nil, "", usageError{fmt.Errorf("use either --%s or --no-%s", n, n)}
+		case no:
+			m[n] = false
+		case f.Changed(n):
 			m[n], _ = f.GetBool(n)
 		}
 	}
@@ -272,6 +282,41 @@ func draftEditInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage,
 		return nil, "", usageError{errors.New("nothing to change; see draft edit --help")}
 	}
 	return marshalInput(m)
+}
+
+// --- draft show --------------------------------------------------------------------
+
+func draftShowFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("eml", false, "print the message as RFC 5322 text (.eml) instead, byte for byte the copy in the Drafts folder")
+}
+
+func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := positiveID(args[0], "draft id")
+	if err != nil {
+		return nil, "", err
+	}
+	m := map[string]any{"draft_id": id}
+	if eml, _ := cmd.Flags().GetBool("eml"); eml {
+		m["eml"] = true
+	}
+	return marshalInput(m)
+}
+
+// draftShowNotes: Bei --eml gehört stdout allein der Nachricht (umleitbar in
+// eine .eml-Datei); was sie ist, steht auf stderr.
+func draftShowNotes(out any) []string {
+	o, ok := out.(ops.DraftDetail)
+	if !ok || o.EML == "" {
+		return nil
+	}
+	var notes []string
+	if o.EMLNote != "" {
+		notes = append(notes, "eml: "+o.EMLNote)
+	}
+	if o.OlderCopies > 0 {
+		notes = append(notes, ops.OlderCopiesWarning(o.OlderCopies))
+	}
+	return notes
 }
 
 func draftIDArg(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
@@ -471,6 +516,11 @@ func renderDraftShow(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	if o.EML != "" {
+		// --eml: genau die Bytes der Nachricht (CRLF), nichts davor oder danach.
+		_, err := io.WriteString(w, o.EML)
+		return err
+	}
 	fmt.Fprintf(w, "draft %d (%s) in account %s, status %s\n", o.DraftID, strings.ReplaceAll(o.Kind, "_", " "), o.Account, o.Status)
 	if o.ApprovalID > 0 {
 		fmt.Fprintf(w, "approval:    %d (%s", o.ApprovalID, orDash(o.ApprovalStatus))
@@ -540,7 +590,18 @@ func renderDraftList(w io.Writer, out any) error {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n", d.DraftID, d.Account, d.Kind, d.Status, ap, d.Remote, d.Recipients,
 			d.Attachments, d.UpdatedAt, termLine(d.Subject))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	// Entscheid 43: ältere Kopien im Entwürfe-Ordner, je Entwurf eine Zeile.
+	for _, d := range o.Drafts {
+		if d.OlderCopies > 0 {
+			if _, err := fmt.Fprintf(w, "warning: draft %d: %s\n", d.DraftID, ops.OlderCopiesWarning(d.OlderCopies)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func renderDraftRequest(w io.Writer, out any) error {

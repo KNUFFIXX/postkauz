@@ -231,14 +231,14 @@ func KeysCreate(repo KeyRepo) Operation {
 				return nil, err
 			}
 			if !AccountNameRE.MatchString(in.Name) {
-				return nil, inputErr("invalid key name %q: use lowercase letters, digits and '-' (max 63)", in.Name)
+				return nil, inputErr("invalid key name: use lowercase letters, digits and '-' (max 63)")
 			}
 			if in.Role == "" {
 				in.Role = "assistant"
 			}
 			roleScopes, ok := policy.Roles[in.Role]
 			if !ok {
-				return nil, inputErr("unknown role %q (reader, assistant, operator, admin)", in.Role)
+				return nil, inputErr("unknown role (reader, assistant, operator, admin)")
 			}
 			scopes := make([]string, 0, len(roleScopes))
 			for _, s := range roleScopes {
@@ -248,7 +248,7 @@ func KeysCreate(repo KeyRepo) Operation {
 				// Verengen, nie erweitern (docs/sicherheit.md, Abschnitt 3).
 				for _, s := range in.Scopes {
 					if !slices.Contains(scopes, s) {
-						return nil, inputErr("scope %q is not part of role %s; scopes can only narrow a role", s, in.Role)
+						return nil, inputErr("a scope is not part of role %s; scopes can only narrow a role (see: policy show)", in.Role)
 					}
 				}
 				narrowed := []string{}

@@ -87,7 +87,7 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t, nil
 	}
-	return time.Time{}, inputErr("invalid time %q: use a duration like 10m, 24h or 7d, a date like 2026-10-16, or RFC 3339", s)
+	return time.Time{}, inputErr("invalid time: use a duration like 10m, 24h or 7d, a date like 2026-10-16, or RFC 3339")
 }
 
 // AuditListOutput ist die Ausgabe von audit.list.

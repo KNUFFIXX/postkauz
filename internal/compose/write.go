@@ -240,9 +240,18 @@ func (b *builder) write(w io.Writer, atts []loadedAttachment) error {
 func writeAttachment(mw *message.Writer, a loadedAttachment) error {
 	var h message.Header
 	ctParams, dispParams := map[string]string{}, map[string]string{}
-	if a.info.Filename != "" {
-		ctParams["name"] = a.info.Filename
-		dispParams["filename"] = a.info.Filename
+	if name := a.info.Filename; name != "" {
+		// Wie Betreff und Namen (Gegenprüfung S2.3, K4; umgesetzt S2.7): Ein
+		// Dateiname, der wörtlich "=?" enthält, wird selbst als encoded-word
+		// kodiert. Mailclients (und der eigene Parser) dekodieren encoded-words
+		// auch in Dateinamen; sonst sähe der Empfänger statt
+		// "=?utf-8?q?=E2=80=AE?=gpj.exe" einen Namen mit U+202E, den der
+		// Mensch beim Prüfen in draft show nicht sah.
+		if strings.Contains(name, "=?") {
+			name = encodeWords(name)
+		}
+		ctParams["name"] = name
+		dispParams["filename"] = name
 	}
 	ct := a.info.ContentType
 	if strings.HasPrefix(ct, "text/") && utf8.Valid(a.data) {

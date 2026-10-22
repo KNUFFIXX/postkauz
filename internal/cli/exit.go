@@ -5,7 +5,6 @@ package cli
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -72,7 +71,8 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, store.ErrKeyExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
 	case errors.Is(err, store.ErrKeyNotFound):
-		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list keys with: key list"}
+		// Ohne den Namen (S2.7: keine Eingabewerte in Fehlermeldungen).
+		return ExitError, ErrorInfo{Code: "not_found", Message: "api key not found", Hint: "list keys with: key list"}
 	case errors.Is(err, ops.ErrKeyMissing), errors.Is(err, ops.ErrKeyInvalid), errors.Is(err, ops.ErrKeyRevoked),
 		errors.Is(err, ops.ErrKeyExpired):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "create a key with: key create --name <name> --role reader"}
@@ -96,8 +96,11 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: deniedHint(de.Reason)}
 	case errors.As(err, &pe) && pe.Decision.Reason == "human_only":
 		// A02 E2 (D4.5): nur der Mensch ohne --key.
-		return ExitDenied, ErrorInfo{Code: "denied", Message: fmt.Sprintf("denied (human_only): %s is for a human without a key", pe.Operation),
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(),
 			Hint: "run it without --key; no API key may do this, whatever its role"}
+	case errors.As(err, &pe) && pe.Decision.Reason == "missing_scope":
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(),
+			Hint: "the key lacks the required scope; see what it may do with: policy show --key <name>"}
 	case errors.Is(err, ops.ErrDenied):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "the key lacks the required scope or the policy forbids this"}
 	case errors.Is(err, ops.ErrNeedsApproval):

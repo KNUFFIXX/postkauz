@@ -48,6 +48,10 @@ type binding struct {
 	// check prüft die Ausgabe nach dem Schreiben und kann so einen
 	// Exit-Code ≠ 0 erzwingen (audit verify: mismatch → Exit 1).
 	check func(out any) error
+	// notes liefert Hinweise, die ohne --json auf stderr gehen, weil stdout
+	// allein der Ausgabe gehört (draft show --eml); mit --json stehen sie in
+	// der Ausgabe der Operation.
+	notes func(out any) []string
 }
 
 var bindings = []binding{
@@ -209,6 +213,11 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 		}
 	} else {
 		err = b.human(a.stdout, res.Output)
+		if err == nil && b.notes != nil {
+			for _, n := range b.notes(res.Output) {
+				fmt.Fprintf(a.stderr, "note: %s\n", termLine(n))
+			}
+		}
 	}
 	if err == nil && b.check != nil {
 		err = b.check(res.Output)
@@ -333,7 +342,7 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return nil, "", usageError{fmt.Errorf("invalid --imap port %q", portStr)}
+		return nil, "", usageError{errors.New("invalid --imap port: give host:port with a port number")}
 	}
 	if tlsMode == "" {
 		tlsMode = defaultTLS(port, insecure)

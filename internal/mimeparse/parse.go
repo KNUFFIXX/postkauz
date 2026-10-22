@@ -515,7 +515,7 @@ func (w *walker) walk(e *message.Entity, depth int, id string) {
 
 	disp, dparams, _ := e.Header.ContentDisposition()
 	disp = strings.ToLower(disp)
-	filename := w.filename(dparams, params)
+	filename := w.filename(e.Header, dparams, params)
 	isText := mediaType == "text/plain" || mediaType == "text/html"
 	if isText && disp != "attachment" && filename == "" {
 		w.text(e, mediaType, params, id)
@@ -531,15 +531,28 @@ func nonEmpty(id string) string {
 	return id
 }
 
-func (w *walker) filename(dparams, ctparams map[string]string) string {
-	name := dparams["filename"]
-	if name == "" {
-		name = ctparams["name"]
+// filename liest den Dateinamen eines Teils: filename aus
+// Content-Disposition, sonst name aus Content-Type, je RFC 2231 und genau
+// einmal RFC 2047 dekodiert. go-message dekodiert encoded-words in
+// Parametern schon selbst (dparams, ctparams); ein zweites Dekodieren machte
+// aus einem kodierten Namen, der wörtlich "=?…?=" lautet, etwas anderes als
+// das, was Mailclients anzeigen (z. B. U+202E; S2.7). Deshalb kommen die
+// Parameter hier roh aus mime.ParseMediaType, und nur wo das scheitert,
+// gilt der Wert von go-message.
+func (w *walker) filename(h message.Header, dparams, ctparams map[string]string) string {
+	for _, f := range []struct {
+		field, param string
+		decoded      map[string]string
+	}{{"Content-Disposition", "filename", dparams}, {"Content-Type", "name", ctparams}} {
+		if _, raw, err := mime.ParseMediaType(h.Get(f.field)); err == nil && raw[f.param] != "" {
+			return strings.TrimSpace(w.m.decodeText("filename", raw[f.param]))
+		}
+		if v := f.decoded[f.param]; v != "" {
+			v, _ = fixUTF8(v)
+			return strings.TrimSpace(v)
+		}
 	}
-	if name == "" {
-		return ""
-	}
-	return strings.TrimSpace(w.m.decodeText("filename", name))
+	return ""
 }
 
 // text liest einen Textteil bis MaxTextBytes.
