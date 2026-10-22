@@ -36,10 +36,10 @@ type Config struct {
 	IdleRestart time.Duration
 }
 
-// Provider ist der IMAP-Provider. Stand S1.5: Verbinden, Fähigkeiten,
-// Ordner mit Rollen, Changes, FetchHeaders, FetchRaw und Idle (sync.go).
-// SetFlags, Move, Trash und Append folgen mit S2/S3; erst dann erfüllt
-// Provider provider.MailProvider vollständig.
+// Provider ist der IMAP-Provider. Stand S2.5: Verbinden, Fähigkeiten,
+// Ordner mit Rollen, Changes, FetchHeaders, FetchRaw und Idle (sync.go),
+// Append für Entwürfe (append.go). SetFlags, Move und Trash folgen mit S3;
+// erst dann erfüllt Provider provider.MailProvider vollständig.
 type Provider struct {
 	s          *imapx.Session
 	newSession func() *imapx.Session // eigene Verbindung für IDLE

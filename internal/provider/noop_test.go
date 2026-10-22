@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"io"
-	"time"
 )
 
 // noopProvider erfüllt MailProvider und hält die Schnittstelle kompilierbar.
@@ -27,8 +26,8 @@ func (noopProvider) Move(context.Context, string, []UID, string) (map[UID]UID, e
 	return nil, nil
 }
 func (noopProvider) Trash(context.Context, string, []UID) error { return nil }
-func (noopProvider) Append(context.Context, string, []byte, Flags, time.Time) (UID, error) {
-	return 0, nil
+func (noopProvider) Append(context.Context, string, []byte, AppendOptions) (AppendResult, error) {
+	return AppendResult{}, nil
 }
 func (noopProvider) Idle(context.Context, string, chan<- struct{}) error { return ErrUnsupported }
 func (noopProvider) Close() error                                        { return nil }

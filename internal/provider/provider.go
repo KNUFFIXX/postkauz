@@ -2,9 +2,9 @@
 // JMAP-Semantik (Zustandstokens, changes, Rollen) und wird für IMAP
 // nachgebildet (ADR-003, docs/architektur.md).
 //
-// Stand S1.5: Die IMAP-Implementierung (internal/provider/imap) deckt
-// Capabilities, ListMailboxes, Changes, FetchHeaders, FetchRaw und Idle ab;
-// SetFlags, Move, Trash und Append folgen mit S2/S3.
+// Stand S2.5: Die IMAP-Implementierung (internal/provider/imap) deckt
+// Capabilities, ListMailboxes, Changes, FetchHeaders, FetchRaw, Idle und
+// Append (Entwürfe) ab; SetFlags, Move und Trash folgen mit S3.
 //
 // Verbindliche Eigenschaften:
 //
@@ -139,6 +139,22 @@ type Flags struct {
 	Keywords                       []string
 }
 
+// AppendOptions steuert Append.
+type AppendOptions struct {
+	Flags Flags
+	// Date ist das INTERNALDATE der neuen Nachricht (Nullzeit = Server).
+	Date time.Time
+	// MessageID (ohne <>) findet die Kopie wieder, wenn der Server keine
+	// UID nennt oder die Verbindung während APPEND abbricht.
+	MessageID string
+}
+
+// AppendResult ist das Ergebnis von Append.
+type AppendResult struct {
+	UID         UID // 0 = unbekannt
+	UIDValidity uint32
+}
+
 // FlagPatch ändert Flags; nil bedeutet „nicht anfassen".
 type FlagPatch struct {
 	Seen, Flagged, Answered, Draft *bool
@@ -252,9 +268,12 @@ type MailProvider interface {
 	// „in [Gmail]/Papierkorb verschieben", nicht „Label entfernen".
 	Trash(ctx context.Context, mailbox string, uids []UID) error
 
-	// Append legt eine Rohmail in einem Ordner ab (Entwürfe!). Liefert die
-	// neue UID, falls der Server sie nennt (UIDPLUS), sonst 0.
-	Append(ctx context.Context, mailbox string, raw []byte, flags Flags, date time.Time) (UID, error)
+	// Append legt eine Rohmail in einem Ordner ab (Entwürfe!). Liefert UID
+	// und UIDVALIDITY der neuen Nachricht (APPENDUID, sonst per Suche nach
+	// o.MessageID; 0 = unbekannt). APPEND ist nicht wiederholbar: Nach einem
+	// Verbindungsabbruch sucht der Provider die Kopie über o.MessageID, bevor
+	// er es erneut versucht.
+	Append(ctx context.Context, mailbox string, raw []byte, o AppendOptions) (AppendResult, error)
 
 	// Idle blockiert und sendet auf notify, sobald sich der Ordner ändert,
 	// bis ctx endet (Rückgabe nil) oder die Verbindung trotz Wiederholung
