@@ -184,7 +184,10 @@ type ToolError struct {
 func classify(err error) ToolError {
 	var pe *ops.PolicyError
 	var ie *ops.InputError
+	var de *ops.DeniedError
 	switch {
+	case errors.As(err, &de):
+		return ToolError{Status: "denied", Reason: de.Reason, Message: de.Msg}
 	case errors.As(err, &pe):
 		st := "denied"
 		if pe.Decision.Outcome == policy.NeedsApproval {
@@ -210,6 +213,10 @@ func classify(err error) ToolError {
 		return ToolError{Status: "error", Code: "not_found", Message: "attachment not found; use an id from mail_list_attachments"}
 	case errors.Is(err, store.ErrMailboxNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "mailbox not found; see mail_list_mailboxes"}
+	case errors.Is(err, store.ErrDraftNotFound):
+		return ToolError{Status: "error", Code: "not_found", Message: "draft not found; see mail_list_drafts"}
+	case errors.Is(err, store.ErrApprovalNotFound):
+		return ToolError{Status: "error", Code: "not_found", Message: "approval not found"}
 	case errors.Is(err, store.ErrAccountNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "account not found; see mail_list_accounts"}
 	}

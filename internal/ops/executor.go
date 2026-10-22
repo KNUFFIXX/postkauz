@@ -236,13 +236,19 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	if herr != nil {
 		reason = "invalid_input"
 	} else {
-		out, herr = x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress, Key: req.Key})
+		out, herr = x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress,
+			Key: req.Key, Actor: req.Actor})
 	}
 	if herr != nil {
 		ev.Result = audit.ResultError
 		ev.Reason = reason
-		if errors.Is(herr, ErrInternal) {
+		var de *DeniedError
+		switch {
+		case errors.Is(herr, ErrInternal):
 			ev.Reason = "panic"
+		case errors.As(herr, &de):
+			// Fachliche Ablehnung (S2.3): Ergebnis denied mit ihrem Grund.
+			ev.Result, ev.Reason = audit.ResultDenied, de.Reason
 		}
 		ev.Duration = now().Sub(start)
 		// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann

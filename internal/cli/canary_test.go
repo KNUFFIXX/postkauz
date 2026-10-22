@@ -35,14 +35,18 @@ import (
 //
 //   - pw, pwBad: Passwörter zweier Konten (eines richtig, eines falsch);
 //   - key: ein echter API-Schlüssel aus `key create`, wrongKey ein falscher;
-//   - mail: ein Wort im Text einer Mail und ihres Anhangs.
+//   - mail: ein Wort im Text einer Mail und ihres Anhangs;
+//   - draft: ein Wort in Betreff und Text eines Entwurfs (S2.3).
 //
 // Passwörter und der falsche Schlüssel dürfen nirgends erscheinen, der
 // Schlüssel nur in der Ausgabe von `key create`. Mailtext darf nur in den
 // lesenden Kommandos stehen (show, search, thread, attach text, mailbox
 // overview) und in MCP-Ergebnissen in der Untrusted-Hülle; nie im Audit,
 // im Log, in den --json-Ausgaben der Admin-Kommandos, in Fehlermeldungen,
-// in Absturzausgaben, im Audit-Export oder in doctor.
+// in Absturzausgaben, im Audit-Export oder in doctor. Entwurfsinhalt darf
+// nur in den Ausgaben stehen, die den Entwurf zeigen (draft new|reply|edit
+// mit Vorschau, draft show, draft list), nie in Audit, Log, Fehlern,
+// Freigabe-Ausgaben, Abstürzen, MCP-Ergebnissen oder dem Audit-Export.
 func TestCanaryAllChannels(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the program; skipped with -short")
@@ -124,6 +128,42 @@ func TestCanaryAllChannels(t *testing.T) {
 	c.mustRun("account add (refused, password on stdin)", ExitUsage, c.pwBad+"\n", "account", "add", "x", "--imap", "imap.example.org:143",
 		"--user", "u@example.org", "--tls", "none", "--insecure-test-server", "--password-stdin", "--json")
 
+	// --- Entwürfe (S2.3): Kanarien-Betreff und -Text --------------------------
+	bodyFile := filepath.Join(c.dir, "entwurf.md")
+	if err := os.WriteFile(bodyFile, []byte("Antwort mit "+c.draft+" im Text."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cr := c.drafting(c.mustRun("draft reply", 0, "", "draft", "reply", id, "--no-quote", "--subject", "Re: "+c.draft, "--body-file", bodyFile, "--json"), true)
+	var dw ops.DraftsWriteOutput
+	if err := json.Unmarshal([]byte(cr.stdout), &dw); err != nil || dw.DraftID == 0 || dw.Remote != "pending" {
+		t.Fatalf("draft reply: %v %s", err, cr.stdout)
+	}
+	did := fmt.Sprint(dw.DraftID)
+	c.drafting(c.mustRun("draft reply (text, dry run)", 0, "", "draft", "reply", id, "--no-quote", "--subject", c.draft, "--dry-run"), true)
+	c.drafting(c.mustRun("draft show", 0, "", "draft", "show", did), true)
+	c.drafting(c.mustRun("draft show --json", 0, "", "draft", "show", did, "--json"), true)
+	c.drafting(c.mustRun("draft list", 0, "", "draft", "list"), true)
+	c.mustRun("draft request (key without mail:draft)", ExitDenied, "", "draft", "request", did, "--key", "agent", "--json")
+	req := c.mustRun("draft request", 0, "", "draft", "request", did, "--json")
+	var dr ops.DraftsRequestOutput
+	if err := json.Unmarshal([]byte(req.stdout), &dr); err != nil || dr.ApprovalID == 0 || dr.Status != "pending_approval" {
+		t.Fatalf("draft request: %v %s", err, req.stdout)
+	}
+	aid := fmt.Sprint(dr.ApprovalID)
+	c.mustRun("approve (key)", ExitDenied, "", "approve", aid, "--key", "agent", "--json")
+	c.mustRun("approval show", 0, "", "approval", "show", aid, "--json")
+	c.mustRun("approve", 0, "", "approve", aid)
+	c.drafting(c.mustRun("draft edit", 0, "", "draft", "edit", did, "--subject", c.draft+" neu", "--json"), true)
+	c.mustRun("approve (stale)", ExitDenied, "", "approve", aid, "--json")
+	c.mustRun("approve (stale, text)", ExitDenied, "", "approve", aid)
+	c.mustRun("draft abandon", 0, "", "draft", "abandon", did, "--json")
+	c.mustRun("draft edit (closed)", ExitDenied, "", "draft", "edit", did, "--subject", c.draft+" zu", "--json")
+	c.mustRun("draft edit (closed, text)", ExitDenied, "", "draft", "edit", did, "--subject", c.draft+" zu")
+	c.mustRun("draft new (attachment outside)", ExitDenied, "", "draft", "new", "-a", "demo", "--subject", c.draft, "--attach", bodyFile, "--json")
+	if r := c.mustRun("policy show (human only)", 0, "", "policy", "show", "--key", "agent"); !strings.Contains(r.stdout, "drafts.approve: human_only") {
+		t.Errorf("policy show --key: no human_only list:\n%s", r.stdout)
+	}
+
 	// --- Abstürze (Panic mit Inhalt im Wert) -------------------------------
 	for _, p := range []struct {
 		when, op string
@@ -136,6 +176,8 @@ func TestCanaryAllChannels(t *testing.T) {
 		{"handler", "attachments.text", []string{"attach", "text", attID}},
 		{"cli", "accounts.test", []string{"account", "test", "demo"}},
 		{"handler", "keys.create", []string{"key", "create", "--name", "panic-" + p0(t), "--json"}},
+		{"handler", "drafts.create", []string{"draft", "new", "-a", "demo", "--subject", c.draft, "--json"}},
+		{"cli", "drafts.get", []string{"draft", "show", "1"}},
 	} {
 		r := c.mustRun("panic "+p.when+":"+p.op, ExitError, "", append([]string{withEnv(ops.EnvTestPanic + "=" + p.when + ":" + p.op)}, p.args...)...)
 		if !strings.Contains(r.stderr, "internal") || !strings.Contains(r.stderr, "panic value withheld") {
@@ -212,6 +254,7 @@ type canaryRun struct {
 	stdout, stderr string
 	mailOK         bool // lesendes Kommando: Mailtext erlaubt (nur stdout)
 	keyOK          bool // key create: Schlüssel erlaubt (nur stdout)
+	draftOK        bool // zeigt den Entwurf: Entwurfsinhalt erlaubt (nur stdout)
 }
 
 type canaryEnv struct {
@@ -220,6 +263,7 @@ type canaryEnv struct {
 	exportDir            string
 	env                  []string
 	pw, pwBad, mail, key string
+	draft                string
 	wrongKey             string
 	runs                 []*canaryRun
 	mcpOut               []string // Texte aus MCP-Ergebnissen mit Mailinhalt
@@ -230,7 +274,7 @@ func newCanaryEnv(t *testing.T) *canaryEnv {
 	dir := t.TempDir()
 	c := &canaryEnv{t: t, dir: dir, dataDir: filepath.Join(dir, "data"), exportDir: filepath.Join(dir, "zweiter-ort"),
 		pw: "KanarienPasswort-" + randHex(t, 8), pwBad: "FalschesKanarienPasswort-" + randHex(t, 8),
-		mail: "KANARIEMAILTEXT" + strings.ToUpper(randHex(t, 6)), wrongKey: ops.KeyPrefix + strings.Repeat("Q", 43)}
+		mail: "KANARIEMAILTEXT" + strings.ToUpper(randHex(t, 6)), draft: "KANARIEENTWURF" + strings.ToUpper(randHex(t, 6)), wrongKey: ops.KeyPrefix + strings.Repeat("Q", 43)}
 	c.bin = buildProgram(t, dir)
 	cfg := filepath.Join(dir, "config.toml")
 	// TOML-Literal (einfache Anführungszeichen): Backslashes unter Windows.
@@ -321,8 +365,20 @@ func (c *canaryEnv) reading(r *canaryRun, must bool) {
 	}
 }
 
-// leaks nennt die Kanarienwerte, die in s stehen und dort nicht dürfen.
-func (c *canaryEnv) leaks(s string, mailOK, keyOK bool) []string {
+// drafting markiert ein Kommando, das den Entwurf zeigt; must: der
+// Entwurfsinhalt muss erscheinen.
+func (c *canaryEnv) drafting(r *canaryRun, must bool) *canaryRun {
+	c.t.Helper()
+	r.draftOK = true
+	if must && !strings.Contains(r.stdout, c.draft) {
+		c.t.Errorf("%s: draft content missing (the test would prove nothing):\n%s", r.name, r.stdout)
+	}
+	return r
+}
+
+// leaks nennt die Kanarienwerte, die in s stehen und dort nicht dürfen
+// (Entwurfsinhalt nur mit draftOK, Standard: nicht erlaubt).
+func (c *canaryEnv) leaks(s string, mailOK, keyOK bool, draftOK ...bool) []string {
 	var out []string
 	for name, v := range map[string]string{"password": c.pw, "wrong password": c.pwBad, "wrong API key": c.wrongKey} {
 		if strings.Contains(s, v) {
@@ -335,12 +391,15 @@ func (c *canaryEnv) leaks(s string, mailOK, keyOK bool) []string {
 	if !mailOK && strings.Contains(s, c.mail) {
 		out = append(out, "mail text")
 	}
+	if (len(draftOK) == 0 || !draftOK[0]) && strings.Contains(s, c.draft) {
+		out = append(out, "draft content")
+	}
 	return out
 }
 
 func (c *canaryEnv) checkOutput(r *canaryRun) {
 	c.t.Helper()
-	if l := c.leaks(r.stdout, r.mailOK, r.keyOK); len(l) > 0 {
+	if l := c.leaks(r.stdout, r.mailOK, r.keyOK, r.draftOK); len(l) > 0 {
 		c.t.Errorf("%s: stdout contains %v:\n%s", r.name, l, r.stdout)
 	}
 	if l := c.leaks(r.stderr, false, false); len(l) > 0 {
@@ -383,7 +442,8 @@ func (c *canaryEnv) checkFiles() {
 			return err
 		}
 		b, _ := os.ReadFile(p)
-		if l := c.leaks(string(b), true, false); len(l) > 0 {
+		draftOK := filepath.Base(p) != "postkauz.log" // Datenbank und Blobs: der Entwurf selbst
+		if l := c.leaks(string(b), true, false, draftOK); len(l) > 0 {
 			c.t.Errorf("data file %s contains %v", p, l)
 		}
 		return nil

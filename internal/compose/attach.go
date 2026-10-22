@@ -118,6 +118,19 @@ func attachName(s string) string {
 	return s
 }
 
+// LoadFile liest einen Dateianhang path unterhalb von attachDir nach
+// denselben Regeln wie Build (E10): aufgelöst, Symlinks und „..“ nach außen
+// ReasonAttachOutsideDir, fehlend ReasonAttachNotFound, mehr als maxBytes
+// ReasonTooLarge (0 = DefaultLimits.MaxAttachmentBytes). Liefert Inhalt und
+// Dateinamen. S2.3 legt den Inhalt damit in den Blob-Store, bevor Build ihn
+// als Data bekommt; field nennt das Eingabefeld für Fehlermeldungen.
+func LoadFile(field, attachDir, path string, maxBytes int64) ([]byte, string, error) {
+	if maxBytes <= 0 {
+		maxBytes = DefaultLimits.MaxAttachmentBytes
+	}
+	return readAttachFile(field, attachDir, path, maxBytes)
+}
+
 // readAttachFile liest eine Datei, die (aufgelöst) unterhalb von dir liegen
 // muss (E10). Relative Pfade gelten relativ zu dir. Symlinks und „..", die
 // nach außen führen, sind ReasonAttachOutsideDir; geöffnet wird über

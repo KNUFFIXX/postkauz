@@ -2,9 +2,12 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -12,6 +15,8 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -229,6 +234,81 @@ var contractInputs = map[string]struct {
 	"audit.export":       {input: `{}`},
 	"audit.verify":       {input: `{}`},
 	"policy.get":         {input: `{}`},
+	// Entwürfe (S2.3): Umgebung mit Identitäten 1 (Standard) und 2, Entwurf
+	// 1 (draft) und Entwurf 2 (pending_approval, Freigabe 1).
+	"drafts.create": {input: `{"account":"demo","kind":"reply","in_reply_to":1,"identity":"demo@example.org","to":["Zweit <zweit@example.net>"],` +
+		`"cc":["c@example.net"],"bcc":["b@example.net"],"subject":"Antwort","body_markdown":"**Hallo**","attachments":[{"attachment_id":1}],` +
+		`"quote":true,"signature":true,"include_attachments":false}`},
+	"drafts.update":          {input: `{"draft_id":1,"to":["neu@example.org"],"subject":"Neu","body_html":"<p>Neuer Text</p>","quote":false,"signature":false}`},
+	"drafts.get":             {input: `{"draft_id":1}`},
+	"drafts.list":            {input: `{"account":"demo","status":["draft","pending_approval"],"limit":5}`},
+	"drafts.request_ready":   {input: `{"draft_id":1}`},
+	"drafts.approve":         {input: `{"approval_id":1}`},
+	"drafts.reject":          {input: `{"approval_id":1,"reason":"zu lang"}`},
+	"drafts.abandon":         {input: `{"draft_id":1}`},
+	"drafts.mark_sent":       {input: `{"draft_id":2}`},
+	"approvals.get":          {input: `{"approval_id":1}`},
+	"identities.add":         {input: `{"account":"demo","name":"Drei","email":"drei@example.org","reply_to":"antwort@example.org","signature_text":"Gruß","default":true}`},
+	"identities.list":        {input: `{"account":"demo"}`},
+	"identities.set_default": {input: `{"id":2}`},
+	"identities.remove":      {input: `{"id":2}`},
+}
+
+// memBlobs ist ein Blob-Store im Speicher: die Blobs von testBlobs und
+// alles, was Put ablegt (puts zählt die Schreibzugriffe).
+type memBlobs struct {
+	m    map[string]string
+	puts int
+}
+
+func newMemBlobs() *memBlobs {
+	b := &memBlobs{m: map[string]string{}}
+	for k, v := range testBlobs {
+		// Unter dem Testnamen (wie in testBlobs) und unter dem echten
+		// SHA-256 (so legt der Sync Anhänge ab; Entwürfe merken sich ihn).
+		sum := sha256.Sum256([]byte(v))
+		b.m[k], b.m[hex.EncodeToString(sum[:])] = v, v
+	}
+	return b
+}
+
+func (b *memBlobs) Get(sha string) (io.ReadCloser, error) { return mapBlobs(b.m).Get(sha) }
+
+func (b *memBlobs) Put(r io.Reader) (blob.Info, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return blob.Info{}, err
+	}
+	sum := sha256.Sum256(data)
+	h := hex.EncodeToString(sum[:])
+	_, existed := b.m[h]
+	b.m[h] = string(data)
+	b.puts++
+	return blob.Info{SHA256: h, Size: int64(len(data)), Existed: existed}, nil
+}
+
+// seedDrafts legt Identitäten und Entwürfe für die Entwurfsoperationen an
+// (direkt über den Dienst, nicht über den Executor).
+func seedDrafts(t *testing.T, st *store.SQLite, acct int64) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := st.AddIdentity(ctx, store.Identity{AccountID: acct, Name: "Demo", Email: "demo@example.org",
+		SignatureText: "Gruß"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddIdentity(ctx, store.Identity{AccountID: acct, Name: "Zweit", Email: "zweit@example.org"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := &drafts.Service{Store: st}
+	for i := 0; i < 2; i++ {
+		if _, err := svc.Create(ctx, drafts.NewDraft{AccountID: acct, Kind: drafts.KindNew, CreatedBy: "cli",
+			Content: drafts.Content{To: []store.Addr{{Address: "a@example.org"}}, Subject: "Entwurf", BodyText: "Text"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := svc.RequestReady(ctx, 2, "cli", drafts.HookPass); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // contractImporter meldet Importe, die schreiben dürften (DryRun=false).
@@ -245,6 +325,7 @@ type contractEnv struct {
 	*mirrorEnv
 	runner   *contractRunner
 	importer *contractImporter
+	blobs    *memBlobs
 	deps     Deps
 }
 
@@ -270,11 +351,14 @@ func newContractEnv(t *testing.T) *contractEnv {
 		Operation: "accounts.list", Result: audit.ResultOK}); err != nil {
 		t.Fatal(err)
 	}
+	seedDrafts(t, m.st, m.acct)
 	r := &contractRunner{}
 	imp := &contractImporter{}
-	return &contractEnv{mirrorEnv: m, runner: r, importer: imp, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
+	blobs := newMemBlobs()
+	return &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
-		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir()}}
+		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
+		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}}}
 }
 
 // fingerprint fasst den lokalen Zustand zusammen: alle Tabellen der
@@ -325,6 +409,7 @@ func (e *contractEnv) fingerprint(t *testing.T) string {
 	if e.importer.acct != "" && !e.importer.got.DryRun {
 		b.WriteString("import wrote\n")
 	}
+	fmt.Fprintf(&b, "blob puts %d\n", e.blobs.puts)
 	return b.String()
 }
 
@@ -475,7 +560,9 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					if want == policy.Allow && ev.DryRun != effDry {
 						t.Fatalf("audit dry_run=%v, want %v", ev.DryRun, effDry)
 					}
-					if b, _ := json.Marshal(ev); strings.Contains(string(b), canary) {
+					// ParamsRedacted ([]byte) zusätzlich als Text prüfen:
+					// json.Marshal schreibt es als Base64.
+					if b, _ := json.Marshal(ev); strings.Contains(string(b), canary) || strings.Contains(string(ev.ParamsRedacted), canary) {
 						t.Fatalf("secret in audit event: %s", b)
 					}
 

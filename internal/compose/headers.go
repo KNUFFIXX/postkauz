@@ -249,7 +249,7 @@ func (b *builder) addresses() error {
 
 	// Abgeleitete Empfänger (Antworten).
 	var to, cc []Address
-	if in.Kind == KindReply || in.Kind == KindReplyAll {
+	if (in.Kind == KindReply || in.Kind == KindReplyAll) && !in.ExplicitRecipients {
 		own := append([]string{in.AccountAddress, in.Identity.Email, from.Address}, in.OwnAddresses...)
 		dto, dcc := ReplyRecipients(*in.Original, own, in.Kind == KindReplyAll)
 		to, cc = b.valid(dto), b.valid(dcc)

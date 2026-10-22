@@ -1,6 +1,6 @@
 # CLI
 
-Stand: S2.1 (22.10.2026; zuletzt veröffentlicht: 0.1.0-rc2). Implementiert und getestet sind `version`, `doctor` (seit S1.11 mit `--secrets` und dem Stand des Audit-Exports), `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain` (seit S2.0/A7 auch `--config` und `--data-dir`); seit S1.9 `mcp` (Abschnitt 2h), seit S1.10 `import mbox` und `import maildir` (Abschnitt 2i); seit S1.11 der Audit-Export mit Hash-Kette und Manifest (Abschnitt 2f) und der Fehlercode `internal` (Abschnitt 3); seit S2.0 `account set --aliases` (Abschnitt 2a) und die Spalte `ALIASES` bzw. das Feld `aliases` in `accounts list`; seit S2.1 die Policy-Datei und die Abschnitte `[paths]`, `[operator]`, `[draft]` der Konfiguration (Abschnitt 5) sowie `account set --password-stdin` (Abschnitt 2a). Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
+Stand: S2.1 (22.10.2026; zuletzt veröffentlicht: 0.1.0-rc2). Implementiert und getestet sind `version`, `doctor` (seit S1.11 mit `--secrets` und dem Stand des Audit-Exports), `accounts list` (aus der Datenbank), `account add`, `account test`, `account remove`, `sync` (Erstsync, inkrementell, `--watch`; danach Extraktion und Suchindex), `mailbox list`, `show` (voll: Kopf, Absenderprüfung, Text, Hinweis auf versteckten Text, Links, Anhangsliste, `--strip-quotes`, `--max-chars`), `search` (Abfragesprache, `--limit`, `--cursor`, `--mailbox`, `--fields`, NDJSON), `thread`, `attach list`, `attach text`, `key create/list/revoke`, `audit`, `audit export`, `audit verify`, `policy show` sowie die globalen Flags `--json`, `--dry-run`, `--account`/`-a`, `--key`, `--quiet`, `--profile` und `--explain` (seit S2.0/A7 auch `--config` und `--data-dir`); seit S1.9 `mcp` (Abschnitt 2h), seit S1.10 `import mbox` und `import maildir` (Abschnitt 2i); seit S1.11 der Audit-Export mit Hash-Kette und Manifest (Abschnitt 2f) und der Fehlercode `internal` (Abschnitt 3); seit S2.0 `account set --aliases` (Abschnitt 2a) und die Spalte `ALIASES` bzw. das Feld `aliases` in `accounts list`; seit S2.1 die Policy-Datei und die Abschnitte `[paths]`, `[operator]`, `[draft]` der Konfiguration (Abschnitt 5) sowie `account set --password-stdin` (Abschnitt 2a); seit S2.3 die Entwürfe in Grundform: `draft new|reply|forward|edit|show|list|request|abandon|mark-sent`, `approve`, `reject`, `approval show`, `identity add|list|set-default|remove` (Abschnitt 2j) und in `policy show --key` die Liste `human_only` (Abschnitt 2e). Alles andere in diesem Dokument ist **Entwurf** und mit dem Schnitt markiert, in dem es entsteht.
 
 ## 1. Befehlsstruktur
 
@@ -48,8 +48,13 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.8 ✓ | `policy show` (Abschnitt 2e) | `policy.get` (R0, jeder Schlüssel) |
 | S1.9 ✓ | `mcp` (Abschnitt 2h) | startet den stdio-MCP-Server (kein Registerbefehl; jeder Tool-Aufruf läuft einzeln durch den Executor) |
 | S1.10 ✓ | `import mbox <datei\|ordner>`, `import maildir <ordner>` (Abschnitt 2i) | `import.run` (Scope `admin`, R1; nicht über MCP) |
-| S2 | `draft new`, `draft reply`, `draft forward`, `draft list`, `draft show`, `draft edit` | `drafts.*` |
-| S2 | `approve <id>`, `reject <id>` | `approvals.decide` |
+| S2.3 ✓ | `draft new`, `draft reply`, `draft forward` (Abschnitt 2j) | `drafts.create` (R2, `mail:draft`; eine Operation, drei Kommandos) |
+| S2.3 ✓ | `draft edit <id>` | `drafts.update` (R2, `mail:draft`) |
+| S2.3 ✓ | `draft show <id>`, `draft list` | `drafts.get`, `drafts.list` (R0, `mail:draft`) |
+| S2.3 ✓ | `draft request <id>` | `drafts.request_ready` (R1, `mail:draft`) |
+| S2.3 ✓ | `approve <approval-id>`, `reject <approval-id> [--reason]`, `draft abandon <id>`, `draft mark-sent <id>` | `drafts.approve`, `drafts.reject`, `drafts.abandon`, `drafts.mark_sent` (R1, `mail:draft`, nur Mensch: mit `--key` Exit 3 `human_only`) |
+| S2.3 ✓ | `approval show <approval-id>` | `approvals.get` (R0, `mail:draft`) |
+| S2.3 ✓ | `identity add`, `identity list`, `identity set-default <id>`, `identity remove <id>` | `identities.add`, `identities.list`, `identities.set_default`, `identities.remove` (`admin`, nur Mensch; nicht über MCP) |
 | S3 | `tag`, `mark`, `move`, `trash`, `attach save` | `messages.*`, `attachments.save` |
 | S3 | `export`, `backup`, `restore` | `export.run`, `backup.run`, `restore.run` |
 
@@ -86,10 +91,12 @@ postkauz audit verify                                                       # S1
 postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024   # S1.10 ✓
 postkauz import mbox "%APPDATA%\Thunderbird\Profiles\x.default\ImapMail\imap.example.org" -a demo --dry-run   # S1.10 ✓
 
-# S2 (Entwurf)
-postkauz draft reply 18233 --all --body-file antwort.md --quote             # legt den Entwurf in den Entwürfe-Ordner
+# S2.3 ✓ (die Ablage im Entwürfe-Ordner folgt mit S2.5)
+postkauz identity add -a demo --email demo@example.org --name "Demo Büro" --signature-file signatur.txt
+postkauz draft reply 18233 --all --body-file antwort.md                     # Entwurf anlegen, Status draft, remote pending
+postkauz draft request 1                                                    # zur Freigabe vorlegen (Prüf-Hook, approval 1)
 postkauz draft list --status pending_approval
-postkauz approve 17                                                         # Mensch gibt den Entwurf frei (Status ready)
+postkauz approve 1                                                          # Mensch gibt den Entwurf frei (Status ready)
 ```
 
 Der Mensch sendet den Entwurf in seinem gewohnten Mailclient; PostKauz erkennt den Versand beim nächsten Sync.
@@ -194,7 +201,7 @@ Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehr
 - `key list` zeigt Name, Rolle, Scopes, Status (`active`, `expired`, `revoked`), Trockenlauf-Standard, Anlage, Ablauf und letzte Nutzung.
 - `key revoke <name>` widerruft sofort; der Name bleibt belegt (eindeutiges Audit). Ein zweiter Widerruf meldet `already revoked`.
 - **`--key <name>`** (global): Der Mensch handelt mit den Rechten dieses Schlüssels, z. B. `search Rechnung --key test-agent --explain` oder `policy show --key test-agent`. So lässt sich vor dem Einsatz prüfen, was ein Agent sehen würde. Erwartet wird der **Name**; ein Schlüssel im Klartext als Argument wird abgewiesen (Exit 2; Kommandozeilen sind in der Prozessliste sichtbar). Unbekannt: Exit 1 `not_found`; widerrufen oder abgelaufen: Exit 3 `denied`. Im Audit steht `key:<name>`.
-- `policy show` beschreibt die Richtlinie des (mit `--key` gewählten) Schlüssels: Rolle, Scopes, Trockenlauf-Standard, Ablauf, Zeichenbudget für Agenten (20.000) und die erlaubten Operationen mit Risikostufe. Ohne `--key` ist das der Mensch (`cli`, alle Rechte).
+- `policy show` beschreibt die Richtlinie des (mit `--key` gewählten) Schlüssels: Rolle, Scopes, Trockenlauf-Standard, Ablauf, Zeichenbudget für Agenten (20.000) und die erlaubten Operationen mit Risikostufe. Ohne `--key` ist das der Mensch (`cli`, alle Rechte). Seit S2.3 (Entscheid 40) folgt für einen Schlüssel der Block `never with a key (human only):` mit je einer Zeile `  <operation>: human_only` (z. B. `drafts.approve: human_only`), `--json` im Feld `human_only` (für den Menschen leer): Diese Operationen darf kein Schlüssel, gleich welcher Rolle.
 
 ## 2f. Audit (S1.8)
 
@@ -259,6 +266,35 @@ Liest einen Bestand in ein Konto ein, ohne den Server zu berühren (Operation `i
 
   Ein zweiter Lauf zeigt `new: 0`. Mit `--json` ein Objekt nach dem `OutputSchema` von `import.run` (je Quelle `new`, `existing`, `skipped`, `errors`, `linked`, `bytes`, `resumed_at`, `unchanged`, `problems`; gesamt zusätzlich `linked`, `sources_unchanged`, `files_ignored`). `errors` zählt Nachrichten, die nicht gelesen oder gespeichert werden konnten (z. B. über 256 MiB); der Lauf geht weiter (Exit 0).
 - **Eingabefehler** (unbekanntes Format, Pfad fehlt, kein mbox/Maildir gefunden): Exit 2. Im Audit stehen Konto und Feldnamen, nie Pfade.
+
+## 2j. Entwürfe, Freigaben, Identitäten (S2.3, Grundform)
+
+Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeichert; seine Kopie legt der Job `draft_push` in den Entwürfe-Ordner (ausgeführt ab S2.5 von `sync` bzw. `sync --watch`; bis dahin wartet der Job). Der Mensch sendet im Mailclient. S2.7 baut die Kommandos aus (u. a. `draft show --eml`); die Grundform hier deckt alle Felder der Operationen ab.
+
+| Kommando | Optionen | Ausgabe (Text) |
+|---|---|---|
+| `draft new` | `-a <konto>`, `--to`/`--cc`/`--bcc` (je Adresse oder `"Name <adresse>"`, wiederholbar), `--subject`, `--body-file <datei>` (Markdown; `-` = Standardeingabe) oder `--html-file <datei>`, `--attach <anhang-id\|datei>` (wiederholbar; eine Zahl ist die ID aus `attach list`, sonst eine Datei unter `[paths] attach_dir`), `--identity <adresse\|id>`, `--no-signature` | `draft 1 created (status draft, remote pending)`, darunter Message-ID, Kopf, die ersten 500 Zeichen des Texts, Anhänge, `warning:` (Entscheid 39: Typ-Widerspruch oder ausführbarer Anhang, erlaubt), `note:`, `remote: …` und `nothing is sent: a human sends the draft in the mail client` |
+| `draft reply <id\|Message-ID>` | wie `new`, dazu `--all` (Allen antworten), `--no-quote`; Empfänger, Betreff (`Re: …`), `In-Reply-To`, `References` und Zitat kommen aus der Ausgangsnachricht | wie `new` |
+| `draft forward <id\|Message-ID>` | wie `new`, dazu `--no-attachments` (Anhänge der Ausgangsnachricht nicht übernehmen) | wie `new` |
+| `draft edit <id>` | `--to`/`--cc`/`--bcc` (ersetzen die Liste; `--cc ""` leert sie), `--subject`, `--body-file`/`--html-file`, `--attach` (ersetzt alle Anhänge) oder `--no-attachments`, `--quote=true\|false`, `--signature=true\|false`; ohne Option Exit 2 | `draft 1 changed (status ready -> draft, remote pending)` und `approval 1 superseded: …` bzw. `draft 1 unchanged (status …)` |
+| `draft show <id>` | – | Status, Freigabe, Hook-Ergebnis, Stand der Serverkopie, Kopf, `references:`, ganzer Text, Anhänge mit Warnungen, `preview hash:` |
+| `draft list` | `-a <konto>`, `--status <s>` (wiederholbar oder mit Komma), `--limit N` (Standard 100) | Tabelle `ID ACCOUNT KIND STATUS APPROVAL REMOTE TO ATT CHANGED SUBJECT` |
+| `draft request <id>` | – | `hook: pass` und `draft 1: status pending_approval, approval 1 (until …); a human approves with: approve 1`; scheitert der Hook (ab S2.4): `hook: fail`, seine Ausgabe, `status stays draft` |
+| `approve <approval-id>` | – | `approval 1 approved by <name>: draft 1 is ready (valid until …); send it in your mail client, postkauz never sends` |
+| `reject <approval-id>` | `--reason <text>` (steht nur in der Freigabe, nie im Audit) | `approval 2 rejected by <name>: draft 1 is draft` |
+| `approval show <approval-id>` | – | Zustand (`pending`, `approved`, `rejected`, `superseded`, `expired`), Beschreibung ohne Mailinhalt, wer wann vorgelegt und entschieden hat |
+| `draft abandon <id>`, `draft mark-sent <id>` | – | `draft 1: abandoned (was draft)` bzw. `draft 2: sent_by_human (was ready)`; die Kopie im Entwürfe-Ordner bleibt (kein Löschen im MVP) |
+| `identity add` | `-a <konto>`, `--email` (Pflicht), `--name`, `--reply-to`, `--signature-file <datei>` (Text), `--signature-html-file <datei>` (HTML, bereinigt wie jeder Entwurf; versteckter Text → Exit 3 `hidden_text_in_draft`), `--style-file <datei>` (Stilhinweise für Agenten, ab S2.8 als Resource), `--reply-prefix` (Standard `Re: `), `--forward-prefix` (Standard `Fwd: `), `--default` | `identity 1 of account demo: Demo Büro <demo@example.org> (signature text, default)`; die erste Identität eines Kontos wird Standard |
+| `identity list` | `-a <konto>` | Tabelle `ID ACCOUNT DEFAULT NAME EMAIL REPLY-TO SIGNATURE PREFIXES` |
+| `identity set-default <id>`, `identity remove <id>` | – | wie `identity add`; ein Entwurf behält seinen Absender (Kopie), auch wenn die Identität entfernt wird (dann ohne Signatur beim nächsten Ändern) |
+
+- **Wer darf was:** Anlegen, Ändern, Lesen und Vorlegen brauchen den Scope `mail:draft` (Rollen `assistant`, `operator`, `admin`; mit `--key` eines `reader`-Schlüssels Exit 3 `missing_scope`). `approve`, `reject`, `draft abandon`, `draft mark-sent` und `identity …` darf **nur der Mensch ohne `--key`**: mit jedem Schlüssel, auch `admin`, Exit 3 `human_only`, nichts ändert sich.
+- **Freigabe:** `draft request` legt eine Freigabe an (gültig `[draft] approval_ttl`, Standard 7 Tage, danach fällt der Entwurf beim nächsten Lesen auf `draft` zurück). `approve` setzt `ready`, wenn sich der Entwurf seit der Vorlage nicht geändert hat; jede Änderung danach setzt ihn auf `draft`, die Freigabe auf `superseded`, und ein `approve` der alten Freigabe endet mit Exit 3 `approval_stale`.
+- **Fachliche Ablehnungen** sind Exit 3 (`denied`) mit Grund in der Meldung, z. B. `denied (approval_stale): …`, `draft_closed` (Entwurf verworfen oder gesendet), `draft_taken_over`, `attach_outside_dir`, `attach_not_found`, `hidden_text_in_draft`, `invalid_address`, `too_large`, `too_many_recipients`; dazu ein Hinweis mit dem nächsten Schritt. Unbekannte Entwürfe, Freigaben und Identitäten: Exit 1 `not_found`. Widersprüchliche Eingaben (z. B. `--body-file` und `--html-file`): Exit 2.
+- **Trockenlauf** (`--dry-run`): `draft new|reply|forward` zeigt die Vorschau ohne zu speichern (`dry run: would create a draft (reply) in account demo, status draft; nothing saved`), `draft request` prüft nur, `approve` usw. melden, was geschähe.
+- **Audit:** je Aufruf ein Eintrag des Executors und je Übergang ein Eintrag mit Grund `transition` (Draft-ID, Art, Zustand vorher/nachher, Zahl der Empfänger und Anhänge, Freigabe, Hook-Ergebnis); nie Betreff, Adressen, Text oder Dateinamen. `audit --since 10m --operation drafts.request_ready` zeigt sie.
+- `--json` liefert die Ausgabe der Operation (`draft_id`, `status`, `preview`, `attachments`, `warnings`, `remote`, `remote_note`, `preview_hash`, …).
+- **Noch nicht (S2.7):** `draft show --eml`, Alias-Optionen; **noch nicht (S2.5):** die Ablage im Entwürfe-Ordner (`remote` bleibt `pending`).
 
 ## 3. Maschinenlesbarkeit (`--json`)
 

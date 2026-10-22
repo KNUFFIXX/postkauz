@@ -35,6 +35,10 @@ type Content struct {
 	// References); "" = {}.
 	HeadersJSON string
 	Attachments []store.DraftAttachment
+	// ComposeOptions: Schalter des Nachrichtenbaus (JSON-Objekt mit quote,
+	// signature; S2.3); "" = {}. Nicht im preview_hash (sie wirken über
+	// body_text) und nicht im Vergleich „Inhalt geändert".
+	ComposeOptions string
 }
 
 // Validate prüft die Grenzen und Adressen. Eine Verletzung ist eine
