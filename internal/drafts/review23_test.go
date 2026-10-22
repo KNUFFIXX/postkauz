@@ -54,6 +54,25 @@ func TestApproveBindsMessageHash(t *testing.T) {
 	}
 }
 
+// Gegenprüfung S2.3, K3: Die Grenze von 200.000 Zeichen gilt für die
+// Eingabe (body_markdown, body_html), nicht für den fertigen Text mit
+// Signatur und Zitat; eine Antwort mit langem Zitat ist kein too_large.
+func TestBodyLimitOnInput(t *testing.T) {
+	long := make([]byte, MaxBodyChars+50000)
+	for i := range long {
+		long[i] = 'a'
+	}
+	if err := Validate(Content{BodyMarkdown: "kurz", BodyText: string(long)}); err != nil {
+		t.Fatalf("long body_text with a short input: %v", err)
+	}
+	if err := Validate(Content{BodyMarkdown: string(long)}); ReasonOf(err) != ReasonTooLarge {
+		t.Fatalf("long body_markdown: %v", err)
+	}
+	if err := Validate(Content{BodyHTML: string(long)}); ReasonOf(err) != ReasonTooLarge {
+		t.Fatalf("long body_html: %v", err)
+	}
+}
+
 // Gegenprüfung S2.3, W2: Ändert ein zweiter Schreiber den Entwurf, während
 // der Hook den alten Stand prüft, legt RequestReady nicht vor
 // (draft_changed): keine Freigabe, kein Hook-Ergebnis, Zustand draft.

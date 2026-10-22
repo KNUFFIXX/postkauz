@@ -260,6 +260,7 @@ var contractInputs = map[string]struct {
 type memBlobs struct {
 	m    map[string]string
 	puts int
+	read int64 // gelesene Bytes (K2)
 }
 
 func newMemBlobs() *memBlobs {
@@ -273,7 +274,25 @@ func newMemBlobs() *memBlobs {
 	return b
 }
 
-func (b *memBlobs) Get(sha string) (io.ReadCloser, error) { return mapBlobs(b.m).Get(sha) }
+func (b *memBlobs) Get(sha string) (io.ReadCloser, error) {
+	rc, err := mapBlobs(b.m).Get(sha)
+	if err != nil {
+		return nil, err
+	}
+	return countingReader{rc, &b.read}, nil
+}
+
+// countingReader zählt die gelesenen Bytes.
+type countingReader struct {
+	io.ReadCloser
+	n *int64
+}
+
+func (c countingReader) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	*c.n += int64(n)
+	return n, err
+}
 
 func (b *memBlobs) Put(r io.Reader) (blob.Info, error) {
 	data, err := io.ReadAll(r)

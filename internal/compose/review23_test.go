@@ -104,6 +104,36 @@ func TestNoInvisibleTextInDraft(t *testing.T) {
 	}
 }
 
+// Gegenprüfung S2.3, K3: Eine Antwort oder Weiterleitung auf eine sehr
+// lange Mail kürzt das Zitat (mit Markierung und Hinweis), statt die
+// Antwort als too_large abzulehnen.
+func TestLongQuoteIsShortened(t *testing.T) {
+	for _, kind := range []Kind{KindReply, KindForward} {
+		in := baseInput(kind)
+		o := *in.Original
+		o.HTML = ""
+		o.Text = strings.Repeat("Zeile mit Text\n", 20000) // 300.000 Zeichen
+		in.Original = &o
+		in.BodyMarkdown = "Kurze Antwort"
+		m := mustBuild(t, in)
+		n := len([]rune(m.BodyText))
+		if !strings.Contains(m.BodyText, QuoteTruncatedMarker) || n > MaxQuoteChars*3/2 || n < MaxQuoteChars/2 {
+			t.Fatalf("%s: body text %d characters, marker %v", kind, n, strings.Contains(m.BodyText, QuoteTruncatedMarker))
+		}
+		found := false
+		for _, nt := range m.Notes {
+			found = found || nt == NoteQuoteTruncated
+		}
+		if !found {
+			t.Fatalf("%s: notes %v", kind, m.Notes)
+		}
+	}
+	// Ein kurzes Zitat bleibt ganz.
+	if m := mustBuild(t, baseInput(KindReply)); strings.Contains(m.BodyText, QuoteTruncatedMarker) {
+		t.Fatal("short quote shortened")
+	}
+}
+
 // Die MIME-Grenzen hängen vom Inhalt ab, nicht von der Message-ID allein:
 // Ein Text, der die Grenze eines anderen Baus enthält, bekommt eine andere.
 func TestBoundariesFromContent(t *testing.T) {

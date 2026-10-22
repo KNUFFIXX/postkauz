@@ -1,14 +1,18 @@
 package ops
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// Regressionstests zur Gegenprüfung von S2.3 (Befunde B1, K1).
+// Regressionstests zur Gegenprüfung von S2.3 (Befunde B1, K1, K2, K8, W1,
+// W2, W4).
 
 // B1: Eine zu lange oder ungültige Eingabe nennt in der Fehlermeldung nur
 // Feld und Regel, nie den Wert; Längen-Grenzen der Entwurfsfelder sind
@@ -242,6 +246,40 @@ func TestReviewW4NoLostUpdate(t *testing.T) {
 	if round != 2*updateAttempts {
 		t.Fatalf("rounds = %d", round)
 	}
+}
+
+// K2: Anhänge werden nur bis zum Restbudget gelesen; vorher las jeder
+// Anhang einzeln bis zur vollen Grenze, die Summe prüfte erst der
+// Nachrichtenbau.
+func TestReviewK2AttachmentBudgetWhileLoading(t *testing.T) {
+	e := newDraftEnv(t, false)
+	for _, f := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(e.attach, f), []byte(strings.Repeat(f[:1], 600)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := e.must(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new",
+		"attachments": []map[string]any{{"file": "a.txt"}, {"file": "b.txt"}}}).(DraftsWriteOutput)
+	// Dieselbe Datenbank mit kleinerer Grenze: Die gespeicherten Anhänge
+	// (zusammen 1.200 Bytes) passen nicht mehr.
+	deps := e.deps
+	deps.Draft.MaxAttachmentBytes = 1000
+	reg, err := NewDefaultRegistry(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := &Executor{Registry: reg, Audit: e.st.AuditWriter()}
+	e.blobs.read = 0
+	in, _ := json.Marshal(map[string]any{"draft_id": out.DraftID, "subject": "neu"})
+	_, err = x.Execute(context.Background(), Request{Key: humanCLI, Actor: "human", Operation: "drafts.update", Input: in})
+	wantDenied(t, err, "too_large")
+	if e.blobs.read > 1001 {
+		t.Fatalf("read %d bytes for a limit of 1000", e.blobs.read)
+	}
+	// Dateien unter attach_dir ebenso: ein Fehler, bevor die zweite ganz gelesen ist.
+	in, _ = json.Marshal(map[string]any{"account": "demo", "kind": "new", "attachments": []map[string]any{{"file": "a.txt"}, {"file": "b.txt"}}})
+	_, err = x.Execute(context.Background(), Request{Key: humanCLI, Actor: "human", Operation: "drafts.create", Input: in})
+	wantDenied(t, err, "too_large")
 }
 
 // K8: request_ready und update im Trockenlauf speichern keinen Rückfall

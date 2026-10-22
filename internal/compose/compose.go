@@ -79,7 +79,9 @@
 //     erkannte Typ, Widerspruch und ausführbare Typen stehen im Ergebnis),
 //     Summe ≤ Limits.MaxAttachmentBytes, Dateien nur unterhalb von AttachDir
 //     (Symlinks aufgelöst, geöffnet über os.Root).
-//   - Grenzen: Text ≤ 200.000 Zeichen, Betreff ≤ 500 (ein abgeleiteter
+//   - Grenzen: eigener Text (Markdown bzw. HTML) ≤ 200.000 Zeichen; der
+//     Text der Ausgangsnachricht in Zitat und Weiterleitung wird auf
+//     MaxQuoteChars gekürzt (Hinweis NoteQuoteTruncated); Betreff ≤ 500 (ein abgeleiteter
 //     Betreff wird gekürzt, ein genannter abgelehnt), ≤ 50 Empfänger je
 //     Feld, Adressen per net/mail.ParseAddress.
 //
@@ -257,7 +259,20 @@ const (
 	// NoteRecipientDropped: Eine abgeleitete Adresse der Ausgangsnachricht
 	// war ungültig und fehlt.
 	NoteRecipientDropped = "recipient_dropped"
+	// NoteQuoteTruncated: Der zitierte bzw. weitergeleitete Text der
+	// Ausgangsnachricht war länger als MaxQuoteChars und wurde gekürzt.
+	NoteQuoteTruncated = "quote_truncated"
 )
+
+// MaxQuoteChars begrenzt den Text der Ausgangsnachricht in Zitat und
+// Weiterleitung (Zeichen). Die Grenze der Eingabe (MaxBodyChars) gilt für
+// den eigenen Text, nicht für das Zitat; ein längeres Zitat wird gekürzt
+// (mit Hinweis und Markierung im Text), statt die Antwort abzulehnen
+// (Gegenprüfung S2.3, K3).
+const MaxQuoteChars = 200_000
+
+// QuoteTruncatedMarker steht am Ende eines gekürzten Zitats.
+const QuoteTruncatedMarker = "[… the rest of the original message was left out …]"
 
 // AttachmentInfo beschreibt einen Anhang der fertigen Nachricht.
 type AttachmentInfo struct {

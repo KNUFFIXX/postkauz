@@ -368,6 +368,7 @@ var composeNotes = map[string]string{
 	compose.NoteSubjectTruncated: "the derived subject was cut to 500 characters",
 	compose.NoteContentRemoved:   "the HTML cleaner removed something (scripts, forms, remote images or links other than https/mailto)",
 	compose.NoteRecipientDropped: "an invalid address of the original message was left out",
+	compose.NoteQuoteTruncated:   "the quoted or forwarded text of the original message was shortened to 200000 characters",
 }
 
 func addNote(notes []string, n string) []string {
@@ -428,27 +429,58 @@ func (o *draftOps) accountByID(ctx context.Context, id int64) (store.Account, er
 	return store.Account{}, fmt.Errorf("%w: id %d", store.ErrAccountNotFound, id)
 }
 
-// readBlob liest einen Blob vollständig, höchstens max Bytes.
-func (o *draftOps) readBlob(sha string, max int64) ([]byte, error) {
+// attachBudget ist das Restbudget der Anhänge eines Aufrufs
+// ([draft] max_attachment_bytes): Jeder geladene Anhang zieht seine Größe
+// ab, der nächste wird höchstens bis zum Rest gelesen. Vorher las jeder
+// Anhang einzeln bis zur vollen Grenze, und erst der Nachrichtenbau prüfte
+// die Summe (Gegenprüfung S2.3, K2): 50 Anhänge à 25 MiB lagen dann im
+// Speicher, bevor die Ablehnung kam.
+type attachBudget struct{ left int64 }
+
+func (o *draftOps) newBudget() *attachBudget { return &attachBudget{left: o.cfg.maxBytes()} }
+
+var errAttachTooLarge = &DeniedError{Reason: string(compose.ReasonTooLarge), Msg: "attachments exceed the limit in total"}
+
+// readBlob liest einen Blob vollständig, höchstens bis zum Restbudget, und
+// zieht seine Größe davon ab.
+func (o *draftOps) readBlob(sha string, b *attachBudget) ([]byte, error) {
+	if b.left < 0 {
+		return nil, errAttachTooLarge
+	}
 	rc, err := o.blobs.Get(sha)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(io.LimitReader(rc, max+1))
+	data, err := io.ReadAll(io.LimitReader(rc, b.left+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > max {
-		return nil, &DeniedError{Reason: string(compose.ReasonTooLarge), Msg: "attachments exceed the limit in total"}
+	if int64(len(data)) > b.left {
+		return nil, errAttachTooLarge
 	}
+	b.left -= int64(len(data))
 	return data, nil
+}
+
+// loadFile liest einen Dateianhang unter attach_dir, höchstens bis zum
+// Restbudget.
+func (o *draftOps) loadFile(field, file string, b *attachBudget) ([]byte, string, error) {
+	if b.left <= 0 {
+		return nil, "", errAttachTooLarge
+	}
+	data, name, err := compose.LoadFile(field, o.cfg.AttachDir, file, b.left)
+	if err != nil {
+		return nil, "", draftErr(err)
+	}
+	b.left -= int64(len(data))
+	return data, name, nil
 }
 
 // original lädt die Ausgangsnachricht aus dem Spiegel (lokale ID oder
 // Message-ID im Konto acc) und parst ihre Rohmail. withAttachments lädt
 // ihre Anhänge (nicht inline) für eine Weiterleitung.
-func (o *draftOps) original(ctx context.Context, acc *store.Account, id int64, mid string, withAttachments bool) (store.Message, *compose.Original, []string, error) {
+func (o *draftOps) original(ctx context.Context, acc *store.Account, id int64, mid string, withAttachments bool, budget *attachBudget) (store.Message, *compose.Original, []string, error) {
 	var notes []string
 	if id == 0 {
 		if acc == nil {
@@ -496,7 +528,7 @@ func (o *draftOps) original(ctx context.Context, acc *store.Account, id int64, m
 				notes = addNote(notes, fmt.Sprintf("attachment %d of the original message is not included (not stored when mirrored)", a.ID))
 				continue
 			}
-			data, err := o.readBlob(a.SHA256, o.cfg.maxBytes())
+			data, err := o.readBlob(a.SHA256, budget)
 			if err != nil {
 				return m, nil, nil, draftErr(err)
 			}
@@ -514,7 +546,7 @@ type loadedAttachment struct {
 
 // attachments löst die Anhänge der Eingabe auf: IDs aus dem Spiegel
 // (desselben Kontos), Dateien unter attach_dir.
-func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []DraftAttachmentInput) ([]loadedAttachment, error) {
+func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []DraftAttachmentInput, budget *attachBudget) ([]loadedAttachment, error) {
 	var out []loadedAttachment
 	for i, a := range in {
 		field := fmt.Sprintf("attachments[%d]", i)
@@ -532,7 +564,7 @@ func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []Draf
 			if sa.SHA256 == "" || sa.Truncated {
 				return nil, inputErr("%s: attachment %d was not stored when mirrored", field, a.AttachmentID)
 			}
-			data, err := o.readBlob(sa.SHA256, o.cfg.maxBytes())
+			data, err := o.readBlob(sa.SHA256, budget)
 			if err != nil {
 				return nil, draftErr(err)
 			}
@@ -542,9 +574,9 @@ func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []Draf
 			}
 			out = append(out, loadedAttachment{att: compose.Attachment{Filename: name, ContentType: sa.DeclaredType, Data: data}})
 		default:
-			data, name, err := compose.LoadFile(field, o.cfg.AttachDir, a.File, o.cfg.maxBytes())
+			data, name, err := o.loadFile(field, a.File, budget)
 			if err != nil {
-				return nil, draftErr(err)
+				return nil, err
 			}
 			if a.Filename != "" {
 				name = a.Filename
@@ -557,10 +589,10 @@ func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []Draf
 
 // storedAttachments lädt die gespeicherten Anhänge eines Entwurfs als Daten
 // (Neubau bei einer Änderung).
-func (o *draftOps) storedAttachments(atts []store.DraftAttachment) ([]loadedAttachment, error) {
+func (o *draftOps) storedAttachments(atts []store.DraftAttachment, budget *attachBudget) ([]loadedAttachment, error) {
 	var out []loadedAttachment
 	for _, a := range atts {
-		data, err := o.readBlob(a.SHA256, o.cfg.maxBytes())
+		data, err := o.readBlob(a.SHA256, budget)
 		if err != nil {
 			return nil, draftErr(err)
 		}
@@ -764,8 +796,9 @@ func DraftsCreate(d Deps) Operation {
 			var orig *compose.Original
 			var origID int64
 			var notes []string
+			budget := o.newBudget() // eigene und weitergeleitete Anhänge zusammen (K2)
 			if hasOrig {
-				m, og, n, err := o.original(ctx, accp, in.InReplyTo, in.InReplyToMessageID, kind == compose.KindForward && boolOr(in.IncludeAttachments, true))
+				m, og, n, err := o.original(ctx, accp, in.InReplyTo, in.InReplyToMessageID, kind == compose.KindForward && boolOr(in.IncludeAttachments, true), budget)
 				if err != nil {
 					return nil, err
 				}
@@ -780,7 +813,7 @@ func DraftsCreate(d Deps) Operation {
 			if err != nil {
 				return nil, err
 			}
-			atts, err := o.attachments(ctx, acc, in.Attachments)
+			atts, err := o.attachments(ctx, acc, in.Attachments, budget)
 			if err != nil {
 				return nil, err
 			}
@@ -918,7 +951,7 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 	var orig *compose.Original
 	var notes []string
 	if cur.InReplyToMsg > 0 {
-		_, og, _, err := o.original(ctx, &acc, cur.InReplyToMsg, "", false)
+		_, og, _, err := o.original(ctx, &acc, cur.InReplyToMsg, "", false, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -957,9 +990,9 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 	ci.BodyMarkdown, ci.BodyHTML = md, html
 	var atts []loadedAttachment
 	if in.Attachments != nil {
-		atts, err = o.attachments(ctx, acc, *in.Attachments)
+		atts, err = o.attachments(ctx, acc, *in.Attachments, o.newBudget())
 	} else {
-		atts, err = o.storedAttachments(cur.Attachments)
+		atts, err = o.storedAttachments(cur.Attachments, o.newBudget())
 	}
 	if err != nil {
 		return nil, err
@@ -1446,7 +1479,7 @@ func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draf
 	ci := compose.NewInput(compose.Kind(dr.Kind))
 	ci.AccountAddress, ci.ExplicitRecipients = dr.FromEmail, true
 	if dr.InReplyToMsg > 0 {
-		_, og, _, err := o.original(ctx, &acc, dr.InReplyToMsg, "", false)
+		_, og, _, err := o.original(ctx, &acc, dr.InReplyToMsg, "", false, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1460,7 +1493,7 @@ func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draf
 	ci.Quote, ci.Signature, ci.IncludeAttachments = opts.Quote, opts.Signature, false
 	ci.To, ci.Cc, ci.Bcc, ci.Subject = formatAddrs(dr.To), formatAddrs(dr.Cc), formatAddrs(dr.Bcc), dr.Subject
 	ci.BodyMarkdown, ci.BodyHTML, ci.MessageID = dr.BodyMarkdown, dr.BodyHTML, dr.MessageIDHeader
-	atts, err := o.storedAttachments(dr.Attachments)
+	atts, err := o.storedAttachments(dr.Attachments, o.newBudget())
 	if err != nil {
 		return nil, err
 	}
