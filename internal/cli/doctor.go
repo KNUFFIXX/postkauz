@@ -15,6 +15,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -61,6 +62,17 @@ type DoctorReport struct {
 	AuditExportLocation  string          `json:"audit_export_location,omitempty"`
 	AuditDaysNotExported int             `json:"audit_days_not_exported"`
 	Accounts             []DoctorAccount `json:"accounts"`
+	// Policy-Datei (S2.1, A02 E8): Pfad, Zustand (ok | default = keine
+	// Datei, eingebaute Standards | invalid), SHA-256, Version in der
+	// Tabelle policies (0 = noch nicht eingetragen; das nächste Kommando
+	// trägt sie ein) und der Fehler einer ungültigen Datei.
+	PolicyPath    string `json:"policy_path"`
+	Policy        string `json:"policy"`
+	PolicySHA256  string `json:"policy_sha256,omitempty"`
+	PolicyVersion int64  `json:"policy_version"`
+	PolicyError   string `json:"policy_error,omitempty"`
+	// AttachDir: Ordner für Dateianhänge von Entwürfen ([paths] attach_dir).
+	AttachDir string `json:"attach_dir"`
 	// Secrets nur mit --secrets.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Warnings []string       `json:"warnings"`
@@ -97,6 +109,9 @@ func doctorCmd(a *app) *cobra.Command {
 			if rep.ConfigError != "" {
 				return errors.New("configuration is invalid: " + rep.ConfigError)
 			}
+			if rep.PolicyError != "" {
+				return errors.New(rep.PolicyError)
+			}
 			if rep.Secrets != nil && rep.Secrets.Problems > 0 {
 				return fmt.Errorf("%w: %d problems (see the lines marked fail)", errSecretCheck, rep.Secrets.Problems)
 			}
@@ -122,6 +137,8 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		return rep
 	}
 	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
+	rep.AttachDir = a.paths.AttachDir
+	pf := doctorPolicy(&rep, a.paths.ConfigFile)
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
 	}
@@ -185,6 +202,13 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.FTSVersion, _ = db.FTSVersion(ctx)
 	rep.ExtractPending, _ = db.ExtractPending(ctx, 0)
 	doctorAudit(ctx, db, &rep, time.Now())
+	if v >= 10 && rep.Policy != "invalid" {
+		if last, ok, err := db.LatestPolicy(ctx); err != nil {
+			rep.Warnings = append(rep.Warnings, "policy: "+err.Error())
+		} else if ok && last.SHA256 == pf.SHA256 && last.Document == pf.Document() {
+			rep.PolicyVersion = last.Version
+		}
+	}
 	// Nur Spalten, die jedes Schema hat: doctor migriert nicht und muss die
 	// Konten auch bei needs_migration lesen können.
 	list, err := db.AccountRefs(ctx)
@@ -209,6 +233,22 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	doctorCredentialRefs(ctx, db, sec, list, &rep)
 	return rep
+}
+
+// doctorPolicy lädt die Policy-Datei nur lesend (doctor trägt nichts ein).
+func doctorPolicy(rep *DoctorReport, configFile string) policy.File {
+	path, explicit := policy.FilePath(configFile)
+	rep.PolicyPath = path
+	f, err := policy.LoadFile(path, explicit)
+	switch {
+	case err != nil:
+		rep.Policy, rep.PolicyError = "invalid", err.Error()
+	case f.Exists:
+		rep.Policy, rep.PolicySHA256 = "ok", f.SHA256
+	default:
+		rep.Policy = "default"
+	}
+	return f
 }
 
 // doctorCredentialRefs meldet den Stand des Umzugs der Schlüsselbund-Einträge
@@ -365,6 +405,23 @@ func printDoctor(w io.Writer, r DoctorReport) {
 		kr += " (" + r.KeyringDetail + ")"
 	}
 	fmt.Fprintf(w, "keyring:   %s [secrets.backend = %s]\n", kr, r.SecretsBackend)
+	switch r.Policy {
+	case "ok", "default":
+		state := "found"
+		if r.Policy == "default" {
+			state = "not found, built-in defaults"
+		}
+		version := "not recorded yet (the next command records it)"
+		if r.PolicyVersion > 0 {
+			version = fmt.Sprintf("version %d", r.PolicyVersion)
+		}
+		fmt.Fprintf(w, "policy:    %s (%s; %s)\n", r.PolicyPath, state, version)
+	case "invalid":
+		fmt.Fprintf(w, "policy:    %s (INVALID: %s)\n", r.PolicyPath, r.PolicyError)
+	}
+	if r.AttachDir != "" {
+		fmt.Fprintf(w, "attach:    %s [paths.attach_dir]\n", r.AttachDir)
+	}
 	if r.PDFTool != "" {
 		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)
 	} else {

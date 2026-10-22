@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
@@ -15,6 +16,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/importer"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -57,6 +59,10 @@ type app struct {
 	log     *slog.Logger
 	logFile *os.File
 	exec    *ops.Executor
+	// policy ist die geladene Policy-Datei (A02 E8), policyVersion ihre
+	// Version in der Tabelle policies; beides setzt open.
+	policy        policy.File
+	policyVersion int64
 	// noCredentials: Der Prozess fasst keine Passwörter an (MCP-Server,
 	// docs/sicherheit.md, Abschnitt 4); open zieht dann auch keine
 	// Schlüsselbund-Einträge um.
@@ -125,6 +131,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	a.st = st
+	// Policy-Datei: laden, prüfen, Version eintragen (A02 E8). Eine
+	// ungültige Datei hält jedes Kommando auf (fail closed).
+	if err := a.loadPolicy(ctx); err != nil {
+		return nil, err
+	}
 	sec, err := openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir)
 	if err != nil {
 		return nil, err
@@ -139,15 +150,32 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	}
 	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
 		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
-		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir})
+		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars()})
 	if err != nil {
 		return nil, err
 	}
-	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st},
+	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st}, PolicyVersion: a.policyVersion,
 		OnPanic: func(op string, r crash.Report) {
 			a.log.Error("panic in operation", "op", op, "message", r.Message, "stack", r.Stack)
 		}}
 	return a.exec, nil
+}
+
+// loadPolicy lädt die Policy-Datei neben der Konfiguration (oder aus
+// POSTKAUZ_POLICY) und trägt sie in die Tabelle policies ein.
+func (a *app) loadPolicy(ctx context.Context) error {
+	path, explicit := policy.FilePath(a.paths.ConfigFile)
+	f, err := policy.LoadFile(path, explicit)
+	if err != nil {
+		return err
+	}
+	v, err := a.st.RecordPolicy(ctx, f.SHA256, f.Document(), time.Now())
+	if err != nil {
+		return fmt.Errorf("policy: %w", err)
+	}
+	a.policy, a.policyVersion = f, v
+	a.log.Info("policy loaded", "path", f.Path, "exists", f.Exists, "version", v)
+	return nil
 }
 
 // moveCredentialRefs zieht Schlüsselbund-Einträge auf den Verweis mit der

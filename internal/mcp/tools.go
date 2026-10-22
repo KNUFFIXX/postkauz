@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
@@ -25,6 +27,31 @@ type toolBinding struct {
 	maxInt map[string]int
 	// mail: Die Ausgabe enthält Mailinhalt (Untrusted-Hülle).
 	mail bool
+	// maxChars ersetzt in defaults den Wert von max_chars und in desc den
+	// Platzhalter {max_chars} (Zeichenbudget aus der Policy-Datei, A02 E8;
+	// 0 = ops.DefaultMaxChars). Gesetzt von withMaxChars.
+	maxChars int
+}
+
+// withMaxChars liefert die Bindung mit dem Zeichenbudget der Policy-Datei.
+func (b toolBinding) withMaxChars(n int) toolBinding {
+	b.maxChars = n
+	if _, ok := b.defaults["max_chars"]; ok {
+		d := make(map[string]any, len(b.defaults))
+		for k, v := range b.defaults {
+			d[k] = v
+		}
+		d["max_chars"] = b.budget()
+		b.defaults = d
+	}
+	return b
+}
+
+func (b toolBinding) budget() int {
+	if b.maxChars > 0 {
+		return b.maxChars
+	}
+	return ops.DefaultMaxChars
 }
 
 // Budgets für Agenten (docs/mcp.md, Grundsatz 7).
@@ -50,7 +77,7 @@ var tools = []toolBinding{
 		desc: "Read one message by local id (from mail_search) or Message-ID: headers, sender checks (spf/dkim/dmarc), cleaned text " +
 			"(HTML reduced to text, hidden text removed and flagged in hidden_text_removed; alternative_mismatch=true when the " +
 			"plain-text part differs from the HTML part a person sees), links listed separately with warnings, " +
-			"attachment list. Defaults: quoted earlier messages removed (strip_quotes=false keeps them), text cut after 20000 characters " +
+			"attachment list. Defaults: quoted earlier messages removed (strip_quotes=false keeps them), text cut after {max_chars} characters " +
 			"(max_chars; truncated=true when cut). headers=true returns the raw header lines instead of the text."},
 	{tool: "mail_get_thread", op: "threads.get", title: "Read a thread", mail: true,
 		defaults: map[string]any{"text": true, "max_messages": threadMaxMessages, "max_chars_per_message": threadMaxChars},
@@ -64,7 +91,7 @@ var tools = []toolBinding{
 	{tool: "mail_get_attachment_text", op: "attachments.text", title: "Read attachment text", mail: true,
 		defaults: map[string]any{"max_chars": ops.DefaultMaxChars},
 		desc: "Read the text extracted from an attachment (PDF with pdftotext if installed, DOCX, text, HTML, forwarded mail). " +
-			"Executables and type mismatches are never extracted. Text cut after 20000 characters by default (max_chars)."},
+			"Executables and type mismatches are never extracted. Text cut after {max_chars} characters by default (max_chars)."},
 	{tool: "mail_audit_log", op: "audit.list", title: "Audit log",
 		desc: "Show audit log entries: which key called which operation when, with which result. Never contains message content. " +
 			"since: duration back from now (10m, 24h, 7d), a date or RFC 3339; default 24h."},
@@ -100,7 +127,8 @@ func (b toolBinding) toolSchema(op ops.Operation) (json.RawMessage, error) {
 // description setzt die Beschreibung des Tools zusammen. Sie ist statisch
 // (ändert sich nur mit einer Programmversion; docs/mcp.md Grundsatz 8).
 func (b toolBinding) description(op ops.Operation) string {
-	d := b.desc + fmt.Sprintf(" Risk %s (%s).", op.Risk, riskWords[op.Risk.String()])
+	d := strings.ReplaceAll(b.desc, "{max_chars}", strconv.Itoa(b.budget())) +
+		fmt.Sprintf(" Risk %s (%s).", op.Risk, riskWords[op.Risk.String()])
 	if b.mail {
 		d += " " + untrustedToolNote
 	}

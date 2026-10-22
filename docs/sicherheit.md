@@ -1,6 +1,6 @@
 # Sicherheitsmodell
 
-Stand: S1.11 (16.10.2026, Schnitt 1 komplett). Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor samt **Vertragstest** über alle Operationen, Rollen und Trockenlauf-Varianten, die append-only-Audit-Tabelle mit SQLite-Writer (Fehler-Ereignis auch nach Abbruch), die Ablage von Zugangsdaten (Abschnitt 4), die lesenden Operationen `sync.run` (R1, `mail:sync`), `mailboxes.list` und `messages.get` (R0) mit Parser-Limits (Abschnitt 7), terminalsichere CLI-Ausgabe von Mailinhalt (Abschnitt 8), seit S1.6 die Body-Bereinigung mit Erkennung versteckten Texts, sichtbaren Links und Quote-Stripper, die Typprüfung von Anhängen per Magic Bytes und die Textextraktion im Subprozess (Abschnitt 7) sowie deren Tests; seit S1.8 API-Schlüssel (Abschnitt 3), die Prüfung jeder Eingabe gegen das Schema der Operation im Executor, Audit-Abfrage, -Export und -Prüfung (Abschnitt 6) und die Untrusted-Hülle in den Ausgaben mit Mailinhalt (Abschnitt 8); seit S1.11 der Audit-Export mit SHA-256-Kette und Manifest als tägliche Aufgabe (Abschnitt 6), `doctor --secrets` (Abschnitt 4), Abstürze ohne Inhalte (Abschnitt 10) und der Kanarientest über alle Ausgabekanäle (Abschnitt 4). Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
+Stand: S1.11 (16.10.2026, Schnitt 1 komplett). Implementiert sind Scope-/Risikotypen, `policy.Check` (Stub), der fail-closed-Executor samt **Vertragstest** über alle Operationen, Rollen und Trockenlauf-Varianten, die append-only-Audit-Tabelle mit SQLite-Writer (Fehler-Ereignis auch nach Abbruch), die Ablage von Zugangsdaten (Abschnitt 4), die lesenden Operationen `sync.run` (R1, `mail:sync`), `mailboxes.list` und `messages.get` (R0) mit Parser-Limits (Abschnitt 7), terminalsichere CLI-Ausgabe von Mailinhalt (Abschnitt 8), seit S1.6 die Body-Bereinigung mit Erkennung versteckten Texts, sichtbaren Links und Quote-Stripper, die Typprüfung von Anhängen per Magic Bytes und die Textextraktion im Subprozess (Abschnitt 7) sowie deren Tests; seit S1.8 API-Schlüssel (Abschnitt 3), die Prüfung jeder Eingabe gegen das Schema der Operation im Executor, Audit-Abfrage, -Export und -Prüfung (Abschnitt 6) und die Untrusted-Hülle in den Ausgaben mit Mailinhalt (Abschnitt 8); seit S1.11 der Audit-Export mit SHA-256-Kette und Manifest als tägliche Aufgabe (Abschnitt 6), `doctor --secrets` (Abschnitt 4), Abstürze ohne Inhalte (Abschnitt 10) und der Kanarientest über alle Ausgabekanäle (Abschnitt 4); seit S2.0 Operationen nur für Menschen (Abschnitt 2); seit S2.1 die Policy-Datei mit Version im Audit und der Entwurfsdienst mit Zustandsmaschine, `preview_hash` und Ablauf der Freigaben (Abschnitt 5; die Operationen dazu folgen in S2.3). Alles Übrige ist Zielentwurf für S1–S3 und als solcher gekennzeichnet. Meldeweg für Sicherheitsprobleme: [SECURITY.md](../SECURITY.md).
 
 ## 1. Schutzgüter und Annahmen
 
@@ -88,24 +88,27 @@ stateDiagram-v2
 
 *Umgesetzt S2.1 (`internal/drafts`, ohne Operationen; die kommen mit S2.3):* Die Zustandsmaschine ist eine feste Tabelle der erlaubten Übergänge (`drafts.Next`; `TestTransitionsTable` prüft jedes Paar aus Zustand und Ereignis, `TestServiceTransitions` führt jeden erlaubten Übergang einmal mit Datenbank aus). Zusätzlich zum Diagramm: `pending_approval` → `abandoned` und → `sent_by_human` (Freigabe dann `superseded`), `pending_approval` → `draft` bei Änderung oder Ablauf. Jedes andere Ereignis ist `denied` mit Grund `invalid_transition`, nach `sent_by_human`/`abandoned` jedes Ereignis `draft_closed`. Eine **Änderung** ist eine Änderung des `preview_hash` oder der Felder außerhalb des Hashes (Markdown, Kopfzeilen, Name und Typ der Anhänge); nur umsortierte Empfänger lassen `ready` stehen. `preview_hash` ist SHA-256 über eine feste JSON-Form (Versionspräfix `postkauz-preview-v1`) aus Identität (ID, Name, Adresse), To/Cc/Bcc je normalisiert (Adresse klein, Name mit einfachem Leerraum) und sortiert, Betreff, `body_text`, `body_html`, sortierten Anhang-Hashes, `In-Reply-To` und Art (`TestPreviewHashOrderAndFields`). `approve` verlangt eine offene Freigabe (`superseded`/`expired` → `approval_stale`, schon entschieden → `approval_decided`) mit demselben Hash wie der Entwurf (sonst `approval_stale`). **Ablauf:** Eine Freigabe gilt `[draft] approval_ttl` (Standard 168 h) ab der Vorlage, nach `approve` neu ab der Entscheidung; danach fällt der Entwurf beim nächsten Lesen (Get, List) bzw. ab S2.6 beim Sync auf `draft` zurück, die Freigabe wird `expired`, und ein Audit-Eintrag mit Akteur `system`, Schlüssel `system`, Operation `drafts.expire` und Grund `approval_expired` entsteht in **derselben Transaktion** (ebenso `drafts.sent_detected` für den vom Sync erkannten Versand, S2.6). Ein `approve` nach Ablauf meldet `approval_expired` und speichert den Rückfall. Grenzen und Adressprüfung (A02, „Vorgaben"): `body_markdown`, `body_text`, `body_html` je höchstens 200.000 Zeichen, Betreff 500, Anzeigename 200 (`too_large`), höchstens 50 Empfänger je Feld (`too_many_recipients`), jede Adresse über `net/mail.ParseAddress` und nur als reine Adresse (`invalid_address`), Zeilenumbrüche oder Steuerzeichen in Betreff und Namen `invalid_header` (Kopfzeilen-Einschleusung). Fehlermeldungen nennen Feld, Index und Zahl, nie Inhalt (`TestErrorsWithoutContent`). Der Dienst schreibt jeden Übergang in einer kurzen Transaktion (`BEGIN IMMEDIATE`); zwei Prozesse auf derselben Datenbank warten aufeinander statt zu scheitern (`TestConcurrentWritersOnOneFile`).
 
-**Policy-Datei (S2)**, TOML, je Schlüssel nur verengbar:
+**Policy-Datei** (A02 E8; *umgesetzt S2.1*, `internal/policy/file.go`): `policy.toml` im Ordner der Konfigurationsdatei, `POSTKAUZ_POLICY` überschreibt den Pfad (dann muss die Datei existieren). Fehlt sie, gelten die Standards unten. Jeder Prozess, der die Datenbank öffnet (CLI-Kommandos und `mcp`; nicht `version`, `doctor`, `--help`), lädt und prüft sie beim Start: **unbekannte Schlüssel**, ungültige Werte und Syntaxfehler sind ein Fehler (Exit 1, Code `policy_invalid`; die Meldung nennt Datei, Zeile und Schlüssel, nie Werte). Ihr SHA-256 und das geprüfte Dokument (JSON) stehen in der Tabelle `policies` (`api_key_id` NULL); ändert sich der Inhalt, entsteht beim nächsten Start eine neue **Version** (auch beim Zurückändern: A → B → A ergibt 1, 2, 3), und jeder Audit-Eintrag trägt die Version, unter der die Entscheidung fiel (`policy_version`). `doctor` zeigt Pfad, Zustand und Version, ohne einzutragen. Je Schlüssel nur verengbar (S3).
 
 ```toml
 [draft]
-require_approval_for_ready = true
-check_hook = ""                  # optional: Kommando; Exit 0 = bestanden
+require_approval_for_ready = true   # nur true: ready setzt nur ein Mensch (E2, E7)
+check_hook = []                     # Prüf-Hook als Liste, kein Shell-Aufruf, z. B. ["lint-mail", "{eml}"]; leer = kein Hook (S2.4)
+check_hook_timeout = "30s"          # 1s bis 10m (S2.4)
 
 [delete]
-agent_may = "trash_only"         # none | trash_only   (endgültiges Löschen gibt es für Agenten nie)
+agent_may = "trash_only"            # none | trash_only   (endgültiges Löschen gibt es für Agenten nie; S3)
 
 [move]
-agent_may = "within_account"     # none | archive_only | within_account
-bulk_confirm_threshold = 50      # darüber: confirm_count mit exakter Anzahl
+agent_may = "within_account"        # none | archive_only | within_account (S3)
+bulk_confirm_threshold = 50         # darüber: confirm_count mit exakter Anzahl (1 bis 100000; S3)
 
 [agent_defaults]
-dry_run_default = true
-max_chars = 20000
+dry_run_default = true              # gelesen und geprüft; ab S3 (heute gilt der Standard je Schlüssel aus key create)
+max_chars = 20000                   # Zeichenbudget je Text für Agenten (100 bis 1000000)
 ```
+
+Seit S2.1 **wirken** `[agent_defaults] max_chars` (ersetzt den festen Standard 20.000 in den MCP-Tools, Resources und `policy show`/`mail_get_policy`) und `require_approval_for_ready` (nur `true` erlaubt). `check_hook` und `check_hook_timeout` werden gelesen und geprüft, ausgeführt wird der Hook ab S2.4; `[delete]`, `[move]` und `dry_run_default` werden gelesen und geprüft, ausgewertet erst in S3. Bis S2.0 stand hier `check_hook = ""` (Text); A02 E4 macht daraus eine Liste, ein Text ist jetzt ein Fehler. Nicht in der Policy-Datei, sondern in der Konfiguration ([cli.md](cli.md), Abschnitt 5) stehen `[draft] approval_ttl`, `max_attachment_bytes`, `mailbox`, `quote_line`, `[paths] attach_dir` und `[operator] name` (A02 S2.1, „Konfiguration").
 
 Regeln werden von Agenten **nur vorgeschlagen** (deaktiviert angelegt, ab S4); aktivieren kann sie nur ein Mensch.
 

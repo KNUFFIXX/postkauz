@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
 // Untrusted-Hülle (docs/mcp.md, Abschnitt 5): Jede Ausgabe, die Text aus
@@ -33,9 +35,10 @@ func emailEnvelope() Envelope {
 const envelopeProps = `"untrusted": {"type": "boolean", "const": true}, "source": {"type": "string", "enum": ["email"]},
     "notice": {"type": "string"}`
 
-// DefaultMaxChars ist das Zeichenbudget je Text für Agenten (MCP-Standard,
-// docs/mcp.md Grundsatz 7; die Policy-Datei macht es in S2 einstellbar).
-const DefaultMaxChars = 20000
+// DefaultMaxChars ist das eingebaute Zeichenbudget je Text für Agenten
+// (MCP-Standard, docs/mcp.md Grundsatz 7). Seit S2.1 ersetzt es
+// [agent_defaults] max_chars der Policy-Datei (Deps.MaxChars, A02 E8).
+const DefaultMaxChars = policy.DefaultMaxChars
 
 // truncateRunes kürzt s auf höchstens max Zeichen (0 = unbegrenzt) und
 // meldet, ob gekürzt wurde.

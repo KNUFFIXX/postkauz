@@ -70,6 +70,18 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"max msg < MiB": "[imap]\nmax_message_bytes = 1048575\n",
 		"max msg > cap": "[imap]\nmax_message_bytes = 268435457\n",
 		"max msg text":  "[imap]\nmax_message_bytes = \"256MiB\"\n",
+		// S2.1: [paths], [operator], [draft]
+		"unknown draft key":  "[draft]\nmailbx = \"Drafts\"\n",
+		"unknown paths key":  "[paths]\nattach = \"x\"\n",
+		"unknown op key":     "[operator]\nmail = \"x@example.org\"\n",
+		"ttl too short":      "[draft]\napproval_ttl = \"30s\"\n",
+		"ttl too long":       "[draft]\napproval_ttl = \"9000h\"\n",
+		"ttl negative":       "[draft]\napproval_ttl = \"-1h\"\n",
+		"attach bytes < 0":   "[draft]\nmax_attachment_bytes = -1\n",
+		"attach bytes > cap": "[draft]\nmax_attachment_bytes = 268435457\n",
+		"quote placeholder":  "[draft]\nquote_line = \"Am {datum} schrieb {from}:\"\n",
+		"quote two lines":    "[draft]\nquote_line = \"On {date}\\n{from} wrote:\"\n",
+		"mailbox line break": "[draft]\nmailbox = \"Drafts\\nINBOX\"\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := filepath.Join(dir, strings.ReplaceAll(name, " ", "_")+".toml")
@@ -81,6 +93,45 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 				t.Error("expected error")
 			}
 		})
+	}
+}
+
+// S2.1: Standards und Werte für [paths] attach_dir, [operator] name und
+// [draft] (A02 E7, E10, E11, E12).
+func TestLoadDraftPathsOperator(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvDataDir, dir)
+	t.Setenv(EnvSecretsBackend, "")
+	t.Setenv(EnvConfig, filepath.Join(dir, "fehlt.toml"))
+	cfg, p, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Draft.ApprovalTTL != 168*time.Hour || cfg.Draft.MaxAttachmentBytes != 25<<20 || cfg.Draft.QuoteLine != "On {date}, {from} wrote:" ||
+		cfg.Draft.Mailbox != "" || cfg.Operator.Name != "" || p.AttachDir != filepath.Join(dir, "attach") || cfg.Paths.AttachDir != p.AttachDir {
+		t.Fatalf("defaults: %+v %+v", cfg.Draft, p)
+	}
+	f := filepath.Join(dir, "config.toml")
+	body := "[paths]\nattach_dir = \"anhaenge\"\n[operator]\nname = \"Demo Operator\"\n" +
+		"[draft]\napproval_ttl = \"24h\"\nmax_attachment_bytes = 1048576\nmailbox = \" Entwürfe \"\nquote_line = \"Am {date} schrieb {from}:\"\n"
+	if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(EnvConfig, f)
+	cfg, p, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Draft.ApprovalTTL != 24*time.Hour || cfg.Draft.MaxAttachmentBytes != 1<<20 || cfg.Draft.Mailbox != "Entwürfe" ||
+		cfg.Draft.QuoteLine != "Am {date} schrieb {from}:" || cfg.Operator.Name != "Demo Operator" || p.AttachDir != filepath.Join(dir, "anhaenge") {
+		t.Fatalf("values: %+v %+v %+v", cfg.Draft, cfg.Operator, p)
+	}
+	abs := filepath.Join(t.TempDir(), "attach")
+	if err := os.WriteFile(f, []byte("[paths]\nattach_dir = '"+abs+"'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, p, err = Load(); err != nil || p.AttachDir != abs {
+		t.Fatalf("absolute attach_dir: %s, %v", p.AttachDir, err)
 	}
 }
 

@@ -349,6 +349,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{secrets.ErrUnavailable, ExitError, "secret_store_unavailable"},
 		{ops.ErrNoSecret, ExitError, "no_secret"},
 		{store.ErrSchemaTooNew, ExitError, "schema_too_new"},
+		{fmt.Errorf("%w: x", policy.ErrInvalidFile), ExitError, "policy_invalid"},
 		{ops.ErrSyncRunning, ExitError, "sync_running"},
 		{errAuditMismatch, ExitError, "mismatch"},
 		{errors.New("boom"), ExitError, "error"},

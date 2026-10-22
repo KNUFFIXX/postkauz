@@ -34,7 +34,10 @@ type PolicyOutput struct {
 // HumanOnly-Operationen stehen nur für den Menschen ohne Schlüssel in der
 // Liste (ein Schlüssel darf sie nie, A02 E2).
 // Jeder Schlüssel darf sie lesen (ScopeAny, R0).
-func PolicyGet() Operation {
+func PolicyGet(maxChars int) Operation {
+	if maxChars <= 0 {
+		maxChars = DefaultMaxChars
+	}
 	return Operation{
 		Name:       "policy.get",
 		Scope:      policy.ScopeAny,
@@ -66,7 +69,7 @@ func PolicyGet() Operation {
 			}
 			k := call.Key
 			out := PolicyOutput{Key: k.ID, Role: k.Role, Scopes: []string{}, DryRunDefault: k.DryRunDefault,
-				ExpiresAt: rfc3339(k.ExpiresAt), MaxChars: DefaultMaxChars, DraftOnly: true, Operations: []PolicyOperation{}}
+				ExpiresAt: rfc3339(k.ExpiresAt), MaxChars: maxChars, DraftOnly: true, Operations: []PolicyOperation{}}
 			for _, s := range k.Scopes {
 				out.Scopes = append(out.Scopes, string(s))
 			}

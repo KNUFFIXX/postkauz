@@ -234,3 +234,37 @@ func TestApplyDefaults(t *testing.T) {
 		t.Fatal("array accepted")
 	}
 }
+
+// S2.1 (A02 E8): [agent_defaults] max_chars der Policy-Datei ersetzt den
+// festen Standard 20000 in den Standardwerten und Beschreibungen der Tools;
+// die Tabelle selbst bleibt unverändert.
+func TestToolBudgetFollowsPolicy(t *testing.T) {
+	reg, err := ops.NewDefaultRegistry(ops.Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, b := range tools {
+		if _, ok := b.defaults["max_chars"]; !ok {
+			continue
+		}
+		n++
+		op, err := reg.Get(b.op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nb := b.withMaxChars(5000)
+		if nb.defaults["max_chars"] != 5000 || b.defaults["max_chars"] != ops.DefaultMaxChars {
+			t.Errorf("%s: defaults %v (table %v)", b.tool, nb.defaults, b.defaults)
+		}
+		if d := nb.description(op); !strings.Contains(d, "5000 characters") || strings.Contains(d, "20000") || strings.Contains(d, "{max_chars}") {
+			t.Errorf("%s: description %q", b.tool, d)
+		}
+		if d := b.description(op); !strings.Contains(d, "20000 characters") {
+			t.Errorf("%s: default description %q", b.tool, d)
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d tools with max_chars, want 2 (mail_get_message, mail_get_attachment_text)", n)
+	}
+}
