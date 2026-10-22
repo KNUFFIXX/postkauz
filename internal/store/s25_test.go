@@ -199,7 +199,7 @@ func TestMigration0014DraftPushAttempt(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := s.SchemaVersion(ctx); v != 14 || KnownSchemaVersion() != 14 {
+	if v, _ := s.SchemaVersion(ctx); v != KnownSchemaVersion() || v < 14 {
 		t.Fatalf("schema %d, known %d", v, KnownSchemaVersion())
 	}
 	d, err := s.Draft(ctx, 1)

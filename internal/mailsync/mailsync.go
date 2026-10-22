@@ -277,8 +277,15 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	// K3: Was dieser Lauf (fehlerfrei) gespiegelt hat, bestimmt, was die
+	// Prüfung der Entwürfe danach darf (drafts.CheckOptions).
+	var check drafts.CheckOptions
 	for _, mb := range local {
+		isDrafts := mb.Role == string(provider.RoleDrafts) || (e.Drafts != nil && e.Drafts.Mailbox != "" && mb.Path == e.Drafts.Mailbox)
+		isSent := mb.Role == string(provider.RoleSent) || mb.Role == string(provider.RoleAll)
 		if len(o.Mailboxes) > 0 && !slices.Contains(o.Mailboxes, mb.Path) {
+			check.SkipSent = check.SkipSent || isDrafts
+			check.KeepMark = check.KeepMark || isSent
 			continue
 		}
 		// crash.Do (A02 A5): Ein Panic in einem Fenster des Ordners (Abruf,
@@ -299,6 +306,8 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			mr.Errors++
 			mr.Failed = true
 			mr.problem(err.Error())
+			check.SkipSent = check.SkipSent || isDrafts
+			check.KeepMark = check.KeepMark || isSent
 			e.emit(Event{Kind: "error", Mailbox: mb.Path, Message: err.Error()})
 		}
 		rep.add(mr)
@@ -308,10 +317,22 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		}
 	}
 	// S2.6: Entwürfe gegen den eben gespiegelten Stand prüfen (gesendet?
-	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?).
-	if rep.DraftCheck, err = e.checkDrafts(ctx); err != nil {
-		rep.Duration = time.Since(start)
-		return rep, err
+	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?). Ein Fehler
+	// der Prüfung zählt als Fehler des Laufs, hält aber Nacharbeit, Jobs und
+	// Zählung nicht auf (Gegenprüfung S2.6–S2.8, K5); die Prüfung ist beim
+	// nächsten Lauf wiederholbar. Nur Abbruch, Verbindungs-/Anmeldefehler
+	// und ein Panic beenden den Lauf.
+	if check.SkipSent && e.Drafts != nil {
+		e.log().Debug("sent detection skipped: the Drafts folder was not mirrored in this run")
+	}
+	if rep.DraftCheck, err = e.checkDrafts(ctx, check); err != nil {
+		if fatal(ctx, err) {
+			rep.Duration = time.Since(start)
+			return rep, err
+		}
+		rep.Errors++
+		e.log().Warn("draft check failed; repeating it in the next run", "error", err.Error())
+		e.emit(Event{Kind: "error", Mailbox: "drafts", Message: err.Error()})
 	}
 	if err := e.backlog(ctx); err != nil {
 		rep.Duration = time.Since(start)

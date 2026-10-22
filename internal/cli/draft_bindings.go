@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -303,7 +304,9 @@ func draftShowInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage,
 }
 
 // draftShowNotes: Bei --eml gehört stdout allein der Nachricht (umleitbar in
-// eine .eml-Datei); was sie ist, steht auf stderr.
+// eine .eml-Datei); was sie ist und alle Warnungen des Entwurfs (Anhangtyp,
+// Entscheid 39; ältere Kopien, Entscheid 43) stehen auf stderr
+// (Gegenprüfung S2.6–S2.8, K8).
 func draftShowNotes(out any) []string {
 	o, ok := out.(ops.DraftDetail)
 	if !ok || o.EML == "" {
@@ -313,8 +316,10 @@ func draftShowNotes(out any) []string {
 	if o.EMLNote != "" {
 		notes = append(notes, "eml: "+o.EMLNote)
 	}
-	if o.OlderCopies > 0 {
-		notes = append(notes, ops.OlderCopiesWarning(o.OlderCopies))
+	for _, w := range o.Warnings {
+		if w != "" && !slices.Contains(notes, w) {
+			notes = append(notes, w)
+		}
 	}
 	return notes
 }

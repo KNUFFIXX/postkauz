@@ -140,7 +140,7 @@ func (e *env) fire(d store.Draft, ev Event) (Result, error) {
 	case EvMarkSent:
 		return e.svc.MarkSent(ctx, d.ID)
 	case EvSentDetected:
-		return e.svc.SentDetected(ctx, d.ID, 0, "message_id")
+		return e.svc.SentDetected(ctx, d.ID, 0, "message_id", "")
 	case EvExpire:
 		e.now = e.now.Add(DefaultApprovalTTL + time.Second)
 		ids, err := e.svc.ExpireApprovals(ctx, e.acc)

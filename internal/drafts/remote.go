@@ -336,7 +336,7 @@ func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c Pu
 func (s *Service) recordCopy(x *store.DraftTx, d *store.Draft, fingerprint string, c PushedCopy, now time.Time, adopted bool) (bool, error) {
 	if d.PushedContentHash != "" && d.RemoteUID > 0 && d.RemoteMailboxID > 0 {
 		d.RemotePrevious = append(d.RemotePrevious, store.RemoteCopy{MailboxID: d.RemoteMailboxID, UID: d.RemoteUID,
-			UIDValidity: d.RemoteUIDValidity})
+			UIDValidity: d.RemoteUIDValidity, ContentHash: d.PushedContentHash})
 	}
 	d.RemoteMailboxID, d.RemoteUIDValidity, d.RemoteUID = c.MailboxID, c.UIDValidity, c.UID
 	d.PushedContentHash, d.PushedMessageHash, d.PushedDate, d.PushAttempt = c.ContentHash, c.MessageHash, c.Date, nil

@@ -89,7 +89,7 @@ func (m *mirror) link(role string, id int64, draftFlag bool) {
 
 func (e *env) check() CheckReport {
 	e.t.Helper()
-	rep, err := e.svc.CheckAfterSync(context.Background(), e.acc)
+	rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, CheckOptions{})
 	if err != nil {
 		e.t.Fatal(err)
 	}

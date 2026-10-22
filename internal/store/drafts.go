@@ -77,6 +77,17 @@ type Draft struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	ClosedAt          time.Time // Nullzeit = offen
+	// ContentChangedAt: letzte Änderung des Inhalts (Anlegen, drafts.update;
+	// Migration 0015, Gegenprüfung S2.6–S2.8, W1). Ablauf, Lesen, Vorlage,
+	// Freigabe und Push ändern sie nicht; das Zeitfenster des
+	// Rückfall-Abgleichs (E5) hängt an ihr. Nullzeit beim Schreiben =
+	// UpdatedAt.
+	ContentChangedAt time.Time
+	// FallbackCheckedAt: content_changed_at bei der letzten Prüfung des
+	// ganzen Zeitfensters im Rückfall-Abgleich (Nullzeit = noch nie;
+	// Migration 0016, W2). Nur lesend: UpdateDraft schreibt es nicht, das
+	// tut SetFallbackChecked.
+	FallbackCheckedAt time.Time
 	// ComposeOptions: Schalter des Nachrichtenbaus als JSON-Objekt
 	// (quote, signature; Migration 0011, S2.3). "" = {}.
 	ComposeOptions string
@@ -115,6 +126,10 @@ type RemoteCopy struct {
 	MailboxID   int64  `json:"mailbox_id"`
 	UID         int64  `json:"uid"`
 	UIDValidity uint32 `json:"uidvalidity,omitempty"`
+	// ContentHash der Kopie wie messages.content_hash (seit der
+	// Gegenprüfung S2.6–S2.8, K3: Die Versanderkennung zählt eine Nachricht
+	// mit diesem Hash nie als gesendet); "" bei Kopien von vorher.
+	ContentHash string `json:"content_hash,omitempty"`
 }
 
 // Approval ist eine Zeile der Tabelle approvals.
@@ -192,18 +207,19 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(remote_mailbox_id, 0), COALESCE(remote_uid, 0), remote_state, COALESCE(pushed_content_hash, ''),
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
 	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
-	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, '')`
+	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, ''), content_changed_at,
+	COALESCE(fallback_checked_at, 0)`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
 	var to, cc, bcc, atts, prev, attempt string
-	var created, updated, closed, uv int64
+	var created, updated, closed, uv, contentChanged, fallbackChecked int64
 	if err := sc.Scan(&d.ID, &d.AccountID, &d.IdentityID, &d.Kind, &d.InReplyToMsg, &d.MessageIDHeader,
 		&d.FromName, &d.FromEmail, &to, &cc, &bcc, &d.Subject, &d.BodyMarkdown, &d.BodyText,
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
 		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
-		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt); err != nil {
+		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked); err != nil {
 		return d, err
 	}
 	if attempt != "" {
@@ -221,9 +237,12 @@ func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 			return d, fmt.Errorf("store: draft %d: corrupt JSON column: %w", d.ID, err)
 		}
 	}
-	d.CreatedAt, d.UpdatedAt = unixMilliUTC(created), unixMilliUTC(updated)
+	d.CreatedAt, d.UpdatedAt, d.ContentChangedAt = unixMilliUTC(created), unixMilliUTC(updated), unixMilliUTC(contentChanged)
 	if closed != 0 {
 		d.ClosedAt = unixMilliUTC(closed)
+	}
+	if fallbackChecked != 0 {
+		d.FallbackCheckedAt = unixMilliUTC(fallbackChecked)
 	}
 	return d, nil
 }
@@ -284,19 +303,23 @@ func draftArgs(d Draft) ([]any, error) {
 			return nil, err
 		}
 	}
+	contentChanged := d.ContentChangedAt
+	if contentChanged.IsZero() {
+		contentChanged = d.UpdatedAt
+	}
 	return []any{nullID(d.IdentityID), d.Kind, nullID(d.InReplyToMsg), d.MessageIDHeader, d.FromName, d.FromEmail,
 		js[0], js[1], js[2], d.Subject, nullStr(d.BodyMarkdown), d.BodyText, nullStr(d.BodyHTML), headers, as,
 		d.Status, nullStr(d.PreviewHash), nullStr(d.HookResult), nullID(d.RemoteMailboxID), nullID(d.RemoteUID), remote,
 		nullStr(d.PushedContentHash), nullStr(d.CreatedBy), nullID(d.ApprovalID), nullID(d.SentMessageID),
 		d.UpdatedAt.UnixMilli(), closed, opts, nullStr(d.PushedDate), nullID(int64(d.RemoteUIDValidity)), ps,
-		nullStr(d.PushNote), nullStr(d.PushedMessageHash), attempt}, nil
+		nullStr(d.PushNote), nullStr(d.PushedMessageHash), attempt, contentChanged.UnixMilli()}, nil
 }
 
 const draftWriteCols = `identity_id, kind, in_reply_to_msg, message_id_header, from_name, from_email,
 	to_addrs, cc_addrs, bcc_addrs, subject, body_markdown, body_text, body_html, headers_json, attachment_blobs,
 	status, preview_hash, hook_result, remote_mailbox_id, remote_uid, remote_state,
 	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options,
-	pushed_date, remote_uidvalidity, remote_previous, push_note, pushed_message_hash, push_attempt`
+	pushed_date, remote_uidvalidity, remote_previous, push_note, pushed_message_hash, push_attempt, content_changed_at`
 
 func nullID(v int64) any {
 	if v <= 0 {
