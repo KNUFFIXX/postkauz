@@ -351,6 +351,16 @@ Auflagen aus dem Nachtrag 16.10.2026 zu A01 (Programmierstand des Betreibers):
 
 ## S2: Entwürfe (draft-only)
 
+### Stand A7 (22.10.2026, erledigt): Nachbesserung aus D3.3c
+
+Befund D3.3c (21.10.2026): Aus der Claude-Desktop-App (MSIX) gestartet, sah PostKauz `%LOCALAPPDATA%\postkauz` in Wahrheit unter `…\Packages\Claude_…\LocalCache\Local\postkauz`; die Aufgabenplanung sah einen anderen Ordner. Gemessen am 22.10.2026 auf dem Büro-PC: beide Pfade haben **dieselbe Datei-ID**; `GetFinalPathNameByHandle` zeigt die Umleitung **nicht**, und der Prozess hat **keine Paket-Identität** (`GetCurrentPackageFullName` leer). Erkennung deshalb über die Datei-Identität (`os.SameFile` gegen das Gegenstück im `LocalCache` jedes Pakets).
+
+- **Globale Optionen `--config <datei>` und `--data-dir <ordner>`** (`config.LoadWith`): wie `POSTKAUZ_CONFIG`/`POSTKAUZ_DATA_DIR`, mit Vorrang; leer = Exit 2. Tests: `TestLoadWithOverrides`, `TestDataDirAndConfigFlags`.
+- **`doctor` erkennt die Umleitung** (nur Windows; `internal/config/redirect.go`): Zeile `really: …`, `package: …`, JSON `data_dir_real`, `config_path_real`, `app_package`, Warnung mit Abhilfe; fehlt das Datenverzeichnis unter `%LOCALAPPDATA%`/`%APPDATA%` noch und sieht der Prozess die Umleitung eines Pakets, warnt er vorab. Tests mit Symlinks als Nachbildung (`TestCheckRedirects`, `TestCheckRedirectsPackageWithoutDataDir`).
+- **`Register-AuditExport.ps1`**: neuer Parameter `-DataDir`; die Aufgabe bekommt `--data-dir` und `--config` mit den Pfaden aus `doctor` (statt `--profile`); bei Umleitung bricht das Skript ab, bevor es etwas registriert.
+- **Probe auf dem Büro-PC** (22.10.2026, Testbau `0.1.0-rc2-a7test2`, aus der Sitzung in der Claude-App): `doctor` ohne Optionen meldet `really: …\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\postkauz` und `package: Claude_pzs8sxrjxfjjc`; `doctor --data-dir %LOCALAPPDATA%\postkauz-a7probe` warnt vorab und legt nichts an; Registrieren mit dem Standardpfad bricht ab („Not registered: … redirected"); mit `-DataDir C:\Claude\postkauz` „OK: export written", die Aufgabe trägt `--data-dir C:\Claude\postkauz --config …`, `audit verify --data-dir C:\Claude\postkauz` im Fenster `ok` (die Exportdatei enthält die Ereignisse aus dem Fenster, nicht nur den Export selbst wie in D3.3c). Datenverzeichnis des Betreibers ab jetzt `C:\Claude\postkauz`.
+- **A02 Teil D** auf „Claude-Skript + Urteil des Betreibers" umgeschrieben (Entscheid 35).
+
 ### Abnahme D2 und D3 (21.10.2026, Windows 11 auf dem Büro-PC)
 
 Durchgeführt von Claude per PowerShell auf dem Rechner des Betreibers (Entscheid des Betreibers 21.10.2026: Ausgabenvergleich ist Maschinenarbeit; er entscheidet über Abweichungen und macht D5 mit dem echten Postfach). Programm `postkauz.exe` 0.1.0-rc1 (`64e516c`), Abnahme-Daten mit geprüftem SHA-256. Protokolle: [protokolle/D2_windows.txt](protokolle/D2_windows.txt), [protokolle/D3_windows.txt](protokolle/D3_windows.txt) (Schlüssel maskiert).
