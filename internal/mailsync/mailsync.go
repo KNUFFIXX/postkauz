@@ -277,8 +277,15 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	// K3: Was dieser Lauf (fehlerfrei) gespiegelt hat, bestimmt, was die
+	// Prüfung der Entwürfe danach darf (drafts.CheckOptions).
+	var check drafts.CheckOptions
 	for _, mb := range local {
+		isDrafts := mb.Role == string(provider.RoleDrafts) || (e.Drafts != nil && e.Drafts.Mailbox != "" && mb.Path == e.Drafts.Mailbox)
+		isSent := mb.Role == string(provider.RoleSent) || mb.Role == string(provider.RoleAll)
 		if len(o.Mailboxes) > 0 && !slices.Contains(o.Mailboxes, mb.Path) {
+			check.SkipSent = check.SkipSent || isDrafts
+			check.KeepMark = check.KeepMark || isSent
 			continue
 		}
 		// crash.Do (A02 A5): Ein Panic in einem Fenster des Ordners (Abruf,
@@ -299,6 +306,8 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			mr.Errors++
 			mr.Failed = true
 			mr.problem(err.Error())
+			check.SkipSent = check.SkipSent || isDrafts
+			check.KeepMark = check.KeepMark || isSent
 			e.emit(Event{Kind: "error", Mailbox: mb.Path, Message: err.Error()})
 		}
 		rep.add(mr)
@@ -313,7 +322,10 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	// Zählung nicht auf (Gegenprüfung S2.6–S2.8, K5); die Prüfung ist beim
 	// nächsten Lauf wiederholbar. Nur Abbruch, Verbindungs-/Anmeldefehler
 	// und ein Panic beenden den Lauf.
-	if rep.DraftCheck, err = e.checkDrafts(ctx); err != nil {
+	if check.SkipSent && e.Drafts != nil {
+		e.log().Debug("sent detection skipped: the Drafts folder was not mirrored in this run")
+	}
+	if rep.DraftCheck, err = e.checkDrafts(ctx, check); err != nil {
 		if fatal(ctx, err) {
 			rep.Duration = time.Since(start)
 			return rep, err

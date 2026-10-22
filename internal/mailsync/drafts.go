@@ -40,8 +40,9 @@ type DraftPusher interface {
 	NoDraftsMailbox(ctx context.Context, accountID int64) error
 	Push(ctx context.Context, acc store.Account, mailboxID int64, app ops.DraftAppender, retry bool) (ops.DraftPushReport, error)
 	// AfterSync prüft die Entwürfe nach dem Spiegeln (S2.6): Ablauf der
-	// Freigabe, Versanderkennung, Stand der Serverkopie.
-	AfterSync(ctx context.Context, accountID int64) (drafts.CheckReport, error)
+	// Freigabe, Versanderkennung, Stand der Serverkopie; o sagt, was der
+	// Lauf gespiegelt hat (K3).
+	AfterSync(ctx context.Context, accountID int64, o drafts.CheckOptions) (drafts.CheckReport, error)
 }
 
 var _ DraftPusher = (*ops.DraftPusher)(nil)
@@ -208,7 +209,7 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.S
 // verschwunden ist oder bearbeitet wurde, wird missing bzw. taken_over.
 // Grundlage ist der Spiegel nach diesem Lauf; der Server wird dafür nicht
 // gefragt. nil = nichts geändert (oder kein Push konfiguriert).
-func (e *Engine) checkDrafts(ctx context.Context) (*drafts.CheckReport, error) {
+func (e *Engine) checkDrafts(ctx context.Context, o drafts.CheckOptions) (*drafts.CheckReport, error) {
 	if e.Drafts == nil {
 		return nil, nil
 	}
@@ -216,7 +217,7 @@ func (e *Engine) checkDrafts(ctx context.Context) (*drafts.CheckReport, error) {
 	// crash.Do (A02 A5): Ein Panic im Abgleich beendet den Lauf mit Fehler.
 	err := crash.Do("draft check", func() error {
 		var err error
-		rep, err = e.Drafts.Pusher.AfterSync(ctx, e.AccountID)
+		rep, err = e.Drafts.Pusher.AfterSync(ctx, e.AccountID, o)
 		return err
 	})
 	if n := rep.SentByMessageID + rep.SentByFallback; n > 0 {

@@ -6,6 +6,8 @@ Stand: S2.6 (A02 E5, E6, E7; Entscheide 26, 38, 43). PostKauz sendet nie (ADR-00
 
 Nach **jedem** Sync-Lauf, also bei `postkauz sync` und in jeder Runde von `postkauz sync --watch` (alle 5 Minuten, bei jeder Meldung der INBOX per IDLE, stündlich mit vollem Abgleich), unter der Kontosperre und **nur gegen den lokalen Spiegel**: Der Server wird dafür nicht eigens gefragt. Gesehen wird also, was der Lauf gespiegelt hat. Eine IDLE-Runde spiegelt nur die INBOX; Gesendet sieht spätestens die nächste Runde über alle Ordner (höchstens 5 Minuten).
 
+**Nur, was der Lauf gespiegelt hat** (Gegenprüfung S2.6–S2.8, K3): Hat der Lauf den **Entwürfe-Ordner** nicht oder nicht fehlerfrei gespiegelt (IDLE-Runde nur mit INBOX, `sync --mailbox` ohne ihn, Fehler im Ordner), entfallen Versanderkennung und Stand der Serverkopie; nur der Ablauf der Freigaben läuft. Sonst kennte der Spiegel eine eben abgelegte Kopie nicht im Entwürfe-Ordner, und Gmail führt sie schon in „All Mail". Hat der Lauf einen Ordner mit Rolle `sent` oder `all` nicht oder nicht fehlerfrei gespiegelt, läuft die Erkennung, aber die Hochwassermarke (Abschnitt 3) bleibt stehen, damit der nächste vollständige Lauf dieselben Nachrichten noch einmal als neu prüft.
+
 Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfterSync`; die Versanderkennung kommt seit der Gegenprüfung S2.6–S2.8, W1, **vor** dem Ablauf: Hat der Mensch einen freigegebenen Entwurf vor Ablauf der Freigabe gesendet und sieht der Sync die Nachricht erst danach, ist der Entwurf gesendet, nicht abgelaufen):
 
 1. **Versanderkennung** (E5, Abschnitt 2 und 3): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`.

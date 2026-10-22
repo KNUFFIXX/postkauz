@@ -237,3 +237,46 @@ func TestDetectSentIgnoresOwnCopiesByHash(t *testing.T) {
 		t.Fatalf("a = %s, sent %d", got.Status, got.SentMessageID)
 	}
 }
+
+// K3: Mit SkipSent (Entwürfe-Ordner nicht gespiegelt) erkennt die Prüfung
+// nichts als gesendet und lässt den Stand der Kopie, nur der Ablauf läuft;
+// mit KeepMark erkennt sie, vermerkt aber nichts (der nächste volle Lauf
+// prüft dieselben Nachrichten erneut).
+func TestCheckOptionsSkipSentAndKeepMark(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	ctx := context.Background()
+	d := e.reach(StatusReady)
+	stale := e.reach(StatusReady)
+	m.put("sent", sentMsg{messageID: d.MessageIDHeader, subject: "x", from: "demo@example.org", date: e.now, text: "x"})
+	e.now = e.now.Add(DefaultApprovalTTL + time.Hour)
+	rep, err := e.svc.CheckAfterSync(ctx, e.acc, CheckOptions{SkipSent: true})
+	if err != nil || rep.SentByMessageID != 0 || rep.Expired != 2 {
+		t.Fatalf("SkipSent: %+v, %v", rep, err)
+	}
+	if got := e.draft(d.ID); got.Status != string(StatusDraft) {
+		t.Fatalf("draft = %s", got.Status)
+	}
+	if _, ok, _ := e.st.SentCheckMark(ctx, e.acc); ok {
+		t.Fatal("mark set without sent detection")
+	}
+	m.put("sent", sentMsg{messageID: "neu@example.org", subject: "y", from: "demo@example.org", date: e.now, text: "y"})
+	for i := 0; i < 2; i++ {
+		rep, err = e.svc.CheckAfterSync(ctx, e.acc, CheckOptions{KeepMark: true})
+		if err != nil || rep.SentByMessageID != 1-i {
+			t.Fatalf("KeepMark round %d: %+v, %v", i, rep, err)
+		}
+	}
+	if _, ok, _ := e.st.SentCheckMark(ctx, e.acc); ok {
+		t.Fatal("mark set with KeepMark")
+	}
+	if got := e.draft(stale.ID); !got.FallbackCheckedAt.IsZero() {
+		t.Fatal("fallback_checked_at set with KeepMark")
+	}
+	if rep := e.check(); rep.Examined == 0 {
+		t.Fatalf("full run after KeepMark examined nothing: %+v", rep)
+	}
+	if _, ok, _ := e.st.SentCheckMark(ctx, e.acc); !ok {
+		t.Fatal("no mark after a full run")
+	}
+}

@@ -66,12 +66,12 @@ func BenchmarkCheckAfterSync22k(b *testing.B) {
 		}
 		now = time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
 	}
-	if _, err := svc.CheckAfterSync(ctx, acc); err != nil { // erste Runde: Fenster aller Entwürfe
+	if _, err := svc.CheckAfterSync(ctx, acc, CheckOptions{}); err != nil { // erste Runde: Fenster aller Entwürfe
 		b.Fatal(err)
 	}
 	b.Run("steady", func(b *testing.B) {
 		for n := 0; n < b.N; n++ {
-			rep, err := svc.CheckAfterSync(ctx, acc)
+			rep, err := svc.CheckAfterSync(ctx, acc, CheckOptions{})
 			if err != nil || rep.Examined != 0 {
 				b.Fatalf("%+v %v", rep, err)
 			}
@@ -89,7 +89,7 @@ func BenchmarkCheckAfterSync22k(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.StartTimer()
-			rep, err := svc.CheckAfterSync(ctx, acc)
+			rep, err := svc.CheckAfterSync(ctx, acc, CheckOptions{})
 			if err != nil || rep.Examined != 1 {
 				b.Fatalf("%+v %v", rep, err)
 			}

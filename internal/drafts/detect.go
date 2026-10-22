@@ -73,18 +73,39 @@ func (r *CheckReport) Add(o CheckReport) {
 
 var openStatuses = []string{string(StatusDraft), string(StatusPendingApproval), string(StatusReady)}
 
+// CheckOptions sagt der Prüfung nach dem Spiegeln, was der Lauf gespiegelt
+// hat (Gegenprüfung S2.6–S2.8, K3). Der Nullwert ist ein vollständiger
+// Lauf.
+type CheckOptions struct {
+	// SkipSent: Der Entwürfe-Ordner wurde in diesem Lauf nicht oder nicht
+	// fehlerfrei gespiegelt (sync --mailbox ohne ihn, IDLE-Runde nur mit
+	// INBOX, Fehler im Ordner). Der Spiegel kennt dann frisch abgelegte
+	// Kopien nicht im Entwürfe-Ordner, und eine Kopie, die Gmail schon in
+	// „All Mail" führt, sähe wie gesendet aus. Versanderkennung und Stand
+	// der Serverkopie entfallen; nur der Ablauf der Freigaben läuft.
+	SkipSent bool
+	// KeepMark: Ein Ordner mit Rolle sent oder all wurde nicht oder nicht
+	// fehlerfrei gespiegelt. Die Erkennung läuft, aber Hochwassermarke und
+	// fallback_checked_at bleiben stehen: Eine schon gespiegelte Nachricht
+	// kann noch in Gesendet hinzukommen, und der nächste vollständige Lauf
+	// soll sie als neu prüfen.
+	KeepMark bool
+}
+
 // CheckAfterSync führt die Prüfung nach dem Spiegeln für ein Konto aus
 // (siehe oben). Ein Fehler bricht ab; was bis dahin gespeichert ist, bleibt
 // (jeder Schritt ist eine eigene kurze Transaktion und beim nächsten Lauf
 // wiederholbar).
-func (s *Service) CheckAfterSync(ctx context.Context, accountID int64) (CheckReport, error) {
+func (s *Service) CheckAfterSync(ctx context.Context, accountID int64, o CheckOptions) (CheckReport, error) {
 	var rep CheckReport
-	if err := s.detectSent(ctx, accountID, &rep); err != nil {
-		return rep, err
+	if !o.SkipSent {
+		if err := s.detectSent(ctx, accountID, o.KeepMark, &rep); err != nil {
+			return rep, err
+		}
 	}
 	ids, err := s.ExpireApprovals(ctx, accountID)
 	rep.Expired = len(ids)
-	if err != nil {
+	if err != nil || o.SkipSent {
 		return rep, err
 	}
 	return rep, s.refreshRemote(ctx, accountID, &rep)
@@ -98,7 +119,7 @@ func (s *Service) CheckAfterSync(ctx context.Context, accountID int64) (CheckRep
 // Der Weg über die Message-ID fragt je offenem Entwurf den Index
 // messages_message_id (billig, jedes Mal vollständig). Der Rückfall prüft
 // nur, was neu ist (Gegenprüfung S2.6–S2.8, W2; detectFallback).
-func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckReport) error {
+func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool, rep *CheckReport) error {
 	open, err := s.Store.ListDrafts(ctx, store.DraftFilter{AccountID: accountID, Status: openStatuses})
 	if err != nil {
 		return err
@@ -131,7 +152,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 		}
 		rest = append(rest, d)
 	}
-	return s.detectFallback(ctx, accountID, rest, claimed, copies, rep)
+	return s.detectFallback(ctx, accountID, rest, claimed, copies, keepMark, rep)
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe
@@ -158,7 +179,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 // und der nächste Lauf prüft dieselben Nachrichten erneut (zugeordnete
 // zählen dann nicht mehr).
 func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, copies []string,
-	rep *CheckReport) error {
+	keepMark bool, rep *CheckReport) error {
 	isCopy := map[string]bool{}
 	for _, h := range copies {
 		isCopy[h] = true
@@ -215,6 +236,9 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 		if err := s.matchFallback(ctx, accountID, open, cands, claimed, rep); err != nil {
 			return err
 		}
+	}
+	if keepMark {
+		return nil // K3: Gesendet nicht vollständig gespiegelt, nichts vermerken
 	}
 	for _, d := range changed {
 		if err := s.Store.SetFallbackChecked(ctx, d.ID, d.ContentChangedAt); err != nil {
