@@ -45,7 +45,7 @@ func TestMigration0010FromSchema9(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := s.SchemaVersion(ctx); v != 10 || KnownSchemaVersion() != 10 {
+	if v, _ := s.SchemaVersion(ctx); v != KnownSchemaVersion() || KnownSchemaVersion() < 10 {
 		t.Fatalf("schema %d, known %d", v, KnownSchemaVersion())
 	}
 	if s.LastSnapshot == "" || !strings.Contains(s.LastSnapshot, ".pre-0010-") {
@@ -221,5 +221,58 @@ func TestIdentitiesAndOwnAddresses(t *testing.T) {
 	}
 	if _, err := s.Identity(ctx, second); err == nil {
 		t.Fatal("identity still there")
+	}
+}
+
+// S2.3: Migration 0011 ergänzt drafts.compose_options (Standard {}); der
+// Job draft_push wird je Konto höchstens einmal offen eingereiht, in der
+// Transaktion des Entwurfs.
+func TestComposeOptionsAndDraftPushJob(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acc, err := s.CreateAccount(ctx, Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143, TLS: "none",
+		Username: "demo@example.org", AuthType: "password", CredentialRef: "account/0a1b2c3d/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	var id, job1, job2 int64
+	err = s.DraftTx(ctx, func(x *DraftTx) error {
+		var err error
+		if id, err = x.InsertDraft(Draft{AccountID: acc, Kind: "new", MessageIDHeader: "pk.1@example.org", Status: "draft",
+			CreatedAt: now, UpdatedAt: now, ComposeOptions: `{"quote":false,"signature":true}`}); err != nil {
+			return err
+		}
+		if job1, err = x.EnqueueDraftPush(acc, now); err != nil {
+			return err
+		}
+		job2, err = x.EnqueueDraftPush(acc, now)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job1 == 0 || job1 != job2 {
+		t.Fatalf("jobs %d, %d: want one open job", job1, job2)
+	}
+	d, err := s.Draft(ctx, id)
+	if err != nil || d.ComposeOptions != `{"quote":false,"signature":true}` {
+		t.Fatalf("draft = %+v, %v", d.ComposeOptions, err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM jobs WHERE type = 'draft_push'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("draft_push jobs = %d, %v", n, err)
+	}
+	// Ohne Angabe: {} (Altbestand vor 0011 und leere Schalter).
+	if _, err := s.db.Exec(`INSERT INTO drafts(account_id,kind,message_id_header,status,created_at,updated_at)
+		VALUES (?,'new','pk.2@example.org','draft',1,1)`, acc); err != nil {
+		t.Fatal(err)
+	}
+	all, err := s.ListDrafts(ctx, DraftFilter{AccountID: acc})
+	if err != nil || len(all) != 2 || all[1].ComposeOptions != "{}" {
+		t.Fatalf("list = %+v, %v", all, err)
+	}
+	if _, err := s.db.Exec(`UPDATE drafts SET compose_options = '[]' WHERE id = ?`, id); err == nil {
+		t.Fatal("compose_options accepts a JSON array")
 	}
 }

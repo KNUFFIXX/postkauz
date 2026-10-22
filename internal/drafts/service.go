@@ -36,6 +36,100 @@ type Service struct {
 	ApprovalTTL time.Duration
 	// PolicyVersion steht in den Audit-Einträgen der Systemereignisse (E8).
 	PolicyVersion int64
+
+	// who: Wer handelt; gesetzt über As. Dann schreibt jeder Übergang
+	// einen Audit-Eintrag mit diesem Akteur in derselben Transaktion (S2.3).
+	who *Who
+	// dry: Trockenlauf; jede Transaktion läuft vollständig (alle Prüfungen)
+	// und wird am Ende zurückgerollt (S2.3).
+	dry bool
+}
+
+// Who beschreibt, wer einen Übergang auslöst, für dessen Audit-Eintrag:
+// Akteur, Schlüssel ("cli" | "key:<name>"), Scope und Operation wie im
+// Eintrag des Executors.
+type Who struct {
+	Actor     audit.ActorType
+	KeyID     string
+	Scope     string
+	Operation string
+}
+
+// As liefert eine Kopie des Dienstes, die jeden Übergang mit who
+// auditiert (in derselben Transaktion wie der Übergang) und mit dryRun
+// nichts speichert: Die Transaktion läuft mit allen Prüfungen und wird
+// zurückgerollt; das Ergebnis zeigt, was geschähe.
+func (s *Service) As(who Who, dryRun bool) *Service {
+	c := *s
+	c.who, c.dry = &who, dryRun
+	return &c
+}
+
+// DryRun meldet, ob der Dienst im Trockenlauf arbeitet.
+func (s *Service) DryRun() bool { return s.dry }
+
+// errDryRun rollt die Transaktion eines Trockenlaufs zurück.
+var errDryRun = errors.New("drafts: dry run")
+
+// tx führt fn in einer Schreibtransaktion aus; im Trockenlauf wird sie
+// nach erfolgreichem fn zurückgerollt.
+func (s *Service) tx(ctx context.Context, fn func(*store.DraftTx) error) error {
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		if err := fn(x); err != nil {
+			return err
+		}
+		if s.dry {
+			return errDryRun
+		}
+		return nil
+	})
+	if errors.Is(err, errDryRun) {
+		return nil
+	}
+	return err
+}
+
+// ReasonTransition steht als Grund im Audit-Eintrag eines Übergangs, den
+// ein Mensch oder Agent auslöst (As); der Eintrag des Executors davor
+// trägt die Entscheidung der Policy.
+const ReasonTransition = "transition"
+
+// record schreibt den Audit-Eintrag eines Übergangs (nur mit As): Draft-ID,
+// Art, Zustand vorher und nachher, Zahl der Empfänger und Anhänge,
+// Freigabe, Hook-Ergebnis. Nie Betreff, Adressen oder Text.
+func (s *Service) record(x *store.DraftTx, now time.Time, d store.Draft, from, to Status, approvalID int64, hook string) error {
+	if s.who == nil {
+		return nil
+	}
+	params := map[string]any{"draft_id": d.ID, "kind": d.Kind, "from": from, "to": to,
+		"recipients": len(d.To) + len(d.Cc) + len(d.Bcc), "attachments": len(d.Attachments)}
+	if from == "" {
+		params["from"] = "new"
+	}
+	targets := []string{"draft:" + strconv.FormatInt(d.ID, 10)}
+	if approvalID > 0 {
+		params["approval_id"] = approvalID
+		targets = append(targets, "approval:"+strconv.FormatInt(approvalID, 10))
+	}
+	if hook != "" {
+		params["hook"] = hook
+	}
+	b, _ := json.Marshal(params)
+	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: s.who.Actor, KeyID: s.who.KeyID, Scope: s.who.Scope,
+		Operation: s.who.Operation, ParamsRedacted: b, Targets: targets, Result: audit.ResultOK, Reason: ReasonTransition,
+		PolicyVersion: s.PolicyVersion})
+	return err
+}
+
+// enqueuePush reiht den Job draft_push ein, wenn die Serverkopie aussteht
+// (E1; ausgeführt ab S2.5).
+func (s *Service) enqueuePush(x *store.DraftTx, d store.Draft, now time.Time, res *Result) error {
+	if d.RemoteState != RemotePending {
+		return nil
+	}
+	id, err := x.EnqueueDraftPush(d.AccountID, now)
+	res.PushJobID = id
+	return err
 }
 
 func (s *Service) now() time.Time {
@@ -76,6 +170,9 @@ type Result struct {
 	Changed bool
 	// Notes sind Hinweise für die Ausgabe (englisch, ohne Inhalt).
 	Notes []string
+	// PushJobID: der offene Job draft_push des Kontos, wenn die
+	// Serverkopie aussteht (E1; 0 = keiner eingereiht).
+	PushJobID int64
 }
 
 // NoteNoIdentity: Hinweis, wenn das Konto keine Identität hat (E9).
@@ -93,7 +190,7 @@ func (s *Service) Create(ctx context.Context, in NewDraft) (Result, error) {
 	}
 	now := s.now()
 	var res Result
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		acc, err := x.Account(in.AccountID)
 		if err != nil {
 			return err
@@ -131,7 +228,10 @@ func (s *Service) Create(ctx context.Context, in NewDraft) (Result, error) {
 			return err
 		}
 		res.Draft, res.From, res.To, res.Changed = d, "", StatusDraft, true
-		return nil
+		if err := s.enqueuePush(x, d, now, &res); err != nil {
+			return err
+		}
+		return s.record(x, now, d, "", StatusDraft, 0, "")
 	})
 	return res, err
 }
@@ -144,13 +244,17 @@ func setContent(d *store.Draft, c Content) {
 		d.HeadersJSON = "{}"
 	}
 	d.Attachments = c.Attachments
+	d.ComposeOptions = c.ComposeOptions
+	if d.ComposeOptions == "" {
+		d.ComposeOptions = "{}"
+	}
 }
 
 // ContentOf liefert den veränderlichen Inhalt eines gespeicherten Entwurfs
 // (Ausgangspunkt einer Änderung einzelner Felder).
 func ContentOf(d store.Draft) Content {
 	return Content{To: d.To, Cc: d.Cc, Bcc: d.Bcc, Subject: d.Subject, BodyMarkdown: d.BodyMarkdown, BodyText: d.BodyText,
-		BodyHTML: d.BodyHTML, HeadersJSON: d.HeadersJSON, Attachments: d.Attachments}
+		BodyHTML: d.BodyHTML, HeadersJSON: d.HeadersJSON, Attachments: d.Attachments, ComposeOptions: d.ComposeOptions}
 }
 
 // sameContent meldet, ob c inhaltlich dem gespeicherten Entwurf gleicht:
@@ -190,7 +294,7 @@ func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, erro
 	}
 	now := s.now()
 	var res Result
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(id)
 		if err != nil {
 			return err
@@ -224,7 +328,14 @@ func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, erro
 			return err
 		}
 		res.Draft, res.To, res.Changed = d, t.To, true
-		return nil
+		if err := s.enqueuePush(x, d, now, &res); err != nil {
+			return err
+		}
+		var superseded int64
+		if res.Approval != nil {
+			superseded = res.Approval.ID
+		}
+		return s.record(x, now, d, from, t.To, superseded, "")
 	})
 	return res, err
 }
@@ -243,7 +354,7 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 	}
 	now := s.now()
 	var res Result
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(id)
 		if err != nil {
 			return err
@@ -260,7 +371,7 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 				return err
 			}
 			res.Draft, res.To = d, from
-			return nil
+			return s.record(x, now, d, from, from, 0, hook)
 		}
 		acc, err := x.Account(d.AccountID)
 		if err != nil {
@@ -276,7 +387,7 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 			return err
 		}
 		res.Draft, res.To, res.Approval = d, t.To, &a
-		return nil
+		return s.record(x, now, d, from, t.To, a.ID, hook)
 	})
 	return res, err
 }
@@ -307,7 +418,7 @@ func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decide
 	now := s.now()
 	var res Result
 	var deny error // Ablehnung nach einem Übergang, der trotzdem gespeichert wird
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		a, err := x.Approval(approvalID)
 		if err != nil {
 			return err
@@ -367,7 +478,7 @@ func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decide
 			return err
 		}
 		res.Draft, res.To = d, t.To
-		return nil
+		return s.record(x, now, d, from, t.To, a.ID, "")
 	})
 	if err == nil && deny != nil {
 		return res, deny
@@ -451,7 +562,7 @@ func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, rea
 func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason string) (Result, error) {
 	now := s.now()
 	var res Result
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(id)
 		if err != nil {
 			return err
@@ -471,13 +582,16 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		if err := x.UpdateDraft(d); err != nil {
 			return err
 		}
-		if ev == EvSentDetected {
-			if _, err := x.AppendAudit(s.systemEvent(now, "drafts.sent_detected", reason, d, from, t.To)); err != nil {
-				return err
-			}
-		}
 		res.Draft, res.From, res.To = d, from, t.To
-		return nil
+		if ev == EvSentDetected {
+			_, err := x.AppendAudit(s.systemEvent(now, "drafts.sent_detected", reason, d, from, t.To))
+			return err
+		}
+		var aid int64
+		if res.Approval != nil {
+			aid = res.Approval.ID
+		}
+		return s.record(x, now, d, from, t.To, aid, "")
 	})
 	return res, err
 }
@@ -505,7 +619,7 @@ func (s *Service) systemEvent(now time.Time, op, reason string, d store.Draft, f
 func (s *Service) ExpireApprovals(ctx context.Context, accountID int64) ([]int64, error) {
 	now := s.now()
 	var out []int64
-	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+	err := s.tx(ctx, func(x *store.DraftTx) error {
 		ids, err := x.ExpiredDraftIDs(now, accountID)
 		if err != nil {
 			return err

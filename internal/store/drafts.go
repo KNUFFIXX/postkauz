@@ -39,6 +39,12 @@ type DraftAttachment struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type,omitempty"`
 	Size        int64  `json:"size"`
+	// Declared ist der angegebene Typ (Anhang einer Nachricht), Mismatch und
+	// Executable die Befunde der Typprüfung beim Nachrichtenbau
+	// (Entscheid 39: erlaubt, mit Warnung in Ergebnis und draft show; S2.3).
+	Declared   string `json:"declared,omitempty"`
+	Mismatch   bool   `json:"mismatch,omitempty"`
+	Executable bool   `json:"executable,omitempty"`
 }
 
 // Draft ist eine Zeile der Tabelle drafts.
@@ -71,6 +77,9 @@ type Draft struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	ClosedAt          time.Time // Nullzeit = offen
+	// ComposeOptions: Schalter des Nachrichtenbaus als JSON-Objekt
+	// (quote, signature; Migration 0011, S2.3). "" = {}.
+	ComposeOptions string
 }
 
 // Approval ist eine Zeile der Tabelle approvals.
@@ -143,7 +152,7 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(body_html, ''), headers_json, attachment_blobs, status, COALESCE(preview_hash, ''), COALESCE(hook_result, ''),
 	COALESCE(remote_mailbox_id, 0), COALESCE(remote_uid, 0), remote_state, COALESCE(pushed_content_hash, ''),
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
-	COALESCE(closed_at, 0)`
+	COALESCE(closed_at, 0), compose_options`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
@@ -153,7 +162,7 @@ func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 		&d.FromName, &d.FromEmail, &to, &cc, &bcc, &d.Subject, &d.BodyMarkdown, &d.BodyText,
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
-		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed); err != nil {
+		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions); err != nil {
 		return d, err
 	}
 	for _, x := range []struct {
@@ -209,17 +218,21 @@ func draftArgs(d Draft) ([]any, error) {
 	if !d.ClosedAt.IsZero() {
 		closed = d.ClosedAt.UnixMilli()
 	}
+	opts := d.ComposeOptions
+	if opts == "" {
+		opts = "{}"
+	}
 	return []any{nullID(d.IdentityID), d.Kind, nullID(d.InReplyToMsg), d.MessageIDHeader, d.FromName, d.FromEmail,
 		js[0], js[1], js[2], d.Subject, nullStr(d.BodyMarkdown), d.BodyText, nullStr(d.BodyHTML), headers, as,
 		d.Status, nullStr(d.PreviewHash), nullStr(d.HookResult), nullID(d.RemoteMailboxID), nullID(d.RemoteUID), remote,
 		nullStr(d.PushedContentHash), nullStr(d.CreatedBy), nullID(d.ApprovalID), nullID(d.SentMessageID),
-		d.UpdatedAt.UnixMilli(), closed}, nil
+		d.UpdatedAt.UnixMilli(), closed, opts}, nil
 }
 
 const draftWriteCols = `identity_id, kind, in_reply_to_msg, message_id_header, from_name, from_email,
 	to_addrs, cc_addrs, bcc_addrs, subject, body_markdown, body_text, body_html, headers_json, attachment_blobs,
 	status, preview_hash, hook_result, remote_mailbox_id, remote_uid, remote_state,
-	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at`
+	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options`
 
 func nullID(v int64) any {
 	if v <= 0 {
@@ -425,6 +438,26 @@ func (x *DraftTx) AppendAudit(e audit.Event) (int64, error) {
 		return 0, err
 	}
 	return appendAudit(x.ctx, x.tx, e, params, tj)
+}
+
+// EnqueueDraftPush reiht den Job draft_push für ein Konto ein (A02 E1), in
+// derselben Transaktion wie die Änderung des Entwurfs. Ist schon einer
+// offen (queued oder running; höchstens einer je Art und Konto, Index
+// jobs_open), bleibt es bei diesem; er arbeitet alle Entwürfe des Kontos
+// mit remote_state pending ab (S2.5). Liefert die ID des offenen Jobs.
+func (x *DraftTx) EnqueueDraftPush(accountID int64, now time.Time) (int64, error) {
+	payload := fmt.Sprintf(`{"account_id":%d}`, accountID)
+	if _, err := x.tx.ExecContext(x.ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at) VALUES (?, ?, ?)`,
+		JobDraftPush, payload, now.UnixMilli()); err != nil {
+		return 0, fmt.Errorf("store: enqueue draft_push: %w", err)
+	}
+	var id int64
+	err := x.tx.QueryRowContext(x.ctx, `SELECT id FROM jobs WHERE type = ? AND state IN ('queued','running')
+		AND json_extract(payload, '$.account_id') = ?`, JobDraftPush, accountID).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("store: enqueue draft_push: %w", err)
+	}
+	return id, nil
 }
 
 // Account liest ein Konto innerhalb der Transaktion.

@@ -215,7 +215,11 @@ type Input struct {
 	OwnAddresses   []string
 
 	To, Cc, Bcc []string
-	Subject     string
+	// ExplicitRecipients: To, Cc und Bcc sind die vollständigen Listen
+	// (Änderung eines gespeicherten Entwurfs, S2.3); bei reply/reply_all
+	// werden keine Empfänger aus der Ausgangsnachricht abgeleitet.
+	ExplicitRecipients bool
+	Subject            string
 
 	BodyMarkdown string
 	BodyHTML     string
