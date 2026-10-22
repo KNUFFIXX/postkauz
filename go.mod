@@ -14,6 +14,7 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
+	github.com/yuin/goldmark v1.8.6
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
