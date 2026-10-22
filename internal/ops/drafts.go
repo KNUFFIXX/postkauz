@@ -99,6 +99,17 @@ type DraftCheckResult struct {
 // Kopie legt der Prozess mit Zugangsdaten ab, nicht der Aufruf selbst.
 const RemoteNotePending = "the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s"
 
+// pushNotes erklärt den Hinweis des Pushs (drafts.push_note, S2.5).
+var pushNotes = map[string]string{
+	drafts.PushNoteApprovalStale: "not pushed while ready: the message built for the Drafts folder differs from the approved one " +
+		"(identity, signature, reply-to, quoted original or attachments changed), so the draft went back to status draft and the approval " +
+		"was superseded; check it and submit it again with draft request",
+	drafts.PushNoteNoDraftsMailbox: "not pushed: the account has no Drafts folder (no mailbox with role drafts); " +
+		"set [draft] mailbox in the configuration",
+	drafts.PushNotePushFailed: "not pushed: the message could not be built (original message or attachment missing locally); " +
+		"the next sync tries again",
+}
+
 // remoteNote erklärt den Stand der Serverkopie.
 func remoteNote(d store.Draft) string {
 	switch d.RemoteState {
@@ -106,8 +117,23 @@ func remoteNote(d store.Draft) string {
 		if drafts.Status(d.Status).Closed() {
 			return ""
 		}
+		if n := pushNotes[d.PushNote]; n != "" && d.PushNote != drafts.PushNoteApprovalStale {
+			return n
+		}
+		if d.PushedContentHash != "" {
+			earlier := "the earlier copy"
+			if d.RemoteUID > 0 {
+				earlier = fmt.Sprintf("the earlier copy (uid %d)", d.RemoteUID)
+			}
+			return "changed after the push: a new copy is queued (a running sync --watch pushes it within 10 s); " +
+				earlier + " stays in the Drafts folder, nothing is deleted"
+		}
 		return RemoteNotePending
 	case drafts.RemotePushed:
+		if len(d.RemotePrevious) > 0 {
+			return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s stay there, nothing is deleted)", d.RemoteUID,
+				previousUIDs(d.RemotePrevious))
+		}
 		return fmt.Sprintf("in the Drafts folder (uid %d)", d.RemoteUID)
 	case drafts.RemoteTakenOver:
 		return "taken over in the mail client; change it there"
@@ -115,6 +141,15 @@ func remoteNote(d store.Draft) string {
 		return "the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon"
 	}
 	return ""
+}
+
+// previousUIDs nennt die UIDs früherer Kopien ("uid 3, 5").
+func previousUIDs(l []store.RemoteCopy) string {
+	parts := make([]string, 0, len(l))
+	for _, c := range l {
+		parts = append(parts, "uid "+strconv.FormatInt(c.UID, 10))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // draftOps hält die Abhängigkeiten der Entwurfsoperationen.
@@ -663,7 +698,9 @@ func (o *draftOps) build(in compose.Input) (*compose.Message, error) {
 	in.QuoteLine = o.cfg.QuoteLine
 	in.AttachDir = o.cfg.AttachDir
 	in.Limits = compose.Limits{MaxAttachmentBytes: o.cfg.maxBytes()}
-	in.Now = o.cfg.now
+	if in.Now == nil {
+		in.Now = o.cfg.now // der Push setzt Date selbst (rebuildAt)
+	}
 	in.Rand = o.cfg.Rand
 	if in.Rand == nil {
 		in.Rand = rand.Reader
@@ -940,8 +977,15 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 		_, err := drafts.Next(st, drafts.EvUpdate)
 		return nil, draftErr(err)
 	}
-	if cur.RemoteState == drafts.RemoteTakenOver {
-		return nil, &DeniedError{Reason: drafts.ReasonDraftTakenOver, Msg: fmt.Sprintf("draft %d was taken over in the mail client; change it there", cur.ID)}
+	if cur.RemoteState == drafts.RemoteTakenOver || cur.RemoteState == drafts.RemoteMissing {
+		// Die Prüfung gegen den Spiegel (E6) macht der Dienst in der
+		// Schreibtransaktion; hier nur der schon gespeicherte Befund.
+		msg := fmt.Sprintf("draft %d was taken over in the mail client; change it there", cur.ID)
+		if cur.RemoteState == drafts.RemoteMissing {
+			msg = fmt.Sprintf("the copy of draft %d in the Drafts folder is gone (sent or deleted in the mail client); "+
+				"it is no longer changed here, close it with draft mark-sent or draft abandon", cur.ID)
+		}
+		return nil, &DeniedError{Reason: drafts.ReasonDraftTakenOver, Msg: msg}
 	}
 	acc, err := o.accountByID(ctx, cur.AccountID)
 	if err != nil {
@@ -1060,12 +1104,21 @@ type DraftDetail struct {
 	RemoteNote        string                  `json:"remote_note,omitempty"`
 	RemoteMailboxID   int64                   `json:"remote_mailbox_id,omitempty"`
 	RemoteUID         int64                   `json:"remote_uid,omitempty"`
-	PreviewHash       string                  `json:"preview_hash"`
-	CreatedBy         string                  `json:"created_by"`
-	CreatedAt         string                  `json:"created_at"`
-	UpdatedAt         string                  `json:"updated_at"`
-	ClosedAt          string                  `json:"closed_at,omitempty"`
-	SentMessageID     int64                   `json:"sent_message_id,omitempty"`
+	// RemotePreviousUIDs: UIDs früherer Kopien im Entwürfe-Ordner (nach
+	// einer Änderung legt der Push eine neue Kopie ab, die alte bleibt; S2.5).
+	RemotePreviousUIDs []int64 `json:"remote_previous_uids,omitempty"`
+	// PushedDate: Date-Kopfzeile der abgelegten Kopie (S2.5).
+	PushedDate string `json:"pushed_date,omitempty"`
+	// PushNote: Hinweis des Pushs als Code (approval_stale,
+	// no_drafts_mailbox, push_failed) und seine Erklärung.
+	PushNote      string `json:"push_note,omitempty"`
+	PushNoteText  string `json:"push_note_text,omitempty"`
+	PreviewHash   string `json:"preview_hash"`
+	CreatedBy     string `json:"created_by"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+	ClosedAt      string `json:"closed_at,omitempty"`
+	SentMessageID int64  `json:"sent_message_id,omitempty"`
 }
 
 // DraftsGet zeigt einen Entwurf vollständig (R0). Eine abgelaufene
@@ -1105,6 +1158,8 @@ func DraftsGet(d Deps) Operation {
     "approval_expires_at": {"type": "string", "format": "date-time"},
     "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
+    "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
+    "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed"]}, "push_note_text": {"type": "string"},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
@@ -1140,6 +1195,10 @@ func DraftsGet(d Deps) Operation {
 				out.References, _ = h["References"].(string)
 			}
 			out.Attachments, out.Warnings = attachmentOutputs(dr.Attachments)
+			for _, c := range dr.RemotePrevious {
+				out.RemotePreviousUIDs = append(out.RemotePreviousUIDs, c.UID)
+			}
+			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
 			if dr.ApprovalID > 0 {
 				if a, err := o.svc.Store.Approval(ctx, dr.ApprovalID); err == nil {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)
@@ -1476,7 +1535,19 @@ func truncateBytes(s string, n int) (string, bool) {
 // Ergebnis bei gleichem Entwurf, gleicher Identität und gleicher
 // Ausgangsnachricht byte-gleich (compose.MessageHash).
 func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draft) (*compose.Message, error) {
+	return o.rebuildAt(ctx, acc, dr, time.Time{})
+}
+
+// rebuildAt baut wie rebuild, mit date als Date-Kopfzeile (Nullzeit = Uhr
+// der Konfiguration). Der Push (S2.5) setzt so das Date der abgelegten
+// Kopie; mit dem gespeicherten pushed_date (in time.Local umgerechnet,
+// denn die Zitatzeile zeigt das Datum der Ausgangsnachricht in der Zone von
+// Date) entsteht dieselbe Kopie byte-gleich noch einmal (S2.7).
+func (o *draftOps) rebuildAt(ctx context.Context, acc store.Account, dr store.Draft, date time.Time) (*compose.Message, error) {
 	ci := compose.NewInput(compose.Kind(dr.Kind))
+	if !date.IsZero() {
+		ci.Now = func() time.Time { return date }
+	}
 	ci.AccountAddress, ci.ExplicitRecipients = dr.FromEmail, true
 	if dr.InReplyToMsg > 0 {
 		_, og, _, err := o.original(ctx, &acc, dr.InReplyToMsg, "", false, nil)

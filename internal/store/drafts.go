@@ -80,6 +80,20 @@ type Draft struct {
 	// ComposeOptions: Schalter des Nachrichtenbaus als JSON-Objekt
 	// (quote, signature; Migration 0011, S2.3). "" = {}.
 	ComposeOptions string
+	// Ablage im Entwürfe-Ordner (Migration 0013, S2.5): Date-Kopfzeile der
+	// abgelegten Kopie, UIDVALIDITY des Ordners beim APPEND, frühere Kopien
+	// (bleiben im Ordner, kein Expunge) und ein Hinweis des Pushs als Code.
+	PushedDate        string
+	RemoteUIDValidity uint32
+	RemotePrevious    []RemoteCopy
+	PushNote          string // "" | approval_stale | no_drafts_mailbox | push_failed
+}
+
+// RemoteCopy ist eine frühere Kopie eines Entwurfs im Entwürfe-Ordner.
+type RemoteCopy struct {
+	MailboxID   int64  `json:"mailbox_id"`
+	UID         int64  `json:"uid"`
+	UIDValidity uint32 `json:"uidvalidity,omitempty"`
 }
 
 // Approval ist eine Zeile der Tabelle approvals.
@@ -156,23 +170,26 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(body_html, ''), headers_json, attachment_blobs, status, COALESCE(preview_hash, ''), COALESCE(hook_result, ''),
 	COALESCE(remote_mailbox_id, 0), COALESCE(remote_uid, 0), remote_state, COALESCE(pushed_content_hash, ''),
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
-	COALESCE(closed_at, 0), compose_options`
+	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
+	COALESCE(push_note, '')`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
-	var to, cc, bcc, atts string
-	var created, updated, closed int64
+	var to, cc, bcc, atts, prev string
+	var created, updated, closed, uv int64
 	if err := sc.Scan(&d.ID, &d.AccountID, &d.IdentityID, &d.Kind, &d.InReplyToMsg, &d.MessageIDHeader,
 		&d.FromName, &d.FromEmail, &to, &cc, &bcc, &d.Subject, &d.BodyMarkdown, &d.BodyText,
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
-		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions); err != nil {
+		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
+		&d.PushedDate, &uv, &prev, &d.PushNote); err != nil {
 		return d, err
 	}
+	d.RemoteUIDValidity = uint32(uv)
 	for _, x := range []struct {
 		raw string
 		dst any
-	}{{to, &d.To}, {cc, &d.Cc}, {bcc, &d.Bcc}, {atts, &d.Attachments}} {
+	}{{to, &d.To}, {cc, &d.Cc}, {bcc, &d.Bcc}, {atts, &d.Attachments}, {prev, &d.RemotePrevious}} {
 		if err := json.Unmarshal([]byte(x.raw), x.dst); err != nil {
 			return d, fmt.Errorf("store: draft %d: corrupt JSON column: %w", d.ID, err)
 		}
@@ -226,17 +243,27 @@ func draftArgs(d Draft) ([]any, error) {
 	if opts == "" {
 		opts = "{}"
 	}
+	prev := d.RemotePrevious
+	if prev == nil {
+		prev = []RemoteCopy{}
+	}
+	ps, err := enc(prev)
+	if err != nil {
+		return nil, err
+	}
 	return []any{nullID(d.IdentityID), d.Kind, nullID(d.InReplyToMsg), d.MessageIDHeader, d.FromName, d.FromEmail,
 		js[0], js[1], js[2], d.Subject, nullStr(d.BodyMarkdown), d.BodyText, nullStr(d.BodyHTML), headers, as,
 		d.Status, nullStr(d.PreviewHash), nullStr(d.HookResult), nullID(d.RemoteMailboxID), nullID(d.RemoteUID), remote,
 		nullStr(d.PushedContentHash), nullStr(d.CreatedBy), nullID(d.ApprovalID), nullID(d.SentMessageID),
-		d.UpdatedAt.UnixMilli(), closed, opts}, nil
+		d.UpdatedAt.UnixMilli(), closed, opts, nullStr(d.PushedDate), nullID(int64(d.RemoteUIDValidity)), ps,
+		nullStr(d.PushNote)}, nil
 }
 
 const draftWriteCols = `identity_id, kind, in_reply_to_msg, message_id_header, from_name, from_email,
 	to_addrs, cc_addrs, bcc_addrs, subject, body_markdown, body_text, body_html, headers_json, attachment_blobs,
 	status, preview_hash, hook_result, remote_mailbox_id, remote_uid, remote_state,
-	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options`
+	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options,
+	pushed_date, remote_uidvalidity, remote_previous, push_note`
 
 func nullID(v int64) any {
 	if v <= 0 {
