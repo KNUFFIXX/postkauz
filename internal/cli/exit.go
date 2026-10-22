@@ -147,4 +147,5 @@ var deniedHints = map[string]string{
 	"attach_not_found":     "the file is not in attach_dir (see: doctor)",
 	"hidden_text_in_draft": "the HTML contains text a reader would not see; remove it",
 	"too_large":            "shorten the field named in the message (limits: docs/cli.md)",
+	"draft_changed":        "the draft was changed by someone else meanwhile; check it with: draft show <id>, then try again",
 }

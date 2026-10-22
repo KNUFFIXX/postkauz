@@ -111,3 +111,17 @@ func HashOf(d store.Draft) HashInput {
 	}
 	return h
 }
+
+// Fingerprint kennzeichnet den gespeicherten Inhalt eines Entwurfs: alles,
+// woraus die Nachricht gebaut wird (preview_hash, Markdown, Kopfzeilen,
+// Name und Typ der Anhänge, Schalter quote/signature). Ein Aufruf, der den
+// Entwurf außerhalb der Schreibtransaktion liest, prüft (Hook) oder
+// zusammenführt (Änderung einzelner Felder), gibt ihn mit; weicht er in der
+// Transaktion ab, hat ein anderer Schreiber dazwischen geändert
+// (draft_changed; Gegenprüfung S2.3, W2/W4). Zustand, Hook-Ergebnis und
+// Zeitstempel gehören nicht dazu.
+func Fingerprint(d store.Draft) string {
+	b, _ := json.Marshal([]string{PreviewHash(HashOf(d)), extrasKey(d), d.ComposeOptions})
+	sum := sha256.Sum256(append([]byte("postkauz-draft-fingerprint-v1\n"), b...))
+	return hex.EncodeToString(sum[:])
+}

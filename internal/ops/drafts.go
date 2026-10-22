@@ -872,99 +872,127 @@ func DraftsUpdate(d Deps) Operation {
 			if in.BodyMarkdown != nil && in.BodyHTML != nil {
 				return nil, inputErr("give either body_markdown or body_html")
 			}
-			cur, err := o.svc.Get(ctx, in.DraftID)
-			if err != nil {
-				return nil, err
-			}
-			if st := drafts.Status(cur.Status); st.Closed() {
-				_, err := drafts.Next(st, drafts.EvUpdate)
-				return nil, draftErr(err)
-			}
-			if cur.RemoteState == drafts.RemoteTakenOver {
-				return nil, &DeniedError{Reason: drafts.ReasonDraftTakenOver, Msg: fmt.Sprintf("draft %d was taken over in the mail client; change it there", cur.ID)}
-			}
-			acc, err := o.accountByID(ctx, cur.AccountID)
-			if err != nil {
-				return nil, err
-			}
-			kind := compose.Kind(cur.Kind)
-			var orig *compose.Original
-			var notes []string
-			if cur.InReplyToMsg > 0 {
-				_, og, _, err := o.original(ctx, &acc, cur.InReplyToMsg, "", false)
-				if err != nil {
-					return nil, err
-				}
-				orig = og
-			}
-			// Absender: die Kopie im Entwurf; Signatur und Präfixe aus der
-			// Identität, solange es sie gibt.
-			ci := compose.NewInput(kind)
-			ci.AccountAddress, ci.Original, ci.ExplicitRecipients = cur.FromEmail, orig, true
-			if ci.Identity, err = o.draftIdentity(ctx, cur); err != nil {
-				return nil, err
-			}
-			opts := parseOptions(cur.ComposeOptions)
-			opts.Quote, opts.Signature = boolOr(in.Quote, opts.Quote), boolOr(in.Signature, opts.Signature)
-			ci.Quote, ci.Signature, ci.IncludeAttachments = opts.Quote, opts.Signature, false
-			ci.To, ci.Cc, ci.Bcc = formatAddrs(cur.To), formatAddrs(cur.Cc), formatAddrs(cur.Bcc)
-			for _, p := range []struct {
-				in  *[]string
-				out *[]string
-			}{{in.To, &ci.To}, {in.Cc, &ci.Cc}, {in.Bcc, &ci.Bcc}} {
-				if p.in != nil {
-					*p.out = *p.in
+			// Lesen, zusammenführen und bauen geschieht außerhalb der
+			// Schreibtransaktion; der Dienst schreibt nur, wenn der Entwurf
+			// noch der gelesene ist (Fingerprint). Sonst hat ein anderer
+			// Schreiber dazwischen geändert: neu lesen und die genannten
+			// Felder auf seinem Stand zusammenführen, statt seine Änderung
+			// zu überschreiben (Gegenprüfung S2.3, W4).
+			for attempt := 1; ; attempt++ {
+				out, err := o.updateOnce(ctx, call, in)
+				var de *DeniedError
+				if !errors.As(err, &de) || de.Reason != drafts.ReasonDraftChanged || attempt == updateAttempts {
+					return out, err
 				}
 			}
-			ci.Subject = cur.Subject
-			if in.Subject != nil {
-				ci.Subject = *in.Subject
-			}
-			md, html := cur.BodyMarkdown, cur.BodyHTML
-			switch {
-			case in.BodyMarkdown != nil:
-				md, html = *in.BodyMarkdown, ""
-			case in.BodyHTML != nil:
-				md, html = "", *in.BodyHTML
-			}
-			ci.BodyMarkdown, ci.BodyHTML = md, html
-			var atts []loadedAttachment
-			if in.Attachments != nil {
-				atts, err = o.attachments(ctx, acc, *in.Attachments)
-			} else {
-				atts, err = o.storedAttachments(cur.Attachments)
-			}
-			if err != nil {
-				return nil, err
-			}
-			for _, a := range atts {
-				ci.Attachments = append(ci.Attachments, a.att)
-			}
-			ci.MessageID = cur.MessageIDHeader
-			msg, err := o.build(ci)
-			if err != nil {
-				return nil, err
-			}
-			for _, n := range msg.Notes {
-				if n != compose.NoteNoIdentity {
-					notes = addNote(notes, composeNotes[n])
-				}
-			}
-			if !call.DryRun {
-				if err := o.putFiles(atts); err != nil {
-					return nil, err
-				}
-			}
-			res, err := o.as(call, "drafts.update", policy.ScopeMailDraft).Update(ctx, cur.ID, content(msg, md, html, opts))
-			if err != nil {
-				return nil, draftErr(err)
-			}
-			if !res.Changed {
-				notes = addNote(notes, "nothing changed")
-			}
-			return o.writeOutput(acc.Name, res, notes, call.DryRun), nil
 		},
 	}
+}
+
+// updateAttempts: so oft versucht drafts.update, die genannten Felder auf
+// dem aktuellen Stand zusammenzuführen, bevor es draft_changed meldet.
+const updateAttempts = 3
+
+// testHookBeforeUpdateWrite läuft in Tests zwischen Lesen/Bauen und
+// Schreiben einer Änderung (zweiter Schreiber, W4); nil = nichts.
+var testHookBeforeUpdateWrite func()
+
+// updateOnce ist ein Versuch von drafts.update auf dem gerade gelesenen Stand.
+func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInput) (any, error) {
+	cur, err := o.as(call, "drafts.update", policy.ScopeMailDraft).Get(ctx, in.DraftID)
+	if err != nil {
+		return nil, err
+	}
+	if st := drafts.Status(cur.Status); st.Closed() {
+		_, err := drafts.Next(st, drafts.EvUpdate)
+		return nil, draftErr(err)
+	}
+	if cur.RemoteState == drafts.RemoteTakenOver {
+		return nil, &DeniedError{Reason: drafts.ReasonDraftTakenOver, Msg: fmt.Sprintf("draft %d was taken over in the mail client; change it there", cur.ID)}
+	}
+	acc, err := o.accountByID(ctx, cur.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	kind := compose.Kind(cur.Kind)
+	var orig *compose.Original
+	var notes []string
+	if cur.InReplyToMsg > 0 {
+		_, og, _, err := o.original(ctx, &acc, cur.InReplyToMsg, "", false)
+		if err != nil {
+			return nil, err
+		}
+		orig = og
+	}
+	// Absender: die Kopie im Entwurf; Signatur und Präfixe aus der
+	// Identität, solange es sie gibt.
+	ci := compose.NewInput(kind)
+	ci.AccountAddress, ci.Original, ci.ExplicitRecipients = cur.FromEmail, orig, true
+	if ci.Identity, err = o.draftIdentity(ctx, cur); err != nil {
+		return nil, err
+	}
+	opts := parseOptions(cur.ComposeOptions)
+	opts.Quote, opts.Signature = boolOr(in.Quote, opts.Quote), boolOr(in.Signature, opts.Signature)
+	ci.Quote, ci.Signature, ci.IncludeAttachments = opts.Quote, opts.Signature, false
+	ci.To, ci.Cc, ci.Bcc = formatAddrs(cur.To), formatAddrs(cur.Cc), formatAddrs(cur.Bcc)
+	for _, p := range []struct {
+		in  *[]string
+		out *[]string
+	}{{in.To, &ci.To}, {in.Cc, &ci.Cc}, {in.Bcc, &ci.Bcc}} {
+		if p.in != nil {
+			*p.out = *p.in
+		}
+	}
+	ci.Subject = cur.Subject
+	if in.Subject != nil {
+		ci.Subject = *in.Subject
+	}
+	md, html := cur.BodyMarkdown, cur.BodyHTML
+	switch {
+	case in.BodyMarkdown != nil:
+		md, html = *in.BodyMarkdown, ""
+	case in.BodyHTML != nil:
+		md, html = "", *in.BodyHTML
+	}
+	ci.BodyMarkdown, ci.BodyHTML = md, html
+	var atts []loadedAttachment
+	if in.Attachments != nil {
+		atts, err = o.attachments(ctx, acc, *in.Attachments)
+	} else {
+		atts, err = o.storedAttachments(cur.Attachments)
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range atts {
+		ci.Attachments = append(ci.Attachments, a.att)
+	}
+	ci.MessageID = cur.MessageIDHeader
+	msg, err := o.build(ci)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range msg.Notes {
+		if n != compose.NoteNoIdentity {
+			notes = addNote(notes, composeNotes[n])
+		}
+	}
+	if !call.DryRun {
+		if err := o.putFiles(atts); err != nil {
+			return nil, err
+		}
+	}
+	if testHookBeforeUpdateWrite != nil {
+		testHookBeforeUpdateWrite()
+	}
+	res, err := o.as(call, "drafts.update", policy.ScopeMailDraft).Update(ctx, cur.ID, content(msg, md, html, opts), drafts.Fingerprint(cur))
+	if err != nil {
+		return nil, draftErr(err)
+	}
+	if !res.Changed {
+		notes = addNote(notes, "nothing changed")
+	}
+	return o.writeOutput(acc.Name, res, notes, call.DryRun), nil
 }
 
 // --- drafts.get ---------------------------------------------------------------
@@ -1210,6 +1238,8 @@ type ApprovalOutput struct {
 	DecidedAt   string `json:"decided_at,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	PreviewHash string `json:"preview_hash"`
+	// MessageHash: Hash der vorgelegten Nachricht (W1; "" vor Schema 12).
+	MessageHash string `json:"message_hash,omitempty"`
 }
 
 const approvalOutputProps = `"approval_id": {"type": "integer"}, "draft_id": {"type": "integer"},
@@ -1218,12 +1248,12 @@ const approvalOutputProps = `"approval_id": {"type": "integer"}, "draft_id": {"t
     "description": {"type": "string"}, "requested_by": {"type": "string"},
     "requested_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"},
     "decided_by": {"type": "string"}, "decided_at": {"type": "string", "format": "date-time"},
-    "reason": {"type": "string"}, "preview_hash": {"type": "string"}`
+    "reason": {"type": "string"}, "preview_hash": {"type": "string"}, "message_hash": {"type": "string"}`
 
 func approvalOutput(a store.Approval, d store.Draft) ApprovalOutput {
 	return ApprovalOutput{ApprovalID: a.ID, DraftID: a.SubjectID, Status: a.Decision, DraftStatus: d.Status, Description: a.Description,
 		RequestedBy: a.RequestedBy, RequestedAt: rfc3339(a.RequestedAt), ExpiresAt: rfc3339(a.ExpiresAt), DecidedBy: a.DecidedBy,
-		DecidedAt: rfc3339(a.DecidedAt), Reason: a.Reason, PreviewHash: a.PreviewHash}
+		DecidedAt: rfc3339(a.DecidedAt), Reason: a.Reason, PreviewHash: a.PreviewHash, MessageHash: a.MessageHash}
 }
 
 // ApprovalsGet zeigt den Stand einer Freigabe (R0): offen, erteilt,
@@ -1289,6 +1319,9 @@ type DraftsRequestOutput struct {
 	ApprovalID  int64  `json:"approval_id,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	PreviewHash string `json:"preview_hash"`
+	// MessageHash: SHA-256 der gebauten Nachricht ohne Date
+	// (compose.MessageHash); die Freigabe bindet ihn (W1).
+	MessageHash string `json:"message_hash"`
 	DryRun      bool   `json:"dry_run"`
 }
 
@@ -1319,9 +1352,9 @@ func DraftsRequestReady(d Deps) Operation {
     "hook": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
     "hook_output": {"type": "string"}, "approval_id": {"type": "integer"},
     "expires_at": {"type": "string", "format": "date-time"}, "preview_hash": {"type": "string"},
-    "dry_run": {"type": "boolean"}
+    "message_hash": {"type": "string"}, "dry_run": {"type": "boolean"}
   },
-  "required": ["draft_id", "status", "previous_status", "hook", "preview_hash", "dry_run"]
+  "required": ["draft_id", "status", "previous_status", "hook", "preview_hash", "message_hash", "dry_run"]
 }`),
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -1329,25 +1362,37 @@ func DraftsRequestReady(d Deps) Operation {
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
 			}
-			dr, err := o.svc.Get(ctx, in.DraftID)
+			svc := o.as(call, "drafts.request_ready", policy.ScopeMailDraft)
+			dr, err := svc.Get(ctx, in.DraftID)
 			if err != nil {
 				return nil, err
 			}
 			// Erst der Übergang (kein Hook für einen abgeschlossenen oder
-			// schon vorgelegten Entwurf), dann der Hook.
+			// schon vorgelegten Entwurf), dann Nachrichtenbau und Hook.
 			if _, err := drafts.Next(drafts.Status(dr.Status), drafts.EvRequestReady); err != nil {
 				return nil, draftErr(err)
 			}
-			hook, err := o.runCheck(ctx, dr)
+			acc, err := o.accountByID(ctx, dr.AccountID)
 			if err != nil {
 				return nil, err
 			}
-			res, err := o.as(call, "drafts.request_ready", policy.ScopeMailDraft).RequestReady(ctx, dr.ID, call.Key.ID, hook.Result)
+			msg, err := o.rebuild(ctx, acc, dr)
+			if err != nil {
+				return nil, err
+			}
+			hook, err := o.runCheck(ctx, dr, acc.Name, msg.Raw)
+			if err != nil {
+				return nil, err
+			}
+			// Die Freigabe bindet genau den Stand, den Nachrichtenbau und Hook
+			// gesehen haben (W1, W2).
+			mh := compose.MessageHash(msg.Raw)
+			res, err := svc.RequestReady(ctx, dr.ID, call.Key.ID, hook.Result, drafts.Checked{Fingerprint: drafts.Fingerprint(dr), MessageHash: mh})
 			if err != nil {
 				return nil, draftErr(err)
 			}
 			out := DraftsRequestOutput{DraftID: res.Draft.ID, Status: string(res.To), PreviousStatus: string(res.From), Hook: hook.Result,
-				PreviewHash: res.Draft.PreviewHash, DryRun: call.DryRun}
+				PreviewHash: res.Draft.PreviewHash, MessageHash: mh, DryRun: call.DryRun}
 			if hook.Result != drafts.HookPass {
 				out.HookOutput = hook.Output
 			}
@@ -1362,19 +1407,11 @@ func DraftsRequestReady(d Deps) Operation {
 // runCheck ist die Stelle, an der S2.4 den Prüf-Hook einhängt
 // (Deps.DraftCheck): Er bekommt den Entwurf und die fertige Nachricht.
 // Ohne Hook gilt „pass" (wie ein leerer check_hook, A02 E4).
-func (o *draftOps) runCheck(ctx context.Context, dr store.Draft) (DraftCheckResult, error) {
+func (o *draftOps) runCheck(ctx context.Context, dr store.Draft, account string, raw []byte) (DraftCheckResult, error) {
 	if o.check == nil {
 		return DraftCheckResult{Result: drafts.HookPass}, nil
 	}
-	acc, err := o.accountByID(ctx, dr.AccountID)
-	if err != nil {
-		return DraftCheckResult{}, err
-	}
-	raw, err := o.rebuild(ctx, acc, dr)
-	if err != nil {
-		return DraftCheckResult{}, err
-	}
-	r, err := o.check.CheckDraft(ctx, DraftCheckInput{Draft: dr, Account: acc.Name, EML: raw})
+	r, err := o.check.CheckDraft(ctx, DraftCheckInput{Draft: dr, Account: account, EML: raw})
 	if err != nil {
 		return DraftCheckResult{}, err
 	}
@@ -1401,8 +1438,11 @@ func truncateBytes(s string, n int) (string, bool) {
 }
 
 // rebuild baut die Nachricht eines gespeicherten Entwurfs aus seinen
-// Eingaben neu (für den Prüf-Hook und ab S2.5 den Push).
-func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draft) ([]byte, error) {
+// Eingaben neu: für den Prüf-Hook, für den Hash, den die Freigabe bindet
+// (Vorlage und Freigabe, W1) und ab S2.5 für den Push. Bis auf Date ist das
+// Ergebnis bei gleichem Entwurf, gleicher Identität und gleicher
+// Ausgangsnachricht byte-gleich (compose.MessageHash).
+func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draft) (*compose.Message, error) {
 	ci := compose.NewInput(compose.Kind(dr.Kind))
 	ci.AccountAddress, ci.ExplicitRecipients = dr.FromEmail, true
 	if dr.InReplyToMsg > 0 {
@@ -1427,11 +1467,31 @@ func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draf
 	for _, a := range atts {
 		ci.Attachments = append(ci.Attachments, a.att)
 	}
-	msg, err := o.build(ci)
-	if err != nil {
-		return nil, err
+	return o.build(ci)
+}
+
+// messageHashFor baut den Entwurf einer Freigabe neu und liefert den Hash
+// der Nachricht (W1). Für eine Freigabe, die nicht mehr offen ist, oder
+// einen Entwurf außerhalb von pending_approval "" (die Ablehnung kommt dann
+// vom Dienst mit ihrem eigenen Grund).
+func (o *draftOps) messageHashFor(ctx context.Context, approvalID int64) (string, error) {
+	a, err := o.svc.Store.Approval(ctx, approvalID)
+	if err != nil || a.SubjectType != "draft" || a.Decision != drafts.DecisionPending {
+		return "", nil
 	}
-	return msg.Raw, nil
+	dr, err := o.svc.Store.Draft(ctx, a.SubjectID)
+	if err != nil || dr.Status != string(drafts.StatusPendingApproval) {
+		return "", nil
+	}
+	acc, err := o.accountByID(ctx, dr.AccountID)
+	if err != nil {
+		return "", err
+	}
+	msg, err := o.rebuild(ctx, acc, dr)
+	if err != nil {
+		return "", err
+	}
+	return compose.MessageHash(msg.Raw), nil
 }
 
 // --- drafts.approve, drafts.reject ------------------------------------------------
@@ -1518,7 +1578,13 @@ func draftsDecide(d Deps, name, summary string) Operation {
 			if reject {
 				res, err = svc.Reject(ctx, in.ApprovalID, by, in.Reason)
 			} else {
-				res, err = svc.Approve(ctx, in.ApprovalID, by)
+				// Die Freigabe gilt der fertigen Nachricht: neu bauen und mit
+				// dem Hash der Vorlage vergleichen (W1).
+				mh, herr := o.messageHashFor(ctx, in.ApprovalID)
+				if herr != nil {
+					return nil, draftErr(herr)
+				}
+				res, err = svc.Approve(ctx, in.ApprovalID, by, mh)
 			}
 			if err != nil {
 				return nil, draftErr(err)

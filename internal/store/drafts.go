@@ -96,6 +96,10 @@ type Approval struct {
 	DecidedBy   string
 	DecidedAt   time.Time
 	Reason      string
+	// MessageHash: SHA-256 der bei der Vorlage gebauten Nachricht ohne
+	// Date (compose.MessageHash; Migration 0012, Gegenprüfung S2.3 W1);
+	// "" bei Freigaben von vorher.
+	MessageHash string
 }
 
 // Identity ist eine Absenderidentität eines Kontos (E9).
@@ -353,13 +357,14 @@ func (x *DraftTx) ExpiredDraftIDs(now time.Time, accountID int64) ([]int64, erro
 }
 
 const approvalCols = `id, subject_type, COALESCE(subject_id, 0), description, COALESCE(requested_by, ''), requested_at,
-	preview_hash, COALESCE(expires_at, 0), decision, COALESCE(decided_by, ''), COALESCE(decided_at, 0), COALESCE(reason, '')`
+	preview_hash, COALESCE(expires_at, 0), decision, COALESCE(decided_by, ''), COALESCE(decided_at, 0), COALESCE(reason, ''),
+	message_hash`
 
 func scanApproval(sc interface{ Scan(...any) error }) (Approval, error) {
 	var a Approval
 	var req, exp, dec int64
 	if err := sc.Scan(&a.ID, &a.SubjectType, &a.SubjectID, &a.Description, &a.RequestedBy, &req, &a.PreviewHash, &exp,
-		&a.Decision, &a.DecidedBy, &dec, &a.Reason); err != nil {
+		&a.Decision, &a.DecidedBy, &dec, &a.Reason, &a.MessageHash); err != nil {
 		return a, err
 	}
 	a.RequestedAt = unixMilliUTC(req)
@@ -395,9 +400,9 @@ func (x *DraftTx) InsertApproval(a Approval) (int64, error) {
 	}
 	var id int64
 	err := x.tx.QueryRowContext(x.ctx, `INSERT INTO approvals(subject_type, subject_id, description, requested_by,
-		requested_at, preview_hash, expires_at, decision) VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
+		requested_at, preview_hash, expires_at, decision, message_hash) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id`,
 		a.SubjectType, nullID(a.SubjectID), a.Description, nullStr(a.RequestedBy), a.RequestedAt.UnixMilli(),
-		a.PreviewHash, nullTime(a.ExpiresAt), a.Decision).Scan(&id)
+		a.PreviewHash, nullTime(a.ExpiresAt), a.Decision, a.MessageHash).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: insert approval: %w", err)
 	}

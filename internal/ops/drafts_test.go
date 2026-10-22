@@ -25,11 +25,16 @@ type fakeChecker struct {
 	res   DraftCheckResult
 	calls int
 	eml   []byte
+	// during läuft, während der Hook prüft (zweiter Schreiber, W2).
+	during func()
 }
 
 func (f *fakeChecker) CheckDraft(_ context.Context, in DraftCheckInput) (DraftCheckResult, error) {
 	f.calls++
 	f.eml = in.EML
+	if f.during != nil {
+		f.during()
+	}
 	return f.res, nil
 }
 

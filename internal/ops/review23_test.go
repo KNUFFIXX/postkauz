@@ -3,6 +3,7 @@ package ops
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -141,5 +142,131 @@ func TestReviewK1RedactOnlyKnownFields(t *testing.T) {
 		if strings.Contains(string(params), "unknown_fields") {
 			t.Errorf("%s: own fields counted as unknown: %s", op.Name, params)
 		}
+	}
+}
+
+// W1: Die Freigabe bindet die fertige Nachricht. Ändert sich nach der
+// Vorlage etwas, das nur beim Bau hinzukommt (Signatur oder Reply-To der
+// Identität), ist approve approval_stale; der Entwurf fällt auf draft
+// zurück, die Freigabe ist superseded.
+func TestReviewW1ApprovalBindsBuiltMessage(t *testing.T) {
+	for name, change := range map[string]string{
+		"signature": `UPDATE identities SET signature_text = 'Andere Signatur' WHERE id = 1`,
+		"reply-to":  `UPDATE identities SET reply_to = 'umleitung@example.net' WHERE id = 1`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newDraftEnv(t, false)
+			out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": 1, "body_markdown": "Antwort"}).(DraftsWriteOutput)
+			req := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": out.DraftID}).(DraftsRequestOutput)
+			if len(req.MessageHash) != 64 {
+				t.Fatalf("request = %+v", req)
+			}
+			if ap := e.must(t, assistant, "approvals.get", map[string]any{"approval_id": req.ApprovalID}).(ApprovalOutput); ap.MessageHash != req.MessageHash {
+				t.Fatalf("approval = %+v", ap)
+			}
+			if err := e.st.ExecForTest(change); err != nil {
+				t.Fatal(err)
+			}
+			_, err := e.do(t, humanCLI, "drafts.approve", map[string]any{"approval_id": req.ApprovalID}, false)
+			wantDenied(t, err, "approval_stale")
+			got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID}).(DraftDetail)
+			ap := e.must(t, assistant, "approvals.get", map[string]any{"approval_id": req.ApprovalID}).(ApprovalOutput)
+			if got.Status != "draft" || ap.Status != "superseded" {
+				t.Fatalf("after stale approve: draft %s, approval %s", got.Status, ap.Status)
+			}
+			// Neu vorgelegt, bindet sie die neue Nachricht und lässt sich freigeben.
+			req2 := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": out.DraftID}).(DraftsRequestOutput)
+			if req2.MessageHash == req.MessageHash {
+				t.Fatal("message hash ignores the change")
+			}
+			if dec := e.must(t, humanCLI, "drafts.approve", map[string]any{"approval_id": req2.ApprovalID}).(DraftsDecideOutput); dec.Status != "ready" {
+				t.Fatalf("approve = %+v", dec)
+			}
+		})
+	}
+}
+
+// W2: Ein zweiter Schreiber ändert den Text, während der Hook den alten
+// Stand prüft. Vorher wurde trotzdem vorgelegt (hook=pass für einen Text,
+// den der Hook nie sah); jetzt draft_changed, keine Freigabe.
+func TestReviewW2HookRaceRefused(t *testing.T) {
+	e := newDraftEnv(t, true)
+	const changed = "Geaenderter Text des zweiten Schreibers"
+	e.check.during = func() {
+		e.check.during = nil
+		e.must(t, assistant, "drafts.update", map[string]any{"draft_id": 1, "body_markdown": changed})
+	}
+	_, err := e.do(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 1}, false)
+	wantDenied(t, err, "draft_changed")
+	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": 1}).(DraftDetail)
+	if got.Status != "draft" || got.ApprovalID != 0 || !strings.Contains(got.BodyText, changed) {
+		t.Fatalf("draft = %+v", got)
+	}
+	// Erneut vorgelegt: Der Hook sieht den neuen Text.
+	r := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 1}).(DraftsRequestOutput)
+	if r.Status != "pending_approval" || !strings.Contains(string(e.check.eml), "Geaenderter") {
+		t.Fatalf("request = %+v", r)
+	}
+}
+
+// W4: B ändert den Text, während A (nur Betreff) liest und baut; A darf
+// B's Text nicht mit dem alten Stand überschreiben.
+func TestReviewW4NoLostUpdate(t *testing.T) {
+	e := newDraftEnv(t, false)
+	const bodyB = "Text von Schreiber B"
+	calls := 0
+	testHookBeforeUpdateWrite = func() {
+		calls++
+		if calls == 1 {
+			// B schreibt dazwischen (sein eigener Aufruf ist der zweite Haken-Aufruf).
+			e.must(t, assistant, "drafts.update", map[string]any{"draft_id": 1, "body_markdown": bodyB})
+		}
+	}
+	t.Cleanup(func() { testHookBeforeUpdateWrite = nil })
+	out := e.must(t, assistant, "drafts.update", map[string]any{"draft_id": 1, "subject": "Betreff von A"}).(DraftsWriteOutput)
+	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": 1}).(DraftDetail)
+	if got.Subject != "Betreff von A" || got.BodyMarkdown != bodyB || !strings.Contains(got.BodyText, bodyB) || out.Preview.Subject != "Betreff von A" {
+		t.Fatalf("draft = subject %q, markdown %q", got.Subject, got.BodyMarkdown)
+	}
+	// Ändert ein zweiter Schreiber vor jedem Schreibversuch, gibt A nach
+	// updateAttempts Versuchen mit draft_changed auf.
+	round := 0
+	testHookBeforeUpdateWrite = func() {
+		round++
+		if round%2 == 1 { // A's Versuch; der Aufruf von B selbst ist gerade
+			e.must(t, humanCLI, "drafts.update", map[string]any{"draft_id": 1, "body_markdown": fmt.Sprintf("Runde %d", round)})
+		}
+	}
+	_, err := e.do(t, assistant, "drafts.update", map[string]any{"draft_id": 1, "subject": "nie"}, false)
+	wantDenied(t, err, "draft_changed")
+	if round != 2*updateAttempts {
+		t.Fatalf("rounds = %d", round)
+	}
+}
+
+// K8: request_ready und update im Trockenlauf speichern keinen Rückfall
+// einer abgelaufenen Freigabe (Datenbank unverändert, kein Audit
+// drafts.expire), zeigen aber den Stand danach.
+func TestReviewK8DryRunStoresNoExpiry(t *testing.T) {
+	e := newDraftEnv(t, false)
+	if err := e.st.ExecForTest(`UPDATE approvals SET expires_at = 1 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	before := e.state(t)
+	out, err := e.do(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 2}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := out.(DraftsRequestOutput); r.PreviousStatus != "draft" || r.Status != "pending_approval" || !r.DryRun {
+		t.Fatalf("dry run = %+v", r)
+	}
+	if _, err := e.do(t, assistant, "drafts.update", map[string]any{"draft_id": 2, "subject": "trocken"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if e.state(t) != before {
+		t.Fatal("dry run stored the expiry")
+	}
+	if _, all := e.auditJSON(t); strings.Contains(all, "drafts.expire") {
+		t.Fatalf("dry run audited an expiry: %s", all)
 	}
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -306,7 +307,31 @@ func seedDrafts(t *testing.T, st *store.SQLite, acct int64) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := svc.RequestReady(ctx, 2, "cli", drafts.HookPass); err != nil {
+	if _, err := svc.RequestReady(ctx, 2, "cli", drafts.HookPass, drafts.Checked{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bindApproval trägt in Freigabe 1 den Hash der aus Entwurf 2 gebauten
+// Nachricht ein, wie ihn drafts.request_ready speichert (W1), damit
+// drafts.approve sie freigeben kann.
+func bindApproval(t *testing.T, d Deps) {
+	t.Helper()
+	ctx := context.Background()
+	o := newDraftOps(d)
+	dr, err := o.svc.Store.Draft(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc, err := o.accountByID(ctx, dr.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := o.rebuild(ctx, acc, dr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.svc.Store.ExecForTest(`UPDATE approvals SET message_hash = ? WHERE id = 1`, compose.MessageHash(msg.Raw)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -355,10 +380,12 @@ func newContractEnv(t *testing.T) *contractEnv {
 	r := &contractRunner{}
 	imp := &contractImporter{}
 	blobs := newMemBlobs()
-	return &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
+	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
 		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}}}
+	bindApproval(t, e.deps)
+	return e
 }
 
 // fingerprint fasst den lokalen Zustand zusammen: alle Tabellen der
