@@ -65,6 +65,7 @@ Damit nicht jeder Zwischenstand eine weitere Kopie im Entwürfe-Ordner hinterlä
 
 ## 8. Gmail und andere Anbieter (nur dokumentiert, gemessen in D5)
 
+- **Testserver (Integrationstest `TestIntegrationSentDetection`, `make integration`):** gegen Dovecot, Stalwart und GreenMail geprüft, je mit einem zweiten IMAP-Client als Mailprogramm, das in Gesendet ablegt und die Kopie aus den Entwürfen entfernt: (A) Kopie mit derselben Message-ID → `sent_by_human` (`message_id`); (B) neue Message-ID, gleicher Text, Betreff mit `Re:` → `sent_by_human` (`fallback`); (C) neue Message-ID, stark geänderter Text → bleibt `ready`, `remote: missing`; `ready` älter als `approval_ttl` → `draft`; `draft mark-sent`/`draft abandon` mit Schlüssel → `human_only`. Dovecot und Stalwart melden Gesendet per SPECIAL-USE, GreenMail hat keinen Ordner Gesendet (der Test legt `Sent` an, Rolle per Name).
 - Entwürfe-Ordner: `[Gmail]/Drafts` bzw. lokalisiert (`[Gmail]/Entwürfe`), Rolle `drafts` aus SPECIAL-USE `\Drafts`.
 - Gesendet: `[Gmail]/Sent Mail` (lokalisiert `[Gmail]/Gesendet`), Rolle `sent`; zugleich in `[Gmail]/All Mail` (Rolle `all`). Beide Rollen gelten für die Erkennung; dieselbe Nachricht in beiden Ordnern ist im Spiegel **eine** Nachricht (gleiche Message-ID und Größe) und schließt höchstens einen Entwurf.
 - Erwartung (nicht gemessen): Gmail im Browser vergibt beim Senden eine neue Message-ID → Rückfall; Thunderbird behält sie wahrscheinlich → Message-ID. **Messen, nicht annehmen**: Tabelle unten.
