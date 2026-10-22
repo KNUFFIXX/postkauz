@@ -67,13 +67,17 @@ func hookOutputEnvelope(r DraftCheckResult) *HookOutputEnvelope {
 }
 
 // originalPart meldet, ob der Klartext des Entwurfs Text der
-// Ausgangsnachricht enthält, und welchen.
+// Ausgangsnachricht enthält, und welchen. Es hängt nur an Art und Schalter,
+// nicht am Zeiger auf die Ausgangsnachricht: Die Spalte in_reply_to_msg
+// wird beim Löschen der Nachricht NULL (ON DELETE SET NULL), das
+// gespeicherte Zitat bleibt aber im Text und gehört weiter in die Hülle
+// (Gegenprüfung S2.8, K1).
 func originalPart(d store.Draft) string {
 	switch drafts.Kind(d.Kind) {
 	case drafts.KindForward:
 		return "forward"
 	case drafts.KindReply, drafts.KindReplyAll:
-		if d.InReplyToMsg > 0 && parseOptions(d.ComposeOptions).Quote {
+		if parseOptions(d.ComposeOptions).Quote {
 			return "quote"
 		}
 	}
