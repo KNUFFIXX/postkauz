@@ -103,8 +103,8 @@ func TestRequestReadyHookOutputTruncated(t *testing.T) {
 	e := newDraftEnv(t, true)
 	e.check.res = DraftCheckResult{Result: drafts.HookFail, Output: "Kanarie" + strings.Repeat("ä", 3000)}
 	r := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 1}).(DraftsRequestOutput)
-	if r.Hook != "fail" || !r.HookOutputTruncated || len(r.HookOutput) > 4096 || len(r.HookOutput) < 4090 || !strings.HasPrefix(r.HookOutput, "Kanarie") {
-		t.Fatalf("hook %s, truncated %v, %d bytes", r.Hook, r.HookOutputTruncated, len(r.HookOutput))
+	if h := r.HookOutput; r.Hook != "fail" || h == nil || !h.Truncated || len(h.Text) > 4096 || len(h.Text) < 4090 || !strings.HasPrefix(h.Text, "Kanarie") {
+		t.Fatalf("hook %s, output %+v", r.Hook, r.HookOutput)
 	}
 	if _, all := e.auditJSON(t); strings.Contains(all, "Kanarie") || strings.Contains(all, "ä") {
 		t.Fatal("hook output in the audit")
@@ -112,7 +112,7 @@ func TestRequestReadyHookOutputTruncated(t *testing.T) {
 	// Kurze Ausgabe: kein Hinweis.
 	e.check.res = DraftCheckResult{Result: drafts.HookTimeout, Output: "slow"}
 	r = e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 1}).(DraftsRequestOutput)
-	if r.Hook != "timeout" || r.HookOutput != "slow" || r.HookOutputTruncated || r.Status != "draft" {
+	if r.Hook != "timeout" || r.HookOutput == nil || r.HookOutput.Text != "slow" || r.HookOutput.Truncated || r.Status != "draft" {
 		t.Fatalf("timeout = %+v", r)
 	}
 }

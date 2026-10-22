@@ -15,15 +15,6 @@ var notOverMCP = map[string]string{
 	"keys.revoke":     "admin: key management is for humans only",
 	"audit.export":    "admin: writes files to a second location, human only",
 	"audit.verify":    "checks export files on disk; a human task (CLI audit verify)",
-	// Entwürfe (S2.3): Die Tools mail_create_draft, mail_update_draft,
-	// mail_get_draft, mail_list_drafts, mail_request_ready und
-	// mail_get_approval kommen mit Schritt S2.8 (A02); bis dahin nur CLI.
-	"drafts.create":        "not yet: the tool mail_create_draft comes with step S2.8 (CLI draft new|reply|forward until then)",
-	"drafts.update":        "not yet: the tool mail_update_draft comes with step S2.8 (CLI draft edit until then)",
-	"drafts.get":           "not yet: the tool mail_get_draft and the resource mail://{account}/draft/{id} come with step S2.8",
-	"drafts.list":          "not yet: the tool mail_list_drafts comes with step S2.8 (CLI draft list until then)",
-	"drafts.request_ready": "not yet: the tool mail_request_ready comes with step S2.8 (CLI draft request until then)",
-	"approvals.get":        "not yet: the tool mail_get_approval comes with step S2.8 (CLI approval show until then)",
 	// Nur für Menschen (A02 E2), dauerhaft ohne Tool: Ein Agent kann einen
 	// Entwurf vorlegen, aber nie freigeben, ablehnen, verwerfen oder für
 	// gesendet erklären, und er verwaltet keine Absender.
@@ -36,5 +27,6 @@ var notOverMCP = map[string]string{
 	"identities.set_default": "admin, human only (A02 E2); CLI identity set-default",
 	"identities.remove":      "admin, human only (A02 E2); CLI identity remove",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
+	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
 }

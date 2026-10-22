@@ -139,8 +139,13 @@ func TestDraftLifecycleWithApproval(t *testing.T) {
 	p := out.Preview
 	if p.Subject != "Re: Hallo" || p.InReplyTo != "<a@example.org>" || p.From != "Demo <demo@example.org>" ||
 		strings.Join(p.To, ",") != "Zweit <zweit@example.net>" || !strings.Contains(p.Text, body) || !strings.Contains(p.Text, "Gruß") ||
-		!strings.Contains(p.Text, "> Text") {
+		strings.Contains(p.Text, "> Text") {
 		t.Fatalf("preview = %+v", p)
+	}
+	// S2.8: Das Zitat steht nicht im eigenen Text, sondern in der Hülle.
+	if q := out.Original; out.Source != "draft" || q == nil || !q.Untrusted || q.Source != "email" || q.Part != "quote" ||
+		q.OriginalID != 1 || !strings.Contains(q.Text, "> Text") || strings.Contains(q.Text, body) {
+		t.Fatalf("original = %+v", out.Original)
 	}
 	id := out.DraftID
 
@@ -342,7 +347,8 @@ func TestDraftAttachmentsAndReasons(t *testing.T) {
 	// einer ohne gespeicherten Inhalt fehlt mit Hinweis.
 	fw := e.must(t, assistant, "drafts.create", map[string]any{"kind": "forward", "in_reply_to": 1, "to": []string{"c@example.org"}}).(DraftsWriteOutput)
 	if len(fw.Attachments) != 2 || fw.Attachments[0].Filename != "Notiz.txt" || fw.Preview.Subject != "Fwd: Hallo" || len(fw.Notes) == 0 ||
-		!strings.Contains(fw.Preview.Text, "Text") {
+		fw.Original == nil || fw.Original.Part != "forward" || !strings.Contains(fw.Original.Text, "Text") ||
+		!strings.Contains(fw.Original.Text, "Forwarded message") || strings.Contains(fw.Preview.Text, "Forwarded") {
 		t.Fatalf("forward = %+v", fw)
 	}
 	fw = e.must(t, assistant, "drafts.create", map[string]any{"kind": "forward", "in_reply_to": 1, "include_attachments": false}).(DraftsWriteOutput)
@@ -397,7 +403,8 @@ func TestDraftCheckHook(t *testing.T) {
 	e := newDraftEnv(t, true)
 	e.check.res = DraftCheckResult{Result: drafts.HookFail, Output: "HookAusgabeKanarie: Anrede fehlt"}
 	r := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": 1}).(DraftsRequestOutput)
-	if r.Status != "draft" || r.Hook != "fail" || r.HookOutput != e.check.res.Output || r.ApprovalID != 0 || e.check.calls != 1 ||
+	if r.Status != "draft" || r.Hook != "fail" || r.HookOutput == nil || r.HookOutput.Text != e.check.res.Output || !r.HookOutput.Untrusted ||
+		r.HookOutput.Source != "check_hook" || r.ApprovalID != 0 || e.check.calls != 1 ||
 		!strings.Contains(strings.ToLower(string(e.check.eml)), "message-id: <pk.") {
 		t.Fatalf("request = %+v calls %d", r, e.check.calls)
 	}

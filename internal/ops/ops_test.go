@@ -249,6 +249,7 @@ var contractInputs = map[string]struct {
 	"drafts.abandon":         {input: `{"draft_id":1}`},
 	"drafts.mark_sent":       {input: `{"draft_id":2}`},
 	"approvals.get":          {input: `{"approval_id":1}`},
+	"drafts.style":           {input: `{"identity":"demo@example.org","account":"demo","max_chars":100}`},
 	"identities.add":         {input: `{"account":"demo","name":"Drei","email":"drei@example.org","reply_to":"antwort@example.org","signature_text":"Gruß","default":true}`},
 	"identities.list":        {input: `{"account":"demo"}`},
 	"identities.set_default": {input: `{"id":2}`},

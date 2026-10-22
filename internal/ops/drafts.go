@@ -272,8 +272,9 @@ type draftIDInput struct {
 
 // --- Ausgaben -----------------------------------------------------------------
 
-// DraftPreview ist der Kopf eines Entwurfs und der Anfang seines Texts
-// (erste PreviewChars Zeichen von text/plain).
+// DraftPreview ist der Kopf eines Entwurfs und der Anfang seines eigenen
+// Texts (erste PreviewChars Zeichen von text/plain ohne Zitat und
+// Weiterleitung; die stehen in DraftsWriteOutput.Original, S2.8).
 type DraftPreview struct {
 	From          string   `json:"from"`
 	To            []string `json:"to"`
@@ -301,6 +302,9 @@ type DraftAttachmentOutput struct {
 
 // DraftsWriteOutput ist die Ausgabe von drafts.create und drafts.update.
 type DraftsWriteOutput struct {
+	// Source: "draft" (S2.8): Kopf und Text sind für den Entwurf
+	// geschrieben; Text aus der Ausgangsnachricht steht in Original.
+	Source         string `json:"source"`
 	DraftID        int64  `json:"draft_id,omitempty"` // fehlt im Trockenlauf von create
 	Account        string `json:"account"`
 	Kind           string `json:"kind"`
@@ -311,6 +315,7 @@ type DraftsWriteOutput struct {
 	MessageID          string                  `json:"message_id,omitempty"`
 	OriginalID         int64                   `json:"original_id,omitempty"`
 	Preview            DraftPreview            `json:"preview"`
+	Original           *OriginalEnvelope       `json:"original,omitempty"`
 	Attachments        []DraftAttachmentOutput `json:"attachments"`
 	Warnings           []string                `json:"warnings"`
 	Notes              []string                `json:"notes"`
@@ -339,12 +344,14 @@ const draftStatusEnum = `["draft", "pending_approval", "ready", "sent_by_human",
 const draftsWriteOutputSchema = `{
   "type": "object",
   "properties": {
+    "source": {"type": "string", "enum": ["draft"]},
     "draft_id": {"type": "integer"}, "account": {"type": "string"},
     "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "previous_status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "changed": {"type": "boolean"}, "message_id": {"type": "string"}, "original_id": {"type": "integer"},
     "preview": ` + draftPreviewSchema + `,
+    "original": ` + originalEnvelopeSchema + `,
     "attachments": ` + draftAttachmentsSchema + `,
     "warnings": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}},
@@ -353,7 +360,7 @@ const draftsWriteOutputSchema = `{
     "approval_superseded": {"type": "integer"}, "preview_hash": {"type": "string"},
     "dry_run": {"type": "boolean"}
   },
-  "required": ["account", "kind", "status", "changed", "preview", "attachments", "warnings", "notes", "remote", "preview_hash", "dry_run"]
+  "required": ["source", "account", "kind", "status", "changed", "preview", "attachments", "warnings", "notes", "remote", "preview_hash", "dry_run"]
 }`
 
 // draftAttachmentInputSchema ist das Schema eines Anhangs in der Eingabe.
@@ -738,8 +745,8 @@ func content(m *compose.Message, md, html string, opts composeOptions) drafts.Co
 	return c
 }
 
-func preview(d store.Draft) DraftPreview {
-	text, cut := truncateRunes(d.BodyText, PreviewChars)
+func preview(d store.Draft, own string) DraftPreview {
+	text, cut := truncateRunes(own, PreviewChars)
 	p := DraftPreview{From: formatAddr(store.Addr{Name: d.FromName, Address: d.FromEmail}), To: formatAddrs(d.To), Cc: formatAddrs(d.Cc),
 		Bcc: formatAddrs(d.Bcc), Subject: d.Subject, Text: text, TextTruncated: cut}
 	var h map[string]any
@@ -751,11 +758,15 @@ func preview(d store.Draft) DraftPreview {
 	return p
 }
 
-func (o *draftOps) writeOutput(acc string, res drafts.Result, notes []string, dry bool) DraftsWriteOutput {
+func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Result, notes []string, dry bool) (DraftsWriteOutput, error) {
 	d := res.Draft
-	out := DraftsWriteOutput{DraftID: d.ID, Account: acc, Kind: d.Kind, Status: string(res.To), Changed: res.Changed,
-		MessageID: d.MessageIDHeader, OriginalID: d.InReplyToMsg, Preview: preview(d), Notes: []string{}, Remote: d.RemoteState,
-		RemoteNote: remoteNote(d), PushJobID: res.PushJobID, PreviewHash: d.PreviewHash, DryRun: dry}
+	own, orig, err := o.textParts(ctx, d, PreviewChars)
+	if err != nil {
+		return DraftsWriteOutput{}, err
+	}
+	out := DraftsWriteOutput{Source: DraftSource, DraftID: d.ID, Account: acc, Kind: d.Kind, Status: string(res.To), Changed: res.Changed,
+		MessageID: d.MessageIDHeader, OriginalID: d.InReplyToMsg, Preview: preview(d, own), Original: orig, Notes: []string{},
+		Remote: d.RemoteState, RemoteNote: remoteNote(d), PushJobID: res.PushJobID, PreviewHash: d.PreviewHash, DryRun: dry}
 	if res.From != "" {
 		out.PreviousStatus = string(res.From)
 	}
@@ -777,7 +788,7 @@ func (o *draftOps) writeOutput(acc string, res drafts.Result, notes []string, dr
 			out.RemoteNote = "dry run: nothing was saved or queued"
 		}
 	}
-	return out
+	return out, nil
 }
 
 // --- drafts.create -------------------------------------------------------------
@@ -907,7 +918,7 @@ func DraftsCreate(d Deps) Operation {
 			if err != nil {
 				return nil, draftErr(err)
 			}
-			return o.writeOutput(acc.Name, res, notes, call.DryRun), nil
+			return o.writeOutput(ctx, acc.Name, res, notes, call.DryRun)
 		},
 	}
 }
@@ -1087,13 +1098,17 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 	if !res.Changed {
 		notes = addNote(notes, "nothing changed")
 	}
-	return o.writeOutput(acc.Name, res, notes, call.DryRun), nil
+	return o.writeOutput(ctx, acc.Name, res, notes, call.DryRun)
 }
 
 // --- drafts.get ---------------------------------------------------------------
 
 // DraftDetail ist die Ausgabe von drafts.get: der ganze Entwurf.
 type DraftDetail struct {
+	// Source: "draft" (S2.8): Kopf, body_text, body_markdown und body_html
+	// sind für den Entwurf geschrieben (body_text: eigener Text und
+	// Signatur); Zitat bzw. weitergeleiteter Text stehen in Original.
+	Source            string                  `json:"source"`
 	DraftID           int64                   `json:"draft_id"`
 	Account           string                  `json:"account"`
 	Kind              string                  `json:"kind"`
@@ -1108,6 +1123,7 @@ type DraftDetail struct {
 	Bcc               []string                `json:"bcc"`
 	Subject           string                  `json:"subject"`
 	BodyText          string                  `json:"body_text"`
+	Original          *OriginalEnvelope       `json:"original,omitempty"`
 	BodyMarkdown      string                  `json:"body_markdown,omitempty"`
 	BodyHTML          string                  `json:"body_html,omitempty"`
 	Quote             bool                    `json:"quote"`
@@ -1178,6 +1194,7 @@ func DraftsGet(d Deps) Operation {
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    "source": {"type": "string", "enum": ["draft"]},
     "draft_id": {"type": "integer"}, "account": {"type": "string"},
     "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
@@ -1186,7 +1203,9 @@ func DraftsGet(d Deps) Operation {
     "in_reply_to": {"type": "string"}, "references": {"type": "string"},
     "from": {"type": "string"}, "to": {"type": "array", "items": {"type": "string"}},
     "cc": {"type": "array", "items": {"type": "string"}}, "bcc": {"type": "array", "items": {"type": "string"}},
-    "subject": {"type": "string"}, "body_text": {"type": "string"},
+    "subject": {"type": "string"},
+    "body_text": {"type": "string", "description": "own text and signature; the quoted or forwarded original is in original"},
+    "original": ` + originalEnvelopeSchema + `,
     "body_markdown": {"type": "string"}, "body_html": {"type": "string"},
     "quote": {"type": "boolean"}, "signature": {"type": "boolean"},
     "attachments": ` + draftAttachmentsSchema + `,
@@ -1204,7 +1223,7 @@ func DraftsGet(d Deps) Operation {
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
   },
-  "required": ["draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
+  "required": ["source", "draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
     "quote", "signature", "attachments", "warnings", "remote", "preview_hash", "created_by", "created_at", "updated_at"]
 }`),
 		Redact: redactDraftInput,
@@ -1225,9 +1244,13 @@ func DraftsGet(d Deps) Operation {
 				return nil, err
 			}
 			opts := parseOptions(dr.ComposeOptions)
-			out := DraftDetail{DraftID: dr.ID, Account: acc.Name, Kind: dr.Kind, Status: dr.Status, MessageID: dr.MessageIDHeader,
+			own, orig, err := o.textParts(ctx, dr, 0)
+			if err != nil {
+				return nil, err
+			}
+			out := DraftDetail{Source: DraftSource, DraftID: dr.ID, Account: acc.Name, Kind: dr.Kind, Status: dr.Status, MessageID: dr.MessageIDHeader,
 				OriginalID: dr.InReplyToMsg, From: formatAddr(store.Addr{Name: dr.FromName, Address: dr.FromEmail}),
-				To: formatAddrs(dr.To), Cc: formatAddrs(dr.Cc), Bcc: formatAddrs(dr.Bcc), Subject: dr.Subject, BodyText: dr.BodyText,
+				To: formatAddrs(dr.To), Cc: formatAddrs(dr.Cc), Bcc: formatAddrs(dr.Bcc), Subject: dr.Subject, BodyText: own, Original: orig,
 				BodyMarkdown: dr.BodyMarkdown, BodyHTML: dr.BodyHTML, Quote: opts.Quote, Signature: opts.Signature,
 				HookResult: dr.HookResult, ApprovalID: dr.ApprovalID, Remote: dr.RemoteState, RemoteNote: remoteNote(dr),
 				RemoteMailboxID: dr.RemoteMailboxID, RemoteUID: dr.RemoteUID, PreviewHash: dr.PreviewHash, CreatedBy: dr.CreatedBy,
@@ -1388,6 +1411,8 @@ type DraftSummary struct {
 
 // DraftsListOutput ist die Ausgabe von drafts.list.
 type DraftsListOutput struct {
+	// Source: "draft" (S2.8), wie bei drafts.get.
+	Source string         `json:"source"`
 	Drafts []DraftSummary `json:"drafts"`
 }
 
@@ -1420,6 +1445,7 @@ func DraftsList(d Deps) Operation {
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
+    "source": {"type": "string", "enum": ["draft"]},
     "drafts": {"type": "array", "items": {"type": "object", "properties": {
       "draft_id": {"type": "integer"}, "account": {"type": "string"},
       "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
@@ -1430,7 +1456,7 @@ func DraftsList(d Deps) Operation {
       "updated_at": {"type": "string", "format": "date-time"}, "older_copies": {"type": "integer"}},
       "required": ["draft_id", "account", "kind", "status", "subject", "recipients", "attachments", "remote", "updated_at"]}}
   },
-  "required": ["drafts"]
+  "required": ["source", "drafts"]
 }`),
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -1461,7 +1487,7 @@ func DraftsList(d Deps) Operation {
 			for _, a := range accs {
 				names[a.ID] = a.Name
 			}
-			out := DraftsListOutput{Drafts: []DraftSummary{}}
+			out := DraftsListOutput{Source: DraftSource, Drafts: []DraftSummary{}}
 			for _, dr := range list {
 				older, err := o.olderCopies(ctx, dr)
 				if err != nil {
@@ -1571,18 +1597,16 @@ type DraftsRequestOutput struct {
 	PreviousStatus string `json:"previous_status"`
 	Hook           string `json:"hook"`
 	// HookOutput: die ersten 4 KB der Ausgabe des Hooks, wenn er nicht
-	// bestand (nur hier, nie im Audit).
-	HookOutput  string `json:"hook_output,omitempty"`
-	ApprovalID  int64  `json:"approval_id,omitempty"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	PreviewHash string `json:"preview_hash"`
+	// bestand (nur hier, nie im Audit), seit S2.8 in der Untrusted-Hülle
+	// (sie kann Mailinhalt spiegeln; Gegenprüfung S2.4/S2.5, K7).
+	HookOutput  *HookOutputEnvelope `json:"hook_output,omitempty"`
+	ApprovalID  int64               `json:"approval_id,omitempty"`
+	ExpiresAt   string              `json:"expires_at,omitempty"`
+	PreviewHash string              `json:"preview_hash"`
 	// MessageHash: SHA-256 der gebauten Nachricht ohne Date
 	// (compose.MessageHash); die Freigabe bindet ihn (W1).
 	MessageHash string `json:"message_hash"`
 	DryRun      bool   `json:"dry_run"`
-
-	// HookOutputTruncated: Die Ausgabe des Hooks war länger als 4 KB (S2.4).
-	HookOutputTruncated bool `json:"hook_output_truncated,omitempty"`
 }
 
 // DraftsRequestReady legt einen Entwurf zur Freigabe durch einen Menschen
@@ -1610,7 +1634,7 @@ func DraftsRequestReady(d Deps) Operation {
     "status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "previous_status": {"type": "string", "enum": ` + draftStatusEnum + `},
     "hook": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
-    "hook_output": {"type": "string"}, "hook_output_truncated": {"type": "boolean"}, "approval_id": {"type": "integer"},
+    "hook_output": ` + hookOutputSchema + `, "approval_id": {"type": "integer"},
     "expires_at": {"type": "string", "format": "date-time"}, "preview_hash": {"type": "string"},
     "message_hash": {"type": "string"}, "dry_run": {"type": "boolean"}
   },
@@ -1654,7 +1678,7 @@ func DraftsRequestReady(d Deps) Operation {
 			out := DraftsRequestOutput{DraftID: res.Draft.ID, Status: string(res.To), PreviousStatus: string(res.From), Hook: hook.Result,
 				PreviewHash: res.Draft.PreviewHash, MessageHash: mh, DryRun: call.DryRun}
 			if hook.Result != drafts.HookPass {
-				out.HookOutput, out.HookOutputTruncated = hook.Output, hook.Truncated
+				out.HookOutput = hookOutputEnvelope(hook)
 			}
 			if res.Approval != nil && !call.DryRun {
 				out.ApprovalID, out.ExpiresAt = res.Approval.ID, rfc3339(res.Approval.ExpiresAt)

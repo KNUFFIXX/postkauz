@@ -381,7 +381,8 @@ func TestDraftEditNoQuoteNoSignature(t *testing.T) {
 		}
 		return d
 	}
-	if d := show(); !d.Quote || !d.Signature || !strings.Contains(d.BodyText, "Signaturzeile-S27") || !strings.Contains(d.BodyText, "> Die Heizung") {
+	if d := show(); !d.Quote || !d.Signature || !strings.Contains(d.BodyText, "Signaturzeile-S27") || d.Original == nil ||
+		!strings.Contains(d.Original.Text, "> Die Heizung") {
 		t.Fatalf("before: %+v", d)
 	}
 	if code, _, errs := run(t, "draft", "edit", "1", "--no-quote", "--quote=true"); code != ExitUsage || !strings.Contains(errs, "--quote or --no-quote") {
@@ -390,7 +391,7 @@ func TestDraftEditNoQuoteNoSignature(t *testing.T) {
 	if code, out, errs := run(t, "draft", "edit", "1", "--no-quote", "--no-signature"); code != ExitOK || !strings.Contains(out, "draft 1 changed") {
 		t.Fatalf("edit: %d %s %s", code, out, errs)
 	}
-	if d := show(); d.Quote || d.Signature || strings.Contains(d.BodyText, "Signaturzeile-S27") || strings.Contains(d.BodyText, "> Die Heizung") {
+	if d := show(); d.Quote || d.Signature || strings.Contains(d.BodyText, "Signaturzeile-S27") || d.Original != nil {
 		t.Fatalf("after: %+v", d)
 	}
 	if code, out, errs := run(t, "draft", "edit", "1", "--signature=true"); code != ExitOK || !strings.Contains(out, "draft 1 changed") {

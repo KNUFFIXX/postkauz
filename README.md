@@ -169,7 +169,7 @@ After installing, the next `sync` also extracts the PDFs that were skipped becau
 
 ## Set up MCP in Claude Code
 
-`postkauz mcp` is a read-only MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. Nothing can be sent, deleted, moved or drafted.
+`postkauz mcp` is an MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. A reader key only reads; a key with the scope `mail:draft` (role `assistant`) can also create drafts and submit them for approval. Only a human approves and sends them from the mail client; nothing is ever sent, deleted or moved by PostKauz.
 
 **1. Create a key** (shown exactly once; only its hash is stored):
 

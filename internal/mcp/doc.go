@@ -16,7 +16,10 @@
 //   - Ausgaben mit Mailinhalt tragen die Untrusted-Hülle der Operation
 //     (untrusted, source, notice); zusätzlich entfernt der Adapter aus allen
 //     Zeichenketten Steuer- und unsichtbare Formatzeichen (clean.go).
-//   - Es gibt im MVP kein Tool zum Senden, Löschen oder Entwerfen.
+//   - Es gibt im MVP kein Tool zum Senden, Löschen oder Verschieben. Seit
+//     S2.8 legt ein Schlüssel mit mail:draft Entwürfe an und legt sie vor
+//     (Ablage im Entwürfe-Ordner durch den nächsten Sync, E1); Freigeben
+//     und Senden bleiben dem Menschen (notbound.go).
 //
 // Vertragstest (server_test.go): Schema jedes Tools == Schema der Operation
 // (Ausnahme: dokumentierte engere Grenzen), jede gebundene Operation steht

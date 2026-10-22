@@ -30,11 +30,12 @@ var (
 func mcpCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
-		Short: "Run the read-only MCP server over stdio for an agent (key from " + EnvKey + ")",
-		Long: "Run the read-only MCP server over standard input/output, for Claude Code and other MCP clients.\n" +
+		Short: "Run the MCP server over stdio for an agent: read mail, write drafts; never sends (key from " + EnvKey + ")",
+		Long: "Run the MCP server over standard input/output, for Claude Code and other MCP clients.\n" +
 			"The API key comes from the environment variable " + EnvKey + " (or a file named in " + EnvKeyFile +
 			", readable only by you), never from the command line. Create a key with: key create --name <name> --role reader.\n" +
-			"The tools follow the scopes of the key; nothing can be sent, deleted or drafted.",
+			"The tools follow the scopes of the key: a reader key only reads; a key with mail:draft (role assistant) can also " +
+			"create drafts and submit them for approval. Only a human approves and sends; nothing is ever sent, deleted or moved.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name, _ := cmd.Flags().GetString("key"); name != "" {
