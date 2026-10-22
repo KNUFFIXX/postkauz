@@ -31,6 +31,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Ausgehendes HTML erlaubt nur eine Positivliste von Stilangaben; `title`/`bgcolor` entfernt, `alt` als sichtbarer Text.
 - Betreffs und Namen mit `=?` werden immer RFC-2047-kodiert. Anhänge werden innerhalb des Restbudgets gelesen. Antworten mit langem Zitat sind nicht mehr `too_large` (Zitat gekürzt mit Hinweis).
 - Policy-Datei: `0`/leere Werte sind Fehler, Meldungen nennen keine Werte. Trockenläufe speichern keinen Rückfall einer abgelaufenen Freigabe.
+- IMAP: Eine unlesbare Serverantwort, die mit dem Schreiben eines Kommandos zusammenfällt, gilt jetzt verlässlich als Protokollfehler (kein Wiederholen); vorher wurde sie gelegentlich als Verbindungsfehler wiederholt (wackliger Test, CI rot für `a93aa9c` und `31d7643`).
 
 ## [0.1.0-rc2] – 2026-10-22
 
