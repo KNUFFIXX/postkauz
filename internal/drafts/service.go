@@ -196,7 +196,7 @@ func (s *Service) Create(ctx context.Context, in NewDraft) (Result, error) {
 			return err
 		}
 		d := store.Draft{AccountID: acc.ID, Kind: string(in.Kind), InReplyToMsg: in.InReplyToMsg, Status: string(StatusDraft),
-			RemoteState: RemotePending, CreatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now}
+			RemoteState: RemotePending, CreatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now, ContentChangedAt: now}
 		switch {
 		case in.IdentityID > 0:
 			id, err := x.Identity(in.IdentityID)
@@ -347,7 +347,7 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 			return err
 		}
 		setContent(&d, c)
-		d.Status, d.HookResult, d.PushNote, d.UpdatedAt = string(t.To), "", "", now
+		d.Status, d.HookResult, d.PushNote, d.UpdatedAt, d.ContentChangedAt = string(t.To), "", "", now, now
 		d.PreviewHash = PreviewHash(HashOf(d))
 		if d.RemoteState == RemotePushed {
 			// Neue Kopie beim nächsten Push; die alte bleibt im

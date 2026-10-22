@@ -25,8 +25,11 @@ import (
 //   - gleicher Betreff nach Entfernen der Präfixe Re:, AW:, Antw:, Fwd:,
 //     WG:, FW: (auch mehrfach, Groß- und Kleinschreibung egal) und
 //     Zusammenfassen von Leerraum,
-//   - Versandzeit zwischen updated_at − 1 h und updated_at + 14 Tage
-//     (beide Grenzen eingeschlossen),
+//   - Versandzeit zwischen content_changed_at − 1 h und
+//     content_changed_at + 14 Tage (beide Grenzen eingeschlossen;
+//     content_changed_at ist die letzte Änderung des Inhalts, nicht
+//     updated_at: Ablauf und Lesen verschieben das Fenster nicht,
+//     Gegenprüfung S2.6–S2.8, W1),
 //   - Jaccard-Ähnlichkeit der Wortmengen ≥ 0,9: eigener Entwurfstext (ohne
 //     Zitat, Signatur, Weiterleitung) gegen den zitatfreien Text der
 //     gesendeten Nachricht (ohne weitergeleiteten Teil); die Wörter der
@@ -140,10 +143,11 @@ func without(a, drop map[string]struct{}) map[string]struct{} {
 	return out
 }
 
-// InFallbackWindow meldet, ob sent zwischen updated − 1 h und updated + 14
-// Tage liegt (beide Grenzen eingeschlossen).
-func InFallbackWindow(updated, sent time.Time) bool {
-	return !sent.Before(updated.Add(-FallbackBefore)) && !sent.After(updated.Add(FallbackAfter))
+// InFallbackWindow meldet, ob sent zwischen changed − 1 h und changed + 14
+// Tage liegt (beide Grenzen eingeschlossen); changed ist die letzte
+// Inhaltsänderung des Entwurfs (content_changed_at).
+func InFallbackWindow(changed, sent time.Time) bool {
+	return !sent.Before(changed.Add(-FallbackBefore)) && !sent.After(changed.Add(FallbackAfter))
 }
 
 // forwardRe erkennt die Trennzeile vor einer weitergeleiteten Nachricht
@@ -173,8 +177,10 @@ func DraftOwnText(own string) string {
 // FallbackDraft ist die vorbereitete Seite eines Entwurfs im
 // Rückfall-Abgleich.
 type FallbackDraft struct {
-	ID         int64
-	UpdatedAt  time.Time
+	ID int64
+	// ChangedAt: letzte Inhaltsänderung (content_changed_at); daran hängt
+	// das Zeitfenster.
+	ChangedAt  time.Time
 	Subject    string // NormalizeSubject
 	Recipients string // RecipientKey(To, Cc)
 	// Words: Wortmenge des eigenen Texts (DraftOwnText); Signature: die der
@@ -188,7 +194,11 @@ type FallbackDraft struct {
 // ("" = keine).
 func NewFallbackDraft(d store.Draft, own, signature string) FallbackDraft {
 	sig := Words(signature)
-	return FallbackDraft{ID: d.ID, UpdatedAt: d.UpdatedAt, Subject: NormalizeSubject(d.Subject),
+	changed := d.ContentChangedAt
+	if changed.IsZero() {
+		changed = d.UpdatedAt
+	}
+	return FallbackDraft{ID: d.ID, ChangedAt: changed, Subject: NormalizeSubject(d.Subject),
 		Recipients: RecipientKey(d.To, d.Cc), Words: without(Words(DraftOwnText(own)), sig), Signature: sig}
 }
 
@@ -196,7 +206,7 @@ func NewFallbackDraft(d store.Draft, own, signature string) FallbackDraft {
 // Zeitfenster.
 func (f FallbackDraft) HeadersMatch(m store.SentMessage) bool {
 	return f.Recipients != "" && RecipientKey(m.To, m.Cc) == f.Recipients && NormalizeSubject(m.Subject) == f.Subject &&
-		InFallbackWindow(f.UpdatedAt, m.Date)
+		InFallbackWindow(f.ChangedAt, m.Date)
 }
 
 // Score ist die Jaccard-Ähnlichkeit des eigenen Texts mit sentWords (der

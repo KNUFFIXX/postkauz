@@ -13,17 +13,23 @@ import (
 // jedes Laufs auf (postkauz sync und jede Runde von sync --watch), unter
 // der Kontosperre. Sie
 //
-//  1. lässt abgelaufene Freigaben verfallen (E7, Entscheid 38: ready und
-//     pending_approval älter als approval_ttl → draft, Freigabe expired,
-//     Audit drafts.expire mit Grund approval_expired),
-//  2. erkennt gesendete Entwürfe (E5, sentmatch.go): sent_by_human,
+//  1. erkennt gesendete Entwürfe (E5, sentmatch.go): sent_by_human,
 //     sent_message_id, Audit drafts.sent_detected mit Grund message_id
 //     oder fallback (Akteur system, nur IDs und Zustände),
+//  2. lässt abgelaufene Freigaben verfallen (E7, Entscheid 38: ready und
+//     pending_approval älter als approval_ttl → draft, Freigabe expired,
+//     Audit drafts.expire mit Grund approval_expired),
 //  3. frischt den Stand der Serverkopie auf (E6): Ist die zuletzt
 //     abgelegte Kopie eines offenen Entwurfs laut Spiegel weg oder
 //     bearbeitet, wird remote_state missing bzw. taken_over (Audit
 //     drafts.remote_check), damit draft list es zeigt, auch ohne dass
 //     jemand den Entwurf ändert.
+//
+// Die Versanderkennung kommt vor dem Ablauf (Gegenprüfung S2.6–S2.8, W1):
+// Hat der Mensch einen ready-Entwurf vor dem Ablauf gesendet und sieht der
+// Sync die Nachricht erst danach, ist der Entwurf gesendet, nicht
+// abgelaufen. Das Zeitfenster des Rückfalls hängt an content_changed_at
+// (letzte Inhaltsänderung), das weder Ablauf noch Lesen verschieben.
 //
 // Kein Treffer ist kein Fehler: Der Entwurf bleibt, bis der Mensch ihn mit
 // draft mark-sent oder draft abandon schließt.
@@ -67,12 +73,12 @@ var openStatuses = []string{string(StatusDraft), string(StatusPendingApproval), 
 // wiederholbar).
 func (s *Service) CheckAfterSync(ctx context.Context, accountID int64) (CheckReport, error) {
 	var rep CheckReport
+	if err := s.detectSent(ctx, accountID, &rep); err != nil {
+		return rep, err
+	}
 	ids, err := s.ExpireApprovals(ctx, accountID)
 	rep.Expired = len(ids)
 	if err != nil {
-		return rep, err
-	}
-	if err := s.detectSent(ctx, accountID, &rep); err != nil {
 		return rep, err
 	}
 	return rep, s.refreshRemote(ctx, accountID, &rep)
@@ -117,7 +123,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, rep *CheckRep
 
 func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, rep *CheckReport) error {
 	fds := make([]FallbackDraft, 0, len(open))
-	from, to := open[0].UpdatedAt, open[0].UpdatedAt
+	from, to := open[0].ContentChangedAt, open[0].ContentChangedAt
 	sigs := map[int64]string{}
 	for _, d := range open {
 		sig, ok := sigs[d.IdentityID]
@@ -136,11 +142,11 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 			continue // nichts, woran sich der Rückfall festhalten könnte
 		}
 		fds = append(fds, fd)
-		if d.UpdatedAt.Before(from) {
-			from = d.UpdatedAt
+		if d.ContentChangedAt.Before(from) {
+			from = d.ContentChangedAt
 		}
-		if d.UpdatedAt.After(to) {
-			to = d.UpdatedAt
+		if d.ContentChangedAt.After(to) {
+			to = d.ContentChangedAt
 		}
 	}
 	if len(fds) == 0 {
