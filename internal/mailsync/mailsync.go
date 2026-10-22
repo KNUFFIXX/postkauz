@@ -308,10 +308,19 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		}
 	}
 	// S2.6: Entwürfe gegen den eben gespiegelten Stand prüfen (gesendet?
-	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?).
+	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?). Ein Fehler
+	// der Prüfung zählt als Fehler des Laufs, hält aber Nacharbeit, Jobs und
+	// Zählung nicht auf (Gegenprüfung S2.6–S2.8, K5); die Prüfung ist beim
+	// nächsten Lauf wiederholbar. Nur Abbruch, Verbindungs-/Anmeldefehler
+	// und ein Panic beenden den Lauf.
 	if rep.DraftCheck, err = e.checkDrafts(ctx); err != nil {
-		rep.Duration = time.Since(start)
-		return rep, err
+		if fatal(ctx, err) {
+			rep.Duration = time.Since(start)
+			return rep, err
+		}
+		rep.Errors++
+		e.log().Warn("draft check failed; repeating it in the next run", "error", err.Error())
+		e.emit(Event{Kind: "error", Mailbox: "drafts", Message: err.Error()})
 	}
 	if err := e.backlog(ctx); err != nil {
 		rep.Duration = time.Since(start)

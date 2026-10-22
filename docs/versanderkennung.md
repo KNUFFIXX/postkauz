@@ -12,6 +12,8 @@ Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfter
 2. **Versanderkennung** (E5, Abschnitt 2 und 3): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`.
 3. **Stand der Serverkopie** (E6): Ist die zuletzt abgelegte Kopie eines noch offenen Entwurfs aus dem Entwürfe-Ordner verschwunden, wird `remote_state` `missing`; hat ein Mailprogramm eine bearbeitete Fassung gespeichert, `taken_over` (Audit `drafts.remote_check`). Vorher stellte das nur `drafts.update` bzw. der nächste Push fest; jetzt zeigt `draft list` es nach dem nächsten Sync.
 
+Scheitert die Prüfung (etwa weil die Datenbank gerade gesperrt ist), zählt das als Fehler des Laufs (`errors`, Log ohne Mailinhalt); der Rest des Laufs (Nacharbeit, Extraktion, Suchindex) läuft weiter, und der nächste Lauf prüft erneut (Gegenprüfung S2.6–S2.8, K5). Nur Abbruch, Verbindungs- oder Anmeldefehler und ein interner Fehler (Panic) beenden den Lauf.
+
 Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`). Ohne Änderung erscheint nichts.
 
 ## 2. Erster Weg: die Message-ID
