@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -18,12 +19,27 @@ import (
 // abandoned werden nie abgelegt).
 const draftPushPending = `remote_state = 'pending' AND status IN ('draft','pending_approval','ready')`
 
+// draftPushDue ist die Bedingung für einen Entwurf, den der nächste Push
+// ablegt: wartend und nicht mit push_rejected oder push_failed vermerkt
+// (Gegenprüfung S2.4/S2.5, W3). Solche Entwürfe versucht erst der nächste
+// Lauf von postkauz sync erneut (bzw. der nächste Lauf von sync --watch),
+// nicht jede Prüfung alle 10 s, und sie halten den Job nicht fällig; eine
+// Änderung des Entwurfs löscht den Vermerk.
+const draftPushDue = draftPushPending + ` AND (push_note IS NULL OR push_note NOT IN ('push_rejected','push_failed'))`
+
 // DraftPushCandidates liefert die Entwürfe eines Kontos, deren Kopie
 // aussteht, älteste zuerst, und wie viele davon schon früher abgelegt
-// wurden (deren alte Kopie die Übernahme-Erkennung vor dem Push prüft).
-func (s *SQLite) DraftPushCandidates(ctx context.Context, accountID int64) (ids []int64, withCopy int, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, remote_uid IS NOT NULL FROM drafts WHERE account_id = ? AND `+draftPushPending+`
-		ORDER BY id`, accountID)
+// wurden oder einen Ablageversuch mit offenem Ausgang haben (deren Kopien
+// die Übernahme-Erkennung bzw. die Suche nach einer verwaisten Kopie vor
+// dem Push im Spiegel prüft). retry: auch die mit push_rejected oder
+// push_failed vermerkten (Beginn eines Sync-Laufs), sonst nur die fälligen.
+func (s *SQLite) DraftPushCandidates(ctx context.Context, accountID int64, retry bool) (ids []int64, withCopy int, err error) {
+	cond := draftPushDue
+	if retry {
+		cond = draftPushPending
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, remote_uid IS NOT NULL OR push_attempt IS NOT NULL FROM drafts
+		WHERE account_id = ? AND `+cond+` ORDER BY id`, accountID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -95,6 +111,10 @@ type MirrorCopy struct {
 	// Message-ID und demselben Inhalts-Hash (nach einem UIDVALIDITY-Wechsel
 	// gelten die UIDs nicht mehr).
 	SameIDAndHash bool
+	// Skipped: Die UID der Kopie steht in skipped_messages (größer als
+	// [imap] max_message_bytes, der Spiegel lädt sie nicht); ihr Inhalt
+	// ist nicht prüfbar (Gegenprüfung S2.4/S2.5, K4).
+	Skipped bool
 }
 
 // MirrorCopy liest den Spiegel zur Kopie eines Entwurfs: Ordner mailboxID,
@@ -122,6 +142,12 @@ func (x *DraftTx) MirrorCopy(mailboxID, uid int64, messageID, contentHash string
 			mc.AtUID = true
 		case !errors.Is(err, sql.ErrNoRows):
 			return mc, err
+		default:
+			err = x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM skipped_messages
+				WHERE mailbox_id = ? AND uid = ? AND uidvalidity = ?)`, mailboxID, uid, mc.UIDValidity).Scan(&mc.Skipped)
+			if err != nil {
+				return mc, err
+			}
 		}
 	}
 	err = x.tx.QueryRowContext(x.ctx, `SELECT
@@ -131,4 +157,39 @@ func (x *DraftTx) MirrorCopy(mailboxID, uid int64, messageID, contentHash string
 			WHERE mm.mailbox_id = ? AND m.message_id_header = ? AND m.content_hash = ?)`,
 		mailboxID, messageID, uid, mailboxID, messageID, contentHash).Scan(&mc.NewerSameID, &mc.SameIDAndHash)
 	return mc, err
+}
+
+// MirrorOrphan sucht im Spiegel des Ordners mailboxID eine Kopie mit
+// Message-ID messageID und Inhalts-Hash contentHash, deren UID nicht in
+// known steht (die bekannten Kopien des Entwurfs): die höchste solche UID
+// und die UIDVALIDITY des Ordners beim letzten Sync. uid 0 = keine
+// (Gegenprüfung S2.4/S2.5, W1: Kopie eines Ablageversuchs, dessen Ausgang
+// der abgebrochene Lauf nicht mehr vermerken konnte).
+func (x *DraftTx) MirrorOrphan(mailboxID int64, messageID, contentHash string, known []int64) (uid int64, uidValidity uint32, err error) {
+	var uv sql.NullInt64
+	var phase string
+	err = x.tx.QueryRowContext(x.ctx, `SELECT uidvalidity, sync_phase FROM mailboxes WHERE id = ?`, mailboxID).Scan(&uv, &phase)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && phase == PhaseNew) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	rows, err := x.tx.QueryContext(x.ctx, `SELECT mm.uid FROM message_mailboxes mm JOIN messages m ON m.id = mm.message_id
+		WHERE mm.mailbox_id = ? AND m.message_id_header = ? AND m.content_hash = ? ORDER BY mm.uid DESC`,
+		mailboxID, messageID, contentHash)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u int64
+		if err := rows.Scan(&u); err != nil {
+			return 0, 0, err
+		}
+		if !slices.Contains(known, u) {
+			return u, uint32(uv.Int64), rows.Close()
+		}
+	}
+	return 0, 0, rows.Err()
 }

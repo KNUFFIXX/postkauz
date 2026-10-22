@@ -28,16 +28,36 @@ type fakeAppender struct {
 	raws  [][]byte
 	mids  []string
 	dates []time.Time
+	// reject: Message-IDs, deren Ablage der Server ablehnt (W3).
+	reject map[string]bool
+	// lost: Der Server legt ab, die Antwort geht verloren (Verbindung weg;
+	// W1): Die Kopie ist da, AppendDraft meldet einen Verbindungsfehler.
+	lost bool
+	// before läuft vor dem Ablegen (Wettlauf mit einem anderen Prozess, K5).
+	before func()
+}
+
+func (f *fakeAppender) ContentHash(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func (f *fakeAppender) AppendDraft(_ context.Context, raw []byte, mid string, date time.Time) (AppendedCopy, error) {
+	if f.before != nil {
+		f.before()
+	}
 	if f.err != nil {
 		return AppendedCopy{}, f.err
 	}
+	if f.reject[mid] {
+		return AppendedCopy{}, ErrAppendRejected
+	}
 	f.uid++
 	f.raws, f.mids, f.dates = append(f.raws, raw), append(f.mids, mid), append(f.dates, date)
-	sum := sha256.Sum256(raw)
-	return AppendedCopy{UID: f.uid, UIDValidity: f.uv, ContentHash: hex.EncodeToString(sum[:])}, nil
+	if f.lost {
+		return AppendedCopy{}, fmt.Errorf("%w: connection lost after APPEND", provider.ErrConnection)
+	}
+	return AppendedCopy{UID: f.uid, UIDValidity: f.uv, ContentHash: f.ContentHash(raw)}, nil
 }
 
 // pushEnv: Entwurfsumgebung (newDraftEnv) mit Ordner Drafts im Spiegel.
@@ -73,7 +93,7 @@ func newPushEnv(t *testing.T) *pushEnv {
 
 func (e *pushEnv) push(t *testing.T) DraftPushReport {
 	t.Helper()
-	rep, err := e.pusher.Push(context.Background(), e.acc, e.mb, e.app)
+	rep, err := e.pusher.Push(context.Background(), e.acc, e.mb, e.app, true)
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -119,7 +139,7 @@ func TestDraftPushAndTakeOver(t *testing.T) {
 	if out.Remote != "pending" || !strings.Contains(out.RemoteNote, "10 s") {
 		t.Fatalf("create = %+v", out)
 	}
-	if n, withCopy, err := e.pusher.Pending(ctx, e.acct); err != nil || n != 3 || withCopy != 0 {
+	if n, withCopy, err := e.pusher.Pending(ctx, e.acct, false); err != nil || n != 3 || withCopy != 0 {
 		t.Fatalf("pending = %d (%d with copy), %v", n, withCopy, err)
 	}
 	rep := e.push(t)
@@ -300,14 +320,15 @@ func TestDraftPushReadyNeedsApprovedMessage(t *testing.T) {
 	}
 }
 
-// Ein Fehler beim Ablegen hält den Push an; die Entwürfe bleiben pending.
-// Ein nicht baubarer Entwurf bekommt push_failed, die übrigen gehen weiter.
-// Abgeschlossene Entwürfe werden nie abgelegt.
+// Ein Verbindungsfehler beim Ablegen hält den Push an; die Entwürfe bleiben
+// pending. Ein nicht baubarer Entwurf bekommt push_failed, die übrigen gehen
+// weiter, und der Push ist kein Fehler (W3). Abgeschlossene Entwürfe werden
+// nie abgelegt.
 func TestDraftPushErrors(t *testing.T) {
 	e := newPushEnv(t)
 	ctx := context.Background()
 	e.app.err = fmt.Errorf("%w: test", provider.ErrConnection)
-	if _, err := e.pusher.Push(ctx, e.acc, e.mb, e.app); !errors.Is(err, provider.ErrConnection) {
+	if _, err := e.pusher.Push(ctx, e.acc, e.mb, e.app, true); !errors.Is(err, provider.ErrConnection) {
 		t.Fatalf("push = %v", err)
 	}
 	for _, id := range []int64{1, 2} {
@@ -323,8 +344,8 @@ func TestDraftPushErrors(t *testing.T) {
 		"subject": "Anhang", "body_markdown": "Text", "attachments": []map[string]any{{"attachment_id": 1}}}).(DraftsWriteOutput)
 	d := e.draft(t, out.DraftID)
 	delete(e.blobs.m, d.Attachments[0].SHA256)
-	rep, err := e.pusher.Push(ctx, e.acc, e.mb, e.app)
-	if !errors.Is(err, ErrDraftBuild) || rep.Pushed != 1 || rep.Failed != 1 {
+	rep, err := e.pusher.Push(ctx, e.acc, e.mb, e.app, true)
+	if err != nil || rep.Pushed != 1 || rep.Failed != 1 {
 		t.Fatalf("push = %+v, %v", rep, err)
 	}
 	if d := e.draft(t, 1); d.RemoteState != drafts.RemotePending || d.RemoteUID != 0 {

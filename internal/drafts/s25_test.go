@@ -42,6 +42,10 @@ func TestCopyState(t *testing.T) {
 		{"uidvalidity changed, copy found", d, with(func(m *store.MirrorCopy) { m.SameIDAndHash = true }), false, ""},
 		{"uidvalidity changed, other version", d, with(func(m *store.MirrorCopy) { m.NewerSameID = true }), false, RemoteTakenOver},
 		{"uidvalidity changed, gone", d, synced, false, RemoteMissing},
+		// Gegenprüfung S2.4/S2.5, K4: Die Kopie ist größer als
+		// [imap] max_message_bytes, der Spiegel lädt sie nicht: nicht
+		// prüfbar, kein missing.
+		{"too large for the mirror", d, with(func(m *store.MirrorCopy) { m.Skipped = true }), true, ""},
 	} {
 		if got := copyState(c.d, c.mc, c.valid); got != c.want {
 			t.Errorf("%s: state = %q, want %q", c.name, got, c.want)

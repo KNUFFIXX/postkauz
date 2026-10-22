@@ -44,6 +44,11 @@ var (
 	// unbrauchbar; dasselbe Kommando zu wiederholen hilft nicht. Der Sync
 	// grenzt die betroffene Nachricht durch kleinere Fenster ein.
 	ErrProtocol = errors.New("provider: unreadable server response")
+	// ErrRejected: Der Server hat das Ablegen einer Nachricht abgelehnt
+	// (IMAP NO/BAD auf APPEND, z. B. zu groß oder Kontingent voll). Die
+	// Verbindung ist in Ordnung; dieselbe Nachricht erneut abzulegen hilft
+	// nicht, eine andere kann gelingen (Gegenprüfung S2.4/S2.5, W3).
+	ErrRejected = errors.New("provider: the server refused to store the message")
 )
 
 // Capabilities beschreibt, was der Server kann. Sie werden beim Verbinden

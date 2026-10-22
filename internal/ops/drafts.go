@@ -113,10 +113,21 @@ var pushNotes = map[string]string{
 		"set [draft] mailbox in the configuration",
 	drafts.PushNotePushFailed: "not pushed: the message could not be built (original message or attachment missing locally); " +
 		"the next sync tries again",
+	drafts.PushNotePushRejected: "not pushed: the mail server refused to store this draft in the Drafts folder (for example too large " +
+		"or mailbox full); the other drafts are pushed, the next sync tries this one again, a change to it queues it at once",
+	drafts.PushNotePushedAfterClose: "a copy reached the Drafts folder just after the draft was closed; it stays there, nothing is " +
+		"deleted here (delete it in the mail client if it is not wanted)",
 }
 
 // remoteNote erklärt den Stand der Serverkopie.
 func remoteNote(d store.Draft) string {
+	if d.PushNote == drafts.PushNotePushedAfterClose {
+		if d.RemoteUID > 0 {
+			return fmt.Sprintf("a copy (uid %d) reached the Drafts folder just after the draft was closed; it stays there, "+
+				"nothing is deleted here (delete it in the mail client if it is not wanted)", d.RemoteUID)
+		}
+		return pushNotes[d.PushNote]
+	}
 	switch d.RemoteState {
 	case drafts.RemotePending:
 		if drafts.Status(d.Status).Closed() {
@@ -1115,7 +1126,8 @@ type DraftDetail struct {
 	// PushedDate: Date-Kopfzeile der abgelegten Kopie (S2.5).
 	PushedDate string `json:"pushed_date,omitempty"`
 	// PushNote: Hinweis des Pushs als Code (approval_stale,
-	// no_drafts_mailbox, push_failed) und seine Erklärung.
+	// no_drafts_mailbox, push_failed, push_rejected, pushed_after_close)
+	// und seine Erklärung.
 	PushNote      string `json:"push_note,omitempty"`
 	PushNoteText  string `json:"push_note_text,omitempty"`
 	PreviewHash   string `json:"preview_hash"`
@@ -1164,7 +1176,7 @@ func DraftsGet(d Deps) Operation {
     "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
-    "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed"]}, "push_note_text": {"type": "string"},
+    "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
