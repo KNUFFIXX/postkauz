@@ -21,8 +21,11 @@ type SyncOptions struct {
 	IdleRestart time.Duration // nur Watch
 	// FullCheckInterval: Abstand der vollen UID-Abgleiche (nur Watch; 0 = 1 h).
 	FullCheckInterval time.Duration
-	Mailboxes         []string
-	DryRun            bool
+	// JobsInterval: Abstand, in dem der Dauerläufer die Jobs des Kontos
+	// prüft (draft_push; nur Watch; 0 = 10 s; A02 E1).
+	JobsInterval time.Duration
+	Mailboxes    []string
+	DryRun       bool
 }
 
 // SyncMailbox ist das Ergebnis eines Ordners.
@@ -60,7 +63,24 @@ type SyncOutput struct {
 	Rounds          int   `json:"rounds,omitempty"`
 	DurationMS      int64 `json:"duration_ms"`
 	DryRun          bool  `json:"dry_run"`
+	// Drafts: Ablage der Entwürfe im Entwürfe-Ordner (Job draft_push, S2.5);
+	// nil = nichts zu tun.
+	Drafts *SyncDrafts `json:"drafts,omitempty"`
 }
+
+// SyncDrafts ist das Ergebnis des Jobs draft_push in einem Sync.
+type SyncDrafts struct {
+	DraftPushReport
+	// Mailbox: der Entwürfe-Ordner (Pfad).
+	Mailbox string `json:"mailbox,omitempty"`
+	// Error: Grund, aus dem (nicht alle) Entwürfe abgelegt wurden, ohne
+	// Mailinhalt; no_drafts_mailbox, wenn es keinen Entwürfe-Ordner gibt.
+	Error string `json:"error,omitempty"`
+}
+
+// ReasonNoDraftsMailbox: Das Konto hat keinen Ordner mit Rolle drafts und
+// [draft] mailbox ist nicht gesetzt bzw. fehlt auf dem Server (A02 E12).
+const ReasonNoDraftsMailbox = "no_drafts_mailbox"
 
 // SyncRunner führt den Sync eines Kontos aus (internal/mailsync). Im
 // Trockenlauf meldet er nur Ordner und Stände, ohne zu schreiben.
@@ -117,20 +137,28 @@ type SyncRunInput struct {
 	IdleRestartSeconds int    `json:"idle_restart_seconds,omitempty"`
 	// FullCheckIntervalSeconds: Abstand der vollen UID-Abgleiche im
 	// Dauerbetrieb (0 = 3600; A02 A1).
-	FullCheckIntervalSeconds int      `json:"full_check_interval_seconds,omitempty"`
-	Mailboxes                []string `json:"mailboxes,omitempty"`
+	FullCheckIntervalSeconds int `json:"full_check_interval_seconds,omitempty"`
+	// JobsIntervalSeconds: Abstand der Prüfung auf Jobs (draft_push) im
+	// Dauerbetrieb (0 = 10; A02 E1).
+	JobsIntervalSeconds int      `json:"jobs_interval_seconds,omitempty"`
+	Mailboxes           []string `json:"mailboxes,omitempty"`
 }
 
 // SyncRun spiegelt ein Konto: Erstsync in Fenstern (wiederaufnehmbar),
 // danach inkrementell; mit watch als Dauerläufer (IDLE auf INBOX plus
-// Intervall). Lokal schreibend, am Server nur lesend (R1, mail:sync).
+// Intervall). Lokal schreibend (R1, mail:sync). Am Server schreibt er nur
+// eines: Zu Beginn jedes Laufs (im Dauerbetrieb zusätzlich alle
+// jobs_interval) legt er wartende Entwürfe per APPEND im Entwürfe-Ordner ab
+// (Job draft_push, A02 E1; die Entwürfe hat ein Mensch oder Agent über
+// drafts.create/drafts.update angelegt, die Freigabe-Regeln greifen dort).
+// Er sendet nie, löscht nie, verschiebt nie.
 func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 	return Operation{
 		Name:       "sync.run",
 		Scope:      policy.ScopeMailSync,
 		Risk:       policy.R1,
 		Idempotent: true,
-		Summary:    "Mirror an account: resumable first sync in windows, then incremental (read-only on the server).",
+		Summary:    "Mirror an account: resumable first sync in windows, then incremental; on the server it only puts queued drafts into the Drafts folder, it never sends, deletes or moves.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -141,6 +169,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "interval_seconds": {"type": "integer", "minimum": 1},
     "idle_restart_seconds": {"type": "integer", "minimum": 300, "maximum": 600},
     "full_check_interval_seconds": {"type": "integer", "minimum": 1, "description": "with watch: time between full UID checks of all mailboxes (deletions); default 3600"},
+    "jobs_interval_seconds": {"type": "integer", "minimum": 1, "description": "with watch: time between checks for queued jobs (drafts to put into the Drafts folder); default 10"},
     "mailboxes": {"type": "array", "items": {"type": "string"}}
   },
   "additionalProperties": false
@@ -160,7 +189,12 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "new": {"type": "integer"}, "updated": {"type": "integer"}, "removed": {"type": "integer"},
     "errors": {"type": "integer"}, "messages_mirrored": {"type": "integer"},
     "attachments_extracted": {"type": "integer"},
-    "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
+    "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"},
+    "drafts": {"type": "object", "properties": {
+      "pushed": {"type": "integer"}, "taken_over": {"type": "integer"}, "missing": {"type": "integer"},
+      "approval_stale": {"type": "integer"}, "failed": {"type": "integer"},
+      "draft_ids": {"type": "array", "items": {"type": "integer"}}, "mailbox": {"type": "string"}, "error": {"type": "string"}},
+      "required": ["pushed"]}
   },
   "required": ["account", "mode", "mailboxes", "new", "updated", "removed", "errors", "messages_mirrored", "duration_ms", "dry_run"]
 }`),
@@ -176,11 +210,11 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 			if in.IdleRestartSeconds != 0 && (in.IdleRestartSeconds < 300 || in.IdleRestartSeconds > 600) {
 				return nil, inputErr("idle restart must be between 300 and 600 seconds (5 to 10 minutes)")
 			}
-			if in.IntervalSeconds < 0 || in.FullCheckIntervalSeconds < 0 {
+			if in.IntervalSeconds < 0 || in.FullCheckIntervalSeconds < 0 || in.JobsIntervalSeconds < 0 {
 				return nil, inputErr("interval must be positive")
 			}
-			if (in.IntervalSeconds != 0 || in.IdleRestartSeconds != 0 || in.FullCheckIntervalSeconds != 0) && !in.Watch {
-				return nil, inputErr("interval, idle restart and full check interval only apply with watch")
+			if (in.IntervalSeconds != 0 || in.IdleRestartSeconds != 0 || in.FullCheckIntervalSeconds != 0 || in.JobsIntervalSeconds != 0) && !in.Watch {
+				return nil, inputErr("interval, idle restart, full check interval and jobs interval only apply with watch")
 			}
 			a, err := ResolveAccount(ctx, repo, in.Account)
 			if err != nil {
@@ -194,7 +228,8 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 			}
 			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
 				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
-				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second}
+				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second,
+				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second}
 			out, err := runner.Sync(ctx, a, pw, o, call.Progress)
 			if err != nil {
 				return nil, scrub(err, pw)

@@ -39,6 +39,12 @@ type Runner struct {
 	Extractor *extract.Extractor
 	// Connect ersetzt den Verbindungsaufbau (Tests); nil = IMAP-Provider.
 	Connect func(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error)
+	// Pusher legt wartende Entwürfe im Entwürfe-Ordner ab (Job draft_push,
+	// S2.5; ops.NewDraftPusher); nil = kein Push.
+	Pusher DraftPusher
+	// DraftMailbox ist [draft] mailbox der Konfiguration (leer = Ordner mit
+	// Rolle drafts).
+	DraftMailbox string
 }
 
 // RemoteCloser ist ein Remote mit Close und Strategie.
@@ -118,8 +124,14 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 	}
 	// Die Kontosperre schließt einen zweiten Sync dieses Kontos aus; ein
 	// laufender Job des Kontos stammt dann von einem abgebrochenen Prozess.
-	eng.Jobs = &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Extractor: ex, Log: r.Log, TakeOver: locked,
+	jr := &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Extractor: ex, Log: r.Log, TakeOver: locked,
 		Progress: func(ev jobs.Event) { eng.emit(Event{Kind: ev.Kind, Done: ev.Done, Total: ev.Total}) }}
+	eng.Jobs = jr
+	if r.Pusher != nil {
+		// draft_push (A02 E1): Dieser Prozess hat die Zugangsdaten und hält
+		// die Kontosperre; er legt die Entwürfe ab.
+		eng.Drafts = &Drafts{Pusher: r.Pusher, Jobs: jr, Account: a, Mailbox: r.DraftMailbox}
+	}
 	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes}
 	if !o.Watch {
 		rep, err := eng.SyncAll(ctx, so)
@@ -127,30 +139,34 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out, err
 	}
-	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, OnRound: func(rep Report, err error) {
-		out.Rounds++
-		round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
-		fill(&round, rep)
-		round.DurationMS = rep.Duration.Milliseconds()
-		out.New += round.New
-		out.Updated += round.Updated
-		out.Removed += round.Removed
-		out.Errors += round.Errors
-		out.MessagesMirrored = round.MessagesMirrored
-		out.AttachmentsExtracted += round.AttachmentsExtracted
-		out.MessagesIndexed += round.MessagesIndexed
-		out.IndexPending = round.IndexPending
-		if err != nil {
-			out.Errors++
-		}
-		if progress != nil {
-			msg := ""
+	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, JobsInterval: o.JobsInterval,
+		// Fortschritt der Ablage meldet die Engine selbst (Event drafts).
+		OnDrafts: func(d ops.SyncDrafts, _ error) { addDrafts(&out, &d) },
+		OnRound: func(rep Report, err error) {
+			out.Rounds++
+			round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
+			fill(&round, rep)
+			round.DurationMS = rep.Duration.Milliseconds()
+			out.New += round.New
+			out.Updated += round.Updated
+			out.Removed += round.Removed
+			out.Errors += round.Errors
+			out.MessagesMirrored = round.MessagesMirrored
+			out.AttachmentsExtracted += round.AttachmentsExtracted
+			out.MessagesIndexed += round.MessagesIndexed
+			out.IndexPending = round.IndexPending
+			addDrafts(&out, round.Drafts)
 			if err != nil {
-				msg = err.Error()
+				out.Errors++
 			}
-			progress(ops.Progress{Event: "round", Message: msg, Round: &round})
-		}
-	}})
+			if progress != nil {
+				msg := ""
+				if err != nil {
+					msg = err.Error()
+				}
+				progress(ops.Progress{Event: "round", Message: msg, Round: &round})
+			}
+		}})
 	out.DurationMS = time.Since(start).Milliseconds()
 	return out, err
 }
@@ -179,6 +195,26 @@ func fill(out *ops.SyncOutput, rep Report) {
 	out.New, out.Updated, out.Removed, out.Errors, out.MessagesMirrored = rep.New, rep.Updated, rep.Removed, rep.Errors, rep.Mirrored
 	out.AttachmentsExtracted = rep.Extracted
 	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
+	if rep.Drafts != nil {
+		d := *rep.Drafts
+		out.Drafts = &d
+	}
+}
+
+// addDrafts zählt das Ergebnis einer Ablage zum Gesamtergebnis des
+// Dauerbetriebs (der letzte Fehler und Ordner gelten).
+func addDrafts(out *ops.SyncOutput, d *ops.SyncDrafts) {
+	if d == nil {
+		return
+	}
+	if out.Drafts == nil {
+		out.Drafts = &ops.SyncDrafts{}
+	}
+	out.Drafts.Add(d.DraftPushReport)
+	if d.Mailbox != "" {
+		out.Drafts.Mailbox = d.Mailbox
+	}
+	out.Drafts.Error = d.Error
 }
 
 // dryRun meldet Ordner des Servers und den lokalen Stand, ohne zu schreiben.

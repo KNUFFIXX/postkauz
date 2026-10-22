@@ -154,14 +154,21 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
+	deps := ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
 		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
 		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars(),
 		Drafts:     &drafts.Service{Store: st, ApprovalTTL: a.cfg.Draft.ApprovalTTL, PolicyVersion: a.policyVersion},
 		DraftBlobs: blobs,
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
-		DraftCheck: newDraftChecker(a)})
+		DraftCheck: newDraftChecker(a)}
+	// draft_push (A02 E1, S2.5): Der Sync legt wartende Entwürfe im
+	// Entwürfe-Ordner ab; nur er hat die Zugangsdaten (der MCP-Server ruft
+	// sync.run nie auf).
+	if r, ok := deps.Runner.(*mailsync.Runner); ok {
+		r.Pusher, r.DraftMailbox = ops.NewDraftPusher(deps), a.cfg.Draft.Mailbox
+	}
+	reg, err := ops.NewDefaultRegistry(deps)
 	if err != nil {
 		return nil, err
 	}

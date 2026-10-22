@@ -37,6 +37,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -109,7 +110,7 @@ type Options struct {
 
 // Event ist eine Fortschrittsmeldung.
 type Event struct {
-	Kind    string // mailbox_start | window | mailbox_done | error | backlog | extract | index
+	Kind    string // mailbox_start | window | mailbox_done | error | backlog | extract | index | drafts
 	Mailbox string
 	Done    int // im Ordner bisher gespiegelt
 	Total   int // Nachrichten laut Server
@@ -152,6 +153,9 @@ type Report struct {
 	Indexed      int           `json:"messages_indexed"`
 	IndexPending int           `json:"index_pending"`
 	Duration     time.Duration `json:"-"`
+	// Drafts: Ablage wartender Entwürfe zu Beginn des Laufs (Job
+	// draft_push, S2.5); nil = nichts wartete.
+	Drafts *ops.SyncDrafts `json:"drafts,omitempty"`
 }
 
 // failedMailboxes zählt die Ordner, die wegen eines Fehlers übersprungen
@@ -196,6 +200,9 @@ type Engine struct {
 	// ohne sie zu laden; sie wird gemerkt und erst mit `sync --full` neu
 	// geprüft. Die Lese-Grenze im IMAP-Abruf bleibt die zweite Sicherung.
 	MaxMessageBytes int64
+	// Drafts legt zu Beginn jedes Laufs wartende Entwürfe im
+	// Entwürfe-Ordner ab (Job draft_push, S2.5; drafts.go); nil = nicht.
+	Drafts *Drafts
 }
 
 func (e *Engine) maxMessageBytes() int64 {
@@ -221,12 +228,26 @@ func (e *Engine) emit(ev Event) {
 // ErrAborted kennzeichnet einen Abbruch durch AfterBatch.
 var ErrAborted = errors.New("mailsync: aborted")
 
-// SyncAll gleicht die Ordnerliste ab und synct alle (bzw. die gewählten)
-// Ordner, INBOX zuerst. Fehler eines Ordners zählen als Fehler und der Lauf
+// SyncAll legt wartende Entwürfe im Entwürfe-Ordner ab (Engine.Drafts),
+// gleicht die Ordnerliste ab und synct alle (bzw. die gewählten) Ordner,
+// INBOX zuerst. Fehler eines Ordners zählen als Fehler und der Lauf
 // geht weiter; Verbindungs- und Anmeldefehler sowie ctx-Ende brechen ab.
 func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	start := time.Now()
 	var rep Report
+	// Zuerst die Entwürfe (A02 E1): Der Spiegel sieht ihre Kopien dann in
+	// diesem Lauf. Ein Push-Fehler hält den Lauf nur bei Verbindungs- und
+	// Anmeldefehlern auf (die Entwürfe bleiben pending, der nächste Lauf
+	// holt sie nach).
+	dr, err := e.pushDrafts(ctx, true)
+	rep.Drafts = dr
+	if err != nil {
+		if fatal(ctx, err) {
+			rep.Duration = time.Since(start)
+			return rep, fmt.Errorf("drafts: %w", err)
+		}
+		e.log().Warn("drafts not pushed", "error", err.Error())
+	}
 	boxes, err := e.Remote.ListMailboxes(ctx)
 	if err != nil {
 		return rep, err

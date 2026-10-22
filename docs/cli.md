@@ -36,7 +36,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S2.0 ✓ | `account set <name> --aliases a@…,b@…` (Abschnitt 2a) | `accounts.set` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
 | S2.1 ✓ | `account set <name> --password-stdin` (Abschnitt 2a; Entscheid 36) | `accounts.set` mit `replace_password` (das Passwort selbst geht getrennt von der Eingabe, nie ins Audit) |
-| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b) | `sync.run` (Scope `mail:sync`, R1) |
+| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`) | `sync.run` (Scope `mail:sync`, R1) |
 | S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
 | S1.9 ✓ | `mailbox overview <mailbox-id> [--since D] [--limit N]` | `mailboxes.overview` (R0, `mail:read`) |
 | S1.5–S1.8 ✓ | `show <id>` bzw. `show <Message-ID>`, `--headers`, `--strip-quotes`, `--max-chars` | `messages.get` (R0, `mail:read`; Untrusted-Hülle seit S1.8) |
@@ -91,9 +91,11 @@ postkauz audit verify                                                       # S1
 postkauz import maildir ./Mail/Archive --account demo --mailbox Archive-2024   # S1.10 ✓
 postkauz import mbox "%APPDATA%\Thunderbird\Profiles\x.default\ImapMail\imap.example.org" -a demo --dry-run   # S1.10 ✓
 
-# S2.3 ✓ (die Ablage im Entwürfe-Ordner folgt mit S2.5)
+# S2.3 ✓, Ablage im Entwürfe-Ordner S2.5 ✓
 postkauz identity add -a demo --email demo@example.org --name "Demo Büro" --signature-file signatur.txt
 postkauz draft reply 18233 --all --body-file antwort.md                     # Entwurf anlegen, Status draft, remote pending
+postkauz sync -a demo                                                       # legt den Entwurf zuerst im Entwürfe-Ordner ab, dann Spiegel
+postkauz draft show 1                                                       # remote: pushed, copies: uid 7
 postkauz draft request 1                                                    # zur Freigabe vorlegen (Prüf-Hook, approval 1)
 postkauz draft list --status pending_approval
 postkauz approve 1                                                          # Mensch gibt den Entwurf frei (Status ready)
@@ -126,7 +128,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 
 ## 2b. Sync, Ordner, Anzeige (S1.4/S1.5)
 
-`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--full-check-interval D] [--mailbox P ...]`
+`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--full-check-interval D] [--jobs-interval D] [--mailbox P ...]`
 
 | Option | Bedeutung |
 |---|---|
@@ -134,6 +136,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 | `--full` | zusätzlich vollständiger Lösch- und Flag-Abgleich ohne `CHANGEDSINCE`; holt Fehlendes nach; prüft Nachrichten erneut, die wegen `[imap] max_message_bytes` übersprungen wurden (ohne `--full` werden sie nicht wieder angefordert) |
 | `--watch` | Dauerläufer: sofort ein Lauf, danach alle `--interval` (Standard 5 min) und bei jeder IDLE-Meldung der INBOX (IDLE-Neustart alle `--idle-restart`, 5 bis 10 min, Standard 8 min); Strg+C beendet ihn |
 | `--full-check-interval` | nur mit `--watch` (seit S2.0): Abstand der vollen UID-Abgleiche aller Ordner, Standard `1h`. Der erste Lauf über alle Ordner und danach der erste Lauf, der mindestens so lange nach dem letzten erfolgreichen vollen Abgleich beginnt (erfolgreich = ohne Fehler und ohne übersprungenen Ordner; sonst gleicht der nächste Lauf erneut voll ab), holt in jedem Ordner die vollständige UID-Liste (`UID SEARCH ALL`) und erkennt so auch Löschungen, die der Zahlenvergleich übersieht (z. B. wenn lokal zugleich eine Nachricht fehlt, die beim Spiegeln scheiterte). Flags bleiben inkrementell (`CHANGEDSINCE`); IDLE-Läufe (nur INBOX) gleichen nie voll ab. Der einmalige `sync` ist davon nicht betroffen |
+| `--jobs-interval` | nur mit `--watch` (seit S2.5): Abstand, in dem der Dauerläufer die Tabelle `jobs` auf wartende Entwürfe prüft (Job `draft_push`), auch zwischen zwei Läufen; Standard `10s`. Ein Entwurf, den `draft new` oder ein Agent über MCP anlegt oder ändert, liegt so spätestens nach diesem Abstand plus der Dauer des APPEND im Entwürfe-Ordner (gemessen gegen die Testserver: 10,0 bis 10,3 s im ungünstigsten Fall) |
 | `--window` | Nachrichten je Fenster im Erstsync (Standard 200) |
 | `--mailbox` | nur diese Ordner (mehrfach möglich) |
 | `--dry-run` | meldet Ordner und lokalen Stand, schreibt nichts |
@@ -142,7 +145,10 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 - Mit `--json`: ein Objekt (`account`, `mode`, `strategy`, `mailboxes[]`, `new`, `updated`, `removed`, `errors`, `messages_mirrored`, `attachments_extracted`, `messages_indexed`, `index_pending`, `duration_ms`, `dry_run`); im Dauerbetrieb zusätzlich je Lauf eine NDJSON-Zeile.
 - **Nach dem Abgleich** arbeitet `sync` die Warteschlange des Kontos ab (seit S1.7, Tabelle `jobs`): Text aus Anhängen extrahieren (höchstens 60 s je Lauf, der Rest im nächsten) und neue oder geänderte Nachrichten in den Suchindex aufnehmen (bis alles drin ist; Fortschritt `search index: N/M` auf stderr). Ohne `--json` steht davor die Zeile `search index: N messages indexed` (mit `, M still pending …`, wenn ein Abbruch etwas übrig ließ). Ein Abbruch verliert nichts: Der nächste `sync` macht dort weiter.
 - **Abbruch** (Strg+C, `kill`, Absturz): Gespeichert ist alles bis zum letzten fertigen Fenster; derselbe Befehl setzt dort fort, ohne Doppelte. Strg+C endet mit Exit 1, Code `interrupted`. Je Konto läuft höchstens **ein** schreibender Sync: Ein zweiter (z. B. ein manueller `sync` neben `sync --watch`) bricht sofort mit Exit 1, Code `sync_running` (`another sync is running: account …`) ab, ohne sich am Server anzumelden; `--dry-run` ist davon ausgenommen. Die Sperre ist eine Dateisperre des Betriebssystems (`sync-<konto-id>.lock` neben der Datenbank) und fällt mit dem Prozess, auch nach `kill -9`.
-- Am Server ändert `sync` nichts (EXAMINE, `BODY.PEEK`).
+- Am Server ändert `sync` nichts (EXAMINE, `BODY.PEEK`) — mit einer Ausnahme seit S2.5: **Entwürfe ablegen**. Zu Beginn jedes Laufs (vor dem Spiegeln, damit der Spiegel die neue Kopie im selben Lauf sieht) und im Dauerbetrieb zusätzlich alle `--jobs-interval` legt `sync` jeden Entwurf, dessen Kopie aussteht (`remote: pending`), per IMAP APPEND im Entwürfe-Ordner ab: Ordner mit Rolle `drafts` (SPECIAL-USE, sonst Name wie `Drafts`/`Entwürfe`), `[draft] mailbox` der Konfiguration überschreibt; Flags `\Draft \Seen`, die beim Anlegen vergebene Message-ID, `Date` = Zeitpunkt der Ablage. `sync` sendet nie, löscht nie, verschiebt nie. In der Textausgabe (ohne `--json`) steht vor den Schlusszeilen eine Zeile `drafts: 1 put into Drafts (flags \Draft \Seen; nothing is sent)`, ggf. mit `N taken over in the mail client (not pushed)`, `N with their copy gone`, `N ready but no longer the approved message: back to draft, not pushed (see draft show)`, `N could not be built` oder `error: no_drafts_mailbox` (kein Entwürfe-Ordner; der Lauf spiegelt trotzdem, Exit 0, der Entwurf bleibt `pending`, `draft show` nennt den Grund). Mit `--json` das Feld `drafts` (`pushed`, `taken_over`, `missing`, `approval_stale`, `failed`, `draft_ids`, `mailbox`, `error`). Im Dauerbetrieb meldet jede Ablage eine Zeile `<Zeit>  N drafts put into Drafts` auf stdout.
+- **Ohne Verbindung** endet `sync` mit Exit 5 (`connection`); die Entwürfe bleiben `pending`, der Job ist sofort wieder fällig, und der nächste `sync` legt sie ab. Läuft für das Konto schon `sync --watch`, endet ein zweiter `sync` mit `sync_running` und überlässt dem Dauerläufer die Ablage (er hält die Kontosperre).
+- **Erneute Ablage nach einer Änderung:** `draft edit` (oder `mail_update_draft`) setzt `remote` wieder auf `pending`; der nächste Push legt eine **neue** Kopie ab. Die alte bleibt im Entwürfe-Ordner (PostKauz löscht nie, kein Expunge im MVP); `draft show` nennt beide UIDs (`copies: uid 8, earlier uid 7`). Mailprogramme zeigen dann zwei Entwürfe mit derselben Message-ID; den alten löscht der Mensch im Mailprogramm.
+- **Übernahme im Mailprogramm (E6):** Vor jeder Änderung und vor jeder erneuten Ablage prüft PostKauz anhand des Spiegels des Entwürfe-Ordners (vor einer erneuten Ablage frisch gespiegelt), ob die zuletzt abgelegte Kopie unverändert da ist (gleiche UID, Message-ID und Inhalts-Hash). Hat ein Mailprogramm eine bearbeitete Fassung gespeichert (neue UID, gleiche Message-ID) oder die Kopie entfernt (gesendet, gelöscht), gilt der Entwurf als übernommen: `remote: taken_over` bzw. `missing`, jede Änderung endet mit Exit 3 `draft_taken_over`, der Entwurf bleibt lokal lesbar. Was der Spiegel noch nicht gesehen hat (Ablage nach dem letzten Lauf), gilt als unverändert.
 
 `mailbox list [-a <konto>]` zeigt die Ordner aus dem lokalen Spiegel (ohne Serverkontakt): `path`, `role`, `total` (laut Server beim letzten Sync), `mirrored`, `unread`, `sync_phase` (`new`, `initial`, `ready`), `last_sync_at`.
 
@@ -269,7 +275,7 @@ Liest einen Bestand in ein Konto ein, ohne den Server zu berühren (Operation `i
 
 ## 2j. Entwürfe, Freigaben, Identitäten (S2.3, Grundform)
 
-Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeichert; seine Kopie legt der Job `draft_push` in den Entwürfe-Ordner (ausgeführt ab S2.5 von `sync` bzw. `sync --watch`; bis dahin wartet der Job). Der Mensch sendet im Mailclient. S2.7 baut die Kommandos aus (u. a. `draft show --eml`); die Grundform hier deckt alle Felder der Operationen ab.
+Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeichert; seine Kopie legt der Job `draft_push` in den Entwürfe-Ordner (seit S2.5: `sync` zu Beginn jedes Laufs, `sync --watch` alle `--jobs-interval`, Abschnitt 2b). Der Mensch sendet im Mailclient. S2.7 baut die Kommandos aus (u. a. `draft show --eml`); die Grundform hier deckt alle Felder der Operationen ab.
 
 | Kommando | Optionen | Ausgabe (Text) |
 |---|---|---|
@@ -277,7 +283,7 @@ Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeicher
 | `draft reply <id\|Message-ID>` | wie `new`, dazu `--all` (Allen antworten), `--no-quote`; Empfänger, Betreff (`Re: …`), `In-Reply-To`, `References` und Zitat kommen aus der Ausgangsnachricht | wie `new` |
 | `draft forward <id\|Message-ID>` | wie `new`, dazu `--no-attachments` (Anhänge der Ausgangsnachricht nicht übernehmen) | wie `new` |
 | `draft edit <id>` | `--to`/`--cc`/`--bcc` (ersetzen die Liste; `--cc ""` leert sie), `--subject`, `--body-file`/`--html-file`, `--attach` (ersetzt alle Anhänge) oder `--no-attachments`, `--quote=true\|false`, `--signature=true\|false`; ohne Option Exit 2 | `draft 1 changed (status ready -> draft, remote pending)` und `approval 1 superseded: …` bzw. `draft 1 unchanged (status …)` |
-| `draft show <id>` | – | Status, Freigabe, Hook-Ergebnis, Stand der Serverkopie, Kopf, `references:`, ganzer Text, Anhänge mit Warnungen, `preview hash:` |
+| `draft show <id>` | – | Status, Freigabe, Hook-Ergebnis, Stand der Serverkopie (`remote: pending|pushed|taken_over|missing` mit Erklärung), seit S2.5 `copies: uid 8, earlier uid 7 (date of the copy: …)` (alle Kopien im Entwürfe-Ordner; frühere bleiben dort) und `push: …`, wenn der Push den Entwurf nicht ablegte (`approval_stale`, `no_drafts_mailbox`, `push_failed`), Kopf, `references:`, ganzer Text, Anhänge mit Warnungen, `preview hash:`; mit `--json` dazu `remote_uid`, `remote_previous_uids`, `pushed_date`, `push_note`, `push_note_text` |
 | `draft list` | `-a <konto>`, `--status <s>` (wiederholbar oder mit Komma), `--limit N` (Standard 100) | Tabelle `ID ACCOUNT KIND STATUS APPROVAL REMOTE TO ATT CHANGED SUBJECT` |
 | `draft request <id>` | – | `hook: pass` und `draft 1: status pending_approval, approval 1 (until …); a human approves with: approve 1`; scheitert der Hook (ab S2.4): `hook: fail`, seine Ausgabe, `status stays draft` |
 | `approve <approval-id>` | – | `approval 1 approved by <name>: draft 1 is ready (valid until …); send it in your mail client, postkauz never sends` |
@@ -294,7 +300,8 @@ Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeicher
 - **Trockenlauf** (`--dry-run`): `draft new|reply|forward` zeigt die Vorschau ohne zu speichern (`dry run: would create a draft (reply) in account demo, status draft; nothing saved`), `draft request` prüft nur, `approve` usw. melden, was geschähe.
 - **Audit:** je Aufruf ein Eintrag des Executors und je Übergang ein Eintrag mit Grund `transition` (Draft-ID, Art, Zustand vorher/nachher, Zahl der Empfänger und Anhänge, Freigabe, Hook-Ergebnis); nie Betreff, Adressen, Text oder Dateinamen. `audit --since 10m --operation drafts.request_ready` zeigt sie.
 - `--json` liefert die Ausgabe der Operation (`draft_id`, `status`, `preview`, `attachments`, `warnings`, `remote`, `remote_note`, `preview_hash`, …).
-- **Noch nicht (S2.7):** `draft show --eml`, Alias-Optionen; **noch nicht (S2.5):** die Ablage im Entwürfe-Ordner (`remote` bleibt `pending`).
+- **Ablage (S2.5):** `remote: pending` heißt: Die Kopie wartet auf den nächsten `sync` (ein laufender `sync --watch` legt sie nach höchstens `--jobs-interval` ab). Ein Entwurf in `ready` wird nur abgelegt, wenn die jetzt gebaute Nachricht (bis auf `Date`) die freigegebene ist; sonst kein Push, der Entwurf fällt auf `draft` zurück, die Freigabe wird `superseded`, und `draft show` erklärt es (`push: not pushed while ready …`); erneut vorlegen mit `draft request`. Danach wird er wie jeder Entwurf beim nächsten Push abgelegt. `draft abandon` und `draft mark-sent` lassen die Kopie im Entwürfe-Ordner (kein Löschen); abgeschlossene Entwürfe werden nie abgelegt.
+- **Noch nicht (S2.7):** `draft show --eml`, Alias-Optionen.
 
 ## 3. Maschinenlesbarkeit (`--json`)
 
