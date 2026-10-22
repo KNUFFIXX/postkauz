@@ -97,6 +97,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io"
+	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
@@ -164,9 +166,25 @@ type Original struct {
 func OriginalFrom(m *mimeparse.Message) Original {
 	return Original{
 		MessageID: m.MessageID, InReplyTo: m.InReplyTo, References: m.References,
-		From: m.From, ReplyTo: m.ReplyTo, To: m.To, Cc: m.Cc, Date: m.Date,
+		From: m.From, ReplyTo: m.ReplyTo, To: m.To, Cc: m.Cc, Date: originalDate(m),
 		Subject: m.Subject, Text: m.Text, HTML: m.HTML,
 	}
+}
+
+// originalDate ist das Datum der Ausgangsnachricht in der Zeitzone ihrer
+// Date-Kopfzeile (mimeparse liefert UTC). Zitatzeile und
+// Weiterleitungskopf zeigen es in dieser Zone; so hängt die gebaute
+// Nachricht und damit message_hash nicht von der Zeitzone des Prozesses ab
+// (CLI und Sync-Dienst können verschiedene haben; Gegenprüfung S2.4/S2.5,
+// K4). Ohne lesbare Kopfzeile (INTERNALDATE, tolerant gelesene Formate)
+// bleibt es UTC.
+func originalDate(m *mimeparse.Message) time.Time {
+	if m.DateSource == mimeparse.DateFromHeader && m.DateRaw != "" {
+		if t, err := mail.ParseDate(strings.TrimSpace(m.DateRaw)); err == nil && t.Equal(m.Date) {
+			return t
+		}
+	}
+	return m.Date
 }
 
 // Attachment ist ein Anhang: genau eines von Data (Blob-Bytes) und Path

@@ -317,10 +317,16 @@ func (r *Runner) runIndex(ctx context.Context, accountID int64) (int, error) {
 //     Fehlerzählung zurück und ist sofort wieder fällig; der nächste Sync
 //     (oder die nächste Prüfung des Dauerläufers) holt den Push nach. Die
 //     Entwürfe bleiben pending.
-//   - andere Fehler (kein Entwürfe-Ordner, abgelehntes APPEND, Entwurf
-//     nicht baubar): Fehler des Jobs mit Wartezeit 1, 2, 4 … Minuten, nach
-//     fünf Fehlern failed (ein neuer Entwurf oder der nächste Sync reiht neu
-//     ein).
+//   - andere Fehler (kein Entwürfe-Ordner, Protokollfehler, Datenbank):
+//     Fehler des Jobs mit Wartezeit 1, 2, 4 … Minuten, nach fünf Fehlern
+//     failed (der nächste Sync reiht neu ein; ein neuer oder geänderter
+//     Entwurf macht einen wartenden Job sofort fällig).
+//
+// Ein abgelehntes APPEND oder ein nicht baubarer Entwurf ist kein Fehler
+// des Jobs (Gegenprüfung S2.4/S2.5, W3): Der Entwurf bekommt einen Hinweis
+// (push_rejected, push_failed), die übrigen werden abgelegt, und er hält den
+// Job nicht fällig (CompleteJob); der nächste postkauz sync (im
+// Dauerbetrieb der stündliche volle Abgleich) versucht ihn erneut.
 func (r *Runner) RunDraftPush(ctx context.Context, accountID int64, push func(context.Context) error) (ran bool, err error) {
 	j, ok, err := r.Store.ClaimJob(ctx, store.JobDraftPush, accountID, r.owner(), r.lease(), r.TakeOver)
 	if err != nil || !ok {

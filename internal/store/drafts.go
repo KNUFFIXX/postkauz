@@ -86,7 +86,28 @@ type Draft struct {
 	PushedDate        string
 	RemoteUIDValidity uint32
 	RemotePrevious    []RemoteCopy
-	PushNote          string // "" | approval_stale | no_drafts_mailbox | push_failed
+	PushNote          string // "" | approval_stale | no_drafts_mailbox | push_failed | push_rejected | pushed_after_close
+	// Seit Migration 0014 (Gegenprüfung S2.4/S2.5): compose.MessageHash der
+	// zuletzt abgelegten Kopie ("" = unbekannt, Kopie aus Schema 13; W2) und
+	// ein Ablageversuch mit offenem Ausgang (nil = keiner; W1).
+	PushedMessageHash string
+	PushAttempt       *PushAttempt
+}
+
+// PushAttempt ist ein Ablageversuch, dessen Ausgang offen ist: vor dem
+// APPEND geschrieben, gelöscht, sobald die Kopie vermerkt ist oder der
+// Server abgelehnt hat (Migration 0014, W1). Nur Hashes, Datum und IDs.
+type PushAttempt struct {
+	MailboxID   int64  `json:"mailbox_id"`
+	UIDValidity uint32 `json:"uidvalidity,omitempty"`
+	// ContentHash der Bytes wie messages.content_hash des Spiegels.
+	ContentHash string `json:"content_hash"`
+	// MessageHash: compose.MessageHash der Bytes (ohne Date).
+	MessageHash string `json:"message_hash"`
+	// Date: die Date-Kopfzeile der Bytes (RFC 5322).
+	Date string `json:"date"`
+	// Fingerprint des Entwurfs, aus dem die Bytes gebaut wurden.
+	Fingerprint string `json:"fingerprint"`
 }
 
 // RemoteCopy ist eine frühere Kopie eines Entwurfs im Entwürfe-Ordner.
@@ -171,19 +192,25 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(remote_mailbox_id, 0), COALESCE(remote_uid, 0), remote_state, COALESCE(pushed_content_hash, ''),
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
 	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
-	COALESCE(push_note, '')`
+	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, '')`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
-	var to, cc, bcc, atts, prev string
+	var to, cc, bcc, atts, prev, attempt string
 	var created, updated, closed, uv int64
 	if err := sc.Scan(&d.ID, &d.AccountID, &d.IdentityID, &d.Kind, &d.InReplyToMsg, &d.MessageIDHeader,
 		&d.FromName, &d.FromEmail, &to, &cc, &bcc, &d.Subject, &d.BodyMarkdown, &d.BodyText,
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
 		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
-		&d.PushedDate, &uv, &prev, &d.PushNote); err != nil {
+		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt); err != nil {
 		return d, err
+	}
+	if attempt != "" {
+		d.PushAttempt = new(PushAttempt)
+		if err := json.Unmarshal([]byte(attempt), d.PushAttempt); err != nil {
+			return d, fmt.Errorf("store: draft %d: corrupt JSON column: %w", d.ID, err)
+		}
 	}
 	d.RemoteUIDValidity = uint32(uv)
 	for _, x := range []struct {
@@ -251,19 +278,25 @@ func draftArgs(d Draft) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	var attempt any
+	if d.PushAttempt != nil {
+		if attempt, err = enc(d.PushAttempt); err != nil {
+			return nil, err
+		}
+	}
 	return []any{nullID(d.IdentityID), d.Kind, nullID(d.InReplyToMsg), d.MessageIDHeader, d.FromName, d.FromEmail,
 		js[0], js[1], js[2], d.Subject, nullStr(d.BodyMarkdown), d.BodyText, nullStr(d.BodyHTML), headers, as,
 		d.Status, nullStr(d.PreviewHash), nullStr(d.HookResult), nullID(d.RemoteMailboxID), nullID(d.RemoteUID), remote,
 		nullStr(d.PushedContentHash), nullStr(d.CreatedBy), nullID(d.ApprovalID), nullID(d.SentMessageID),
 		d.UpdatedAt.UnixMilli(), closed, opts, nullStr(d.PushedDate), nullID(int64(d.RemoteUIDValidity)), ps,
-		nullStr(d.PushNote)}, nil
+		nullStr(d.PushNote), nullStr(d.PushedMessageHash), attempt}, nil
 }
 
 const draftWriteCols = `identity_id, kind, in_reply_to_msg, message_id_header, from_name, from_email,
 	to_addrs, cc_addrs, bcc_addrs, subject, body_markdown, body_text, body_html, headers_json, attachment_blobs,
 	status, preview_hash, hook_result, remote_mailbox_id, remote_uid, remote_state,
 	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options,
-	pushed_date, remote_uidvalidity, remote_previous, push_note`
+	pushed_date, remote_uidvalidity, remote_previous, push_note, pushed_message_hash, push_attempt`
 
 func nullID(v int64) any {
 	if v <= 0 {
@@ -481,6 +514,13 @@ func (x *DraftTx) EnqueueDraftPush(accountID int64, now time.Time) (int64, error
 	payload := fmt.Sprintf(`{"account_id":%d}`, accountID)
 	if _, err := x.tx.ExecContext(x.ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at) VALUES (?, ?, ?)`,
 		JobDraftPush, payload, now.UnixMilli()); err != nil {
+		return 0, fmt.Errorf("store: enqueue draft_push: %w", err)
+	}
+	// Ein Job, der nach einem Fehler erst später fällig wäre (Backoff bis
+	// 1 h), wird sofort fällig: Ein neuer oder geänderter Entwurf soll nicht
+	// auf die Wiederholung warten (Gegenprüfung S2.4/S2.5, W3).
+	if _, err := x.tx.ExecContext(x.ctx, `UPDATE jobs SET run_at = ? WHERE type = ? AND state = 'queued' AND run_at > ?
+		AND json_extract(payload, '$.account_id') = ?`, now.UnixMilli(), JobDraftPush, now.UnixMilli(), accountID); err != nil {
 		return 0, fmt.Errorf("store: enqueue draft_push: %w", err)
 	}
 	var id int64

@@ -46,7 +46,7 @@ var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c co
 // (A02 E4, S2.4): [draft] check_hook und check_hook_timeout der
 // Policy-Datei; leere Liste = keiner (nil = „pass"). In Tests ersetzbar.
 var newDraftChecker = func(a *app) ops.DraftChecker {
-	return ops.NewHookChecker(a.policy.Doc.Draft.CheckHook, a.policy.Doc.Draft.CheckHookTimeout)
+	return ops.NewHookChecker(a.policy.Doc.Draft.CheckHook, a.policy.Doc.Draft.CheckHookTimeout, a.log)
 }
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,

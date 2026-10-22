@@ -66,6 +66,23 @@ func helperMain(a []string) int {
 	case "sleepchild":
 		_ = os.WriteFile(a[1], []byte(strconv.Itoa(os.Getpid())), 0o600)
 		time.Sleep(time.Hour)
+	case "spawn": // spawn <childpidfile>: startet ein Kind, wartet auf dessen Start und endet mit 0
+		child := exec.Command(os.Args[0], "-test.run=^TestHookHelperProcess$", "--", "sleepchild", a[1])
+		if err := child.Start(); err != nil {
+			return 9
+		}
+		for i := 0; i < 250; i++ {
+			if _, err := os.Stat(a[1]); err == nil {
+				return 0
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return 8
+	case "runner": // runner <hookpidfile> <childpidfile> <tempdir>: ein Aufrufer, der einen Hook „sleep" startet
+		r := Runner{Command: []string{os.Args[0], "-test.run=^TestHookHelperProcess$", "--", "sleep", a[1], a[2]},
+			TempDir: a[3], Timeout: time.Minute}
+		_, _ = r.Run(context.Background(), sample)
+		return 0
 	case "env": // env <outfile>
 		_ = os.WriteFile(a[1], []byte(strings.Join(os.Environ(), "\n")), 0o600)
 		return 0

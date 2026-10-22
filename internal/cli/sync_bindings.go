@@ -196,6 +196,12 @@ func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
 	if d.Failed > 0 {
 		parts = append(parts, fmt.Sprintf("%d could not be built (see draft show)", d.Failed))
 	}
+	if d.Rejected > 0 {
+		parts = append(parts, fmt.Sprintf("%d refused by the server (see draft show)", d.Rejected))
+	}
+	if d.Adopted > 0 {
+		parts = append(parts, fmt.Sprintf("%d found in the Drafts folder from an interrupted push (recorded, not put twice)", d.Adopted))
+	}
 	if d.Error != "" {
 		parts = append(parts, "error: "+termLine(d.Error))
 	}

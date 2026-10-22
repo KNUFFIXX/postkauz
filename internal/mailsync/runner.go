@@ -132,7 +132,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		// die Kontosperre; er legt die Entwürfe ab.
 		eng.Drafts = &Drafts{Pusher: r.Pusher, Jobs: jr, Account: a, Mailbox: r.DraftMailbox}
 	}
-	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes}
+	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes, RetryDrafts: !o.Watch}
 	if !o.Watch {
 		rep, err := eng.SyncAll(ctx, so)
 		fill(&out, rep)

@@ -112,11 +112,23 @@ var pushNotes = map[string]string{
 	drafts.PushNoteNoDraftsMailbox: "not pushed: the account has no Drafts folder (no mailbox with role drafts); " +
 		"set [draft] mailbox in the configuration",
 	drafts.PushNotePushFailed: "not pushed: the message could not be built (original message or attachment missing locally); " +
-		"the next sync tries again",
+		"the next sync (a running sync --watch: within the hour) tries again",
+	drafts.PushNotePushRejected: "not pushed: the mail server refused to store this draft in the Drafts folder (for example too large " +
+		"or mailbox full); the other drafts are pushed, the next sync (a running sync --watch: within the hour) tries this one again, " +
+		"a change to it queues it at once",
+	drafts.PushNotePushedAfterClose: "a copy reached the Drafts folder just after the draft was closed; it stays there, nothing is " +
+		"deleted here (delete it in the mail client if it is not wanted)",
 }
 
 // remoteNote erklärt den Stand der Serverkopie.
 func remoteNote(d store.Draft) string {
+	if d.PushNote == drafts.PushNotePushedAfterClose {
+		if d.RemoteUID > 0 {
+			return fmt.Sprintf("a copy (uid %d) reached the Drafts folder just after the draft was closed; it stays there, "+
+				"nothing is deleted here (delete it in the mail client if it is not wanted)", d.RemoteUID)
+		}
+		return pushNotes[d.PushNote]
+	}
 	switch d.RemoteState {
 	case drafts.RemotePending:
 		if drafts.Status(d.Status).Closed() {
@@ -1115,7 +1127,8 @@ type DraftDetail struct {
 	// PushedDate: Date-Kopfzeile der abgelegten Kopie (S2.5).
 	PushedDate string `json:"pushed_date,omitempty"`
 	// PushNote: Hinweis des Pushs als Code (approval_stale,
-	// no_drafts_mailbox, push_failed) und seine Erklärung.
+	// no_drafts_mailbox, push_failed, push_rejected, pushed_after_close)
+	// und seine Erklärung.
 	PushNote      string `json:"push_note,omitempty"`
 	PushNoteText  string `json:"push_note_text,omitempty"`
 	PreviewHash   string `json:"preview_hash"`
@@ -1164,7 +1177,7 @@ func DraftsGet(d Deps) Operation {
     "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
-    "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed"]}, "push_note_text": {"type": "string"},
+    "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
@@ -1548,9 +1561,10 @@ func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draf
 
 // rebuildAt baut wie rebuild, mit date als Date-Kopfzeile (Nullzeit = Uhr
 // der Konfiguration). Der Push (S2.5) setzt so das Date der abgelegten
-// Kopie; mit dem gespeicherten pushed_date (in time.Local umgerechnet,
-// denn die Zitatzeile zeigt das Datum der Ausgangsnachricht in der Zone von
-// Date) entsteht dieselbe Kopie byte-gleich noch einmal (S2.7).
+// Kopie; mit dem gespeicherten pushed_date (time.Parse mit RFC1123Z)
+// entsteht dieselbe Kopie byte-gleich noch einmal (S2.7). Die Zitatzeile
+// hängt seit der Gegenprüfung von S2.4/S2.5 (K4) nicht mehr von der
+// Zeitzone von date oder des Prozesses ab.
 func (o *draftOps) rebuildAt(ctx context.Context, acc store.Account, dr store.Draft, date time.Time) (*compose.Message, error) {
 	ci := compose.NewInput(compose.Kind(dr.Kind))
 	if !date.IsZero() {

@@ -16,12 +16,14 @@ func TestQuoteLineDateNumeric(t *testing.T) {
 	if !strings.Contains(m.BodyText, "Am 21.10.2026 09:15 schrieb Erika Beispiel <erika@example.org>:") {
 		t.Fatalf("quote line:\n%s", m.BodyText)
 	}
-	// Beide Platzhalter in derselben Zeitzone (der Uhr des Baus), hier UTC.
+	// Beide Platzhalter in derselben Zeitzone: seit der Gegenprüfung von
+	// S2.4/S2.5 (K4) die der Ausgangsnachricht, nicht die der Uhr des Baus
+	// (hier UTC).
 	in = baseInput(KindReply)
 	in.Now = clock(fixedNow.UTC())
 	in.QuoteLine = "{date} = {date_numeric} {from}"
 	m = mustBuild(t, in)
-	if !strings.Contains(m.BodyText, "Wed, 21 Oct 2026 07:15 +0000 = 21.10.2026 07:15 Erika Beispiel") {
+	if !strings.Contains(m.BodyText, "Wed, 21 Oct 2026 09:15 +0200 = 21.10.2026 09:15 Erika Beispiel") {
 		t.Fatalf("time zone:\n%s", m.BodyText)
 	}
 	// Ohne Datum der Ausgangsnachricht.

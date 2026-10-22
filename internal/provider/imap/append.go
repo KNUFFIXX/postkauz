@@ -2,6 +2,8 @@ package imap
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
@@ -22,9 +24,16 @@ import (
 // (UID SEARCH HEADER Message-ID). Ohne o.MessageID entfällt beides (UID 0;
 // nach einem Abbruch kann eine Dublette entstehen).
 //
-// Fehler: provider.ErrNotFound, wenn der Ordner fehlt; imapx.ErrRejected,
-// wenn der Server APPEND ablehnt (NO/BAD, z. B. Kontingent); Verbindungs-
-// und Anmeldefehler wie bei allen Kommandos.
+// Fehler: provider.ErrNotFound, wenn der Ordner fehlt; provider.ErrRejected
+// (zusammen mit imapx.ErrRejected), wenn der Server das APPEND selbst
+// ablehnt (NO/BAD, z. B. zu groß, Kontingent); Verbindungs- und
+// Anmeldefehler wie bei allen Kommandos.
+//
+// Die Liste known gilt nur innerhalb eines Aufrufs. Bricht der Lauf ab,
+// bevor der Aufrufer die Kopie vermerkt hat (Wiederaufbau gescheitert,
+// Strg+C, Prozessende), findet der nächste Lauf sie über den vorab
+// vermerkten Versuch im Spiegel wieder (internal/drafts, push_attempt;
+// Gegenprüfung S2.4/S2.5, W1).
 func (p *Provider) Append(ctx context.Context, mailbox string, raw []byte, o provider.AppendOptions) (provider.AppendResult, error) {
 	var res provider.AppendResult
 	var known []uint32 // UIDs mit dieser Message-ID vor dem ersten Versuch
@@ -57,6 +66,9 @@ func (p *Provider) Append(ctx context.Context, mailbox string, raw []byte, o pro
 		}
 		tried = true
 		r, err := c.AppendInfo(mailbox, raw, flagList(o.Flags), o.Date)
+		if errors.Is(err, imapx.ErrRejected) {
+			return fmt.Errorf("%w: %w", provider.ErrRejected, err)
+		}
 		if err != nil {
 			return err
 		}

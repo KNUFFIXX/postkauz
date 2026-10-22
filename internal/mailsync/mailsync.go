@@ -106,6 +106,14 @@ type Options struct {
 	CheckDeleted bool
 	// Mailboxes beschränkt den Lauf auf diese Pfade (leer = alle).
 	Mailboxes []string
+	// RetryDrafts: Entwürfe, deren Ablage der Server abgelehnt hat oder die
+	// sich nicht bauen ließen (push_rejected, push_failed), in diesem Lauf
+	// erneut ablegen (Gegenprüfung S2.4/S2.5, W3). Der einmalige Sync setzt
+	// es immer, der Dauerbetrieb nur im ersten Lauf und bei jedem vollen
+	// Abgleich (FullCheckInterval, stündlich): Ein zu großer Entwurf soll
+	// nicht alle 5 Minuten oder bei jeder neuen Mail erneut hochgeladen
+	// werden.
+	RetryDrafts bool
 }
 
 // Event ist eine Fortschrittsmeldung.
@@ -239,7 +247,7 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	// diesem Lauf. Ein Push-Fehler hält den Lauf nur bei Verbindungs- und
 	// Anmeldefehlern auf (die Entwürfe bleiben pending, der nächste Lauf
 	// holt sie nach).
-	dr, err := e.pushDrafts(ctx, true)
+	dr, err := e.pushDrafts(ctx, true, o.RetryDrafts)
 	rep.Drafts = dr
 	if err != nil {
 		if fatal(ctx, err) {

@@ -38,6 +38,14 @@ const (
 	// PushNotePushFailed: Die Nachricht ließ sich nicht bauen (z. B.
 	// Ausgangsnachricht oder Anhang fehlt im Blob-Store).
 	PushNotePushFailed = "push_failed"
+	// PushNotePushRejected: Der Server hat das Ablegen dieses Entwurfs
+	// abgelehnt (NO/BAD auf APPEND, z. B. zu groß, Kontingent voll;
+	// Gegenprüfung S2.4/S2.5, W3). Ohne Text des Servers.
+	PushNotePushRejected = "push_rejected"
+	// PushNotePushedAfterClose: Die Kopie kam in den Ordner, nachdem der
+	// Entwurf abgeschlossen wurde (Wettlauf zwischen Prüfung und APPEND,
+	// K5). Sie bleibt dort; PostKauz löscht nichts.
+	PushNotePushedAfterClose = "pushed_after_close"
 )
 
 // Operationen und Gründe der Systemereignisse im Audit (Akteur system).
@@ -75,6 +83,9 @@ func copyState(d store.Draft, mc store.MirrorCopy, uidValid bool) string {
 	if d.RemoteUID <= 0 || mc.UIDNext <= uint32(d.RemoteUID) {
 		return "" // UID unbekannt oder vom Spiegel noch nicht gesehen
 	}
+	if !mc.AtUID && mc.Skipped {
+		return "" // zu groß für den Spiegel: nicht prüfbar (K4)
+	}
 	if mc.AtUID {
 		if mc.AtUIDMessageID == d.MessageIDHeader && mc.AtUIDContentHash == d.PushedContentHash {
 			return ""
@@ -106,6 +117,39 @@ func checkCopy(x *store.DraftTx, d store.Draft) (string, error) {
 		}
 	}
 	return copyState(d, mc, valid), nil
+}
+
+// adoptOrphan übernimmt die Kopie eines Ablageversuchs, dessen Ausgang ein
+// abgebrochener Lauf nicht mehr vermerken konnte (Gegenprüfung S2.4/S2.5,
+// W1): Liegt im Spiegel des Ordners eine Kopie mit der Message-ID des
+// Entwurfs und dem Inhalts-Hash des Versuchs, deren UID keine bekannte
+// Kopie des Entwurfs ist, wird sie vermerkt wie nach einem erfolgreichen
+// APPEND (Pushed), statt eine zweite abzulegen. Ohne solche Kopie bleibt
+// der Versuch stehen; der nächste Push überschreibt ihn. adopted meldet,
+// ob übernommen wurde; d ist danach der gespeicherte Stand.
+func (s *Service) adoptOrphan(x *store.DraftTx, d *store.Draft, now time.Time) (adopted bool, err error) {
+	a := d.PushAttempt
+	if a == nil || a.MailboxID == 0 || a.ContentHash == "" {
+		return false, nil
+	}
+	known := []int64{}
+	if d.RemoteUID > 0 && d.RemoteMailboxID == a.MailboxID {
+		known = append(known, d.RemoteUID)
+	}
+	for _, c := range d.RemotePrevious {
+		if c.MailboxID == a.MailboxID {
+			known = append(known, c.UID)
+		}
+	}
+	uid, uv, err := x.MirrorOrphan(a.MailboxID, d.MessageIDHeader, a.ContentHash, known)
+	if err != nil || uid == 0 {
+		return false, err
+	}
+	c := PushedCopy{MailboxID: a.MailboxID, UIDValidity: uv, UID: uid, ContentHash: a.ContentHash, MessageHash: a.MessageHash, Date: a.Date}
+	if _, err := s.recordCopy(x, d, a.Fingerprint, c, now, true); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // markRemote setzt remote_state nach erkannter Übernahme und auditiert das
@@ -141,6 +185,14 @@ func (s *Service) PushCheck(ctx context.Context, id int64) (d store.Draft, state
 	now := s.now()
 	err = s.tx(ctx, func(x *store.DraftTx) error {
 		if d, err = x.Draft(id); err != nil {
+			return err
+		}
+		if !Pending(d) {
+			return nil
+		}
+		// W1: Kopie eines abgebrochenen Versuchs zuerst übernehmen (sonst
+		// hielte die Prüfung sie für eine Fassung des Mailclients).
+		if _, err := s.adoptOrphan(x, &d, now); err != nil {
 			return err
 		}
 		if !Pending(d) {
@@ -212,55 +264,116 @@ type PushedCopy struct {
 	// ContentHash: Inhalts-Hash der abgelegten Bytes wie messages.content_hash
 	// des Spiegels (SHA-256 ohne CR; internal/mailsync).
 	ContentHash string
+	// MessageHash: compose.MessageHash der abgelegten Bytes (ohne Date; W2).
+	MessageHash string
 	// Date: die Date-Kopfzeile der Kopie (RFC 5322).
 	Date string
 }
 
+// Attempt vermerkt vor dem APPEND einen Ablageversuch (Gegenprüfung
+// S2.4/S2.5, W1): Ordner, Inhalts- und Nachrichten-Hash, Date und der
+// Fingerprint des gebauten Stands. Bricht der Lauf ab, bevor die Kopie
+// vermerkt ist, findet der nächste Push sie darüber im Spiegel wieder
+// (adoptOrphan) und legt keine zweite ab. Ein früherer Versuch wird
+// überschrieben (dessen Kopie hätte der Push vorher übernommen).
+func (s *Service) Attempt(ctx context.Context, id int64, a store.PushAttempt) error {
+	return s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		d.PushAttempt = &a
+		return x.UpdateDraft(d)
+	})
+}
+
+// Rejected vermerkt, dass der Server das Ablegen eines Entwurfs abgelehnt
+// hat (NO/BAD auf APPEND; W3): push_note push_rejected, der Versuch ist
+// erledigt (abgelehnt heißt: nichts abgelegt). Der Entwurf bleibt pending;
+// erneut versucht wird beim nächsten postkauz sync (im Dauerbetrieb beim
+// stündlichen vollen Abgleich) oder sofort nach einer Änderung.
+func (s *Service) Rejected(ctx context.Context, id int64) error {
+	return s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		d.PushAttempt = nil
+		if d.PushNote != PushNoteApprovalStale {
+			d.PushNote = PushNotePushRejected
+		}
+		return x.UpdateDraft(d)
+	})
+}
+
 // Pushed vermerkt eine abgelegte Kopie: Ordner, UIDVALIDITY, UID,
-// Inhalts-Hash und Date; eine frühere Kopie kommt in remote_previous (sie
-// bleibt im Ordner, kein Expunge). Ist der Entwurf noch der Stand, den der
-// Push gebaut hat (fingerprint), ist er danach pushed; hat ein anderer
-// Schreiber inzwischen geändert, bleibt er pending, und der nächste Push
-// legt die neue Fassung ab (die eben abgelegte ist dann die frühere Kopie).
-// Audit: Systemereignis drafts.push, Grund appended, mit Draft-ID, Ordner
-// und UID. current meldet, ob der Entwurf jetzt pushed ist.
+// Inhalts-Hash, Nachrichten-Hash und Date; eine frühere Kopie kommt in
+// remote_previous (sie bleibt im Ordner, kein Expunge), ein offener
+// Ablageversuch ist erledigt. Ist der Entwurf noch der Stand, den der Push
+// gebaut hat (fingerprint), und nicht abgeschlossen, ist er danach pushed;
+// hat ein anderer Schreiber inzwischen geändert, bleibt er pending, und der
+// nächste Push legt die neue Fassung ab (die eben abgelegte ist dann die
+// frühere Kopie). Wurde er inzwischen abgeschlossen (verworfen, als
+// gesendet erkannt; K5), bleibt die Kopie vermerkt, aber nicht als aktuell:
+// push_note pushed_after_close, draft show sagt, dass sie im Ordner liegt
+// und nichts gelöscht wird. Audit: Systemereignis drafts.push, Grund
+// appended, mit Draft-ID, Ordner, UID und current. current meldet, ob der
+// Entwurf jetzt pushed ist.
 func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c PushedCopy) (d store.Draft, current bool, err error) {
 	now := s.now()
 	err = s.tx(ctx, func(x *store.DraftTx) error {
 		if d, err = x.Draft(id); err != nil {
 			return err
 		}
-		if d.PushedContentHash != "" && d.RemoteUID > 0 && d.RemoteMailboxID > 0 {
-			d.RemotePrevious = append(d.RemotePrevious, store.RemoteCopy{MailboxID: d.RemoteMailboxID, UID: d.RemoteUID,
-				UIDValidity: d.RemoteUIDValidity})
-		}
-		d.RemoteMailboxID, d.RemoteUIDValidity, d.RemoteUID = c.MailboxID, c.UIDValidity, c.UID
-		d.PushedContentHash, d.PushedDate = c.ContentHash, c.Date
-		if d.PushNote != PushNoteApprovalStale {
-			d.PushNote = ""
-		}
-		current = Fingerprint(d) == fingerprint && d.RemoteState == RemotePending
-		if current {
-			d.RemoteState = RemotePushed
-		}
-		if err := x.UpdateDraft(d); err != nil {
-			return err
-		}
-		b, _ := json.Marshal(map[string]any{"draft_id": d.ID, "mailbox_id": c.MailboxID, "uid": c.UID, "current": current})
-		_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpPush,
-			ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK,
-			Reason: ReasonAppended, PolicyVersion: s.PolicyVersion})
+		current, err = s.recordCopy(x, &d, fingerprint, c, now, false)
 		return err
 	})
 	return d, current, err
 }
 
+// recordCopy ist Pushed in einer Transaktion; adopted kennzeichnet eine
+// übernommene Kopie eines abgebrochenen Versuchs (W1) im Audit.
+func (s *Service) recordCopy(x *store.DraftTx, d *store.Draft, fingerprint string, c PushedCopy, now time.Time, adopted bool) (bool, error) {
+	if d.PushedContentHash != "" && d.RemoteUID > 0 && d.RemoteMailboxID > 0 {
+		d.RemotePrevious = append(d.RemotePrevious, store.RemoteCopy{MailboxID: d.RemoteMailboxID, UID: d.RemoteUID,
+			UIDValidity: d.RemoteUIDValidity})
+	}
+	d.RemoteMailboxID, d.RemoteUIDValidity, d.RemoteUID = c.MailboxID, c.UIDValidity, c.UID
+	d.PushedContentHash, d.PushedMessageHash, d.PushedDate, d.PushAttempt = c.ContentHash, c.MessageHash, c.Date, nil
+	closed := Status(d.Status).Closed()
+	switch {
+	case closed:
+		d.PushNote = PushNotePushedAfterClose
+	case d.PushNote != PushNoteApprovalStale:
+		d.PushNote = ""
+	}
+	current := !closed && Fingerprint(*d) == fingerprint && d.RemoteState == RemotePending
+	if current {
+		d.RemoteState = RemotePushed
+	}
+	if err := x.UpdateDraft(*d); err != nil {
+		return false, err
+	}
+	p := map[string]any{"draft_id": d.ID, "mailbox_id": c.MailboxID, "uid": c.UID, "current": current}
+	if closed {
+		p["closed"] = true
+	}
+	if adopted {
+		p["adopted"] = true
+	}
+	b, _ := json.Marshal(p)
+	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpPush,
+		ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK,
+		Reason: ReasonAppended, PolicyVersion: s.PolicyVersion})
+	return current, err
+}
+
 // NotePush setzt den Hinweis des Pushs: mit draftID > 0 an diesem Entwurf
-// (push_failed), sonst an allen wartenden Entwürfen des Kontos
+// (push_failed, push_rejected), sonst an allen wartenden Entwürfen des Kontos
 // (no_drafts_mailbox). Ein Hinweis approval_stale bleibt stehen.
 func (s *Service) NotePush(ctx context.Context, accountID, draftID int64, note string) error {
 	switch note {
-	case PushNoteNoDraftsMailbox, PushNotePushFailed:
+	case PushNoteNoDraftsMailbox, PushNotePushFailed, PushNotePushRejected:
 	default:
 		return fmt.Errorf("drafts: unknown push note %q", note)
 	}

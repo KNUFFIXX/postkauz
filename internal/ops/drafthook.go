@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
@@ -18,12 +19,13 @@ import (
 
 // NewHookChecker liefert den Prüf-Hook aus [draft] check_hook und
 // check_hook_timeout der Policy-Datei; bei leerer Liste nil (kein Hook,
-// „pass").
-func NewHookChecker(command []string, timeout time.Duration) DraftChecker {
+// „pass"). log bekommt Fehler beim Aufräumen der Temp-Verzeichnisse (ohne
+// Pfad; nil = verwerfen).
+func NewHookChecker(command []string, timeout time.Duration, log *slog.Logger) DraftChecker {
 	if len(command) == 0 {
 		return nil
 	}
-	return hookChecker{r: hook.Runner{Command: append([]string(nil), command...), Timeout: timeout}}
+	return hookChecker{r: hook.Runner{Command: append([]string(nil), command...), Timeout: timeout, Log: log}}
 }
 
 type hookChecker struct{ r hook.Runner }

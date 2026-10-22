@@ -36,7 +36,7 @@ check_hook_timeout = "30s"
 		f.Doc.Draft.CheckHookTimeout != 30*time.Second {
 		t.Fatalf("check_hook = %q, timeout %s", h, f.Doc.Draft.CheckHookTimeout)
 	}
-	if NewHookChecker(h, f.Doc.Draft.CheckHookTimeout) == nil {
+	if NewHookChecker(h, f.Doc.Draft.CheckHookTimeout, nil) == nil {
 		t.Fatal("no checker for a configured hook")
 	}
 }
@@ -46,14 +46,14 @@ check_hook_timeout = "30s"
 // internal/cli (TestDraftRequestRunsCheckHook).
 
 func TestNewHookCheckerEmptyIsNil(t *testing.T) {
-	if c := NewHookChecker(nil, 0); c != nil {
+	if c := NewHookChecker(nil, 0, nil); c != nil {
 		t.Fatalf("empty check_hook gives %T, want nil (pass without a process)", c)
 	}
-	if c := NewHookChecker([]string{}, time.Second); c != nil {
+	if c := NewHookChecker([]string{}, time.Second, nil); c != nil {
 		t.Fatalf("empty list gives %T", c)
 	}
 	cmd := []string{"lint", "{eml}"}
-	c := NewHookChecker(cmd, time.Second).(hookChecker)
+	c := NewHookChecker(cmd, time.Second, nil).(hookChecker)
 	cmd[0] = "changed"
 	if c.r.Command[0] != "lint" || c.r.Timeout != time.Second {
 		t.Fatalf("runner %+v shares the slice or lost the timeout", c.r)

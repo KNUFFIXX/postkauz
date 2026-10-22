@@ -8,7 +8,9 @@ import (
 	"io"
 	"log"
 	"net"
+	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,7 +32,13 @@ type dropProxy struct {
 	target string
 	armed  atomic.Bool
 	drops  atomic.Int32
+	// refuse: Statt zu kappen, macht der Proxy aus der Bestätigung einmal
+	// eine Ablehnung (NO [OVERQUOTA]), wie ein Server mit vollem
+	// Kontingent (Gegenprüfung S2.4/S2.5, W3).
+	refuse atomic.Bool
 }
+
+var appendOK = regexp.MustCompile(`(?m)^(\S+) OK \[APPENDUID[^\r\n]*`)
 
 func (p *dropProxy) serve(t *testing.T, ln net.Listener) {
 	for {
@@ -56,7 +64,11 @@ func (p *dropProxy) serve(t *testing.T, ln net.Listener) {
 						p.drops.Add(1)
 						return
 					}
-					if _, werr := c.Write(buf[:n]); werr != nil {
+					out := buf[:n]
+					if bytes.Contains(out, []byte("APPENDUID")) && p.refuse.CompareAndSwap(true, false) {
+						out = appendOK.ReplaceAll(out, []byte("$1 NO [OVERQUOTA] Quota exceeded (Mailbox full)"))
+					}
+					if _, werr := c.Write(out); werr != nil {
 						return
 					}
 				}
@@ -169,10 +181,23 @@ func TestAppendNoDuplicateAfterDroppedConnection(t *testing.T) {
 	if err != nil || res2.UID != res.UID+1 || res2.UIDValidity != res.UIDValidity {
 		t.Fatalf("second append = %+v, %v", res2, err)
 	}
-	// Ordner fehlt: kein Verbindungsfehler, nicht wiederholt.
+	// Ordner fehlt: kein Verbindungsfehler, nicht wiederholt, keine
+	// Ablehnung der Nachricht (betrifft alle Entwürfe).
 	if _, err := p.Append(context.Background(), "Fehlt", draftMail("pk.2@example.org", "x"), o); err == nil ||
-		errors.Is(err, provider.ErrConnection) {
+		errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrRejected) {
 		t.Fatalf("missing mailbox = %v", err)
+	}
+	// W3: Lehnt der Server das APPEND selbst ab (NO), ist das
+	// provider.ErrRejected, ohne den Freitext des Servers; die Verbindung
+	// bleibt nutzbar.
+	px.refuse.Store(true)
+	_, err = p.Append(context.Background(), "Drafts", draftMail("pk.3@example.org", "x"), o)
+	if !errors.Is(err, provider.ErrRejected) || !errors.Is(err, imapx.ErrRejected) || errors.Is(err, provider.ErrConnection) ||
+		strings.Contains(err.Error(), "Mailbox full") {
+		t.Fatalf("rejected append = %v", err)
+	}
+	if _, err := p.Append(context.Background(), "Drafts", draftMail("pk.4@example.org", "y"), o); err != nil {
+		t.Fatalf("append after a rejection = %v", err)
 	}
 }
 

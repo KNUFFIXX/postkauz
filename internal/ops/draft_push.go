@@ -3,7 +3,6 @@ package ops
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
@@ -26,12 +25,44 @@ import (
 // bis auf Date genau die freigegebene ist (approvals.message_hash), sonst
 // gar nicht: zurück auf draft, Freigabe superseded, Hinweis approval_stale.
 // sent_by_human und abandoned werden nie abgelegt.
+//
+// Nach der Gegenprüfung von S2.4/S2.5:
+//
+//   - W1, keine Dublette über die Aufrufgrenze: Vor dem APPEND vermerkt der
+//     Push den Versuch am Entwurf (push_attempt: Inhalts- und
+//     Nachrichten-Hash, Date, Fingerprint). Endet der Lauf, bevor die Kopie
+//     vermerkt ist (Verbindung weg und Wiederaufbau gescheitert, Strg+C,
+//     Protokollfehler, Prozessende), sucht der nächste Push im Spiegel des
+//     Entwürfe-Ordners eine Kopie mit der Message-ID und dem Inhalts-Hash
+//     des Versuchs, die keine bekannte Kopie des Entwurfs ist, und übernimmt
+//     sie (drafts.Service.PushCheck), statt eine zweite abzulegen. Der
+//     Aufrufer spiegelt den Ordner dafür vorher (Pending zählt solche
+//     Entwürfe mit).
+//   - W3, ein Entwurf blockiert nicht das Konto: Lehnt der Server das
+//     Ablegen eines Entwurfs ab (ErrAppendRejected) oder lässt er sich nicht
+//     bauen, bekommt nur er einen Hinweis (push_rejected bzw. push_failed),
+//     und es geht mit den übrigen weiter. Nur Verbindungs-, Anmelde- und
+//     Protokollfehler, ein fehlender Ordner und Fehler der Datenbank beenden
+//     den Push. Vermerkte Entwürfe versucht erst der nächste postkauz sync
+//     erneut (retry; im Dauerbetrieb der stündliche volle Abgleich), nicht
+//     jede Prüfung des Watchers.
 
 // DraftAppender legt eine gebaute Nachricht im Entwürfe-Ordner ab, mit den
 // Flags \Draft und \Seen (E12), und liefert, was der Push vermerkt.
+//
+// Lehnt der Server das Ablegen genau dieser Nachricht ab (NO/BAD auf
+// APPEND, z. B. zu groß oder Kontingent voll), ist der Fehler
+// ErrAppendRejected (ohne Text des Servers); jeder andere Fehler beendet
+// den Push. ContentHash liefert den Inhalts-Hash von Bytes in der Form von
+// messages.content_hash des Spiegels (derselbe, den AppendedCopy nennt).
 type DraftAppender interface {
 	AppendDraft(ctx context.Context, raw []byte, messageID string, date time.Time) (AppendedCopy, error)
+	ContentHash(raw []byte) string
 }
+
+// ErrAppendRejected: Der Server hat das Ablegen eines Entwurfs abgelehnt
+// (W3). Nur dieser Entwurf bekommt den Hinweis push_rejected.
+var ErrAppendRejected = errors.New("the server refused to store the draft in the Drafts folder")
 
 // AppendedCopy ist die abgelegte Kopie: UID (0 = unbekannt), UIDVALIDITY
 // des Ordners und der Inhalts-Hash der Bytes wie messages.content_hash des
@@ -55,6 +86,12 @@ type DraftPushReport struct {
 	Stale int `json:"approval_stale,omitempty"`
 	// Failed: Entwürfe, deren Nachricht sich nicht bauen ließ (push_failed).
 	Failed int `json:"failed,omitempty"`
+	// Rejected: Entwürfe, deren Ablage der Server abgelehnt hat
+	// (push_rejected; W3).
+	Rejected int `json:"rejected,omitempty"`
+	// Adopted: Kopien abgebrochener Versuche, die der Push übernommen hat,
+	// statt neu abzulegen (W1).
+	Adopted int `json:"adopted,omitempty"`
 	// DraftIDs: die abgelegten Entwürfe.
 	DraftIDs []int64 `json:"draft_ids,omitempty"`
 }
@@ -66,12 +103,10 @@ func (r *DraftPushReport) Add(o DraftPushReport) {
 	r.Missing += o.Missing
 	r.Stale += o.Stale
 	r.Failed += o.Failed
+	r.Rejected += o.Rejected
+	r.Adopted += o.Adopted
 	r.DraftIDs = append(r.DraftIDs, o.DraftIDs...)
 }
-
-// ErrDraftBuild: Mindestens ein Entwurf ließ sich nicht bauen (push_failed
-// am Entwurf); der Job zählt das als Fehler und versucht es später erneut.
-var ErrDraftBuild = errors.New("some drafts could not be built for the Drafts folder")
 
 // DraftPusher ist der fachliche Teil des Jobs draft_push.
 type DraftPusher struct {
@@ -100,10 +135,11 @@ func (p *DraftPusher) EnsureJob(ctx context.Context, accountID int64) error {
 }
 
 // Pending liefert, wie viele Entwürfe des Kontos auf ihre Kopie warten und
-// wie viele davon schon eine frühere Kopie haben (deren Übernahme der Push
-// prüft; der Aufrufer spiegelt dafür vorher den Entwürfe-Ordner).
-func (p *DraftPusher) Pending(ctx context.Context, accountID int64) (pending, withCopy int, err error) {
-	ids, withCopy, err := p.o.svc.Store.DraftPushCandidates(ctx, accountID)
+// wie viele davon schon eine frühere Kopie oder einen Ablageversuch mit
+// offenem Ausgang haben (deren Kopien der Push im Spiegel prüft; der
+// Aufrufer spiegelt dafür vorher den Entwürfe-Ordner). retry wie bei Push.
+func (p *DraftPusher) Pending(ctx context.Context, accountID int64, retry bool) (pending, withCopy int, err error) {
+	ids, withCopy, err := p.o.svc.Store.DraftPushCandidates(ctx, accountID, retry)
 	return len(ids), withCopy, err
 }
 
@@ -114,13 +150,17 @@ func (p *DraftPusher) NoDraftsMailbox(ctx context.Context, accountID int64) erro
 }
 
 // Push legt die wartenden Entwürfe des Kontos acc im Ordner mailboxID ab
-// (app hängt am Pfad dieses Ordners). Ein Fehler von app (Verbindung,
-// abgelehntes APPEND) beendet den Push sofort; die übrigen Entwürfe bleiben
-// pending. Ließ sich ein Entwurf nicht bauen, geht es mit den übrigen
-// weiter, und Push liefert am Ende ErrDraftBuild.
-func (p *DraftPusher) Push(ctx context.Context, acc store.Account, mailboxID int64, app DraftAppender) (DraftPushReport, error) {
+// (app hängt am Pfad dieses Ordners). Lehnt der Server einen Entwurf ab
+// oder lässt er sich nicht bauen, bekommt er einen Hinweis, und es geht mit
+// den übrigen weiter (W3). Jeder andere Fehler (Verbindung, Anmeldung,
+// Protokoll, Ordner fehlt, Datenbank) beendet den Push sofort; die übrigen
+// Entwürfe bleiben pending. retry: auch Entwürfe mit push_rejected oder
+// push_failed erneut versuchen (postkauz sync; im Dauerbetrieb der
+// stündliche volle Abgleich); sonst nur die fälligen (Prüfung des Watchers
+// alle 10 s, übrige Runden).
+func (p *DraftPusher) Push(ctx context.Context, acc store.Account, mailboxID int64, app DraftAppender, retry bool) (DraftPushReport, error) {
 	var rep DraftPushReport
-	ids, _, err := p.o.svc.Store.DraftPushCandidates(ctx, acc.ID)
+	ids, _, err := p.o.svc.Store.DraftPushCandidates(ctx, acc.ID, retry)
 	if err != nil {
 		return rep, err
 	}
@@ -132,16 +172,21 @@ func (p *DraftPusher) Push(ctx context.Context, acc store.Account, mailboxID int
 			return rep, err
 		}
 	}
-	if rep.Failed > 0 {
-		return rep, fmt.Errorf("%w (%d)", ErrDraftBuild, rep.Failed)
-	}
 	return rep, nil
 }
 
 func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID, id int64, app DraftAppender, rep *DraftPushReport) error {
 	svc := p.o.svc
-	// E6: Ist die zuletzt abgelegte Kopie laut Spiegel noch unverändert da?
+	// W1: Kopie eines abgebrochenen Versuchs übernehmen; E6: Ist die zuletzt
+	// abgelegte Kopie laut Spiegel noch unverändert da?
+	before, err := svc.Store.Draft(ctx, id)
+	if err != nil {
+		return err
+	}
 	d, state, err := svc.PushCheck(ctx, id)
+	if err == nil && before.PushAttempt != nil && d.PushAttempt == nil {
+		rep.Adopted++
+	}
 	switch {
 	case err != nil:
 		return err
@@ -179,12 +224,24 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 			return nil
 		}
 	}
+	mh, dateText := compose.MessageHash(msg.Raw), date.Format(time.RFC1123Z)
+	// W1: Versuch vor dem APPEND vermerken; endet der Lauf vor dem Vermerk
+	// der Kopie, übernimmt der nächste Push sie statt einer zweiten.
+	if err := svc.Attempt(ctx, d.ID, store.PushAttempt{MailboxID: mailboxID, ContentHash: app.ContentHash(msg.Raw), MessageHash: mh,
+		Date: dateText, Fingerprint: fp}); err != nil {
+		return err
+	}
 	cp, err := app.AppendDraft(ctx, msg.Raw, d.MessageIDHeader, date)
+	if errors.Is(err, ErrAppendRejected) {
+		// W3: nur dieser Entwurf; die übrigen werden weiter abgelegt.
+		rep.Rejected++
+		return svc.Rejected(ctx, d.ID)
+	}
 	if err != nil {
 		return err
 	}
 	if _, _, err := svc.Pushed(ctx, d.ID, fp, drafts.PushedCopy{MailboxID: mailboxID, UIDValidity: cp.UIDValidity, UID: int64(cp.UID),
-		ContentHash: cp.ContentHash, Date: date.Format(time.RFC1123Z)}); err != nil {
+		ContentHash: cp.ContentHash, MessageHash: mh, Date: dateText}); err != nil {
 		return err
 	}
 	rep.Pushed++

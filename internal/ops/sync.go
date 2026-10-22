@@ -192,7 +192,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"},
     "drafts": {"type": "object", "properties": {
       "pushed": {"type": "integer"}, "taken_over": {"type": "integer"}, "missing": {"type": "integer"},
-      "approval_stale": {"type": "integer"}, "failed": {"type": "integer"},
+      "approval_stale": {"type": "integer"}, "failed": {"type": "integer"}, "rejected": {"type": "integer"}, "adopted": {"type": "integer"},
       "draft_ids": {"type": "array", "items": {"type": "integer"}}, "mailbox": {"type": "string"}, "error": {"type": "string"}},
       "required": ["pushed"]}
   },

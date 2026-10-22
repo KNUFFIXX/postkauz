@@ -51,6 +51,16 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+# Windows PowerShell 5.1 writes redirected output in the OEM code page
+# (for example 850), so umlauts in the reason would arrive garbled.
+# PostKauz reads the output as UTF-8 (without byte order mark).
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+} catch {
+    # No console to set (PostKauz starts the hook with a hidden one);
+    # the check itself still works, only umlauts may look wrong.
+}
+
 if ([string]::IsNullOrEmpty($MetaJson) -or [string]::IsNullOrEmpty($BodyText)) {
     Write-Output 'check-example: give the paths of {meta_json} and {body_text}'
     exit 2

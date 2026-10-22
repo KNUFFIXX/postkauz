@@ -106,6 +106,9 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 			ro.CheckDeleted = true
 			e.log().Info("full UID check of all mailboxes")
 		}
+		// Abgelehnte oder nicht baubare Entwürfe nur mit dem vollen Abgleich
+		// erneut versuchen (W3), nicht in jeder Runde.
+		ro.RetryDrafts = ro.CheckDeleted
 		rep, err := e.SyncAll(ctx, ro)
 		if ctx.Err() != nil {
 			return nil
@@ -135,7 +138,7 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	// die Entwürfe pending, die nächste Prüfung versucht es erneut. Läufe
 	// und Prüfungen wechseln sich in dieser Schleife ab, nie gleichzeitig.
 	pushJobs := func() error {
-		dr, err := e.pushDrafts(ctx, false)
+		dr, err := e.pushDrafts(ctx, false, false)
 		if ctx.Err() != nil {
 			return nil
 		}

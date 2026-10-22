@@ -318,6 +318,11 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 		if d.RemoteState == RemoteTakenOver || d.RemoteState == RemoteMissing {
 			return takenOver(d.ID, d.RemoteState)
 		}
+		// W1: Kopie eines abgebrochenen Ablageversuchs zuerst übernehmen
+		// (sonst hielte die Prüfung sie für eine Fassung des Mailclients).
+		if _, err := s.adoptOrphan(x, &d, now); err != nil {
+			return err
+		}
 		// E6: Ist die zuletzt abgelegte Kopie laut Spiegel noch unverändert
 		// da? Sonst hat der Mensch im Mailclient übernommen (S2.5).
 		if st, err := checkCopy(x, d); err != nil {
@@ -461,13 +466,37 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 			return err
 		}
 		d.Status, d.ApprovalID = string(t.To), a.ID
+		repush := staleCopy(&d, chk.MessageHash)
 		if err := x.UpdateDraft(d); err != nil {
 			return err
 		}
 		res.Draft, res.To, res.Approval = d, t.To, &a
+		if repush {
+			if err := s.enqueuePush(x, d, now, &res); err != nil {
+				return err
+			}
+		}
 		return s.record(x, now, d, from, t.To, a.ID, hook)
 	})
 	return res, err
+}
+
+// staleCopy prüft bei Vorlage und Freigabe, ob die Kopie im Entwürfe-Ordner
+// noch die Nachricht ist, die jetzt vorgelegt bzw. freigegeben wird
+// (Gegenprüfung S2.4/S2.5, W2): Hat sich seit dem Push etwas geändert, das
+// in den Nachrichtenbau eingeht, aber nicht im Entwurf steht (Identität
+// entfernt, Signatur, [draft] quote_line), läge sonst eine andere Fassung im
+// Ordner, als der Mensch freigibt. Dann wird die Kopie wieder pending (der
+// nächste Push legt die neue Fassung ab, die alte bleibt im Ordner wie nach
+// jeder Änderung); true = Job einreihen. Eine Kopie aus Schema 13 (ohne
+// Nachrichten-Hash) gilt als abweichend. messageHash "" (ohne Prüfung) =
+// nichts tun.
+func staleCopy(d *store.Draft, messageHash string) bool {
+	if messageHash == "" || d.RemoteState != RemotePushed || d.PushedMessageHash == messageHash {
+		return false
+	}
+	d.RemoteState = RemotePending
+	return true
 }
 
 // describe ist die Beschreibung einer Freigabe: Kontoname, Art, Zahl der
@@ -577,10 +606,16 @@ func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decide
 			}
 		}
 		d.Status, d.UpdatedAt = string(t.To), now
+		repush := ev == EvApprove && staleCopy(&d, messageHash)
 		if err := x.UpdateDraft(d); err != nil {
 			return err
 		}
 		res.Draft, res.To = d, t.To
+		if repush {
+			if err := s.enqueuePush(x, d, now, &res); err != nil {
+				return err
+			}
+		}
 		return s.record(x, now, d, from, t.To, a.ID, "")
 	})
 	if err == nil && deny != nil {

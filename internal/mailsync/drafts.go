@@ -33,9 +33,9 @@ const DefaultJobsInterval = 10 * time.Second
 // DraftPusher ist der fachliche Teil des Jobs draft_push (ops.DraftPusher).
 type DraftPusher interface {
 	EnsureJob(ctx context.Context, accountID int64) error
-	Pending(ctx context.Context, accountID int64) (pending, withCopy int, err error)
+	Pending(ctx context.Context, accountID int64, retry bool) (pending, withCopy int, err error)
 	NoDraftsMailbox(ctx context.Context, accountID int64) error
-	Push(ctx context.Context, acc store.Account, mailboxID int64, app ops.DraftAppender) (ops.DraftPushReport, error)
+	Push(ctx context.Context, acc store.Account, mailboxID int64, app ops.DraftAppender, retry bool) (ops.DraftPushReport, error)
 }
 
 var _ DraftPusher = (*ops.DraftPusher)(nil)
@@ -78,22 +78,33 @@ type draftAppender struct {
 func (a draftAppender) AppendDraft(ctx context.Context, raw []byte, messageID string, date time.Time) (ops.AppendedCopy, error) {
 	res, err := a.r.Append(ctx, a.path, raw, provider.AppendOptions{Flags: provider.Flags{Seen: true, Draft: true}, Date: date,
 		MessageID: messageID})
+	if errors.Is(err, provider.ErrRejected) {
+		// Nur dieser Entwurf (W3); der Text des Servers bleibt draußen.
+		return ops.AppendedCopy{}, ops.ErrAppendRejected
+	}
 	if err != nil {
 		return ops.AppendedCopy{}, err
 	}
+	return ops.AppendedCopy{UID: uint32(res.UID), UIDValidity: res.UIDValidity, ContentHash: a.ContentHash(raw)}, nil
+}
+
+// ContentHash ist der Inhalts-Hash wie messages.content_hash des Spiegels.
+func (draftAppender) ContentHash(raw []byte) string {
 	h := NewContentHasher()
 	_, _ = h.Write(raw)
 	exact, _ := h.Sums()
-	return ops.AppendedCopy{UID: uint32(res.UID), UIDValidity: res.UIDValidity, ContentHash: exact}, nil
+	return exact
 }
 
 // pushDrafts führt den fälligen Job draft_push des Kontos aus. ensure reiht
 // ihn vorher ein, wenn Entwürfe warten und keiner offen ist (Beginn eines
-// Laufs). nil = kein Job fällig oder nichts wartet. Ein Fehler kommt zurück
+// Laufs); retry versucht auch Entwürfe erneut, deren Ablage der Server
+// abgelehnt hat oder die sich nicht bauen ließen (push_rejected,
+// push_failed; W3; Options.RetryDrafts). nil = kein Job fällig oder nichts wartet. Ein Fehler kommt zurück
 // (der Job ist dann zurückgegeben bzw. als Fehler verbucht); der Aufrufer
 // entscheidet, ob der Lauf weitergeht (nur Verbindungs- und Anmeldefehler
 // beenden ihn).
-func (e *Engine) pushDrafts(ctx context.Context, ensure bool) (*ops.SyncDrafts, error) {
+func (e *Engine) pushDrafts(ctx context.Context, ensure, retry bool) (*ops.SyncDrafts, error) {
 	d := e.Drafts
 	if d == nil {
 		return nil, nil
@@ -109,7 +120,7 @@ func (e *Engine) pushDrafts(ctx context.Context, ensure bool) (*ops.SyncDrafts, 
 		// Push mit Fehler statt den Prozess.
 		return crash.Do("draft push", func() error {
 			var err error
-			out, err = e.pushPending(ctx, d)
+			out, err = e.pushPending(ctx, d, retry)
 			return err
 		})
 	})
@@ -128,8 +139,8 @@ func (e *Engine) pushDrafts(ctx context.Context, ensure bool) (*ops.SyncDrafts, 
 	return out, err
 }
 
-func (e *Engine) pushPending(ctx context.Context, d *Drafts) (*ops.SyncDrafts, error) {
-	n, withCopy, err := d.Pusher.Pending(ctx, e.AccountID)
+func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.SyncDrafts, error) {
+	n, withCopy, err := d.Pusher.Pending(ctx, e.AccountID, retry)
 	if err != nil || n == 0 {
 		return nil, err // nichts wartet
 	}
@@ -149,7 +160,8 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts) (*ops.SyncDrafts, e
 	out.Mailbox = mb.Path
 	if withCopy > 0 {
 		// E6: Vor dem erneuten Push prüft der Pusher, ob der Mensch die
-		// frühere Kopie übernommen hat; dafür den Spiegel des Ordners
+		// frühere Kopie übernommen hat, und W1: ob ein abgebrochener
+		// Versuch doch abgelegt hat; dafür den Spiegel des Ordners
 		// auffrischen (sonst sähe er erst den Stand des letzten Laufs).
 		if _, err := e.SyncMailbox(ctx, mb, Options{}); err != nil {
 			return out, fmt.Errorf("%s: %w", mb.Path, err)
@@ -159,10 +171,16 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts) (*ops.SyncDrafts, e
 	if !ok {
 		return out, fmt.Errorf("drafts: this connection cannot append messages")
 	}
-	rep, err := d.Pusher.Push(ctx, d.Account, mb.ID, draftAppender{r: app, path: mb.Path})
+	rep, err := d.Pusher.Push(ctx, d.Account, mb.ID, draftAppender{r: app, path: mb.Path}, retry)
 	out.DraftPushReport = rep
 	if rep.Pushed > 0 {
 		e.log().Info("drafts pushed to the Drafts folder", "count", rep.Pushed, "draft_ids", rep.DraftIDs)
+	}
+	if rep.Rejected+rep.Failed > 0 {
+		e.log().Warn("drafts not pushed; see draft show", "rejected", rep.Rejected, "failed", rep.Failed)
+	}
+	if rep.Adopted > 0 {
+		e.log().Info("copies of interrupted pushes found in the Drafts folder and recorded", "count", rep.Adopted)
 	}
 	return out, err
 }
