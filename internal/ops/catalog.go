@@ -26,6 +26,9 @@ type Deps struct {
 	// AuditExportDir ist das Standardziel von audit.export ([audit]
 	// export_dir in der Konfiguration; leer = Ziel muss angegeben werden).
 	AuditExportDir string
+	// MaxChars ist das Zeichenbudget für Agenten aus der Policy-Datei
+	// ([agent_defaults] max_chars; 0 = DefaultMaxChars). policy.get nennt es.
+	MaxChars int
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -36,7 +39,7 @@ func Catalog(d Deps) []Operation {
 	return []Operation{
 		AccountsList(d.Accounts),
 		AccountsAdd(d.Accounts, d.Secrets),
-		AccountsSet(d.Accounts),
+		AccountsSet(d.Accounts, d.Secrets),
 		AccountsRemove(d.Accounts, d.Secrets),
 		AccountsTest(d.Accounts, d.Secrets, d.Prober),
 		SyncRun(d.Accounts, d.Secrets, d.Runner),
@@ -54,7 +57,7 @@ func Catalog(d Deps) []Operation {
 		AuditList(d.Audit),
 		AuditExport(d.Audit, d.AuditExportDir),
 		AuditVerify(d.Audit),
-		PolicyGet(),
+		PolicyGet(d.MaxChars),
 	}
 }
 

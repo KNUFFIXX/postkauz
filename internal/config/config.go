@@ -51,7 +51,52 @@ type Config struct {
 	Secrets  Secrets `toml:"secrets"`
 	IMAP     IMAP    `toml:"imap"`
 	Audit    Audit   `toml:"audit"`
+	// Paths: weitere Ordner (seit S2.1: attach_dir).
+	Paths    PathsConfig `toml:"paths"`
+	Operator Operator    `toml:"operator"`
+	Draft    Draft       `toml:"draft"`
 }
+
+// PathsConfig: Abschnitt [paths] der Konfiguration.
+type PathsConfig struct {
+	// AttachDir: Dateianhänge von Entwürfen nur von hier (A02 E10;
+	// Standard <Datenverzeichnis>/attach). Relativ = zum Datenverzeichnis.
+	AttachDir string `toml:"attach_dir"`
+}
+
+// Operator: Abschnitt [operator]. Name ist, wer im MVP freigibt
+// (approvals.decided_by; Entschiedene Frage 20); leer = Benutzername des
+// Betriebssystems.
+type Operator struct {
+	Name string `toml:"name"`
+}
+
+// Draft: Abschnitt [draft] der Konfiguration (A02 E7, E10, E11, E12). Nicht
+// zu verwechseln mit [draft] der Policy-Datei (Prüf-Hook, Freigabepflicht).
+type Draft struct {
+	// ApprovalTTL: so lange gilt eine offene oder erteilte Freigabe
+	// (Standard 168h; mindestens 1m, höchstens 365 Tage).
+	ApprovalTTL time.Duration `toml:"approval_ttl"`
+	// MaxAttachmentBytes: Summe der Anhänge eines Entwurfs (Standard 25 MiB).
+	MaxAttachmentBytes int64 `toml:"max_attachment_bytes"`
+	// Mailbox: Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts.
+	Mailbox string `toml:"mailbox"`
+	// QuoteLine: Einleitungszeile des Zitats mit {date} und {from};
+	// leer = "On {date}, {from} wrote:".
+	QuoteLine string `toml:"quote_line"`
+}
+
+// Standards für [draft] und [paths].
+const (
+	DefaultApprovalTTL        = 168 * time.Hour
+	MinApprovalTTL            = time.Minute
+	MaxApprovalTTL            = 365 * 24 * time.Hour
+	DefaultMaxAttachmentBytes = 25 << 20
+	// MaxAttachmentBytesLimit: größer nimmt der Blob-Store nichts an.
+	MaxAttachmentBytesLimit = 256 << 20
+	DefaultQuoteLine        = "On {date}, {from} wrote:"
+	DefaultAttachDirName    = "attach"
+)
 
 // Audit steuert den Export des Audit-Logs (docs/sicherheit.md, Abschnitt 6).
 type Audit struct {
@@ -99,6 +144,8 @@ type Paths struct {
 	Blobs        string `json:"blobs"`
 	Log          string `json:"log"`
 	SecretsDir   string `json:"secrets_dir"`
+	// AttachDir: aufgelöster [paths] attach_dir (absolut).
+	AttachDir string `json:"attach_dir"`
 }
 
 // ConfigPath liefert den Pfad der Konfigurationsdatei: POSTKAUZ_CONFIG, sonst
@@ -263,6 +310,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	if v := cfg.IMAP.MaxMessageBytes; v != 0 && (v < MinMessageBytes || v > MaxMessageBytesLimit) {
 		return cfg, p, fmt.Errorf("config: imap.max_message_bytes %d is out of range (%d to %d; 0 = default)", v, MinMessageBytes, MaxMessageBytesLimit)
 	}
+	if err := checkDraft(&cfg.Draft); err != nil {
+		return cfg, p, err
+	}
 	if cfg.DataDir == "" {
 		var err error
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {
@@ -285,7 +335,46 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	p.Blobs = filepath.Join(p.DataDir, "blobs")
 	p.Log = filepath.Join(p.DataDir, brand.Name+".log")
 	p.SecretsDir = filepath.Join(p.DataDir, "insecure-secrets")
+	p.AttachDir = filepath.Join(p.DataDir, DefaultAttachDirName)
+	if d := strings.TrimSpace(cfg.Paths.AttachDir); d != "" {
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(p.DataDir, d)
+		}
+		p.AttachDir = filepath.Clean(d)
+	}
+	cfg.Paths.AttachDir = p.AttachDir
 	return cfg, p, nil
+}
+
+// checkDraft prüft [draft] und setzt die Standards.
+func checkDraft(d *Draft) error {
+	switch {
+	case d.ApprovalTTL == 0:
+		d.ApprovalTTL = DefaultApprovalTTL
+	case d.ApprovalTTL < MinApprovalTTL || d.ApprovalTTL > MaxApprovalTTL:
+		return fmt.Errorf("config: draft.approval_ttl %s is out of range (%s to %s; 0 = default %s)", d.ApprovalTTL, MinApprovalTTL, MaxApprovalTTL, DefaultApprovalTTL)
+	}
+	switch v := d.MaxAttachmentBytes; {
+	case v == 0:
+		d.MaxAttachmentBytes = DefaultMaxAttachmentBytes
+	case v < 1 || v > MaxAttachmentBytesLimit:
+		return fmt.Errorf("config: draft.max_attachment_bytes %d is out of range (1 to %d; 0 = default %d)", v, MaxAttachmentBytesLimit, DefaultMaxAttachmentBytes)
+	}
+	d.Mailbox = strings.TrimSpace(d.Mailbox)
+	if strings.ContainsAny(d.Mailbox, "\r\n\x00") {
+		return fmt.Errorf("config: draft.mailbox contains a line break")
+	}
+	if d.QuoteLine == "" {
+		d.QuoteLine = DefaultQuoteLine
+	}
+	if strings.ContainsAny(d.QuoteLine, "\r\n") {
+		return fmt.Errorf("config: draft.quote_line must be one line")
+	}
+	rest := strings.NewReplacer("{date}", "", "{from}", "").Replace(d.QuoteLine)
+	if strings.ContainsAny(rest, "{}") {
+		return fmt.Errorf("config: draft.quote_line knows only the placeholders {date} and {from}")
+	}
+	return nil
 }
 
 // EnsureDataDir legt das Datenverzeichnis nur für den Nutzer lesbar an

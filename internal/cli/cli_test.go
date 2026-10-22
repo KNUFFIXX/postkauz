@@ -34,6 +34,7 @@ func setupEnv(t *testing.T) (dataDir string, kr *memKeyring) {
 	t.Setenv("POSTKAUZ_CONFIG", filepath.Join(dir, "missing-config.toml"))
 	t.Setenv("POSTKAUZ_DATA_DIR", dataDir)
 	t.Setenv("POSTKAUZ_SECRETS_BACKEND", "")
+	t.Setenv("POSTKAUZ_POLICY", "")
 	kr = &memKeyring{m: map[string]secrets.Secret{}}
 	orig := openSecrets
 	openSecrets = func(backend, insecureDir string) (secrets.Store, error) {

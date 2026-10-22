@@ -55,8 +55,8 @@ var bindings = []binding{
 	{op: "accounts.add", path: []string{"account", "add"}, use: "<name>", args: cobra.ExactArgs(1),
 		flags: accountAddFlags, input: accountAddInput, human: renderAccountAdd,
 		covers: []string{"name", "email", "host", "port", "tls", "username", "auth_type", "insecure_test_server", "password_from_env"}},
-	{op: "accounts.set", path: []string{"account", "set"}, use: "<name> --aliases a@example.org,b@example.org", args: cobra.ExactArgs(1),
-		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases"}},
+	{op: "accounts.set", path: []string{"account", "set"}, use: "<name> [--aliases a@example.org,b@example.org] [--password-stdin]", args: cobra.ExactArgs(1),
+		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases", "replace_password"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
 		input: nameInput, human: renderAccountTest, covers: []string{"name"}},
 	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
@@ -381,9 +381,10 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 
 func accountSetFlags(cmd *cobra.Command) {
 	cmd.Flags().String("aliases", "", "further own addresses of the account, comma separated; replaces the list (\"\" removes all)")
+	cmd.Flags().Bool("password-stdin", false, "replace the stored password with one read from standard input (hidden prompt on a terminal; never as an argument)")
 }
 
-func accountSetInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error) {
 	in := ops.AccountsSetInput{Name: args[0]}
 	if cmd.Flags().Changed("aliases") {
 		v, _ := cmd.Flags().GetString("aliases")
@@ -394,11 +395,47 @@ func accountSetInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage
 			}
 		}
 		in.Aliases = &list
-	} else {
-		return nil, "", usageError{errors.New("nothing to change; use --aliases a@example.org,b@example.org (--aliases \"\" removes all)")}
+	}
+	var pw secrets.Secret
+	if fromStdin, _ := cmd.Flags().GetBool("password-stdin"); fromStdin {
+		var err error
+		if pw, err = readNewPassword(a, args[0]); err != nil {
+			return nil, "", err
+		}
+		in.ReplacePassword = true
+	}
+	if in.Aliases == nil && !in.ReplacePassword {
+		return nil, "", usageError{errors.New("nothing to change; use --aliases a@example.org,b@example.org (--aliases \"\" removes all) or --password-stdin")}
 	}
 	b, err := json.Marshal(in)
-	return b, "", err
+	return b, pw, err
+}
+
+// readNewPassword liest ein neues Passwort von stdin (Entscheid 36): am
+// Terminal verdeckt mit Aufforderung auf stderr, sonst die erste Zeile.
+// Das Passwort ist nie ein Argument (Prozessliste, Verlauf der Shell).
+func readNewPassword(a *app, account string) (secrets.Secret, error) {
+	if fd, ok := terminalFD(a.stdin); ok {
+		fmt.Fprintf(a.stderr, "New password for account %s: ", account)
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(a.stderr)
+		if err != nil {
+			return "", err
+		}
+		if len(b) == 0 {
+			return "", usageError{errors.New("empty password")}
+		}
+		return secrets.Secret(b), nil
+	}
+	line, err := bufio.NewReader(a.stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	pw := secrets.Secret(strings.TrimRight(line, "\r\n"))
+	if pw.IsZero() {
+		return "", usageError{errors.New("empty password on standard input")}
+	}
+	return pw, nil
 }
 
 func terminalFD(r io.Reader) (int, bool) {
@@ -460,16 +497,38 @@ func renderAccountSet(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
-	aliases := "none"
-	if len(o.Aliases) > 0 {
-		aliases = strings.Join(o.Aliases, ", ")
-	}
 	prefix := "account " + o.Account
 	if o.DryRun {
 		prefix = "dry run: would set account " + o.Account
 	}
-	_, err := fmt.Fprintf(w, "%s: aliases %s\n", prefix, aliases)
-	return err
+	if o.AliasesChanged {
+		aliases := "none"
+		if len(o.Aliases) > 0 {
+			aliases = strings.Join(o.Aliases, ", ")
+		}
+		if _, err := fmt.Fprintf(w, "%s: aliases %s\n", prefix, aliases); err != nil {
+			return err
+		}
+	}
+	if o.Password != "" {
+		where := map[string]string{"keyring": "in the OS keyring", "insecure-file": "in the INSECURE test file store"}[o.SecretStore]
+		if where == "" {
+			where = "in the secret store"
+		}
+		msg := fmt.Sprintf("account %s: password replaced %s as %s", o.Account, where, o.CredentialRef)
+		if o.DryRun {
+			msg = fmt.Sprintf("dry run: would replace the password of account %s %s as %s", o.Account, where, o.CredentialRef)
+		}
+		if _, err := fmt.Fprintln(w, msg); err != nil {
+			return err
+		}
+		if o.EnvOverride != "" {
+			if _, err := fmt.Fprintf(w, "note: %s is set and takes precedence over the stored password at runtime\n", o.EnvOverride); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func renderAccountTest(w io.Writer, out any) error {

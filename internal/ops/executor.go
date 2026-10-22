@@ -34,6 +34,9 @@ type Executor struct {
 	Keys *KeyGuard
 	// Now ist für Tests ersetzbar.
 	Now func() time.Time
+	// PolicyVersion ist die Version der geladenen Policy-Datei (Tabelle
+	// policies, A02 E8); sie steht in jedem Audit-Eintrag (0 = keine).
+	PolicyVersion int64
 	// OnPanic erfährt von einem abgefangenen Panic im Handler (bereinigt:
 	// ohne Panic-Wert, ohne Argumente im Stack); die CLI schreibt ihn ins
 	// Log. nil = nur der Fehler an den Aufrufer.
@@ -185,6 +188,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		Targets:        targets,
 		Reason:         dec.Reason,
 		DryRun:         dec.DryRun,
+		PolicyVersion:  x.PolicyVersion,
 	}
 
 	// Ein Schlüssel kann während einer langen Sitzung widerrufen werden

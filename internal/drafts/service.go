@@ -1,0 +1,583 @@
+package drafts
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"sort"
+	"strconv"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// Service führt die Übergänge eines Entwurfs aus: je Aufruf eine kurze
+// Schreibtransaktion (BEGIN IMMEDIATE) mit Lesen, Prüfen und Schreiben.
+// Mehrere Prozesse (CLI, MCP-Server, sync --watch) dürfen gleichzeitig
+// arbeiten; wer zuerst die Schreibsperre hat, gewinnt, der andere sieht
+// danach den neuen Zustand.
+//
+// Wer handelt (Mensch oder Schlüssel) und ob er darf, entscheidet der
+// Executor (ab S2.3, HumanOnly für approve/reject/abandon/mark_sent); er
+// schreibt auch den Audit-Eintrag der Operation. Der Dienst schreibt selbst
+// nur die Einträge der Systemereignisse (Ablauf einer Freigabe, vom Sync
+// erkannter Versand), in derselben Transaktion wie den Übergang.
+type Service struct {
+	Store *store.SQLite
+	// Now ist die Uhr (nil = time.Now); Tests setzen eine feste.
+	Now func() time.Time
+	// Rand ist die Zufallsquelle der Message-ID (nil = crypto/rand).
+	Rand io.Reader
+	// ApprovalTTL: so lange gilt eine offene oder erteilte Freigabe
+	// ([draft] approval_ttl; 0 = DefaultApprovalTTL).
+	ApprovalTTL time.Duration
+	// PolicyVersion steht in den Audit-Einträgen der Systemereignisse (E8).
+	PolicyVersion int64
+}
+
+func (s *Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (s *Service) ttl() time.Duration {
+	if s.ApprovalTTL > 0 {
+		return s.ApprovalTTL
+	}
+	return DefaultApprovalTTL
+}
+
+// NewDraft ist die Eingabe von Create.
+type NewDraft struct {
+	AccountID int64
+	// IdentityID: 0 = Standardidentität des Kontos; hat das Konto keine,
+	// ist der Absender die Kontoadresse ohne Namen (E9).
+	IdentityID   int64
+	Kind         Kind
+	InReplyToMsg int64
+	Content
+	// CreatedBy: "cli" | "key:<name>" (wie audit_events.api_key_id).
+	CreatedBy string
+}
+
+// Result ist das Ergebnis eines Aufrufs: der Entwurf danach, der Übergang
+// (From == To bei einer Änderung ohne Wirkung) und die Freigabe, wenn eine
+// entstand oder entschieden wurde.
+type Result struct {
+	Draft    store.Draft
+	From, To Status
+	Approval *store.Approval
+	// Changed: Der Inhalt hat sich geändert (Update) bzw. der Entwurf ist neu.
+	Changed bool
+	// Notes sind Hinweise für die Ausgabe (englisch, ohne Inhalt).
+	Notes []string
+}
+
+// NoteNoIdentity: Hinweis, wenn das Konto keine Identität hat (E9).
+const NoteNoIdentity = "no identity configured for this account: the sender is the account address without a name (add one with identity add)"
+
+// Create legt einen Entwurf im Zustand draft an: Grenzen geprüft, Absender
+// aus der Identität (Kopie), Message-ID vergeben, preview_hash berechnet,
+// Serverkopie pending.
+func (s *Service) Create(ctx context.Context, in NewDraft) (Result, error) {
+	if !ValidKind(in.Kind) {
+		return Result{}, fmt.Errorf("drafts: unknown kind %q", in.Kind)
+	}
+	if err := Validate(in.Content); err != nil {
+		return Result{}, err
+	}
+	now := s.now()
+	var res Result
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		acc, err := x.Account(in.AccountID)
+		if err != nil {
+			return err
+		}
+		d := store.Draft{AccountID: acc.ID, Kind: string(in.Kind), InReplyToMsg: in.InReplyToMsg, Status: string(StatusDraft),
+			RemoteState: RemotePending, CreatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now}
+		switch {
+		case in.IdentityID > 0:
+			id, err := x.Identity(in.IdentityID)
+			if err != nil {
+				return err
+			}
+			if id.AccountID != acc.ID {
+				return denied(ReasonIdentityMismatch, "identity %d belongs to another account", id.ID)
+			}
+			d.IdentityID, d.FromName, d.FromEmail = id.ID, id.Name, id.Email
+		default:
+			id, ok, err := x.DefaultIdentity(acc.ID)
+			if err != nil {
+				return err
+			}
+			if ok {
+				d.IdentityID, d.FromName, d.FromEmail = id.ID, id.Name, id.Email
+			} else {
+				d.FromEmail = acc.Email
+				res.Notes = append(res.Notes, NoteNoIdentity)
+			}
+		}
+		if d.MessageIDHeader, err = NewMessageID(s.Rand, d.FromEmail); err != nil {
+			return err
+		}
+		setContent(&d, in.Content)
+		d.PreviewHash = PreviewHash(HashOf(d))
+		if d.ID, err = x.InsertDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.From, res.To, res.Changed = d, "", StatusDraft, true
+		return nil
+	})
+	return res, err
+}
+
+func setContent(d *store.Draft, c Content) {
+	d.To, d.Cc, d.Bcc = c.To, c.Cc, c.Bcc
+	d.Subject, d.BodyMarkdown, d.BodyText, d.BodyHTML = c.Subject, c.BodyMarkdown, c.BodyText, c.BodyHTML
+	d.HeadersJSON = c.HeadersJSON
+	if d.HeadersJSON == "" {
+		d.HeadersJSON = "{}"
+	}
+	d.Attachments = c.Attachments
+}
+
+// ContentOf liefert den veränderlichen Inhalt eines gespeicherten Entwurfs
+// (Ausgangspunkt einer Änderung einzelner Felder).
+func ContentOf(d store.Draft) Content {
+	return Content{To: d.To, Cc: d.Cc, Bcc: d.Bcc, Subject: d.Subject, BodyMarkdown: d.BodyMarkdown, BodyText: d.BodyText,
+		BodyHTML: d.BodyHTML, HeadersJSON: d.HeadersJSON, Attachments: d.Attachments}
+}
+
+// sameContent meldet, ob c inhaltlich dem gespeicherten Entwurf gleicht:
+// gleicher preview_hash (Empfänger also ohne Rücksicht auf Reihenfolge und
+// Schreibweise der Adresse) und gleiche übrige Felder, die der Hash nicht
+// abdeckt (Markdown, Kopfzeilen, Name und Typ der Anhänge). Nur dann ist
+// eine Änderung keine Änderung.
+func sameContent(d store.Draft, c Content) bool {
+	n := d
+	setContent(&n, c)
+	return PreviewHash(HashOf(d)) == PreviewHash(HashOf(n)) && extrasKey(d) == extrasKey(n)
+}
+
+func extrasKey(d store.Draft) string {
+	var headers any
+	_ = json.Unmarshal([]byte(d.HeadersJSON), &headers)
+	atts := append([]store.DraftAttachment{}, d.Attachments...)
+	sort.Slice(atts, func(i, j int) bool {
+		if atts[i].SHA256 != atts[j].SHA256 {
+			return atts[i].SHA256 < atts[j].SHA256
+		}
+		return atts[i].Filename < atts[j].Filename
+	})
+	b, _ := json.Marshal([]any{d.BodyMarkdown, headers, atts})
+	return string(b)
+}
+
+// Update ersetzt den Inhalt eines Entwurfs. Ändert sich nichts, bleibt
+// alles, wie es ist (auch ready). Sonst: Zustand draft (aus
+// pending_approval und ready mit Freigabe superseded), Hook-Ergebnis
+// gelöscht, neuer preview_hash, Serverkopie wieder pending (Push nach
+// Änderung, S2.5). Abgeschlossen: draft_closed; vom Menschen im Client
+// übernommen (E6): draft_taken_over.
+func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, error) {
+	if err := Validate(c); err != nil {
+		return Result{}, err
+	}
+	now := s.now()
+	var res Result
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		if from.Closed() {
+			_, err := Next(from, EvUpdate)
+			return err
+		}
+		if d.RemoteState == RemoteTakenOver {
+			return denied(ReasonDraftTakenOver, "draft %d was taken over in the mail client; change it there", d.ID)
+		}
+		res.Draft, res.From, res.To = d, from, from
+		if sameContent(d, c) {
+			return nil
+		}
+		t, err := Next(from, EvUpdate)
+		if err != nil {
+			return err
+		}
+		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
+			return err
+		}
+		setContent(&d, c)
+		d.Status, d.HookResult, d.UpdatedAt = string(t.To), "", now
+		d.PreviewHash = PreviewHash(HashOf(d))
+		if d.RemoteState == RemotePushed || d.RemoteState == RemoteMissing {
+			d.RemoteState = RemotePending
+		}
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.To, res.Changed = d, t.To, true
+		return nil
+	})
+	return res, err
+}
+
+// RequestReady legt den Entwurf zur Freigabe vor. hook ist das Ergebnis des
+// Prüf-Hooks (S2.4; ohne Hook "pass"). Besteht er nicht, bleibt der
+// Entwurf draft, nur hook_result wird gesetzt (kein Fehler: Result.To ist
+// draft). Sonst entsteht eine Freigabe (pending, gültig bis jetzt +
+// approval_ttl) mit dem preview_hash des Entwurfs und einer Beschreibung
+// ohne Mailinhalt, und der Entwurf wird pending_approval.
+func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook string) (Result, error) {
+	switch hook {
+	case HookPass, HookFail, HookTimeout, HookError:
+	default:
+		return Result{}, fmt.Errorf("drafts: unknown hook result %q", hook)
+	}
+	now := s.now()
+	var res Result
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		t, err := Next(from, EvRequestReady)
+		if err != nil {
+			return err
+		}
+		res.From = from
+		d.HookResult, d.UpdatedAt = hook, now
+		if hook != HookPass {
+			if err := x.UpdateDraft(d); err != nil {
+				return err
+			}
+			res.Draft, res.To = d, from
+			return nil
+		}
+		acc, err := x.Account(d.AccountID)
+		if err != nil {
+			return err
+		}
+		a := store.Approval{SubjectType: "draft", SubjectID: d.ID, Description: describe(acc.Name, d), RequestedBy: requestedBy,
+			RequestedAt: now, PreviewHash: d.PreviewHash, ExpiresAt: now.Add(s.ttl()), Decision: DecisionPending}
+		if a.ID, err = x.InsertApproval(a); err != nil {
+			return err
+		}
+		d.Status, d.ApprovalID = string(t.To), a.ID
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.To, res.Approval = d, t.To, &a
+		return nil
+	})
+	return res, err
+}
+
+// describe ist die Beschreibung einer Freigabe: Kontoname, Art, Zahl der
+// Empfänger und Anhänge, Draft-ID; nie Betreff, Adressen oder Text.
+func describe(account string, d store.Draft) string {
+	return fmt.Sprintf("draft %d (%s) in account %s: %d recipients, %d attachments", d.ID, d.Kind, account,
+		len(d.To)+len(d.Cc)+len(d.Bcc), len(d.Attachments))
+}
+
+// Approve gibt eine Freigabe frei (nur Mensch, ab S2.3 HumanOnly). Der
+// Entwurf muss pending_approval sein und denselben preview_hash haben wie
+// die Freigabe; sonst approval_stale. Eine abgelaufene Freigabe fällt dabei
+// zurück (approval_expired, Systemereignis im Audit). Danach ist der
+// Entwurf ready, die Freigabe approved und gilt bis jetzt + approval_ttl.
+func (s *Service) Approve(ctx context.Context, approvalID int64, decidedBy string) (Result, error) {
+	return s.decide(ctx, approvalID, EvApprove, decidedBy, "")
+}
+
+// Reject lehnt eine offene Freigabe ab (nur Mensch); der Entwurf wird draft.
+// reason ist der Grund des Menschen; er steht nur in approvals.reason.
+func (s *Service) Reject(ctx context.Context, approvalID int64, decidedBy, reason string) (Result, error) {
+	return s.decide(ctx, approvalID, EvReject, decidedBy, reason)
+}
+
+func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decidedBy, reason string) (Result, error) {
+	now := s.now()
+	var res Result
+	var deny error // Ablehnung nach einem Übergang, der trotzdem gespeichert wird
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		a, err := x.Approval(approvalID)
+		if err != nil {
+			return err
+		}
+		if a.SubjectType != "draft" {
+			return denied(ReasonInvalidTransition, "approval %d is not for a draft", a.ID)
+		}
+		d, err := x.Draft(a.SubjectID)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		res.Draft, res.From, res.To, res.Approval = d, from, from, &a
+		if from.Closed() {
+			_, err := Next(from, ev)
+			return err
+		}
+		switch a.Decision {
+		case DecisionPending:
+		case DecisionSuperseded, DecisionExpired:
+			return denied(ReasonApprovalStale, "approval %d is %s; the draft changed or the approval ran out, request a new one", a.ID, a.Decision)
+		default:
+			return denied(ReasonApprovalDecided, "approval %d was already %s", a.ID, a.Decision)
+		}
+		if d.ApprovalID != a.ID || d.PreviewHash != a.PreviewHash || from != StatusPendingApproval {
+			return denied(ReasonApprovalStale, "draft %d no longer matches approval %d; request a new one", d.ID, a.ID)
+		}
+		if !a.ExpiresAt.IsZero() && !now.Before(a.ExpiresAt) {
+			if err := s.expireOne(x, d.ID, now); err != nil {
+				return err
+			}
+			if res.Draft, err = x.Draft(d.ID); err != nil {
+				return err
+			}
+			if na, err := x.Approval(a.ID); err == nil {
+				res.Approval = &na
+			}
+			res.To = Status(res.Draft.Status)
+			deny = denied(ReasonApprovalExpired, "approval %d ran out at %s", a.ID, a.ExpiresAt.Format(time.RFC3339))
+			return nil
+		}
+		t, err := Next(from, ev)
+		if err != nil {
+			return err
+		}
+		if res.Approval, err = applyApproval(x, &d, t.Approval, now, decidedBy, reason); err != nil {
+			return err
+		}
+		if t.Approval == ApprovalApprove {
+			res.Approval.ExpiresAt = now.Add(s.ttl())
+			if err := x.UpdateApproval(*res.Approval); err != nil {
+				return err
+			}
+		}
+		d.Status, d.UpdatedAt = string(t.To), now
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.To = d, t.To
+		return nil
+	})
+	if err == nil && deny != nil {
+		return res, deny
+	}
+	return res, err
+}
+
+// applyApproval wendet die Wirkung eines Übergangs auf die Freigabe des
+// Entwurfs an (nicht bei ApprovalCreate; das macht RequestReady). Liefert
+// die geänderte Freigabe oder nil.
+func applyApproval(x *store.DraftTx, d *store.Draft, eff ApprovalEffect, now time.Time, by, reason string) (*store.Approval, error) {
+	if eff == ApprovalNone || eff == ApprovalCreate || d.ApprovalID == 0 {
+		return nil, nil
+	}
+	a, err := x.Approval(d.ApprovalID)
+	if err != nil {
+		return nil, err
+	}
+	open := a.Decision == DecisionPending
+	live := open || a.Decision == DecisionApproved
+	switch eff {
+	case ApprovalApprove:
+		if !open {
+			return nil, denied(ReasonApprovalStale, "approval %d is %s", a.ID, a.Decision)
+		}
+		a.Decision, a.DecidedBy, a.DecidedAt = DecisionApproved, by, now
+	case ApprovalReject:
+		if !open {
+			return nil, denied(ReasonApprovalStale, "approval %d is %s", a.ID, a.Decision)
+		}
+		a.Decision, a.DecidedBy, a.DecidedAt, a.Reason = DecisionRejected, by, now, reason
+	case ApprovalSupersede:
+		if !live {
+			return nil, nil
+		}
+		a.Decision = DecisionSuperseded
+	case ApprovalExpire:
+		if !live {
+			return nil, nil
+		}
+		a.Decision = DecisionExpired
+	case ApprovalCloseOpen:
+		if !open {
+			return nil, nil
+		}
+		a.Decision = DecisionSuperseded
+	default:
+		return nil, fmt.Errorf("drafts: unknown approval effect %q", eff)
+	}
+	if err := x.UpdateApproval(a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// Abandon verwirft einen Entwurf (nur Mensch): abandoned, closed_at gesetzt,
+// offene oder erteilte Freigabe superseded. Die Serverkopie bleibt (kein
+// Expunge im MVP).
+func (s *Service) Abandon(ctx context.Context, id int64) (Result, error) {
+	return s.close(ctx, id, EvAbandon, 0, "")
+}
+
+// MarkSent erklärt einen Entwurf für gesendet (nur Mensch, `draft
+// mark-sent`): sent_by_human, closed_at gesetzt, eine noch offene Freigabe
+// superseded (eine erteilte bleibt approved).
+func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
+	return s.close(ctx, id, EvMarkSent, 0, "")
+}
+
+// SentDetected schließt einen Entwurf, dessen Versand der Sync erkannt hat
+// (E5, S2.6): sent_by_human mit der gesendeten Nachricht; reason ist
+// message_id oder fallback. Der Audit-Eintrag (Akteur system) steht in
+// derselben Transaktion.
+func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason string) (Result, error) {
+	if reason != "message_id" && reason != "fallback" {
+		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
+	}
+	return s.close(ctx, id, EvSentDetected, sentMessageID, reason)
+}
+
+func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason string) (Result, error) {
+	now := s.now()
+	var res Result
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		t, err := Next(from, ev)
+		if err != nil {
+			return err
+		}
+		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
+			return err
+		}
+		d.Status, d.UpdatedAt, d.ClosedAt = string(t.To), now, now
+		if sentMessageID > 0 {
+			d.SentMessageID = sentMessageID
+		}
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		if ev == EvSentDetected {
+			if _, err := x.AppendAudit(s.systemEvent(now, "drafts.sent_detected", reason, d, from, t.To)); err != nil {
+				return err
+			}
+		}
+		res.Draft, res.From, res.To = d, from, t.To
+		return nil
+	})
+	return res, err
+}
+
+// systemEvent baut den Audit-Eintrag eines Systemereignisses: Akteur
+// system, nur IDs und Zustände, nie Inhalt.
+func (s *Service) systemEvent(now time.Time, op, reason string, d store.Draft, from, to Status) audit.Event {
+	params := map[string]any{"draft_id": d.ID, "from": from, "to": to}
+	targets := []string{"draft:" + strconv.FormatInt(d.ID, 10)}
+	if d.ApprovalID > 0 {
+		params["approval_id"] = d.ApprovalID
+		targets = append(targets, "approval:"+strconv.FormatInt(d.ApprovalID, 10))
+	}
+	b, _ := json.Marshal(params)
+	return audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: op, ParamsRedacted: b,
+		Targets: targets, Result: audit.ResultOK, Reason: reason, PolicyVersion: s.PolicyVersion}
+}
+
+// ExpireApprovals setzt alle Entwürfe (accountID 0 = aller Konten), deren
+// offene oder erteilte Freigabe abgelaufen ist, nach draft zurück und
+// markiert die Freigabe expired; je Entwurf ein Audit-Eintrag (Akteur
+// system, Grund approval_expired) in derselben Transaktion. Liefert die
+// IDs der zurückgesetzten Entwürfe. Aufgerufen beim Lesen (Get, List) und
+// ab S2.6 beim Sync.
+func (s *Service) ExpireApprovals(ctx context.Context, accountID int64) ([]int64, error) {
+	now := s.now()
+	var out []int64
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		ids, err := x.ExpiredDraftIDs(now, accountID)
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := s.expireOne(x, id, now); err != nil {
+				return err
+			}
+		}
+		out = ids
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) expireOne(x *store.DraftTx, id int64, now time.Time) error {
+	d, err := x.Draft(id)
+	if err != nil {
+		return err
+	}
+	from := Status(d.Status)
+	t, err := Next(from, EvExpire)
+	if err != nil {
+		return err
+	}
+	if _, err := applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
+		return err
+	}
+	d.Status, d.UpdatedAt = string(t.To), now
+	if err := x.UpdateDraft(d); err != nil {
+		return err
+	}
+	_, err = x.AppendAudit(s.systemEvent(now, "drafts.expire", ReasonApprovalExpired, d, from, t.To))
+	return err
+}
+
+// Get liest einen Entwurf; eine abgelaufene Freigabe fällt vorher zurück
+// (E7: „beim nächsten Lesen").
+func (s *Service) Get(ctx context.Context, id int64) (store.Draft, error) {
+	d, err := s.Store.Draft(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	if d.Status != string(StatusPendingApproval) && d.Status != string(StatusReady) {
+		return d, nil
+	}
+	n, err := s.ExpireApprovals(ctx, d.AccountID)
+	if err != nil || len(n) == 0 {
+		return d, err
+	}
+	return s.Store.Draft(ctx, id)
+}
+
+// List liest Entwürfe nach Filter; abgelaufene Freigaben fallen vorher zurück.
+func (s *Service) List(ctx context.Context, f store.DraftFilter) ([]store.Draft, error) {
+	if _, err := s.ExpireApprovals(ctx, f.AccountID); err != nil {
+		return nil, err
+	}
+	return s.Store.ListDrafts(ctx, f)
+}
+
+// OwnAddresses liefert die eigenen Adressen eines Kontos (E9): Kontoadresse,
+// Anmeldename (wenn Adresse), Identitäten samt Reply-To und Aliasse; klein,
+// ohne Dubletten. „Allen antworten" lässt sie weg (S2.2), die
+// Versanderkennung nutzt sie (S2.6).
+func (s *Service) OwnAddresses(ctx context.Context, accountID int64) ([]string, error) {
+	return s.Store.OwnAddresses(ctx, accountID)
+}
+
+// IsNotFound meldet, ob err ein unbekannter Entwurf, eine unbekannte
+// Freigabe oder Identität ist.
+func IsNotFound(err error) bool {
+	return errors.Is(err, store.ErrDraftNotFound) || errors.Is(err, store.ErrApprovalNotFound) ||
+		errors.Is(err, store.ErrIdentityNotFound) || errors.Is(err, store.ErrAccountNotFound)
+}

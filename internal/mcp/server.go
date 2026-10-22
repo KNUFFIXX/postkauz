@@ -25,6 +25,9 @@ type Options struct {
 	Key     policy.Key
 	Version string
 	Log     *slog.Logger
+	// MaxChars: Zeichenbudget je Text aus der Policy-Datei ([agent_defaults]
+	// max_chars, A02 E8); 0 = ops.DefaultMaxChars.
+	MaxChars int
 }
 
 // Instructions erhält der Client beim Verbindungsaufbau.
@@ -45,8 +48,12 @@ func New(o Options) (*sdk.Server, error) {
 	}
 	s := sdk.NewServer(&sdk.Implementation{Name: brand.Name, Title: "PostKauz mail archive (read-only)", Version: o.Version},
 		&sdk.ServerOptions{Instructions: Instructions, Capabilities: &sdk.ServerCapabilities{}})
+	if o.MaxChars <= 0 {
+		o.MaxChars = ops.DefaultMaxChars
+	}
 	h := &handler{o: o}
 	for _, b := range tools {
+		b = b.withMaxChars(o.MaxChars)
 		op, err := o.Executor.Registry.Get(b.op)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: tool %s: %w", b.tool, err)

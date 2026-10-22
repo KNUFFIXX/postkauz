@@ -50,11 +50,18 @@ func TestCheckHumanOnly(t *testing.T) {
 	for r := range Roles {
 		roles = append(roles, r)
 	}
+	// Jede Rolle mit Schlüssel, jede Risikostufe (S2.1: drafts.approve u. a.
+	// sind R1, künftige HumanOnly-Operationen können höher liegen), mit und
+	// ohne Trockenlauf, auch mit gesetztem Trockenlauf-Standard.
 	for _, role := range roles {
-		for _, dry := range []bool{false, true} {
-			k := Key{ID: "key:" + role, Scopes: Roles[role]}
-			if got := Check(k, op, dry); got.Outcome != Deny || got.Reason != "human_only" {
-				t.Errorf("role %s dry=%v: %+v, want deny human_only", role, dry, got)
+		for _, risk := range []Risk{R0, R1, R2, R3} {
+			for _, dry := range []bool{false, true} {
+				r := op
+				r.Risk = risk
+				k := Key{ID: "key:" + role, Scopes: Roles[role], DryRunDefault: dry}
+				if got := Check(k, r, dry); got.Outcome != Deny || got.Reason != "human_only" {
+					t.Errorf("role %s risk %s dry=%v: %+v, want deny human_only", role, risk, dry, got)
+				}
 			}
 		}
 	}

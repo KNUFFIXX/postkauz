@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -68,6 +69,8 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "create a key with: key create --name <name> --role reader"}
 	case errors.Is(err, errAuditMismatch), errors.Is(err, ops.ErrAuditExportChanged):
 		return ExitError, ErrorInfo{Code: "mismatch", Message: err.Error(), Hint: "the audit log or its export was changed; see audit verify"}
+	case errors.Is(err, policy.ErrInvalidFile):
+		return ExitError, ErrorInfo{Code: "policy_invalid", Message: err.Error(), Hint: "fix the policy file (see docs/sicherheit.md, section 5) or check it with: doctor"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, secrets.ErrUnavailable):

@@ -109,11 +109,18 @@ type cliSample struct {
 	captureOnly bool
 }
 
+// sampleStdin: Eingabe auf stdin je Beispiel (Argumente mit Leerzeichen
+// verbunden), etwa das Passwort bei --password-stdin.
+var sampleStdin = map[string]string{
+	"account set demo --password-stdin": canary + "\n",
+}
+
 var cliSamples = []cliSample{
 	{"accounts.list", []string{"accounts", "list"}, false},
 	{"accounts.add", []string{"account", "add", "zwei", "--imap", "127.0.0.1:1", "--user", "u@example.invalid", "--email", "z@example.invalid",
 		"--tls", "none", "--auth", "app_password", "--insecure-test-server", "--password-from-env", "--dry-run"}, false},
 	{"accounts.set", []string{"account", "set", "demo", "--aliases", "Alias@example.org, zweit@example.net"}, false},
+	{"accounts.set", []string{"account", "set", "demo", "--password-stdin"}, false},
 	{"accounts.test", []string{"account", "test", "demo"}, false},
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
@@ -227,7 +234,7 @@ func TestCLIContractRegistry(t *testing.T) {
 			}
 			return nil
 		}
-		code, out, errs := run(t, args...)
+		code, out, errs := runIn(t, sampleStdin[strings.Join(s.args, " ")], args...)
 		observeRequest = nil
 		if len(reqs) != 1 || reqs[0].Operation != s.op {
 			t.Fatalf("%v: requests %+v, want one %s", args, reqs, s.op)
@@ -349,6 +356,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{secrets.ErrUnavailable, ExitError, "secret_store_unavailable"},
 		{ops.ErrNoSecret, ExitError, "no_secret"},
 		{store.ErrSchemaTooNew, ExitError, "schema_too_new"},
+		{fmt.Errorf("%w: x", policy.ErrInvalidFile), ExitError, "policy_invalid"},
 		{ops.ErrSyncRunning, ExitError, "sync_running"},
 		{errAuditMismatch, ExitError, "mismatch"},
 		{errors.New("boom"), ExitError, "error"},

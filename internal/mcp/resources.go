@@ -116,7 +116,7 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if !ok {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "messages.get", map[string]any{"id": id, "account": u.Host, "strip_quotes": true, "max_chars": ops.DefaultMaxChars}
+		op, in = "messages.get", map[string]any{"id": id, "account": u.Host, "strip_quotes": true, "max_chars": h.o.MaxChars}
 	case len(seg) == 2 && seg[0] == "thread":
 		id, ok := positive(seg[1])
 		if !ok {
@@ -130,7 +130,7 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if !ok1 || !ok2 {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "attachments.text", map[string]any{"id": att, "message": msg, "account": u.Host, "max_chars": ops.DefaultMaxChars}
+		op, in = "attachments.text", map[string]any{"id": att, "message": msg, "account": u.Host, "max_chars": h.o.MaxChars}
 	default:
 		return nil, sdk.ResourceNotFoundError(uri)
 	}
