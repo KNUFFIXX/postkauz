@@ -4,6 +4,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+## [0.1.0-rc2] – 2026-10-22
+
+**Erstes veröffentlichtes Release: Schnitt 1, abgenommen (D0–D3), plus S2.0 und A7.** Entscheid 35 (21.10.2026): kein Tag `v0.1.0-rc1` auf den alten Stand; dieses Release ersetzt ihn. Gebaut mit Go 1.27.3 (`make release VERSION=0.1.0-rc2`, `dist/`, `SHA256SUMS`, `VERSION`). Datenbank-Schema 9; ein Bestand aus 0.1.0-rc1 (Schema 7) wird beim ersten Kommando migriert (Sicherungskopie neben der Datenbank). Weiter draft-only, kein Versand (ADR-002). Die Einträge unten gelten seit 0.1.0-rc1.
+
 ### Added
 
 - S2.0/A7: globale Optionen `--config <datei>` und `--data-dir <ordner>` (wie `POSTKAUZ_CONFIG`/`POSTKAUZ_DATA_DIR`, mit Vorrang; `config.LoadWith`); `--config` muss existieren und geht nicht mit `--profile`. Pfade aus Konfiguration, Umgebung und Optionen werden bereinigt (kein abschließender Trenner).
