@@ -153,3 +153,43 @@ func TestBoundariesFromContent(t *testing.T) {
 		t.Fatal("boundary does not depend on the content")
 	}
 }
+
+// S2.7 (offen aus der Gegenprüfung von S2.3): Dateinamen, die wörtlich wie
+// ein encoded-word aussehen, werden kodiert; der Empfänger liest genau den
+// Namen, den draft show zeigt. Gewöhnliche Namen bleiben unverändert.
+func TestEncodedWordLookalikeFilenames(t *testing.T) {
+	names := []string{
+		"=?utf-8?q?=E2=80=AE?=gpj.exe",
+		"Rechnung =?UTF-8?B?4oCu?= " + strings.Repeat("sehr lang ", 12) + ".pdf",
+		"a=?b.txt",
+		"Brief.txt",
+		"Grüße.txt",
+	}
+	in := baseInput(KindNew)
+	for _, n := range names {
+		in.Attachments = append(in.Attachments, Attachment{Filename: n, Data: []byte("Inhalt\n")})
+	}
+	m := mustBuild(t, in)
+	if strings.Contains(string(m.Raw), "=?utf-8?q?=E2") || strings.Contains(string(m.Raw), "=?UTF-8?B?4oCu?=") {
+		t.Fatalf("lookalike file name not encoded:\n%s", m.Raw)
+	}
+	if !strings.Contains(string(m.Raw), `filename=Brief.txt`) && !strings.Contains(string(m.Raw), `filename="Brief.txt"`) {
+		t.Fatalf("plain file name changed:\n%s", m.Raw)
+	}
+	pm, err := mimeparse.Parse(strings.NewReader(string(m.Raw)), mimeparse.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range pm.Attachments {
+		got = append(got, a.Filename)
+	}
+	if strings.Join(got, "|") != strings.Join(names, "|") {
+		t.Fatalf("file names read back as\n%q\nwant\n%q", got, names)
+	}
+	for i, a := range m.Attachments {
+		if a.Filename != names[i] {
+			t.Errorf("stored name %q, want %q", a.Filename, names[i])
+		}
+	}
+}
