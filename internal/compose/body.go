@@ -69,6 +69,23 @@ func originalText(o *Original) string {
 	return sanitize.Text(o.Text)
 }
 
+// quotedText ist originalText, gekürzt auf MaxQuoteChars (an einem
+// Zeilenende, wenn eines in der zweiten Hälfte liegt) mit Markierung und
+// Hinweis NoteQuoteTruncated (K3).
+func (b *builder) quotedText(o *Original) string {
+	t := originalText(o)
+	r := []rune(t)
+	if len(r) <= MaxQuoteChars {
+		return t
+	}
+	cut := string(r[:MaxQuoteChars])
+	if i := strings.LastIndex(cut, "\n"); i > len(cut)/2 {
+		cut = cut[:i]
+	}
+	b.note(NoteQuoteTruncated)
+	return cut + "\n\n" + QuoteTruncatedMarker
+}
+
 func formatAddr(a Address) string {
 	if a.Name == "" {
 		return a.Address
@@ -151,7 +168,7 @@ func (b *builder) body() error {
 	switch o := in.Original; {
 	case (in.Kind == KindReply || in.Kind == KindReplyAll) && in.Quote:
 		doc.WriteString("<div><br></div>\n<div>" + html.EscapeString(b.quoteLine(o)) + "</div>\n")
-		if t := originalText(o); strings.TrimSpace(t) != "" {
+		if t := b.quotedText(o); strings.TrimSpace(t) != "" {
 			doc.WriteString("<blockquote>" + textToHTML(t) + "</blockquote>\n")
 		}
 	case in.Kind == KindForward:
@@ -167,7 +184,7 @@ func (b *builder) body() error {
 		add("To", formatAddrs(o.To))
 		add("Cc", formatAddrs(o.Cc))
 		doc.WriteString("<div><br></div>\n<div>" + textToHTML(strings.Join(lines, "\n")) + "</div>\n")
-		if t := originalText(o); strings.TrimSpace(t) != "" {
+		if t := b.quotedText(o); strings.TrimSpace(t) != "" {
 			doc.WriteString("<div><br></div>\n<div>" + textToHTML(t) + "</div>\n")
 		}
 	}

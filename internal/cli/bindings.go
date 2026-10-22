@@ -191,7 +191,10 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 		a.explain(cmd, op, key, res, err)
 	}
 	if err != nil {
-		a.log.Warn("operation failed", "op", b.op, "error", err.Error())
+		// Nur Code und Grund, nie die Meldung: Sie kann Eingaben des
+		// Aufrufers enthalten (Gegenprüfung S2.3, B1).
+		code, reason := errLogInfo(err)
+		a.log.Warn("operation failed", "op", b.op, "code", code, "reason", reason)
 		return err
 	}
 	a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)

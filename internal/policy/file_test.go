@@ -98,7 +98,15 @@ func TestLoadFileRejects(t *testing.T) {
 		"delete all":             {"[delete]\nagent_may = \"expunge\"\n", "delete.agent_may"},
 		"move anywhere":          {"[move]\nagent_may = \"anywhere\"\n", "move.agent_may"},
 		"threshold negative":     {"[move]\nbulk_confirm_threshold = -1\n", "bulk_confirm_threshold"},
-		"max_chars too small":    {"[agent_defaults]\nmax_chars = 50\n", "agent_defaults.max_chars 50"},
+		"max_chars too small":    {"[agent_defaults]\nmax_chars = 50\n", "agent_defaults.max_chars is out of range"},
+		// Gegenprüfung S2.3, K8: 0 und "" sind kein stiller Standard, und
+		// Meldungen nennen nie den Wert.
+		"max_chars zero":         {"[agent_defaults]\nmax_chars = 0\n", "agent_defaults.max_chars is out of range"},
+		"threshold zero":         {"[move]\nbulk_confirm_threshold = 0\n", "move.bulk_confirm_threshold is out of range"},
+		"hook timeout zero":      {"[draft]\ncheck_hook_timeout = \"0s\"\n", "draft.check_hook_timeout is out of range"},
+		"delete empty":           {"[delete]\nagent_may = \"\"\n", "delete.agent_may is invalid"},
+		"delete with value":      {"[delete]\nagent_may = \"GEHEIMWERT\"\n", "delete.agent_may is invalid"},
+		"move with value":        {"[move]\nagent_may = \"GEHEIMWERT\"\n", "move.agent_may is invalid"},
 		"max_chars too large":    {"[agent_defaults]\nmax_chars = 2000000\n", "agent_defaults.max_chars"},
 		"max_chars not a number": {"[agent_defaults]\nmax_chars = \"GEHEIMWERT\"\n", "line 2"},
 		"syntax error":           {"[draft\ncheck_hook = []\n", "to end table name"},

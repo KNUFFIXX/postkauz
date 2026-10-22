@@ -99,7 +99,7 @@ func redactAccountRef(raw json.RawMessage) (json.RawMessage, []string) {
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return json.RawMessage(`{"invalid_input":true}`), nil
 	}
-	params, _ := redactAccountInput(raw)
+	params, _ := json.Marshal(redactFields(m))
 	var name string
 	if v, ok := m["account"]; ok && json.Unmarshal(v, &name) == nil && AccountNameRE.MatchString(name) {
 		return params, []string{"account:" + name}

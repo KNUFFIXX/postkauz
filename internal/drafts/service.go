@@ -288,14 +288,21 @@ func extrasKey(d store.Draft) string {
 // gelöscht, neuer preview_hash, Serverkopie wieder pending (Push nach
 // Änderung, S2.5). Abgeschlossen: draft_closed; vom Menschen im Client
 // übernommen (E6): draft_taken_over.
-func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, error) {
+//
+// expect ist der Fingerprint des Stands, auf dem c beruht (der Aufrufer hat
+// einzelne Felder auf ihm zusammengeführt); "" = ohne Prüfung. Hat ein
+// anderer Schreiber den Entwurf seitdem geändert, ist das draft_changed
+// (ErrDraftChanged), und nichts wird geschrieben: Der Aufrufer liest neu und
+// führt erneut zusammen, statt die fremde Änderung zu überschreiben
+// (Gegenprüfung S2.3, W4). Die Ablehnung hat den Grund draft_changed.
+func (s *Service) Update(ctx context.Context, id int64, c Content, expect string) (Result, error) {
 	if err := Validate(c); err != nil {
 		return Result{}, err
 	}
 	now := s.now()
 	var res Result
 	err := s.tx(ctx, func(x *store.DraftTx) error {
-		d, err := x.Draft(id)
+		d, err := s.draftDue(x, id, now)
 		if err != nil {
 			return err
 		}
@@ -306,6 +313,9 @@ func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, erro
 		}
 		if d.RemoteState == RemoteTakenOver {
 			return denied(ReasonDraftTakenOver, "draft %d was taken over in the mail client; change it there", d.ID)
+		}
+		if expect != "" && Fingerprint(d) != expect {
+			return changed(d.ID)
 		}
 		res.Draft, res.From, res.To = d, from, from
 		if sameContent(d, c) {
@@ -340,13 +350,57 @@ func (s *Service) Update(ctx context.Context, id int64, c Content) (Result, erro
 	return res, err
 }
 
+// draftDue liest den Entwurf in der Transaktion; ist seine Freigabe
+// abgelaufen, fällt er zuerst zurück (wie beim Lesen, E7), in derselben
+// Transaktion. So sieht auch ein Trockenlauf, der den Rückfall nicht
+// speichert, den Stand danach (K8).
+func (s *Service) draftDue(x *store.DraftTx, id int64, now time.Time) (store.Draft, error) {
+	d, err := x.Draft(id)
+	if err != nil || d.ApprovalID == 0 || (d.Status != string(StatusPendingApproval) && d.Status != string(StatusReady)) {
+		return d, err
+	}
+	a, err := x.Approval(d.ApprovalID)
+	if err != nil {
+		return d, err
+	}
+	if a.ExpiresAt.IsZero() || now.Before(a.ExpiresAt) || (a.Decision != DecisionPending && a.Decision != DecisionApproved) {
+		return d, nil
+	}
+	if err := s.expireOne(x, id, now); err != nil {
+		return d, err
+	}
+	return x.Draft(id)
+}
+
+// changed ist die Ablehnung draft_changed (ReasonOf(err) == ReasonDraftChanged).
+func changed(id int64) error {
+	return denied(ReasonDraftChanged, "draft %d was changed by another writer in the meantime; read it again", id)
+}
+
+// Checked ist, was ein Aufrufer vor der Vorlage geprüft hat: der Stand
+// (Fingerprint) und die daraus gebaute Nachricht (compose.MessageHash).
+type Checked struct {
+	// Fingerprint des Entwurfs, den Hook und Nachrichtenbau gesehen haben
+	// ("" = ohne Prüfung; nur Tests und Werkzeuge ohne Hook).
+	Fingerprint string
+	// MessageHash der gebauten Nachricht; die Freigabe bindet ihn (W1).
+	MessageHash string
+}
+
 // RequestReady legt den Entwurf zur Freigabe vor. hook ist das Ergebnis des
 // Prüf-Hooks (S2.4; ohne Hook "pass"). Besteht er nicht, bleibt der
 // Entwurf draft, nur hook_result wird gesetzt (kein Fehler: Result.To ist
 // draft). Sonst entsteht eine Freigabe (pending, gültig bis jetzt +
-// approval_ttl) mit dem preview_hash des Entwurfs und einer Beschreibung
-// ohne Mailinhalt, und der Entwurf wird pending_approval.
-func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook string) (Result, error) {
+// approval_ttl) mit dem preview_hash des Entwurfs, dem message_hash der
+// gebauten Nachricht und einer Beschreibung ohne Mailinhalt, und der
+// Entwurf wird pending_approval.
+//
+// Hook und Nachrichtenbau laufen vor dieser Transaktion (der Hook darf 30 s
+// dauern, die Schreibsperre nicht). Hat ein anderer Schreiber den Entwurf
+// inzwischen geändert (Fingerprint weicht ab), ist das draft_changed und
+// nichts wird geschrieben: Sonst bände die Freigabe einen Stand, den weder
+// Hook noch Nachrichtenbau gesehen haben (Gegenprüfung S2.3, W2).
+func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook string, chk Checked) (Result, error) {
 	switch hook {
 	case HookPass, HookFail, HookTimeout, HookError:
 	default:
@@ -355,7 +409,7 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 	now := s.now()
 	var res Result
 	err := s.tx(ctx, func(x *store.DraftTx) error {
-		d, err := x.Draft(id)
+		d, err := s.draftDue(x, id, now)
 		if err != nil {
 			return err
 		}
@@ -363,6 +417,9 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		t, err := Next(from, EvRequestReady)
 		if err != nil {
 			return err
+		}
+		if chk.Fingerprint != "" && Fingerprint(d) != chk.Fingerprint {
+			return changed(d.ID)
 		}
 		res.From = from
 		d.HookResult, d.UpdatedAt = hook, now
@@ -378,7 +435,7 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 			return err
 		}
 		a := store.Approval{SubjectType: "draft", SubjectID: d.ID, Description: describe(acc.Name, d), RequestedBy: requestedBy,
-			RequestedAt: now, PreviewHash: d.PreviewHash, ExpiresAt: now.Add(s.ttl()), Decision: DecisionPending}
+			RequestedAt: now, PreviewHash: d.PreviewHash, ExpiresAt: now.Add(s.ttl()), Decision: DecisionPending, MessageHash: chk.MessageHash}
 		if a.ID, err = x.InsertApproval(a); err != nil {
 			return err
 		}
@@ -402,19 +459,25 @@ func describe(account string, d store.Draft) string {
 // Approve gibt eine Freigabe frei (nur Mensch, ab S2.3 HumanOnly). Der
 // Entwurf muss pending_approval sein und denselben preview_hash haben wie
 // die Freigabe; sonst approval_stale. Eine abgelaufene Freigabe fällt dabei
-// zurück (approval_expired, Systemereignis im Audit). Danach ist der
-// Entwurf ready, die Freigabe approved und gilt bis jetzt + approval_ttl.
-func (s *Service) Approve(ctx context.Context, approvalID int64, decidedBy string) (Result, error) {
-	return s.decide(ctx, approvalID, EvApprove, decidedBy, "")
+// zurück (approval_expired, Systemereignis im Audit). messageHash ist der
+// Hash der jetzt neu gebauten Nachricht (compose.MessageHash); weicht er
+// vom gespeicherten der Vorlage ab (Identität, Signatur, Reply-To, Zitat
+// oder Anhänge haben sich geändert) oder fehlt dieser (Freigabe von vor
+// Schema 12), fällt der Entwurf auf draft zurück, die Freigabe wird
+// superseded (gespeichert, auditiert) und das Ergebnis ist approval_stale
+// (Gegenprüfung S2.3, W1). Danach ist der Entwurf ready, die Freigabe
+// approved und gilt bis jetzt + approval_ttl.
+func (s *Service) Approve(ctx context.Context, approvalID int64, decidedBy, messageHash string) (Result, error) {
+	return s.decide(ctx, approvalID, EvApprove, decidedBy, "", messageHash)
 }
 
 // Reject lehnt eine offene Freigabe ab (nur Mensch); der Entwurf wird draft.
 // reason ist der Grund des Menschen; er steht nur in approvals.reason.
 func (s *Service) Reject(ctx context.Context, approvalID int64, decidedBy, reason string) (Result, error) {
-	return s.decide(ctx, approvalID, EvReject, decidedBy, reason)
+	return s.decide(ctx, approvalID, EvReject, decidedBy, reason, "")
 }
 
-func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decidedBy, reason string) (Result, error) {
+func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decidedBy, reason, messageHash string) (Result, error) {
 	now := s.now()
 	var res Result
 	var deny error // Ablehnung nach einem Übergang, der trotzdem gespeichert wird
@@ -459,6 +522,25 @@ func (s *Service) decide(ctx context.Context, approvalID int64, ev Event, decide
 			res.To = Status(res.Draft.Status)
 			deny = denied(ReasonApprovalExpired, "approval %d ran out at %s", a.ID, a.ExpiresAt.Format(time.RFC3339))
 			return nil
+		}
+		if ev == EvApprove && (a.MessageHash == "" || a.MessageHash != messageHash) {
+			// Die fertige Nachricht ist nicht mehr die vorgelegte: wie eine
+			// Änderung (pending_approval → draft, Freigabe superseded).
+			t, err := Next(from, EvUpdate)
+			if err != nil {
+				return err
+			}
+			if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
+				return err
+			}
+			d.Status, d.HookResult, d.UpdatedAt = string(t.To), "", now
+			if err := x.UpdateDraft(d); err != nil {
+				return err
+			}
+			res.Draft, res.To = d, t.To
+			deny = denied(ReasonApprovalStale, "the message built from draft %d differs from the one submitted with approval %d "+
+				"(identity, signature, reply-to, quoted original or attachments changed); submit it again", d.ID, a.ID)
+			return s.record(x, now, d, from, t.To, a.ID, "")
 		}
 		t, err := Next(from, ev)
 		if err != nil {
@@ -657,7 +739,9 @@ func (s *Service) expireOne(x *store.DraftTx, id int64, now time.Time) error {
 }
 
 // Get liest einen Entwurf; eine abgelaufene Freigabe fällt vorher zurück
-// (E7: „beim nächsten Lesen").
+// (E7: „beim nächsten Lesen"). Im Trockenlauf (As mit dryRun) wird der
+// Rückfall nur berechnet, nicht gespeichert: Das Ergebnis zeigt den Stand
+// nach dem Rückfall, Datenbank und Audit bleiben unverändert (K8).
 func (s *Service) Get(ctx context.Context, id int64) (store.Draft, error) {
 	d, err := s.Store.Draft(ctx, id)
 	if err != nil {
@@ -665,6 +749,25 @@ func (s *Service) Get(ctx context.Context, id int64) (store.Draft, error) {
 	}
 	if d.Status != string(StatusPendingApproval) && d.Status != string(StatusReady) {
 		return d, nil
+	}
+	if s.dry {
+		now := s.now()
+		err := s.tx(ctx, func(x *store.DraftTx) error {
+			ids, err := x.ExpiredDraftIDs(now, d.AccountID)
+			if err != nil {
+				return err
+			}
+			for _, e := range ids {
+				if e == id {
+					if err := s.expireOne(x, id, now); err != nil {
+						return err
+					}
+				}
+			}
+			d, err = x.Draft(id)
+			return err
+		})
+		return d, err
 	}
 	n, err := s.ExpireApprovals(ctx, d.AccountID)
 	if err != nil || len(n) == 0 {

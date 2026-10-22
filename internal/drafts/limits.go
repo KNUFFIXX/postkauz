@@ -12,8 +12,17 @@ import (
 // Grenzen (A02, „Vorgaben, die mehrere Schritte betreffen"). Gezählt wird in
 // Zeichen (Unicode-Codepunkten), nicht in Bytes.
 const (
-	// MaxBodyChars gilt je für body_markdown, body_text und body_html.
+	// MaxBodyChars gilt je für die Eingabe body_markdown und body_html.
 	MaxBodyChars = 200000
+	// MaxBodyTextChars gilt für body_text, den fertigen Klartext: eigener
+	// Text, Signatur und Zitat bzw. Weiterleitung. Das Zitat kürzt der
+	// Nachrichtenbau auf compose.MaxQuoteChars; vorher galt hier die Grenze
+	// der Eingabe, und eine Antwort mit Zitat auf eine lange Mail war
+	// too_large (Gegenprüfung S2.3, K3). Die Obergrenze reicht für den
+	// ungünstigsten Fall (200.000 Zeichen eigener Text, Signatur, ein Zitat
+	// aus lauter kurzen Zeilen, dem jede Zeile ein „> " hinzufügt) und
+	// schützt nur noch vor Fehlern im Nachrichtenbau.
+	MaxBodyTextChars = 1000000
 	// MaxSubjectChars: Betreff (gefaltet wird erst beim Nachrichtenbau).
 	MaxSubjectChars = 500
 	// MaxRecipientsPerField: je To, Cc und Bcc.
@@ -49,9 +58,10 @@ func Validate(c Content) error {
 	for _, f := range []struct {
 		name string
 		v    string
-	}{{"body_markdown", c.BodyMarkdown}, {"body_text", c.BodyText}, {"body_html", c.BodyHTML}} {
-		if n := utf8.RuneCountInString(f.v); n > MaxBodyChars {
-			return denied(ReasonTooLarge, "%s has %d characters (at most %d)", f.name, n, MaxBodyChars)
+		max  int
+	}{{"body_markdown", c.BodyMarkdown, MaxBodyChars}, {"body_text", c.BodyText, MaxBodyTextChars}, {"body_html", c.BodyHTML, MaxBodyChars}} {
+		if n := utf8.RuneCountInString(f.v); n > f.max {
+			return denied(ReasonTooLarge, "%s has %d characters (at most %d)", f.name, n, f.max)
 		}
 	}
 	if n := utf8.RuneCountInString(c.Subject); n > MaxSubjectChars {

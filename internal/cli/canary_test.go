@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -160,6 +161,34 @@ func TestCanaryAllChannels(t *testing.T) {
 	c.mustRun("draft edit (closed)", ExitDenied, "", "draft", "edit", did, "--subject", c.draft+" zu", "--json")
 	c.mustRun("draft edit (closed, text)", ExitDenied, "", "draft", "edit", did, "--subject", c.draft+" zu")
 	c.mustRun("draft new (attachment outside)", ExitDenied, "", "draft", "new", "-a", "demo", "--subject", c.draft, "--attach", bodyFile, "--json")
+
+	// Gegenprüfung S2.3 (B1, K5): Grenzen und ungültige Eingaben nennen nie
+	// den Wert — weder im --json-Fehler noch in der Textmeldung noch im Log.
+	long := c.draft + strings.Repeat(" lang", 120)
+	c.mustRun("draft new (subject too long)", ExitDenied, "", "draft", "new", "-a", "demo", "--subject", long, "--json")
+	c.mustRun("draft new (subject too long, text)", ExitDenied, "", "draft", "new", "-a", "demo", "--subject", long)
+	c.mustRun("draft edit (subject too long)", ExitDenied, "", "draft", "edit", did, "--subject", long, "--json")
+	c.mustRun("reject (reason too long)", ExitDenied, "", "reject", aid, "--reason", c.draft+strings.Repeat(" Grund", 400), "--json")
+	c.mustRun("reject (reason too long, text)", ExitDenied, "", "reject", aid, "--reason", c.draft+strings.Repeat(" Grund", 400))
+	bigBody := filepath.Join(c.dir, "gross.md")
+	if err := os.WriteFile(bigBody, []byte(c.draft+strings.Repeat("x", 200001)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.mustRun("draft new (body too long)", ExitDenied, "", "draft", "new", "-a", "demo", "--body-file", bigBody, "--json")
+	c.mustRun("draft new (invalid address)", ExitDenied, "", "draft", "new", "-a", "demo", "--to", c.draft+" keine Adresse", "--json")
+	c.mustRun("draft new (invalid address, text)", ExitDenied, "", "draft", "new", "-a", "demo", "--to", c.draft+" <kaputt", "--json")
+	c.mustRun("draft list (account outside the pattern)", ExitUsage, "", "draft", "list", "--account", c.draft, "--json")
+	c.mustRun("draft new (account outside the pattern)", ExitUsage, "", "draft", "new", "-a", "Konto "+c.draft)
+	c.mustRun("draft new (attachment name)", ExitDenied, "", "draft", "new", "-a", "demo", "--attach", c.draft+".pdf", "--json")
+	c.mustRun("draft new (attachment name, text)", ExitDenied, "", "draft", "new", "-a", "demo", "--attach", "../"+c.draft+".pdf")
+	c.mustRun("draft new (body file name)", ExitUsage, "", "draft", "new", "-a", "demo", "--body-file", filepath.Join(c.dir, c.draft+".md"), "--json")
+	c.mustRun("draft new (body file name, text)", ExitUsage, "", "draft", "new", "-a", "demo", "--body-file", filepath.Join(c.dir, c.draft+".md"))
+	c.mustRun("identity add (name too long)", ExitDenied, "", "identity", "add", "-a", "demo", "--email", c.addr, "--name", long, "--json")
+	c.mustRun("identity add (invalid reply-to)", ExitDenied, "", "identity", "add", "-a", "demo", "--email", c.addr, "--reply-to", c.draft, "--json")
+	c.drafting(c.mustRun("identity add", 0, "", "identity", "add", "-a", "demo", "--email", c.addr, "--name", c.draft, "--json"), true)
+	c.drafting(c.mustRun("draft new (canary address)", 0, "", "draft", "new", "-a", "demo", "--to", c.addr, "--cc", c.draft+" <"+c.addr+">",
+		"--identity", c.addr, "--subject", "Kanarienadresse", "--json"), true)
+	c.mustRun("draft new (unknown identity)", ExitUsage, "", "draft", "new", "-a", "demo", "--identity", "x"+c.addr, "--json")
 	if r := c.mustRun("policy show (human only)", 0, "", "policy", "show", "--key", "agent"); !strings.Contains(r.stdout, "drafts.approve: human_only") {
 		t.Errorf("policy show --key: no human_only list:\n%s", r.stdout)
 	}
@@ -264,6 +293,7 @@ type canaryEnv struct {
 	env                  []string
 	pw, pwBad, mail, key string
 	draft                string
+	addr                 string // Kanarien-Adresse (klein geschrieben, aus draft)
 	wrongKey             string
 	runs                 []*canaryRun
 	mcpOut               []string // Texte aus MCP-Ergebnissen mit Mailinhalt
@@ -275,6 +305,7 @@ func newCanaryEnv(t *testing.T) *canaryEnv {
 	c := &canaryEnv{t: t, dir: dir, dataDir: filepath.Join(dir, "data"), exportDir: filepath.Join(dir, "zweiter-ort"),
 		pw: "KanarienPasswort-" + randHex(t, 8), pwBad: "FalschesKanarienPasswort-" + randHex(t, 8),
 		mail: "KANARIEMAILTEXT" + strings.ToUpper(randHex(t, 6)), draft: "KANARIEENTWURF" + strings.ToUpper(randHex(t, 6)), wrongKey: ops.KeyPrefix + strings.Repeat("Q", 43)}
+	c.addr = strings.ToLower(c.draft) + "@example.org"
 	c.bin = buildProgram(t, dir)
 	cfg := filepath.Join(dir, "config.toml")
 	// TOML-Literal (einfache Anführungszeichen): Backslashes unter Windows.
@@ -391,8 +422,36 @@ func (c *canaryEnv) leaks(s string, mailOK, keyOK bool, draftOK ...bool) []strin
 	if !mailOK && strings.Contains(s, c.mail) {
 		out = append(out, "mail text")
 	}
-	if (len(draftOK) == 0 || !draftOK[0]) && strings.Contains(s, c.draft) {
-		out = append(out, "draft content")
+	if len(draftOK) == 0 || !draftOK[0] {
+		for _, v := range canaryForms(c.draft) {
+			if strings.Contains(s, v) {
+				out = append(out, "draft content")
+				break
+			}
+		}
+	}
+	return out
+}
+
+// canaryForms liefert die Formen, in denen ein Kanarienwert durchsickern
+// kann (K5): wörtlich, klein geschrieben (Adressen) und Base64 in allen
+// drei Ausrichtungen (je ohne die Randzeichen, die von den Nachbarbytes
+// abhängen), auch URL-sicher.
+func canaryForms(v string) []string {
+	out := []string{v, strings.ToLower(v)}
+	for _, w := range []string{v, strings.ToLower(v)} {
+		for pad := range 3 {
+			src := strings.Repeat("\x00", pad) + w
+			for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+				e := enc.EncodeToString([]byte(src))
+				start := (pad*4 + 2) / 3 // erste Stelle, die nur vom Kanarienwert abhängt
+				start = (start + 3) / 4 * 4
+				end := len(e) - 4
+				if end-start >= 12 {
+					out = append(out, e[start:end])
+				}
+			}
+		}
 	}
 	return out
 }

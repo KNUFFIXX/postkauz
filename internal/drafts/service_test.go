@@ -104,16 +104,16 @@ func (e *env) reach(s Status) store.Draft {
 	switch s {
 	case StatusDraft:
 	case StatusPendingApproval:
-		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass))
+		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash}))
 	case StatusReady:
-		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass))
-		step(e.svc.Approve(ctx, d.ApprovalID, "Demo Operator"))
+		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash}))
+		step(e.svc.Approve(ctx, d.ApprovalID, "Demo Operator", testMessageHash))
 	case StatusSentByHuman:
 		// Über pending_approval, damit eine (danach ersetzte) Freigabe besteht.
-		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass))
+		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash}))
 		step(e.svc.MarkSent(ctx, d.ID))
 	case StatusAbandoned:
-		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass))
+		step(e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash}))
 		step(e.svc.Abandon(ctx, d.ID))
 	}
 	if d.Status != string(s) {
@@ -128,11 +128,11 @@ func (e *env) fire(d store.Draft, ev Event) (Result, error) {
 	ctx := context.Background()
 	switch ev {
 	case EvUpdate:
-		return e.svc.Update(ctx, d.ID, content(canarySubject+" geändert"))
+		return e.svc.Update(ctx, d.ID, content(canarySubject+" geändert"), "")
 	case EvRequestReady:
-		return e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass)
+		return e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash})
 	case EvApprove:
-		return e.svc.Approve(ctx, d.ApprovalID, "Demo Operator")
+		return e.svc.Approve(ctx, d.ApprovalID, "Demo Operator", testMessageHash)
 	case EvReject:
 		return e.svc.Reject(ctx, d.ApprovalID, "Demo Operator", "Ton zu scharf")
 	case EvAbandon:
@@ -252,26 +252,26 @@ func TestUpdateAfterApprovalSupersedes(t *testing.T) {
 	c := content(canarySubject)
 	c.To = []store.Addr{c.To[1], c.To[0]}
 	c.To[1].Address = strings.ToUpper(c.To[1].Address)
-	r, err := e.svc.Update(ctx, d.ID, c)
+	r, err := e.svc.Update(ctx, d.ID, c, "")
 	if err != nil || r.Changed || r.Draft.Status != string(StatusReady) || r.Draft.PreviewHash != hash {
 		t.Fatalf("reordered recipients: %+v, %v", r, err)
 	}
-	r, err = e.svc.Update(ctx, d.ID, content(canarySubject+"!"))
+	r, err = e.svc.Update(ctx, d.ID, content(canarySubject+"!"), "")
 	if err != nil || !r.Changed || r.To != StatusDraft || r.Draft.PreviewHash == hash || r.Draft.HookResult != "" {
 		t.Fatalf("update after approval: %+v, %v", r, err)
 	}
 	if a, _ := e.st.Approval(ctx, d.ApprovalID); a.Decision != DecisionSuperseded {
 		t.Fatalf("approval = %s, want superseded", a.Decision)
 	}
-	if _, err := e.svc.Approve(ctx, d.ApprovalID, "Demo Operator"); ReasonOf(err) != ReasonApprovalStale {
+	if _, err := e.svc.Approve(ctx, d.ApprovalID, "Demo Operator", testMessageHash); ReasonOf(err) != ReasonApprovalStale {
 		t.Fatalf("approve old approval: %v, want approval_stale", err)
 	}
 	// Neu vorlegen und freigeben geht.
-	r, err = e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass)
+	r, err = e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash})
 	if err != nil || r.Approval == nil || r.Approval.ID == d.ApprovalID || r.Approval.PreviewHash != r.Draft.PreviewHash {
 		t.Fatalf("request again: %+v, %v", r, err)
 	}
-	if r, err := e.svc.Approve(ctx, r.Approval.ID, "Demo Operator"); err != nil || r.To != StatusReady ||
+	if r, err := e.svc.Approve(ctx, r.Approval.ID, "Demo Operator", testMessageHash); err != nil || r.To != StatusReady ||
 		r.Approval.DecidedBy != "Demo Operator" || !r.Approval.ExpiresAt.Equal(e.now.Add(DefaultApprovalTTL)) {
 		t.Fatalf("approve new: %+v, %v", r, err)
 	}
@@ -283,12 +283,12 @@ func TestRequestReadyHookFailure(t *testing.T) {
 	e := newEnv(t)
 	d := e.create()
 	for _, h := range []string{HookFail, HookTimeout, HookError} {
-		r, err := e.svc.RequestReady(ctx, d.ID, "key:agent", h)
+		r, err := e.svc.RequestReady(ctx, d.ID, "key:agent", h, Checked{MessageHash: testMessageHash})
 		if err != nil || r.To != StatusDraft || r.Approval != nil || r.Draft.HookResult != h || r.Draft.ApprovalID != 0 {
 			t.Fatalf("hook %s: %+v, %v", h, r, err)
 		}
 	}
-	if _, err := e.svc.RequestReady(ctx, d.ID, "key:agent", "maybe"); err == nil {
+	if _, err := e.svc.RequestReady(ctx, d.ID, "key:agent", "maybe", Checked{MessageHash: testMessageHash}); err == nil {
 		t.Fatal("unknown hook result must fail")
 	}
 }
@@ -321,7 +321,7 @@ func TestApprovalExpiry(t *testing.T) {
 	if err != nil || len(list) != 0 {
 		t.Fatalf("pending after expiry: %d, %v", len(list), err)
 	}
-	if _, err := e.svc.Approve(ctx, pending.ApprovalID, "Demo Operator"); ReasonOf(err) != ReasonApprovalStale {
+	if _, err := e.svc.Approve(ctx, pending.ApprovalID, "Demo Operator", testMessageHash); ReasonOf(err) != ReasonApprovalStale {
 		t.Fatalf("approve expired (already rolled back): %v", err)
 	}
 
@@ -330,7 +330,7 @@ func TestApprovalExpiry(t *testing.T) {
 	e2.svc.ApprovalTTL = time.Hour
 	p := e2.reach(StatusPendingApproval)
 	e2.now = e2.now.Add(time.Hour)
-	r, err := e2.svc.Approve(ctx, p.ApprovalID, "Demo Operator")
+	r, err := e2.svc.Approve(ctx, p.ApprovalID, "Demo Operator", testMessageHash)
 	if ReasonOf(err) != ReasonApprovalExpired || r.Draft.Status != string(StatusDraft) {
 		t.Fatalf("approve at expiry: %+v, %v", r.Draft.Status, err)
 	}
@@ -419,7 +419,7 @@ func TestCreateIdentityAndMessageID(t *testing.T) {
 		t.Fatal("message ids must differ")
 	}
 	// Beschreibung der Freigabe: Konto, Art, Zähler; kein Inhalt.
-	rr, err := e.svc.RequestReady(ctx, a.ID, "key:agent", HookPass)
+	rr, err := e.svc.RequestReady(ctx, a.ID, "key:agent", HookPass, Checked{MessageHash: testMessageHash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,13 +445,13 @@ func TestUpdateTakenOver(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.Update(ctx, d.ID, content("neu")); ReasonOf(err) != ReasonDraftTakenOver {
+	if _, err := e.svc.Update(ctx, d.ID, content("neu"), ""); ReasonOf(err) != ReasonDraftTakenOver {
 		t.Fatalf("update taken over: %v", err)
 	}
 	// Push nach Änderung: eine gepushte Kopie wird wieder pending.
 	d.RemoteState = RemotePushed
 	_ = e.st.DraftTx(ctx, func(x *store.DraftTx) error { return x.UpdateDraft(d) })
-	r, err := e.svc.Update(ctx, d.ID, content("neu"))
+	r, err := e.svc.Update(ctx, d.ID, content("neu"), "")
 	if err != nil || r.Draft.RemoteState != RemotePending {
 		t.Fatalf("update pushed: %+v, %v", r.Draft, err)
 	}
@@ -484,7 +484,7 @@ func TestConcurrentWritersOnOneFile(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				if _, err := svc.Update(ctx, d.ID, content(fmt.Sprintf("v%d-%d", i, j))); err != nil {
+				if _, err := svc.Update(ctx, d.ID, content(fmt.Sprintf("v%d-%d", i, j)), ""); err != nil {
 					errs <- err
 				}
 				if _, err := svc.Create(ctx, NewDraft{AccountID: e.acc, Kind: KindNew}); err != nil {

@@ -162,7 +162,7 @@ func LoadFile(path string, explicit bool) (File, error) {
 		sum := sha256.Sum256(raw)
 		f.SHA256 = hex.EncodeToString(sum[:])
 	case errors.Is(err, fs.ErrNotExist) && !explicit:
-		f.Doc = defaults(FileDoc{})
+		f.Doc = defaults(FileDoc{}, nil)
 		return f, nil
 	case errors.Is(err, fs.ErrNotExist):
 		return f, fmt.Errorf("%w: %s does not exist (set by %s)", ErrInvalidFile, path, EnvPolicy)
@@ -182,7 +182,7 @@ func LoadFile(path string, explicit bool) (File, error) {
 		sort.Strings(keys)
 		return f, fmt.Errorf("%w: %s: unknown keys: %s", ErrInvalidFile, path, strings.Join(keys, ", "))
 	}
-	doc = defaults(doc)
+	doc = defaults(doc, md.IsDefined)
 	if err := doc.validate(); err != nil {
 		return f, fmt.Errorf("%w: %s: %v", ErrInvalidFile, path, err)
 	}
@@ -206,7 +206,13 @@ func tomlErr(err error) string {
 	return msg
 }
 
-func defaults(d FileDoc) FileDoc {
+// defaults setzt die Standards für Schlüssel, die in der Datei fehlen.
+// defined meldet, ob ein Schlüssel in der Datei steht (nil = keine Datei).
+// Ein ausdrücklich gesetzter Wert wird nie durch den Standard ersetzt, auch
+// 0 oder "" nicht: max_chars = 0 oder bulk_confirm_threshold = 0 sind ein
+// Fehler, kein stiller Standard (Gegenprüfung S2.3, K8).
+func defaults(d FileDoc, defined func(key ...string) bool) FileDoc {
+	missing := func(key ...string) bool { return defined == nil || !defined(key...) }
 	yes := true
 	if d.Draft.RequireApprovalForReady == nil {
 		d.Draft.RequireApprovalForReady = &yes
@@ -214,23 +220,23 @@ func defaults(d FileDoc) FileDoc {
 	if d.Draft.CheckHook == nil {
 		d.Draft.CheckHook = []string{}
 	}
-	if d.Draft.CheckHookTimeout == 0 {
+	if missing("draft", "check_hook_timeout") {
 		d.Draft.CheckHookTimeout = DefaultCheckHookTimeout
 	}
-	if d.Delete.AgentMay == "" {
+	if missing("delete", "agent_may") {
 		d.Delete.AgentMay = "trash_only"
 	}
-	if d.Move.AgentMay == "" {
+	if missing("move", "agent_may") {
 		d.Move.AgentMay = "within_account"
 	}
-	if d.Move.BulkConfirmThreshold == 0 {
+	if missing("move", "bulk_confirm_threshold") {
 		d.Move.BulkConfirmThreshold = DefaultBulkConfirmThreshold
 	}
 	if d.AgentDefaults.DryRunDefault == nil {
 		y := true
 		d.AgentDefaults.DryRunDefault = &y
 	}
-	if d.AgentDefaults.MaxChars == 0 {
+	if missing("agent_defaults", "max_chars") {
 		d.AgentDefaults.MaxChars = DefaultMaxChars
 	}
 	return d
@@ -248,24 +254,25 @@ func (d FileDoc) validate() error {
 			return fmt.Errorf("draft.check_hook[%d] contains a line break or NUL", i)
 		}
 	}
+	// Meldungen nennen Schlüssel und erlaubten Bereich, nie den Wert (K8).
 	if t := d.Draft.CheckHookTimeout; t < time.Second || t > MaxCheckHookTimeout {
-		return fmt.Errorf("draft.check_hook_timeout %s is out of range (1s to %s)", t, MaxCheckHookTimeout)
+		return fmt.Errorf("draft.check_hook_timeout is out of range (1s to %s)", MaxCheckHookTimeout)
 	}
 	switch d.Delete.AgentMay {
 	case "none", "trash_only":
 	default:
-		return fmt.Errorf("delete.agent_may %q is invalid (expected none or trash_only)", d.Delete.AgentMay)
+		return errors.New("delete.agent_may is invalid (expected none or trash_only)")
 	}
 	switch d.Move.AgentMay {
 	case "none", "archive_only", "within_account":
 	default:
-		return fmt.Errorf("move.agent_may %q is invalid (expected none, archive_only or within_account)", d.Move.AgentMay)
+		return errors.New("move.agent_may is invalid (expected none, archive_only or within_account)")
 	}
 	if v := d.Move.BulkConfirmThreshold; v < 1 || v > 100000 {
-		return fmt.Errorf("move.bulk_confirm_threshold %d is out of range (1 to 100000)", v)
+		return errors.New("move.bulk_confirm_threshold is out of range (1 to 100000)")
 	}
 	if v := d.AgentDefaults.MaxChars; v < MinMaxChars || v > MaxMaxChars {
-		return fmt.Errorf("agent_defaults.max_chars %d is out of range (%d to %d)", v, MinMaxChars, MaxMaxChars)
+		return fmt.Errorf("agent_defaults.max_chars is out of range (%d to %d)", MinMaxChars, MaxMaxChars)
 	}
 	return nil
 }

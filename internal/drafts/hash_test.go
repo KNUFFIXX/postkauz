@@ -118,7 +118,7 @@ func TestValidateLimits(t *testing.T) {
 		reason string
 	}{
 		"markdown too long":  {Content{BodyMarkdown: strings.Repeat("a", MaxBodyChars+1)}, ReasonTooLarge},
-		"text too long":      {Content{BodyText: strings.Repeat("a", MaxBodyChars+1)}, ReasonTooLarge},
+		"text too long":      {Content{BodyText: strings.Repeat("a", MaxBodyTextChars+1)}, ReasonTooLarge},
 		"html too long":      {Content{BodyHTML: strings.Repeat("a", MaxBodyChars+1)}, ReasonTooLarge},
 		"subject too long":   {Content{Subject: strings.Repeat("ß", MaxSubjectChars+1)}, ReasonTooLarge},
 		"subject line break": {Content{Subject: "Hallo\r\nBcc: x@example.org"}, ReasonInvalidHeader},

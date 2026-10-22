@@ -189,7 +189,8 @@ func readAttachFile(field, dir, p string, budget int64) ([]byte, string, error) 
 	}
 	data, err := io.ReadAll(io.LimitReader(f, budget+1))
 	if err != nil {
-		return nil, "", fmt.Errorf("compose: read %s: %w", field, err)
+		// Die Meldung des Betriebssystems nennt den Pfad: nur das Feld (B1).
+		return nil, "", fmt.Errorf("compose: read %s: cannot read the file", field)
 	}
 	if int64(len(data)) > budget {
 		return nil, "", deny(ReasonTooLarge, field, "attachments exceed the limit in total")

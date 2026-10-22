@@ -37,16 +37,16 @@ func TestAsAuditsTransitionsAndQueuesPush(t *testing.T) {
 	}
 	id := res.Draft.ID
 	who.Operation = "drafts.request_ready"
-	if _, err := e.svc.As(who, false).RequestReady(ctx, id, "key:assistent", HookPass); err != nil {
+	if _, err := e.svc.As(who, false).RequestReady(ctx, id, "key:assistent", HookPass, Checked{MessageHash: testMessageHash}); err != nil {
 		t.Fatal(err)
 	}
 	human := Who{Actor: audit.ActorHuman, KeyID: "cli", Scope: "mail:draft", Operation: "drafts.approve"}
 	d, _ := e.st.Draft(ctx, id)
-	if _, err := e.svc.As(human, false).Approve(ctx, d.ApprovalID, "Mensch"); err != nil {
+	if _, err := e.svc.As(human, false).Approve(ctx, d.ApprovalID, "Mensch", testMessageHash); err != nil {
 		t.Fatal(err)
 	}
 	who.Operation = "drafts.update"
-	up, err := e.svc.As(who, false).Update(ctx, id, content(canarySubject+" neu"))
+	up, err := e.svc.As(who, false).Update(ctx, id, content(canarySubject+" neu"), "")
 	if err != nil || up.To != StatusDraft || up.PushJobID != res.PushJobID {
 		t.Fatalf("update = %+v, %v (one open push job per account)", up, err)
 	}
@@ -84,7 +84,7 @@ func TestAsAuditsTransitionsAndQueuesPush(t *testing.T) {
 	}
 
 	// Trockenlauf eines verbotenen Übergangs scheitert wie echt.
-	if _, err := e.svc.As(human, true).Approve(ctx, d.ApprovalID, "Mensch"); ReasonOf(err) != ReasonApprovalStale {
+	if _, err := e.svc.As(human, true).Approve(ctx, d.ApprovalID, "Mensch", testMessageHash); ReasonOf(err) != ReasonApprovalStale {
 		t.Fatalf("dry approve of a superseded approval: %v", err)
 	}
 	// Ohne As: kein Audit (wie in S2.1).

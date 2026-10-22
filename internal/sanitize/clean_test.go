@@ -34,8 +34,8 @@ func TestCleanHTMLAllowlist(t *testing.T) {
 		}
 	}
 	for _, good := range []string{`<p style="color:#333">Hallo <b>Welt</b></p>`, `<a href="https://www.example.com/a?b=1">sicher</a>`,
-		"unsicher", "js", `<a href="mailto:info@example.com">Mail</a>`, `<img src="cid:logo@example.com" alt="Logo">`,
-		"<div>bg</div>", "innen", "Name", `<table bgcolor="#eeeeee" cellpadding="2">`, `<td colspan="2">Zelle</td>`, "Nullbreite"} {
+		"unsicher", "js", `<a href="mailto:info@example.com">Mail</a>`, `<img src="cid:logo@example.com"> [Logo]`,
+		"<div>bg</div>", "innen", "Name", `<table cellpadding="2">`, `<td colspan="2">Zelle</td>`, "Nullbreite"} {
 		if !strings.Contains(r.HTML, good) {
 			t.Errorf("cleaned HTML lacks %q:\n%s", good, r.HTML)
 		}

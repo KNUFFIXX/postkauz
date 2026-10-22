@@ -102,6 +102,11 @@ const (
 	ReasonInvalidAddress    = "invalid_address"
 	ReasonInvalidHeader     = "invalid_header"
 	ReasonIdentityMismatch  = "identity_mismatch"
+	// ReasonDraftChanged: Der Entwurf hat sich geändert, während ein
+	// Aufruf ihn las und prüfte (Prüf-Hook, Nachrichtenbau); der Aufruf
+	// hätte sonst einen anderen Stand gebunden oder überschrieben
+	// (Gegenprüfung S2.3, W2/W4).
+	ReasonDraftChanged = "draft_changed"
 )
 
 // ErrDenied ist die Wurzel aller Ablehnungen (errors.Is). Die Oberflächen
