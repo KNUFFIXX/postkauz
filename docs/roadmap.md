@@ -657,9 +657,8 @@ Entscheide des Betreibers vom **18.10.2026** ([A02](../auftraege/A02_s2.md), Abs
 41. **Präfixregel je Art und `mailto:`-Links** (22.10.2026, S2.2; Standardantwort): so lassen (siehe „Stand S2.2").
 
 42. **Festlegungen aus S2.3–S2.5** (22.10.2026; Standardantworten von Claude, Einspruch möglich): `draft list` zeigt den Betreff wie `search`; der Hook läuft auch im Trockenlauf; `draft request` endet bei `hook: fail` mit Exit 0; der Beispiel-Hook kommt in S2.9 ins Release-Paket und in `abnahme-d4-daten.zip`; ein `ready`-Entwurf, der beim Push nicht mehr zur Freigabe passt, fällt auf `draft` und wird danach als gewöhnlicher Entwurf abgelegt; der Text „within 10 s" bleibt (gemessen 10,0 bis 10,2 s, in `docs/cli.md` erklärt).
+43. **Mehrere Kopien gleicher Message-ID im Entwürfe-Ordner** (22.10.2026, Betreiber `##`; vorher Offene Frage 1 aus S2.5, Gegenprüfung K6): Der Push legt einen geänderten Entwurf erst ab, wenn er 30 Sekunden unverändert ist (weniger Zwischenstände); `draft show` und `draft list` warnen, solange ältere Kopien im Ordner liegen. Das Aufräumen alter Kopien (Löschen) entscheidet S3. Umsetzung mit S2.6/S2.7.
 
 ## Offene Fragen
 
-Stand S2.5 (22.10.2026). Die Fragen bis S2.5 sind entschieden (oben, Nummern 19 bis 42). Neu:
-
-1. **Mehrere Kopien gleicher Message-ID im Entwürfe-Ordner** (Gegenprüfung S2.5, K6): Nach jeder Änderung eines abgelegten Entwurfs bleibt die alte Kopie liegen (PostKauz löscht im MVP nichts). Der Mensch könnte im Mailprogramm eine veraltete Fassung erwischen und senden. Vorschlag (Standardantwort): Der Push legt einen geänderten Entwurf erst ab, wenn er 30 Sekunden unverändert ist (weniger Zwischenstände), und `draft show`/`draft list` warnen, solange ältere Kopien im Ordner liegen; das Aufräumen alter Kopien (Löschen) entscheidet S3. Einverstanden?
+Stand S2.5 (22.10.2026). Die Fragen bis S2.5 sind entschieden (oben, Nummern 19 bis 43). Derzeit keine offene Frage an den Betreiber.
