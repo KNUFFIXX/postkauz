@@ -12,6 +12,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/crash"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/importer"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
@@ -40,6 +41,11 @@ var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c co
 	return &mailsync.Runner{Store: st, Blobs: b, Log: log, CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration,
 		MaxMessageBytes: c.MaxMessageBytes}
 }
+
+// newDraftChecker liefert den Prüf-Hook vor der Vorlage eines Entwurfs
+// (A02 E4). S2.4 setzt hier internal/hook mit [draft] check_hook der
+// Policy-Datei ein; bis dahin keiner (nil = „pass"). In Tests ersetzbar.
+var newDraftChecker = func(*app) ops.DraftChecker { return nil }
 
 // app hält die Laufzeitumgebung einer CLI-Ausführung. Datenverzeichnis,
 // Datenbank, Log und Schlüsselbund werden erst geöffnet, wenn ein Kommando
@@ -150,7 +156,12 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	}
 	reg, err := ops.NewDefaultRegistry(ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
 		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
-		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars()})
+		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars(),
+		Drafts:     &drafts.Service{Store: st, ApprovalTTL: a.cfg.Draft.ApprovalTTL, PolicyVersion: a.policyVersion},
+		DraftBlobs: blobs,
+		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
+			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
+		DraftCheck: newDraftChecker(a)})
 	if err != nil {
 		return nil, err
 	}

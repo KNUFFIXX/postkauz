@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -38,6 +39,35 @@ type Call struct {
 	// Executor). Handler dürfen ihn nur beschreiben (policy.get), nie für
 	// eigene Rechteentscheidungen nutzen: Die trifft allein die Policy.
 	Key policy.Key
+	// Actor ist der Akteur des Aufrufs (wie im Audit-Eintrag des
+	// Executors); Handler, die selbst Übergänge auditieren (Entwürfe,
+	// S2.3), tragen ihn in deren Einträge ein.
+	Actor audit.ActorType
+}
+
+// DeniedError ist eine fachliche Ablehnung im Handler (A02: z. B.
+// draft_closed, approval_stale, attach_outside_dir): kein technischer
+// Fehler, sondern ein Ergebnis mit Grund. errors.Is(err, ErrDenied) gilt
+// (CLI Exit 3, MCP status denied); der Executor schreibt sie als Ergebnis
+// denied mit diesem Grund ins Audit. Msg ist englisch und nennt nie
+// Mailinhalt (Betreff, Adressen, Text), nur IDs, Feldnamen und Zahlen.
+type DeniedError struct {
+	Reason string
+	Msg    string
+}
+
+func (e *DeniedError) Error() string {
+	if e.Msg == "" {
+		return "denied (" + e.Reason + ")"
+	}
+	return "denied (" + e.Reason + "): " + e.Msg
+}
+
+// Is macht die Ablehnung zu ErrDenied.
+func (e *DeniedError) Is(target error) bool { return target == ErrDenied }
+
+func deniedErr(reason, format string, args ...any) error {
+	return &DeniedError{Reason: reason, Msg: fmt.Sprintf(format, args...)}
 }
 
 // Progress ist eine Fortschrittsmeldung einer langen Operation. Sie enthält

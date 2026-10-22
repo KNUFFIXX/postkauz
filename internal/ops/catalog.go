@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -29,6 +30,16 @@ type Deps struct {
 	// MaxChars ist das Zeichenbudget für Agenten aus der Policy-Datei
 	// ([agent_defaults] max_chars; 0 = DefaultMaxChars). policy.get nennt es.
 	MaxChars int
+	// Drafts ist der Entwurfsdienst (S2.3); seine Datenbank führt auch
+	// Identitäten und Freigaben. nil nur ohne Handler-Aufrufe (Hilfe).
+	Drafts *drafts.Service
+	// DraftBlobs liest und schreibt Anhänge und Rohmails der Entwürfe
+	// (Blob-Store).
+	DraftBlobs BlobStore
+	// Draft: attach_dir, Grenzen, Zitatzeile, Freigebender (Konfiguration).
+	Draft DraftConfig
+	// DraftCheck ist der Prüf-Hook vor der Vorlage (S2.4); nil = „pass".
+	DraftCheck DraftChecker
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -58,6 +69,20 @@ func Catalog(d Deps) []Operation {
 		AuditExport(d.Audit, d.AuditExportDir),
 		AuditVerify(d.Audit),
 		PolicyGet(d.MaxChars),
+		DraftsCreate(d),
+		DraftsUpdate(d),
+		DraftsGet(d),
+		DraftsList(d),
+		DraftsRequestReady(d),
+		DraftsApprove(d),
+		DraftsReject(d),
+		DraftsAbandon(d),
+		DraftsMarkSent(d),
+		ApprovalsGet(d),
+		IdentitiesAdd(d),
+		IdentitiesList(d),
+		IdentitiesSetDefault(d),
+		IdentitiesRemove(d),
 	}
 }
 

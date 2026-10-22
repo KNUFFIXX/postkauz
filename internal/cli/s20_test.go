@@ -2,8 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
 // S2.0/A6: `account set --aliases` pflegt die weiteren eigenen Adressen,
@@ -46,8 +49,20 @@ func TestAccountSetAliasesCLI(t *testing.T) {
 	if _, out, _ = run(t, "accounts", "list", "--json"); !strings.Contains(out, "zweit@example.org") {
 		t.Fatalf("aliases changed by a key: %s", out)
 	}
-	if _, out, _ = run(t, "policy", "show", "--key", "adm", "--json"); strings.Contains(out, "accounts.set") {
-		t.Fatalf("policy show lists a human-only operation for a key: %s", out)
+	// Entscheid 40 (S2.3): für einen Schlüssel nie unter operations, aber
+	// in der eigenen Liste human_only.
+	_, out, _ = run(t, "policy", "show", "--key", "adm", "--json")
+	var pol ops.PolicyOutput
+	if err := json.Unmarshal([]byte(out), &pol); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range pol.Operations {
+		if op.Name == "accounts.set" {
+			t.Fatalf("policy show lists a human-only operation for a key: %s", out)
+		}
+	}
+	if !strings.Contains(fmt.Sprint(pol.HumanOnly), "accounts.set") {
+		t.Fatalf("policy show --key lacks accounts.set in human_only: %s", out)
 	}
 	if _, out, _ = run(t, "policy", "show", "--json"); !strings.Contains(out, "accounts.set") {
 		t.Fatalf("policy show for the human lacks accounts.set: %s", out)

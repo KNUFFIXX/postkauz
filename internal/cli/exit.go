@@ -5,6 +5,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -43,6 +44,8 @@ const internalHint = "this is a bug in postkauz; the log (see doctor) has a clea
 func classify(err error) (int, ErrorInfo) {
 	var ue usageError
 	var ie *ops.InputError
+	var de *ops.DeniedError
+	var pe *ops.PolicyError
 	switch {
 	case errors.As(err, &ue):
 		return ExitUsage, ErrorInfo{Code: "usage", Message: err.Error(), Hint: "see --help"}
@@ -60,6 +63,12 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "not_found", Message: "mailbox not found", Hint: "list mailbox ids with: mailbox list -a <account> --json"}
 	case errors.Is(err, store.ErrAttachmentNotFound):
 		return ExitError, ErrorInfo{Code: "not_found", Message: "attachment not found", Hint: "list attachment ids with: attach list <message-id>"}
+	case errors.Is(err, store.ErrDraftNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "draft not found", Hint: "list drafts with: draft list"}
+	case errors.Is(err, store.ErrApprovalNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "approval not found", Hint: "the approval id is shown by draft request and draft list"}
+	case errors.Is(err, store.ErrIdentityNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "identity not found", Hint: "list identities with: identity list"}
 	case errors.Is(err, store.ErrKeyExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
 	case errors.Is(err, store.ErrKeyNotFound):
@@ -83,6 +92,12 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitConnection, ErrorInfo{Code: "connection", Message: err.Error(), Hint: "check host, port, TLS mode and network"}
 	case errors.Is(err, ops.ErrSyncRunning):
 		return ExitError, ErrorInfo{Code: "sync_running", Message: err.Error(), Hint: "wait for the other sync or import of this account (e.g. sync --watch) to finish or stop it with Ctrl+C, then try again"}
+	case errors.As(err, &de):
+		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: deniedHint(de.Reason)}
+	case errors.As(err, &pe) && pe.Decision.Reason == "human_only":
+		// A02 E2 (D4.5): nur der Mensch ohne --key.
+		return ExitDenied, ErrorInfo{Code: "denied", Message: fmt.Sprintf("denied (human_only): %s is for a human without a key", pe.Operation),
+			Hint: "run it without --key; no API key may do this, whatever its role"}
 	case errors.Is(err, ops.ErrDenied):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "the key lacks the required scope or the policy forbids this"}
 	case errors.Is(err, ops.ErrNeedsApproval):
@@ -94,4 +109,25 @@ func classify(err error) (int, ErrorInfo) {
 	default:
 		return ExitError, ErrorInfo{Code: "error", Message: err.Error()}
 	}
+}
+
+// deniedHint erklärt eine fachliche Ablehnung (ops.DeniedError) mit dem
+// nächsten Schritt; ohne eigenen Text der allgemeine.
+func deniedHint(reason string) string {
+	if h, ok := deniedHints[reason]; ok {
+		return h
+	}
+	return "nothing was changed; see the reason in the message"
+}
+
+var deniedHints = map[string]string{
+	"draft_closed":         "the draft is sent or abandoned; create a new one",
+	"draft_taken_over":     "the draft was changed in the mail client; change it there",
+	"approval_stale":       "the draft changed after it was submitted; submit it again with: draft request <id>",
+	"approval_expired":     "the approval ran out; submit the draft again with: draft request <id>",
+	"approval_decided":     "this approval was already decided; see: approval show <id>",
+	"invalid_transition":   "not possible in the current status; see: draft show <id>",
+	"attach_outside_dir":   "attach files only from attach_dir (see: doctor)",
+	"attach_not_found":     "the file is not in attach_dir (see: doctor)",
+	"hidden_text_in_draft": "the HTML contains text a reader would not see; remove it",
 }

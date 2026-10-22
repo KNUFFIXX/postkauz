@@ -337,7 +337,17 @@ func renderPolicy(w io.Writer, out any) error {
 	for _, op := range o.Operations {
 		fmt.Fprintf(tw, "  %s\t%s\t%s\n", op.Name, op.Scope, op.Risk)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	// Entscheid 40: was der Schlüssel nie darf (nur der Mensch ohne --key).
+	if len(o.HumanOnly) > 0 {
+		fmt.Fprintln(w, "never with a key (human only):")
+		for _, op := range o.HumanOnly {
+			fmt.Fprintf(w, "  %s: human_only\n", op.Name)
+		}
+	}
+	return nil
 }
 
 // plural: "1 day", "2 days".

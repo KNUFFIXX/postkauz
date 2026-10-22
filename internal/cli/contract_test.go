@@ -23,10 +23,12 @@ import (
 
 // --- Vertragstest Register ↔ CLI (ADR-004, S1.8) -------------------------------
 //
-// Jede Operation des Katalogs ist über genau ein Kommando erreichbar und
-// umgekehrt; die Felder, die ein Kommando setzen kann (binding.covers),
-// sind genau die Eigenschaften des InputSchema; jede gebaute Eingabe
-// entspricht dem InputSchema, jede --json-Ausgabe dem OutputSchema.
+// Jede Operation des Katalogs ist über mindestens ein Kommando erreichbar
+// (seit S2.3 mehrere: drafts.create über draft new|reply|forward) und jedes
+// Kommando gehört zu einer Operation; die Felder, die ein Kommando setzen
+// kann (binding.covers), sind Eigenschaften des InputSchema, und alle
+// Kommandos einer Operation zusammen erreichen jedes Feld; jede gebaute
+// Eingabe entspricht dem InputSchema, jede --json-Ausgabe dem OutputSchema.
 
 func resolved(t *testing.T, raw json.RawMessage) *jsonschema.Resolved {
 	t.Helper()
@@ -82,21 +84,41 @@ func TestBindingsCoverCatalogAndSchemas(t *testing.T) {
 	for _, op := range ops.Catalog(ops.Deps{}) {
 		cat[op.Name] = op
 	}
-	bound := map[string]int{}
+	union := map[string]map[string]bool{}
+	paths := map[string]bool{}
 	for _, b := range bindings {
-		bound[b.op]++
 		op, ok := cat[b.op]
 		if !ok {
 			t.Errorf("binding %v: operation %s is not in the catalog", b.path, b.op)
 			continue
 		}
-		if got, want := sorted(b.covers), schemaProps(t, op.InputSchema); !slices.Equal(got, want) {
-			t.Errorf("%s (%s): command sets %v, schema has %v", b.op, strings.Join(b.path, " "), got, want)
+		if p := strings.Join(b.path, " "); paths[p] {
+			t.Errorf("command %q bound twice", p)
+		} else {
+			paths[p] = true
+		}
+		props := schemaProps(t, op.InputSchema)
+		if union[b.op] == nil {
+			union[b.op] = map[string]bool{}
+		}
+		for _, f := range b.covers {
+			if !slices.Contains(props, f) {
+				t.Errorf("%s (%s): covers %q, which is not in the schema %v", b.op, strings.Join(b.path, " "), f, props)
+			}
+			union[b.op][f] = true
 		}
 	}
-	for name := range cat {
-		if bound[name] != 1 {
-			t.Errorf("operation %s is bound to %d commands, want exactly 1", name, bound[name])
+	for name, op := range cat {
+		if union[name] == nil {
+			t.Errorf("operation %s has no command", name)
+			continue
+		}
+		var got []string
+		for f := range union[name] {
+			got = append(got, f)
+		}
+		if g, w := sorted(got), schemaProps(t, op.InputSchema); !slices.Equal(g, w) {
+			t.Errorf("%s: commands set %v, schema has %v", name, g, w)
 		}
 	}
 }
@@ -112,7 +134,8 @@ type cliSample struct {
 // sampleStdin: Eingabe auf stdin je Beispiel (Argumente mit Leerzeichen
 // verbunden), etwa das Passwort bei --password-stdin.
 var sampleStdin = map[string]string{
-	"account set demo --password-stdin": canary + "\n",
+	"account set demo --password-stdin":                                     canary + "\n",
+	"draft new -a demo --to a@example.org --html-file - --attach notiz.txt": "<p>Hallo <b>Welt</b></p>",
 }
 
 var cliSamples = []cliSample{
@@ -145,6 +168,32 @@ var cliSamples = []cliSample{
 	{"audit.export", []string{"audit", "export", "--to", "{exportdir}"}, false},
 	{"audit.verify", []string{"audit", "verify"}, false},
 	{"policy.get", []string{"policy", "show"}, false},
+	// S2.3: Identität, drei Entwürfe (1 reply_all, 2 new, 3 forward),
+	// ändern, vorlegen, freigeben (Freigabe 1), ablehnen (Freigabe 2),
+	// abschließen; die Reihenfolge baut aufeinander auf.
+	{"identities.add", []string{"identity", "add", "-a", "demo", "--email", "demo@example.org", "--name", "Demo", "--reply-to", "antwort@example.org",
+		"--signature-file", "{sigtext}", "--signature-html-file", "{sightml}", "--style-file", "{sigtext}", "--reply-prefix", "AW: ",
+		"--forward-prefix", "WG: ", "--default"}, false},
+	{"identities.list", []string{"identity", "list", "-a", "demo"}, false},
+	{"identities.set_default", []string{"identity", "set-default", "1"}, false},
+	{"drafts.create", []string{"draft", "reply", "{html}", "--all", "--to", "Zweit <zweit@example.net>", "--cc", "c@example.net", "--bcc",
+		"b@example.net", "--subject", "Re: Rechnung", "--body-file", "{body}", "--attach", "{att}", "--no-quote", "--no-signature",
+		"--identity", "demo@example.org"}, false},
+	{"drafts.create", []string{"draft", "new", "-a", "demo", "--to", "a@example.org", "--html-file", "-", "--attach", "notiz.txt"}, false},
+	{"drafts.create", []string{"draft", "forward", "antwort@example.org", "-a", "demo", "--to", "a@example.org", "--no-attachments"}, false},
+	{"drafts.update", []string{"draft", "edit", "1", "--to", "neu@example.org", "--cc", "", "--bcc", "", "--subject", "Neu", "--body-file", "{body}",
+		"--attach", "notiz.txt", "--quote=false", "--signature=true"}, false},
+	{"drafts.update", []string{"draft", "edit", "1", "--html-file", "{html-body}", "--no-attachments"}, false},
+	{"drafts.get", []string{"draft", "show", "1"}, false},
+	{"drafts.list", []string{"draft", "list", "-a", "demo", "--status", "draft,pending_approval", "--limit", "5"}, false},
+	{"drafts.request_ready", []string{"draft", "request", "1"}, false},
+	{"approvals.get", []string{"approval", "show", "1"}, false},
+	{"drafts.approve", []string{"approve", "1"}, false},
+	{"drafts.request_ready", []string{"draft", "request", "2"}, false},
+	{"drafts.reject", []string{"reject", "2", "--reason", "zu lang"}, false},
+	{"drafts.abandon", []string{"draft", "abandon", "2"}, false},
+	{"drafts.mark_sent", []string{"draft", "mark-sent", "1"}, false},
+	{"identities.remove", []string{"identity", "remove", "1"}, false},
 }
 
 // seedS16: Konto demo mit den drei Nachrichten aus s16Server, gesynct;
@@ -199,10 +248,24 @@ func seedS16(t *testing.T) map[string]string {
 var errCaptureOnly = errors.New("captured")
 
 func TestCLIContractRegistry(t *testing.T) {
-	setupEnv(t)
+	dataDir, _ := setupEnv(t)
 	t.Setenv("POSTKAUZ_PASSWORD_ZWEI", "x")
 	t.Setenv("POSTKAUZ_PASSWORD_LEER", "x")
 	ph := seedS16(t)
+	// Dateien für Entwürfe und Identität; Anhänge nur aus attach_dir.
+	files := t.TempDir()
+	for name, text := range map[string]string{"body": "**Hallo**", "html-body": "<p>Hallo</p>", "sigtext": "Gruß", "sightml": "<p>Gruß</p>"} {
+		ph[name] = filepath.Join(files, name)
+		if err := os.WriteFile(ph[name], []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "attach"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "attach", "notiz.txt"), []byte("Notiz"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errs := run(t, "account", "add", "leer", "--imap", "127.0.0.1:1", "--user", "u", "--tls", "none",
 		"--insecure-test-server", "--password-from-env"); code != ExitOK {
 		t.Fatalf("account add leer: %s", errs)
@@ -213,7 +276,11 @@ func TestCLIContractRegistry(t *testing.T) {
 	}
 	covers := map[string][]string{}
 	for _, b := range bindings {
-		covers[b.op] = b.covers
+		for _, f := range b.covers {
+			if !slices.Contains(covers[b.op], f) {
+				covers[b.op] = append(covers[b.op], f)
+			}
+		}
 	}
 	set := map[string]map[string]bool{}
 	ran := map[string]bool{}
@@ -351,6 +418,11 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{store.ErrKeyExists, ExitError, "exists"},
 		{store.ErrMessageNotFound, ExitError, "not_found"},
 		{store.ErrKeyNotFound, ExitError, "not_found"},
+		{store.ErrDraftNotFound, ExitError, "not_found"},
+		{store.ErrApprovalNotFound, ExitError, "not_found"},
+		{store.ErrIdentityNotFound, ExitError, "not_found"},
+		{&ops.DeniedError{Reason: "approval_stale"}, ExitDenied, "denied"},
+		{&ops.PolicyError{Operation: "drafts.approve", Decision: policy.Decision{Outcome: policy.Deny, Reason: "human_only"}}, ExitDenied, "denied"},
 		{provider.ErrAuth, ExitError, "auth"},
 		{provider.ErrConnection, ExitConnection, "connection"},
 		{secrets.ErrUnavailable, ExitError, "secret_store_unavailable"},
