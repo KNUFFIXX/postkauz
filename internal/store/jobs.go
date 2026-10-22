@@ -20,7 +20,8 @@ const (
 	JobIndex   = "index"
 	JobExtract = "extract"
 	// JobDraftPush legt Entwürfe per APPEND im Entwürfe-Ordner ab (A02 E1;
-	// Typ seit Migration 0010, eingereiht ab S2.3, ausgeführt ab S2.5).
+	// Typ seit Migration 0010, eingereiht ab S2.3, ausgeführt seit S2.5 von
+	// sync und sync --watch, internal/mailsync).
 	JobDraftPush = "draft_push"
 )
 
@@ -108,6 +109,8 @@ func (s *SQLite) CompleteJob(ctx context.Context, j Job, owner string) (done boo
 	case JobExtract:
 		pending = `SELECT EXISTS (SELECT 1 FROM attachments a JOIN messages m ON m.id = a.message_id
 			WHERE m.account_id = ? AND a.extract_status = 'pending')`
+	case JobDraftPush:
+		pending = `SELECT EXISTS (SELECT 1 FROM drafts WHERE account_id = ? AND ` + draftPushPending + `)`
 	default:
 		return false, fmt.Errorf("store: unknown job type %q", j.Type)
 	}

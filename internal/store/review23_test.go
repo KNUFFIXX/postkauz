@@ -35,7 +35,7 @@ func TestMigration0012ApprovalMessageHash(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := s.SchemaVersion(ctx); v != 12 || KnownSchemaVersion() != 12 {
+	if v, _ := s.SchemaVersion(ctx); v != KnownSchemaVersion() || v < 12 {
 		t.Fatalf("schema %d, known %d", v, KnownSchemaVersion())
 	}
 	old, err := s.Approval(ctx, 1)

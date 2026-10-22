@@ -91,7 +91,7 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, provider.ErrConnection):
 		return ExitConnection, ErrorInfo{Code: "connection", Message: err.Error(), Hint: "check host, port, TLS mode and network"}
 	case errors.Is(err, ops.ErrSyncRunning):
-		return ExitError, ErrorInfo{Code: "sync_running", Message: err.Error(), Hint: "wait for the other sync or import of this account (e.g. sync --watch) to finish or stop it with Ctrl+C, then try again"}
+		return ExitError, ErrorInfo{Code: "sync_running", Message: err.Error(), Hint: "wait for the other sync or import of this account (e.g. sync --watch) to finish or stop it with Ctrl+C, then try again; a running sync --watch also puts queued drafts into the Drafts folder"}
 	case errors.As(err, &de):
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: deniedHint(de.Reason)}
 	case errors.As(err, &pe) && pe.Decision.Reason == "human_only":

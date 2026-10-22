@@ -287,7 +287,10 @@ func extrasKey(d store.Draft) string {
 // pending_approval und ready mit Freigabe superseded), Hook-Ergebnis
 // gelöscht, neuer preview_hash, Serverkopie wieder pending (Push nach
 // Änderung, S2.5). Abgeschlossen: draft_closed; vom Menschen im Client
-// übernommen (E6): draft_taken_over.
+// übernommen (E6): draft_taken_over. Ob er übernommen hat, prüft Update
+// anhand des Spiegels (zuletzt abgelegte Kopie fehlt oder ist anders); ein
+// Befund wird gespeichert (remote_state taken_over bzw. missing, Audit
+// system), die Änderung abgelehnt.
 //
 // expect ist der Fingerprint des Stands, auf dem c beruht (der Aufrufer hat
 // einzelne Felder auf ihm zusammengeführt); "" = ohne Prüfung. Hat ein
@@ -301,6 +304,7 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 	}
 	now := s.now()
 	var res Result
+	var deny error // Übernahme erkannt: remote_state wird gespeichert, die Änderung abgelehnt
 	err := s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := s.draftDue(x, id, now)
 		if err != nil {
@@ -311,8 +315,17 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 			_, err := Next(from, EvUpdate)
 			return err
 		}
-		if d.RemoteState == RemoteTakenOver {
-			return denied(ReasonDraftTakenOver, "draft %d was taken over in the mail client; change it there", d.ID)
+		if d.RemoteState == RemoteTakenOver || d.RemoteState == RemoteMissing {
+			return takenOver(d.ID, d.RemoteState)
+		}
+		// E6: Ist die zuletzt abgelegte Kopie laut Spiegel noch unverändert
+		// da? Sonst hat der Mensch im Mailclient übernommen (S2.5).
+		if st, err := checkCopy(x, d); err != nil {
+			return err
+		} else if st != "" {
+			res.Draft, res.From, res.To = d, from, from
+			deny = takenOver(d.ID, st)
+			return s.markRemote(x, &d, st, now)
 		}
 		if expect != "" && Fingerprint(d) != expect {
 			return changed(d.ID)
@@ -329,9 +342,11 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 			return err
 		}
 		setContent(&d, c)
-		d.Status, d.HookResult, d.UpdatedAt = string(t.To), "", now
+		d.Status, d.HookResult, d.PushNote, d.UpdatedAt = string(t.To), "", "", now
 		d.PreviewHash = PreviewHash(HashOf(d))
-		if d.RemoteState == RemotePushed || d.RemoteState == RemoteMissing {
+		if d.RemoteState == RemotePushed {
+			// Neue Kopie beim nächsten Push; die alte bleibt im
+			// Entwürfe-Ordner (kein Expunge im MVP, S2.5).
 			d.RemoteState = RemotePending
 		}
 		if err := x.UpdateDraft(d); err != nil {
@@ -347,6 +362,9 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 		}
 		return s.record(x, now, d, from, t.To, superseded, "")
 	})
+	if err == nil && deny != nil {
+		return res, deny
+	}
 	return res, err
 }
 
@@ -423,6 +441,9 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		}
 		res.From = from
 		d.HookResult, d.UpdatedAt = hook, now
+		if d.PushNote == PushNoteApprovalStale {
+			d.PushNote = "" // neu vorgelegt: der Hinweis des Pushs ist erledigt
+		}
 		if hook != HookPass {
 			if err := x.UpdateDraft(d); err != nil {
 				return err

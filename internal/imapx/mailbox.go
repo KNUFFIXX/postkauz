@@ -421,6 +421,24 @@ func (c *Client) Status(mailbox string) (StatusInfo, error) {
 // (APPENDUID, sonst 0). Gebraucht für Entwürfe (S2) und zum Befüllen der
 // Testserver mit dem Korpus.
 func (c *Client) Append(mailbox string, raw []byte, flags []string, date time.Time) (uint32, error) {
+	info, err := c.AppendInfo(mailbox, raw, flags, date)
+	return info.UID, err
+}
+
+// AppendResult ist die Antwort auf APPEND: UID und UIDVALIDITY der neuen
+// Nachricht aus APPENDUID (UIDPLUS bzw. IMAP4rev2); ohne diese Angabe 0.
+type AppendResult struct {
+	UID         uint32
+	UIDValidity uint32
+}
+
+// AppendInfo legt eine Rohmail in mailbox ab wie Append und liefert dazu
+// die UIDVALIDITY aus APPENDUID (Entwürfe, S2.5). Ein abgelehntes APPEND
+// (NO/BAD, z. B. Ordner fehlt, Kontingent voll) ist ErrRejected. APPEND ist
+// nicht wiederholbar: Endet es mit einem Verbindungsfehler, kann die
+// Nachricht trotzdem abgelegt sein; der Aufrufer prüft das, bevor er es
+// erneut versucht (internal/provider/imap, Append).
+func (c *Client) AppendInfo(mailbox string, raw []byte, flags []string, date time.Time) (AppendResult, error) {
 	opts := &imap.AppendOptions{Time: date}
 	for _, f := range flags {
 		opts.Flags = append(opts.Flags, imap.Flag(f))
@@ -440,9 +458,46 @@ func (c *Client) Append(mailbox string, raw []byte, flags []string, date time.Ti
 		return err
 	})
 	if err != nil {
-		return 0, cmdErr(err)
+		return AppendResult{}, cmdErr(err)
 	}
-	return uint32(data.UID), nil
+	return AppendResult{UID: uint32(data.UID), UIDValidity: data.UIDValidity}, nil
+}
+
+// SearchHeader liefert die UIDs ab from (0 oder 1 = alle) im gewählten
+// Ordner, deren Kopfzeile field den Text value enthält (UID SEARCH HEADER;
+// laut RFC 3501 eine Teilzeichenfolge ohne Rücksicht auf Groß- und
+// Kleinschreibung), aufsteigend. Gebraucht, um eine abgelegte Kopie über
+// ihre Message-ID wiederzufinden (Server ohne APPENDUID, Wiederaufnahme nach
+// Verbindungsabbruch; S2.5).
+func (c *Client) SearchHeader(field, value string, from uint32) ([]uint32, error) {
+	crit := &imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: field, Value: value}}}
+	if from > 1 {
+		crit.UID = []imap.UIDSet{{imap.UIDRange{Start: imap.UID(from), Stop: 0}}}
+	}
+	var data *imap.SearchData
+	err := c.run(func() error {
+		var err error
+		data, err = c.c.UIDSearch(crit, nil).Wait()
+		return err
+	})
+	if err != nil {
+		return nil, cmdErr(err)
+	}
+	var out []uint32
+	if data.All != nil {
+		set, ok := data.All.(imap.UIDSet)
+		if !ok || set.Dynamic() {
+			return nil, fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
+		}
+		nums, _ := set.Nums()
+		for _, u := range nums {
+			if uint32(u) >= from {
+				out = append(out, uint32(u))
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // StoreFlags setzt (add=true) oder entfernt Flags an den angegebenen UIDs

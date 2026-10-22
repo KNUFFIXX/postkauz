@@ -486,6 +486,20 @@ func renderDraftShow(w io.Writer, out any) error {
 	if o.RemoteNote != "" {
 		fmt.Fprintf(w, " (%s)", o.RemoteNote)
 	}
+	// Kopien im Entwürfe-Ordner (S2.5): die aktuelle und frühere (die
+	// bleiben, kein Löschen im MVP).
+	if o.RemoteUID > 0 || len(o.RemotePreviousUIDs) > 0 {
+		fmt.Fprintf(w, "\ncopies:      uid %d", o.RemoteUID)
+		for _, u := range o.RemotePreviousUIDs {
+			fmt.Fprintf(w, ", earlier uid %d", u)
+		}
+		if o.PushedDate != "" {
+			fmt.Fprintf(w, " (date of the copy: %s)", termLine(o.PushedDate))
+		}
+	}
+	if o.PushNoteText != "" {
+		fmt.Fprintf(w, "\npush:        %s", o.PushNoteText)
+	}
 	fmt.Fprintf(w, "\nmessage-id:  <%s>\nfrom:        %s\nto:          %s\n", termLine(o.MessageID), termLine(o.From), addrLine(o.To))
 	if len(o.Cc) > 0 {
 		fmt.Fprintf(w, "cc:          %s\n", addrLine(o.Cc))

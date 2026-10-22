@@ -1,6 +1,8 @@
 // Package jobs arbeitet die Warteschlange in SQLite ab (Tabelle jobs;
 // docs/architektur.md, Abschnitt 7): Textextraktion aus Anhängen
-// (extract) und Volltextindex (index). Ein Job gilt einem Konto; der
+// (extract), Volltextindex (index) und seit S2.5 die Ablage der Entwürfe
+// im Entwürfe-Ordner (draft_push; die Arbeit selbst macht der Aufrufer mit
+// Verbindung, internal/mailsync). Ein Job gilt einem Konto; der
 // eigentliche Stand liegt in attachments.extract_status bzw. index_queue,
 // deshalb ist jeder Schritt wiederholbar und ein Abbruch (Strg+C, kill -9)
 // verliert höchstens die laufende Transaktion bzw. den laufenden Anhang.
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/search"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -301,4 +304,38 @@ func (r *Runner) runIndex(ctx context.Context, accountID int64) (int, error) {
 		}
 	}
 	return done, nil
+}
+
+// RunDraftPush führt den fälligen Job draft_push eines Kontos aus (A02 E1,
+// S2.5): push legt die wartenden Entwürfe im Entwürfe-Ordner ab. ran meldet,
+// ob ein Job fällig war (sonst wird push nicht aufgerufen).
+//
+//   - push ohne Fehler: Der Job ist erledigt; warten inzwischen neue
+//     Entwürfe (ein anderer Prozess hat geändert, während der Push lief, oder
+//     ein zurückgesetzter ready-Entwurf), bleibt er fällig (CompleteJob).
+//   - Abbruch, Verbindungs- oder Anmeldefehler: Der Job geht ohne
+//     Fehlerzählung zurück und ist sofort wieder fällig; der nächste Sync
+//     (oder die nächste Prüfung des Dauerläufers) holt den Push nach. Die
+//     Entwürfe bleiben pending.
+//   - andere Fehler (kein Entwürfe-Ordner, abgelehntes APPEND, Entwurf
+//     nicht baubar): Fehler des Jobs mit Wartezeit 1, 2, 4 … Minuten, nach
+//     fünf Fehlern failed (ein neuer Entwurf oder der nächste Sync reiht neu
+//     ein).
+func (r *Runner) RunDraftPush(ctx context.Context, accountID int64, push func(context.Context) error) (ran bool, err error) {
+	j, ok, err := r.Store.ClaimJob(ctx, store.JobDraftPush, accountID, r.owner(), r.lease(), r.TakeOver)
+	if err != nil || !ok {
+		return false, err
+	}
+	err = push(ctx)
+	switch {
+	case err == nil:
+		if _, err := r.Store.CompleteJob(ctx, j, r.owner()); err != nil && !errors.Is(err, store.ErrJobLost) {
+			return true, err
+		}
+		return true, nil
+	case ctx.Err() != nil || errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth):
+		r.release(ctx, j)
+		return true, err
+	}
+	return true, r.fail(ctx, j, err)
 }

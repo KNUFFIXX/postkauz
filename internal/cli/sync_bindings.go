@@ -27,6 +27,7 @@ func syncFlags(cmd *cobra.Command) {
 	f.Duration("interval", 0, "with --watch: time between syncs of all mailboxes (default 5m)")
 	f.Duration("idle-restart", 0, "with --watch: restart IDLE after this time (5m to 10m, default 8m)")
 	f.Duration("full-check-interval", 0, "with --watch: time between full UID checks of all mailboxes, which find deletions the message counts miss (default 1h)")
+	f.Duration("jobs-interval", 0, "with --watch: time between checks for queued drafts to put into the Drafts folder, also between syncs (default 10s)")
 	f.StringSlice("mailbox", nil, "only these mailboxes (repeatable)")
 }
 
@@ -43,16 +44,20 @@ func syncInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secrets
 	interval, _ := f.GetDuration("interval")
 	idle, _ := f.GetDuration("idle-restart")
 	fullCheck, _ := f.GetDuration("full-check-interval")
+	jobsEvery, _ := f.GetDuration("jobs-interval")
 	boxes, _ := f.GetStringSlice("mailbox")
-	if (interval != 0 || idle != 0 || fullCheck != 0) && !watch {
-		return nil, "", usageError{errors.New("--interval, --idle-restart and --full-check-interval need --watch")}
+	if (interval != 0 || idle != 0 || fullCheck != 0 || jobsEvery != 0) && !watch {
+		return nil, "", usageError{errors.New("--interval, --idle-restart, --full-check-interval and --jobs-interval need --watch")}
 	}
-	if interval < 0 || fullCheck < 0 {
-		return nil, "", usageError{errors.New("--interval and --full-check-interval must be positive")}
+	if interval < 0 || fullCheck < 0 || jobsEvery < 0 {
+		return nil, "", usageError{errors.New("--interval, --full-check-interval and --jobs-interval must be positive")}
 	}
 	in := ops.SyncRunInput{Account: accountFlag(cmd), Full: full, Watch: watch, Window: window, Mailboxes: boxes,
 		IntervalSeconds: int(interval / time.Second), IdleRestartSeconds: int(idle / time.Second),
-		FullCheckIntervalSeconds: int(fullCheck / time.Second)}
+		FullCheckIntervalSeconds: int(fullCheck / time.Second), JobsIntervalSeconds: int(jobsEvery / time.Second)}
+	if jobsEvery > 0 && in.JobsIntervalSeconds == 0 {
+		in.JobsIntervalSeconds = 1
+	}
 	if interval > 0 && in.IntervalSeconds == 0 {
 		in.IntervalSeconds = 1
 	}
@@ -95,6 +100,12 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 			fmt.Fprintf(a.stderr, "  search index: %d/%d\n", p.Done, p.Total)
 		case "error":
 			fmt.Fprintf(a.stderr, "  %s: error: %s\n", termLine(p.Mailbox), termLine(p.Message))
+		case "drafts":
+			// Ablage im Entwürfe-Ordner (S2.5); im Dauerbetrieb auch zwischen
+			// zwei Läufen, deshalb mit Zeit auf stdout.
+			if watching, _ := cmd.Flags().GetBool("watch"); watching {
+				fmt.Fprintf(a.stdout, "%s  %d drafts put into %s\n", time.Now().UTC().Format(time.RFC3339), p.Done, termLine(p.Mailbox))
+			}
 		case "round":
 			if r := p.Round; r != nil {
 				line := fmt.Sprintf("%s  %d new, %d updated, %d removed, %d errors; %d messages mirrored",
@@ -144,7 +155,9 @@ func renderSync(w io.Writer, out any) error {
 			}
 		}
 	}
-	// Suchindex (S1.7) vor den beiden Schlusszeilen, die Skripte auswerten.
+	// Entwürfe (S2.5) und Suchindex (S1.7) vor den beiden Schlusszeilen,
+	// die Skripte auswerten.
+	renderSyncDrafts(w, o.Drafts)
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {
@@ -155,6 +168,38 @@ func renderSync(w io.Writer, out any) error {
 	fmt.Fprintf(w, "%d messages mirrored\n", o.MessagesMirrored)
 	_, err := fmt.Fprintf(w, "%d errors\n", o.Errors)
 	return err
+}
+
+// renderSyncDrafts nennt das Ergebnis des Jobs draft_push (Zähler, Ordner,
+// Grund), keine Inhalte.
+func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
+	if d == nil {
+		return
+	}
+	var parts []string
+	if d.Pushed > 0 || d.Error == "" {
+		where := ""
+		if d.Mailbox != "" {
+			where = " into " + termLine(d.Mailbox)
+		}
+		parts = append(parts, fmt.Sprintf("%d put%s (flags \\Draft \\Seen; nothing is sent)", d.Pushed, where))
+	}
+	if d.TakenOver > 0 {
+		parts = append(parts, fmt.Sprintf("%d taken over in the mail client (not pushed)", d.TakenOver))
+	}
+	if d.Missing > 0 {
+		parts = append(parts, fmt.Sprintf("%d with their copy gone (not pushed)", d.Missing))
+	}
+	if d.Stale > 0 {
+		parts = append(parts, fmt.Sprintf("%d ready but no longer the approved message: back to draft, not pushed (see draft show)", d.Stale))
+	}
+	if d.Failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d could not be built (see draft show)", d.Failed))
+	}
+	if d.Error != "" {
+		parts = append(parts, "error: "+termLine(d.Error))
+	}
+	fmt.Fprintf(w, "drafts: %s\n", strings.Join(parts, "; "))
 }
 
 // --- mailbox list -------------------------------------------------------------

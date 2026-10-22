@@ -7,6 +7,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 )
 
@@ -42,10 +43,18 @@ type WatchOptions struct {
 	IdleRetry time.Duration
 	// OnRound bekommt das Ergebnis jedes Laufs (auch fehlerhafter).
 	OnRound func(r Report, err error)
+	// JobsInterval ist der Abstand, in dem Watch die Jobs des Kontos
+	// prüft und wartende Entwürfe ablegt, auch zwischen zwei Läufen (0 =
+	// 10 s; A02 E1, `--jobs-interval`). Nur mit Engine.Drafts.
+	JobsInterval time.Duration
+	// OnDrafts bekommt das Ergebnis jeder Ablage zwischen zwei Läufen
+	// (die zu Beginn eines Laufs steht in dessen Report).
+	OnDrafts func(d ops.SyncDrafts, err error)
 }
 
 // Watch synct sofort, danach alle Interval und zusätzlich bei jeder
-// IDLE-Meldung für die INBOX, bis ctx endet (Rückgabe nil). Läufe über
+// IDLE-Meldung für die INBOX, bis ctx endet (Rückgabe nil). Alle
+// JobsInterval legt er wartende Entwürfe ab (Job draft_push, S2.5). Läufe über
 // alle Ordner gleichen alle FullCheckInterval die UID-Listen vollständig ab
 // (Löschungserkennung, A02 A1). Fehler eines
 // Laufs (Verbindung) beenden Watch nicht; der nächste Lauf versucht es neu
@@ -63,6 +72,9 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	}
 	if o.FullCheckInterval <= 0 {
 		o.FullCheckInterval = DefaultFullCheckInterval
+	}
+	if o.JobsInterval <= 0 {
+		o.JobsInterval = DefaultJobsInterval
 	}
 	// Die IDLE-Schleife endet mit Watch: eigener Kontext, und Watch wartet
 	// auf sie (sonst liefe sie nach einem Anmeldefehler eines Laufs mit
@@ -118,15 +130,46 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		return nil
 	}
 
+	// Jobs zwischen zwei Läufen (draft_push): Der Sync hält die
+	// Kontosperre, also legt nur er ab; ein Fehler (z. B. Verbindung) lässt
+	// die Entwürfe pending, die nächste Prüfung versucht es erneut. Läufe
+	// und Prüfungen wechseln sich in dieser Schleife ab, nie gleichzeitig.
+	pushJobs := func() error {
+		dr, err := e.pushDrafts(ctx, false)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if dr != nil && o.OnDrafts != nil {
+			o.OnDrafts(*dr, err)
+		}
+		if errors.Is(err, provider.ErrAuth) {
+			return err
+		}
+		if err != nil {
+			e.log().Warn("drafts not pushed; retrying at the next check", "error", err.Error())
+		}
+		return nil
+	}
+
 	if err := round(nil); err != nil {
 		return err
 	}
 	t := time.NewTicker(o.Interval)
 	defer t.Stop()
+	var jobsC <-chan time.Time // nil = keine Jobs (ohne Engine.Drafts)
+	if e.Drafts != nil {
+		jt := time.NewTicker(o.JobsInterval)
+		defer jt.Stop()
+		jobsC = jt.C
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-jobsC:
+			if err := pushJobs(); err != nil {
+				return err
+			}
 		case err := <-idleDone:
 			idleDone = nil // beendet; ohne Fehler (IDLE nicht unterstützt) bleibt das Polling
 			if err != nil {
