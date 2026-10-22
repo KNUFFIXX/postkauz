@@ -316,6 +316,7 @@ type DraftsWriteOutput struct {
 	OriginalID         int64                   `json:"original_id,omitempty"`
 	Preview            DraftPreview            `json:"preview"`
 	Original           *OriginalEnvelope       `json:"original,omitempty"`
+	DerivedFromEmail   *DerivedEnvelope        `json:"derived_from_email,omitempty"`
 	Attachments        []DraftAttachmentOutput `json:"attachments"`
 	Warnings           []string                `json:"warnings"`
 	Notes              []string                `json:"notes"`
@@ -352,6 +353,7 @@ const draftsWriteOutputSchema = `{
     "changed": {"type": "boolean"}, "message_id": {"type": "string"}, "original_id": {"type": "integer"},
     "preview": ` + draftPreviewSchema + `,
     "original": ` + originalEnvelopeSchema + `,
+    "derived_from_email": ` + derivedEnvelopeSchema + `,
     "attachments": ` + draftAttachmentsSchema + `,
     "warnings": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}},
@@ -397,14 +399,16 @@ func toStoreAddrs(l []compose.Address) []store.Addr {
 	return out
 }
 
-// attachmentWarning formuliert Entscheid 39 (ohne Inhalt außer dem
-// Dateinamen, der nur in Ausgaben steht).
-func attachmentWarning(a store.DraftAttachment) string {
+// attachmentWarning formuliert Entscheid 39. Der Anhang wird über seine
+// Stelle in attachments genannt, nie über den Namen: Der Name kann aus einer
+// E-Mail stammen (weitergeleiteter Anhang), und warnings steht ohne Hülle
+// (Gegenprüfung S2.8, W3). Der Typ ist der aus dem Inhalt erkannte.
+func attachmentWarning(i int, a store.DraftAttachment) string {
 	switch {
 	case a.Executable:
-		return fmt.Sprintf("attachment %q is a program or script (%s); mail clients may block it", a.Filename, a.ContentType)
+		return fmt.Sprintf("attachments[%d] is a program or script (%s); mail clients may block it", i, a.ContentType)
 	case a.Mismatch:
-		return fmt.Sprintf("attachment %q: its name or declared type does not match the content; it is sent as %s", a.Filename, a.ContentType)
+		return fmt.Sprintf("attachments[%d]: its name or declared type does not match the content; it is sent as %s", i, a.ContentType)
 	}
 	return ""
 }
@@ -412,8 +416,8 @@ func attachmentWarning(a store.DraftAttachment) string {
 func attachmentOutputs(atts []store.DraftAttachment) ([]DraftAttachmentOutput, []string) {
 	out := []DraftAttachmentOutput{}
 	warn := []string{}
-	for _, a := range atts {
-		w := attachmentWarning(a)
+	for i, a := range atts {
+		w := attachmentWarning(i, a)
 		out = append(out, DraftAttachmentOutput{Filename: a.Filename, ContentType: a.ContentType, Size: a.Size, SHA256: a.SHA256, Warning: w})
 		if w != "" {
 			warn = append(warn, w)
@@ -460,6 +464,11 @@ func headersOf(m *compose.Message) string {
 type composeOptions struct {
 	Quote     bool `json:"quote"`
 	Signature bool `json:"signature"`
+	// Derived: Felder, die aus einer E-Mail übernommen wurden
+	// (compose.Message.Derived und Anhänge aus dem Spiegel ohne eigenen
+	// Namen; Gegenprüfung S2.8, W3). nil = unbekannt (Entwurf von vor
+	// dieser Nachbesserung): derivedFields schätzt dann vorsichtig.
+	Derived *[]string `json:"derived,omitempty"`
 }
 
 func parseOptions(s string) composeOptions {
@@ -765,7 +774,8 @@ func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Resul
 		return DraftsWriteOutput{}, err
 	}
 	out := DraftsWriteOutput{Source: DraftSource, DraftID: d.ID, Account: acc, Kind: d.Kind, Status: string(res.To), Changed: res.Changed,
-		MessageID: d.MessageIDHeader, OriginalID: d.InReplyToMsg, Preview: preview(d, own), Original: orig, Notes: []string{},
+		MessageID: d.MessageIDHeader, OriginalID: d.InReplyToMsg, Preview: preview(d, own), Original: orig,
+		DerivedFromEmail: derivedEnvelope(d), Notes: []string{},
 		Remote: d.RemoteState, RemoteNote: remoteNote(d), PushJobID: res.PushJobID, PreviewHash: d.PreviewHash, DryRun: dry}
 	if res.From != "" {
 		out.PreviousStatus = string(res.From)
@@ -912,6 +922,8 @@ func DraftsCreate(d Deps) Operation {
 				}
 				// Weitergeleitete Anhänge stammen aus dem Blob-Store und liegen dort schon.
 			}
+			derived := derivedOnBuild(msg, in.Attachments)
+			opts.Derived = &derived
 			nd := drafts.NewDraft{AccountID: acc.ID, IdentityID: ident.ID, Kind: drafts.Kind(kind), InReplyToMsg: origID,
 				Content: content(msg, in.BodyMarkdown, in.BodyHTML, opts), CreatedBy: call.Key.ID}
 			res, err := o.as(call, "drafts.create", policy.ScopeMailDraft).Create(ctx, nd)
@@ -1078,6 +1090,8 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 	if err != nil {
 		return nil, err
 	}
+	derived := derivedOnUpdate(derivedFields(cur), msg, in)
+	opts.Derived = &derived
 	for _, n := range msg.Notes {
 		if n != compose.NoteNoIdentity {
 			notes = addNote(notes, composeNotes[n])
@@ -1108,24 +1122,34 @@ type DraftDetail struct {
 	// Source: "draft" (S2.8): Kopf, body_text, body_markdown und body_html
 	// sind für den Entwurf geschrieben (body_text: eigener Text und
 	// Signatur); Zitat bzw. weitergeleiteter Text stehen in Original.
-	Source            string                  `json:"source"`
-	DraftID           int64                   `json:"draft_id"`
-	Account           string                  `json:"account"`
-	Kind              string                  `json:"kind"`
-	Status            string                  `json:"status"`
-	MessageID         string                  `json:"message_id"`
-	OriginalID        int64                   `json:"original_id,omitempty"`
-	InReplyTo         string                  `json:"in_reply_to,omitempty"`
-	References        string                  `json:"references,omitempty"`
-	From              string                  `json:"from"`
-	To                []string                `json:"to"`
-	Cc                []string                `json:"cc"`
-	Bcc               []string                `json:"bcc"`
-	Subject           string                  `json:"subject"`
-	BodyText          string                  `json:"body_text"`
-	Original          *OriginalEnvelope       `json:"original,omitempty"`
-	BodyMarkdown      string                  `json:"body_markdown,omitempty"`
-	BodyHTML          string                  `json:"body_html,omitempty"`
+	Source     string   `json:"source"`
+	DraftID    int64    `json:"draft_id"`
+	Account    string   `json:"account"`
+	Kind       string   `json:"kind"`
+	Status     string   `json:"status"`
+	MessageID  string   `json:"message_id"`
+	OriginalID int64    `json:"original_id,omitempty"`
+	InReplyTo  string   `json:"in_reply_to,omitempty"`
+	References string   `json:"references,omitempty"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	Cc         []string `json:"cc"`
+	Bcc        []string `json:"bcc"`
+	Subject    string   `json:"subject"`
+	BodyText   string   `json:"body_text"`
+	// BodyTextTruncated: body_text wurde auf max_chars gekürzt (W1).
+	BodyTextTruncated bool              `json:"body_text_truncated,omitempty"`
+	Original          *OriginalEnvelope `json:"original,omitempty"`
+	// DerivedFromEmail: Kopffelder und Anhangsnamen aus der
+	// Ausgangsnachricht (W3).
+	DerivedFromEmail *DerivedEnvelope `json:"derived_from_email,omitempty"`
+	BodyMarkdown     string           `json:"body_markdown,omitempty"`
+	BodyHTML         string           `json:"body_html,omitempty"`
+	// BodySourceOmitted: body_markdown bzw. body_html war länger als
+	// max_chars und fehlt (W1). Gekürzt würden sie zur Falle: Ein Agent,
+	// der den gekürzten Quelltext ändert und mit drafts.update
+	// zurückschreibt, schnitte den Entwurf still ab.
+	BodySourceOmitted bool                    `json:"body_source_omitted,omitempty"`
 	Quote             bool                    `json:"quote"`
 	Signature         bool                    `json:"signature"`
 	Attachments       []DraftAttachmentOutput `json:"attachments"`
@@ -1186,6 +1210,8 @@ func DraftsGet(d Deps) Operation {
   "type": "object",
   "properties": {
     "draft_id": {"type": "integer", "minimum": 1},
+    "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the draft belongs to this account (otherwise not found)"},
+    "max_chars": {"type": "integer", "minimum": 1, "description": "cut body_text and original.text after this many characters each (body_text_truncated, original.truncated); body_markdown and body_html are left out when longer (body_source_omitted). Default: no limit"},
     "eml": {"type": "boolean", "description": "also return the message as RFC 5322 text, byte for byte the copy put into the Drafts folder when it is still current (eml_matches_copy)"}
   },
   "required": ["draft_id"],
@@ -1205,8 +1231,11 @@ func DraftsGet(d Deps) Operation {
     "cc": {"type": "array", "items": {"type": "string"}}, "bcc": {"type": "array", "items": {"type": "string"}},
     "subject": {"type": "string"},
     "body_text": {"type": "string", "description": "own text and signature; the quoted or forwarded original is in original"},
+    "body_text_truncated": {"type": "boolean"},
     "original": ` + originalEnvelopeSchema + `,
+    "derived_from_email": ` + derivedEnvelopeSchema + `,
     "body_markdown": {"type": "string"}, "body_html": {"type": "string"},
+    "body_source_omitted": {"type": "boolean", "description": "body_markdown or body_html was longer than max_chars and is left out"},
     "quote": {"type": "boolean"}, "signature": {"type": "boolean"},
     "attachments": ` + draftAttachmentsSchema + `,
     "warnings": {"type": "array", "items": {"type": "string"}},
@@ -1229,11 +1258,31 @@ func DraftsGet(d Deps) Operation {
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				DraftID int64 `json:"draft_id"`
-				EML     bool  `json:"eml,omitempty"`
+				DraftID  int64  `json:"draft_id"`
+				Account  string `json:"account,omitempty"`
+				MaxChars int    `json:"max_chars,omitempty"`
+				EML      bool   `json:"eml,omitempty"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
+			}
+			if in.Account != "" {
+				// Konto genannt (Resource mail://{account}/draft/{id}): Ein
+				// Entwurf eines anderen Kontos ist „nicht gefunden", wie bei
+				// messages.get. Geprüft vor dem Lesen mit Ablauf (svc.Get),
+				// damit ein fremder Entwurf auch keinen Rückfall auslöst
+				// (Gegenprüfung S2.8, W2).
+				peek, err := o.svc.Store.Draft(ctx, in.DraftID)
+				if err != nil {
+					return nil, err
+				}
+				a, err := o.accountByID(ctx, peek.AccountID)
+				if err != nil {
+					return nil, err
+				}
+				if a.Name != in.Account {
+					return nil, fmt.Errorf("%w: %d", store.ErrDraftNotFound, in.DraftID)
+				}
 			}
 			dr, err := o.svc.Get(ctx, in.DraftID)
 			if err != nil {
@@ -1244,14 +1293,18 @@ func DraftsGet(d Deps) Operation {
 				return nil, err
 			}
 			opts := parseOptions(dr.ComposeOptions)
-			own, orig, err := o.textParts(ctx, dr, 0)
+			// Zeichenbudget (Gegenprüfung S2.8, W1; docs/mcp.md Grundsatz 7):
+			// MCP setzt immer max_chars, die CLI nur mit --max-chars.
+			own, orig, err := o.textParts(ctx, dr, in.MaxChars)
 			if err != nil {
 				return nil, err
 			}
+			own, ownCut := truncateRunes(own, in.MaxChars)
+			md, html, omitted := budgetSource(dr.BodyMarkdown, dr.BodyHTML, in.MaxChars)
 			out := DraftDetail{Source: DraftSource, DraftID: dr.ID, Account: acc.Name, Kind: dr.Kind, Status: dr.Status, MessageID: dr.MessageIDHeader,
 				OriginalID: dr.InReplyToMsg, From: formatAddr(store.Addr{Name: dr.FromName, Address: dr.FromEmail}),
 				To: formatAddrs(dr.To), Cc: formatAddrs(dr.Cc), Bcc: formatAddrs(dr.Bcc), Subject: dr.Subject, BodyText: own, Original: orig,
-				BodyMarkdown: dr.BodyMarkdown, BodyHTML: dr.BodyHTML, Quote: opts.Quote, Signature: opts.Signature,
+				BodyTextTruncated: ownCut, DerivedFromEmail: derivedEnvelope(dr), BodyMarkdown: md, BodyHTML: html, BodySourceOmitted: omitted, Quote: opts.Quote, Signature: opts.Signature,
 				HookResult: dr.HookResult, ApprovalID: dr.ApprovalID, Remote: dr.RemoteState, RemoteNote: remoteNote(dr),
 				RemoteMailboxID: dr.RemoteMailboxID, RemoteUID: dr.RemoteUID, PreviewHash: dr.PreviewHash, CreatedBy: dr.CreatedBy,
 				CreatedAt: rfc3339(dr.CreatedAt), UpdatedAt: rfc3339(dr.UpdatedAt), ClosedAt: rfc3339(dr.ClosedAt), SentMessageID: dr.SentMessageID}
@@ -1286,6 +1339,23 @@ func DraftsGet(d Deps) Operation {
 			return out, nil
 		},
 	}
+}
+
+// budgetSource wendet das Zeichenbudget auf den Quelltext des Entwurfs an
+// (body_markdown, body_html): Was länger als max ist, fehlt (omitted),
+// statt gekürzt zu werden (max 0 = unbegrenzt).
+func budgetSource(md, html string, max int) (string, string, bool) {
+	if max <= 0 {
+		return md, html, false
+	}
+	omitted := false
+	if utf8.RuneCountInString(md) > max {
+		md, omitted = "", true
+	}
+	if utf8.RuneCountInString(html) > max {
+		html, omitted = "", true
+	}
+	return md, html, omitted
 }
 
 // OlderCopiesWarning ist die Warnung zu älteren Kopien im Entwürfe-Ordner
@@ -1407,6 +1477,8 @@ type DraftSummary struct {
 	UpdatedAt   string `json:"updated_at"`
 	// OlderCopies: ältere Kopien im Entwürfe-Ordner (Entscheid 43, S2.7).
 	OlderCopies int `json:"older_copies,omitempty"`
+	// DerivedFromEmail: Betreff (oder anderes) aus der Ausgangsnachricht (W3).
+	DerivedFromEmail *DerivedEnvelope `json:"derived_from_email,omitempty"`
 }
 
 // DraftsListOutput ist die Ausgabe von drafts.list.
@@ -1453,7 +1525,8 @@ func DraftsList(d Deps) Operation {
       "recipients": {"type": "integer"}, "attachments": {"type": "integer"},
       "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
       "approval_id": {"type": "integer"}, "hook_result": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
-      "updated_at": {"type": "string", "format": "date-time"}, "older_copies": {"type": "integer"}},
+      "updated_at": {"type": "string", "format": "date-time"}, "older_copies": {"type": "integer"},
+      "derived_from_email": ` + derivedEnvelopeSchema + `},
       "required": ["draft_id", "account", "kind", "status", "subject", "recipients", "attachments", "remote", "updated_at"]}}
   },
   "required": ["source", "drafts"]
@@ -1496,7 +1569,7 @@ func DraftsList(d Deps) Operation {
 				out.Drafts = append(out.Drafts, DraftSummary{DraftID: dr.ID, Account: names[dr.AccountID], Kind: dr.Kind, Status: dr.Status,
 					Subject: dr.Subject, Recipients: len(dr.To) + len(dr.Cc) + len(dr.Bcc), Attachments: len(dr.Attachments),
 					Remote: dr.RemoteState, ApprovalID: dr.ApprovalID, HookResult: dr.HookResult, UpdatedAt: rfc3339(dr.UpdatedAt),
-					OlderCopies: len(older)})
+					OlderCopies: len(older), DerivedFromEmail: derivedEnvelope(dr)})
 			}
 			return out, nil
 		},

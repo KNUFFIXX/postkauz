@@ -3,8 +3,10 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -95,7 +97,11 @@ func DraftsStyle(d Deps) Operation {
 			if ident.StyleFile != "" {
 				if out.Text, out.Truncated, err = readStyleFile(ident.StyleFile, max); err != nil {
 					// Ohne Pfad: Er nennt Ordner des Nutzers und geht über MCP an Agenten.
-					return nil, fmt.Errorf("the style file of identity %d cannot be read; check it with: identity list", ident.ID)
+					why := ""
+					if r := styleReadReason(err); r != "" {
+						why = " (" + r + ")"
+					}
+					return nil, fmt.Errorf("the style file of identity %d cannot be read%s; check it with: identity list", ident.ID, why)
 				}
 			}
 			return out, nil
@@ -143,9 +149,33 @@ func (o *draftOps) styleIdentity(ctx context.Context, account, sel string) (stor
 	return store.Identity{}, inputErr("the identity exists in %d accounts; choose one with account", len(found))
 }
 
-// readStyleFile liest höchstens max Zeichen der Stildatei (nur eine
-// gewöhnliche Datei; ungültiges UTF-8 wird ersetzt).
+// Gründe, aus denen readStyleFile eine Stildatei nicht liest. Sie nennen
+// keinen Pfad und dürfen deshalb in die Fehlermeldung (sie geht über MCP an
+// Agenten).
+var (
+	errStyleSymlink    = errors.New("it is a symbolic link; give the file itself with identity add --style-file")
+	errStyleNotRegular = errors.New("it is not a regular file")
+	errStyleChanged    = errors.New("it was replaced while being opened")
+)
+
+// readStyleFile liest höchstens max Zeichen der Stildatei (ungültiges
+// UTF-8 wird ersetzt). Nur eine gewöhnliche Datei, kein Symlink, keine
+// FIFO und kein Gerät (Gegenprüfung S2.8, K2): os.Lstat prüft vor dem
+// Öffnen, denn das Öffnen einer FIFO blockiert, bis jemand hineinschreibt;
+// nach dem Öffnen prüft f.Stat, dass es dieselbe gewöhnliche Datei ist
+// (os.SameFile), falls sie dazwischen ausgetauscht wurde. Die Lesegrenze
+// steht vor dem ersten Lesen fest.
 func readStyleFile(path string, max int) (string, bool, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return "", false, err
+	}
+	switch {
+	case before.Mode()&os.ModeSymlink != 0:
+		return "", false, errStyleSymlink
+	case !before.Mode().IsRegular():
+		return "", false, errStyleNotRegular
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return "", false, err
@@ -155,8 +185,8 @@ func readStyleFile(path string, max int) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if !fi.Mode().IsRegular() {
-		return "", false, fmt.Errorf("not a regular file")
+	if !fi.Mode().IsRegular() || !os.SameFile(before, fi) {
+		return "", false, errStyleChanged
 	}
 	// Ein Zeichen hat in UTF-8 höchstens 4 Bytes: Ist die Datei länger als
 	// limit, enthalten die gelesenen Bytes mehr als max Zeichen, und
@@ -168,4 +198,21 @@ func readStyleFile(path string, max int) (string, bool, error) {
 	}
 	text, cut := truncateRunes(strings.ToValidUTF8(string(b), string(utf8.RuneError)), max)
 	return text, cut, nil
+}
+
+// styleReadReason liefert den Grund ohne Pfad für die Fehlermeldung ("" =
+// keiner, etwa bei einem Fehler des Betriebssystems, der den Pfad nennt).
+func styleReadReason(err error) string {
+	for _, e := range []error{errStyleSymlink, errStyleNotRegular, errStyleChanged} {
+		if errors.Is(err, e) {
+			return e.Error()
+		}
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return "it does not exist"
+	}
+	if errors.Is(err, fs.ErrPermission) {
+		return "permission denied"
+	}
+	return ""
 }

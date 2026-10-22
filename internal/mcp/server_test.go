@@ -257,6 +257,21 @@ func TestInstructionsFollowDraftScope(t *testing.T) {
 	}
 }
 
+// Gegenprüfung S2.8, K4: Die Beschreibung von mail_get_policy gilt für
+// jeden Schlüssel; „read-only" stimmte für assistant nicht.
+func TestPolicyToolDescriptionFitsEveryKey(t *testing.T) {
+	for _, b := range tools {
+		if b.tool != "mail_get_policy" {
+			continue
+		}
+		if strings.Contains(b.desc, "read-only") || !strings.Contains(b.desc, "never sends, deletes or moves mail; drafts only with mail:draft") {
+			t.Fatalf("mail_get_policy: %q", b.desc)
+		}
+		return
+	}
+	t.Fatal("no tool mail_get_policy")
+}
+
 func TestTakeDryRun(t *testing.T) {
 	in, dry, err := takeDryRun(json.RawMessage(`{"draft_id":1,"dry_run":false}`))
 	if err != nil || dry == nil || *dry || string(in) != `{"draft_id":1}` {
@@ -354,7 +369,7 @@ func TestToolBudgetFollowsPolicy(t *testing.T) {
 			t.Errorf("%s: default description %q", b.tool, d)
 		}
 	}
-	if n != 2 {
-		t.Fatalf("%d tools with max_chars, want 2 (mail_get_message, mail_get_attachment_text)", n)
+	if n != 3 {
+		t.Fatalf("%d tools with max_chars, want 3 (mail_get_message, mail_get_attachment_text, mail_get_draft)", n)
 	}
 }

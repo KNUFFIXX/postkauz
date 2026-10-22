@@ -253,6 +253,12 @@ func (b *builder) addresses() error {
 		own := append([]string{in.AccountAddress, in.Identity.Email, from.Address}, in.OwnAddresses...)
 		dto, dcc := ReplyRecipients(*in.Original, own, in.Kind == KindReplyAll)
 		to, cc = b.valid(dto), b.valid(dcc)
+		if len(to) > 0 {
+			b.derive(DerivedTo)
+		}
+		if len(cc) > 0 {
+			b.derive(DerivedCc)
+		}
 	}
 	seen := map[string]bool{}
 	merge := func(lists ...[]Address) []Address {
@@ -315,6 +321,7 @@ func (b *builder) subject() error {
 		b.note(NoteSubjectTruncated)
 	}
 	b.msg.Subject = s
+	b.derive(DerivedSubject)
 	return nil
 }
 
@@ -335,6 +342,12 @@ func (b *builder) ids() error {
 	}
 	if in.Kind == KindReply || in.Kind == KindReplyAll {
 		b.msg.InReplyTo, b.msg.References = References(*in.Original)
+		if b.msg.InReplyTo != "" {
+			b.derive(DerivedInReplyTo)
+		}
+		if len(b.msg.References) > 0 {
+			b.derive(DerivedReferences)
+		}
 	}
 	return nil
 }

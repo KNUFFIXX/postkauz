@@ -63,6 +63,7 @@ func (b *builder) attachments() ([]loadedAttachment, error) {
 			if err := take(fmt.Sprintf("original.attachments[%d]", i), a, a.Data, SourceForward); err != nil {
 				return nil, err
 			}
+			b.derive(DerivedAttachments)
 		}
 	}
 	for _, a := range out {

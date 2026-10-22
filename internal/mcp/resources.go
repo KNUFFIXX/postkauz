@@ -141,7 +141,7 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 		if !ok {
 			return nil, sdk.ResourceNotFoundError(uri)
 		}
-		op, in = "drafts.get", map[string]any{"draft_id": id}
+		op, in = "drafts.get", map[string]any{"draft_id": id, "account": u.Host, "max_chars": h.o.MaxChars}
 	case len(seg) == 4 && seg[0] == "message" && seg[2] == "attachment":
 		msg, ok1 := positive(seg[1])
 		att, ok2 := positive(seg[3])
@@ -155,11 +155,6 @@ func (h *handler) readResource(ctx context.Context, req *sdk.ReadResourceRequest
 	res, err := h.callMap(ctx, op, in)
 	if err != nil {
 		return nil, resourceErr(uri, err)
-	}
-	// drafts.get kennt kein Konto in der Eingabe: Ein Entwurf eines anderen
-	// Kontos ist unter dieser URI „nicht gefunden" (wie bei Nachrichten).
-	if d, ok := res.Output.(ops.DraftDetail); ok && d.Account != u.Host {
-		return nil, sdk.ResourceNotFoundError(uri)
 	}
 	_, text, err := outputValue(res.Output)
 	if err != nil {

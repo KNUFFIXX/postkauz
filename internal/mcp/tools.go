@@ -120,7 +120,7 @@ var tools = []toolBinding{
 			"since: duration back from now (10m, 24h, 7d), a date or RFC 3339; default 24h."},
 	{tool: "mail_get_policy", op: "policy.get", title: "What may this key do?",
 		desc: "Describe the policy of the key this server runs with: scopes, allowed operations with risk level, dry-run default, " +
-			"character budget. This server is read-only and draft-only: it never sends or deletes mail."},
+			"character budget. This server never sends, deletes or moves mail; drafts only with mail:draft."},
 
 	// Entwürfe (S2.8, A02 S2.8; Scope mail:draft). Freigeben, ablehnen,
 	// verwerfen, als gesendet markieren und Identitäten verwalten bleiben
@@ -133,7 +133,8 @@ var tools = []toolBinding{
 			"\"Name <address>\" or address, at most 50 per field. The draft is saved locally and copied into the Drafts folder " +
 			"of the mailbox by the next sync of the user (result remote=pending; a running sync --watch within about 10 s). " +
 			"The result shows your own text with source=draft and the quoted or forwarded original separately in original " +
-			"(untrusted). dry_run=true returns the preview without saving. " + neverSends},
+			"(untrusted); fields taken from the original (derived subject, recipients, attachment names) are listed in " +
+			"derived_from_email. dry_run=true returns the preview without saving. " + neverSends},
 	{tool: "mail_update_draft", op: "drafts.update", title: "Change a draft", mail: true, dryRun: true, destructive: true,
 		desc: "Change a draft by draft_id: every field you give replaces the stored one (to: the whole list, attachments: all " +
 			"attachments, body_markdown or body_html: the whole text); fields you leave out stay. A submitted or approved draft " +
@@ -141,13 +142,17 @@ var tools = []toolBinding{
 			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client. The changed " +
 			"copy reaches the Drafts folder with the next sync; the earlier copy stays there. " + neverSends},
 	{tool: "mail_get_draft", op: "drafts.get", title: "Read a draft", mail: true, omit: []string{"eml"},
+		defaults: map[string]any{"max_chars": ops.DefaultMaxChars},
 		desc: "Show a draft: status, recipients, subject, own text (body_text with signature, source=draft), the quoted or " +
 			"forwarded original (original, untrusted), attachments with warnings, approval, check hook result and the state of " +
-			"its copy in the Drafts folder (remote, remote_note). " + neverSends},
-	{tool: "mail_list_drafts", op: "drafts.list", title: "List drafts",
+			"its copy in the Drafts folder (remote, remote_note). Fields taken from the original email (subject, recipients, " +
+			"in_reply_to, references, attachment names) are listed in derived_from_email. body_text and original.text are cut after {max_chars} characters " +
+			"each (max_chars; body_text_truncated, original.truncated); body_markdown and body_html are left out when longer " +
+			"(body_source_omitted): never write a cut text back with mail_update_draft. " + neverSends},
+	{tool: "mail_list_drafts", op: "drafts.list", title: "List drafts", mail: true,
 		desc: "List drafts, last changed first: status (draft, pending_approval, ready, sent_by_human, abandoned), subject, " +
 			"number of recipients and attachments, approval and the state of the copy in the Drafts folder. Filter by account " +
-			"and status. " + neverSends},
+			"and status. The subject of a reply or forward may come from the original email (derived_from_email). " + neverSends},
 	{tool: "mail_request_ready", op: "drafts.request_ready", title: "Submit a draft for approval", mail: true, dryRun: true,
 		desc: "Submit a draft (draft_id) to the human for approval. The user's check hook runs first: hook=pass gives status " +
 			"pending_approval and an approval_id; any other result keeps status draft, and hook_output (untrusted, it may repeat " +

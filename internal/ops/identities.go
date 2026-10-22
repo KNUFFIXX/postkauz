@@ -193,7 +193,13 @@ func IdentitiesAdd(d Deps) Operation {
 				if err != nil {
 					return nil, inputErr("style_file: not a usable path")
 				}
-				if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
+				// Lstat wie beim Lesen (drafts.style): kein Symlink, keine
+				// FIFO (Gegenprüfung S2.8, K2).
+				st, err := os.Lstat(p)
+				switch {
+				case err == nil && st.Mode()&os.ModeSymlink != 0:
+					return nil, inputErr("style_file: a symbolic link is not allowed; give the file itself")
+				case err != nil || !st.Mode().IsRegular():
 					return nil, inputErr("style_file: not a readable regular file")
 				}
 				i.StyleFile = p

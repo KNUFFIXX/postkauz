@@ -330,7 +330,7 @@ func TestDraftAttachmentsAndReasons(t *testing.T) {
 	}
 	out := e.must(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new", "to": []string{"a@example.org"},
 		"attachments": []map[string]any{{"file": "rechnung.pdf"}, {"attachment_id": 1, "filename": "Notiz-neu.txt"}}}).(DraftsWriteOutput)
-	if len(out.Attachments) != 2 || len(out.Warnings) != 1 || !strings.Contains(out.Warnings[0], "rechnung.pdf") ||
+	if len(out.Attachments) != 2 || len(out.Warnings) != 1 || !strings.HasPrefix(out.Warnings[0], "attachments[0]") ||
 		out.Attachments[0].ContentType != "text/plain" || out.Attachments[1].Filename != "Notiz-neu.txt" || e.blobs.puts != 1 {
 		t.Fatalf("attachments = %+v warnings %v puts %d", out.Attachments, out.Warnings, e.blobs.puts)
 	}
