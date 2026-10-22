@@ -21,7 +21,10 @@ var markdown = goldmark.New(goldmark.WithRendererOptions(ghtml.WithHardWraps()))
 // quoteDateLayout ist das Datum in Einleitungszeile ({date}) und
 // Weiterleitungskopf; quoteDateNumeric das Datum für {date_numeric}
 // (Tag.Monat.Jahr Stunde:Minute, z. B. für „Am {date_numeric} schrieb
-// {from}:"), beide in derselben Zeitzone.
+// {from}:"), beide in der Zeitzone der Ausgangsnachricht (ihrer
+// Date-Kopfzeile, sonst UTC; OriginalFrom). Bis zur Gegenprüfung von
+// S2.4/S2.5 galt die Zone der Uhr des Nachrichtenbaus; dann hing
+// message_hash von der Zeitzone des Prozesses ab (K4).
 const (
 	quoteDateLayout  = "Mon, 2 Jan 2006 15:04 -0700"
 	quoteDateNumeric = "02.01.2006 15:04"
@@ -114,16 +117,16 @@ func (b *builder) quoteDate(t time.Time) string {
 	if t.IsZero() {
 		return "an unknown date"
 	}
-	return t.In(b.msg.Date.Location()).Format(quoteDateLayout)
+	return t.Format(quoteDateLayout)
 }
 
-// quoteDateNum ist {date_numeric}: Zeitzone wie {date} (die der Uhr des
-// Nachrichtenbaus), ohne Angabe der Zeitzone.
+// quoteDateNum ist {date_numeric}: Zeitzone wie {date} (die der
+// Ausgangsnachricht), ohne Angabe der Zeitzone.
 func (b *builder) quoteDateNum(t time.Time) string {
 	if t.IsZero() {
 		return unknownDateNumeric
 	}
-	return t.In(b.msg.Date.Location()).Format(quoteDateNumeric)
+	return t.Format(quoteDateNumeric)
 }
 
 // quoteLine füllt die Vorlage der Einleitungszeile.

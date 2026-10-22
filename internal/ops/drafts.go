@@ -1560,9 +1560,10 @@ func (o *draftOps) rebuild(ctx context.Context, acc store.Account, dr store.Draf
 
 // rebuildAt baut wie rebuild, mit date als Date-Kopfzeile (Nullzeit = Uhr
 // der Konfiguration). Der Push (S2.5) setzt so das Date der abgelegten
-// Kopie; mit dem gespeicherten pushed_date (in time.Local umgerechnet,
-// denn die Zitatzeile zeigt das Datum der Ausgangsnachricht in der Zone von
-// Date) entsteht dieselbe Kopie byte-gleich noch einmal (S2.7).
+// Kopie; mit dem gespeicherten pushed_date (time.Parse mit RFC1123Z)
+// entsteht dieselbe Kopie byte-gleich noch einmal (S2.7). Die Zitatzeile
+// hängt seit der Gegenprüfung von S2.4/S2.5 (K4) nicht mehr von der
+// Zeitzone von date oder des Prozesses ab.
 func (o *draftOps) rebuildAt(ctx context.Context, acc store.Account, dr store.Draft, date time.Time) (*compose.Message, error) {
 	ci := compose.NewInput(compose.Kind(dr.Kind))
 	if !date.IsZero() {
