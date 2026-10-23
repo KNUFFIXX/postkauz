@@ -75,7 +75,7 @@ data_dir = 'C:\PostKauz\d5\daten'
 quote_line = 'Am {date_numeric} schrieb {from}:'
 ```
 
-Die Zeile `quote_line` ist die **empfohlene Einstellung** für Deutsch: Ohne sie beginnt das Zitat in der Antwort englisch (`On Thu, 23 Oct 2026 10:15 +0200, … wrote:`), mit ihr deutsch (`Am 23.10.2026 10:15 schrieb …:`). Du kannst sie später in deine normale `config.toml` übernehmen.
+Die Zeile `quote_line` ist die **empfohlene Einstellung** für Deutsch: Ohne sie beginnt das Zitat in der Antwort englisch (`On <Wochentag>, <Tag> <Monat> <Jahr> <Uhrzeit> <Zeitzone>, … wrote:`, z. B. `On Fri, 23 Oct 2026 10:15 +0200, … wrote:`), mit ihr deutsch (`Am <TT.MM.JJJJ> <Uhrzeit> schrieb …:`, z. B. `Am 23.10.2026 10:15 schrieb …:`). Datum und Uhrzeit sind die der Mail aus 4.1. Du kannst sie später in deine normale `config.toml` übernehmen.
 
 `runde1.md` (Runde 2 und 3 entsprechend mit „Runde 2 (Thunderbird)" bzw. „Runde 3 (zweites Postfach)"):
 
