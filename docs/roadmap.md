@@ -599,7 +599,7 @@ Unabhängige Gegenprüfung des Merge-Stands `c5d6eff`: kein Blocker, 13 Befunde.
 
 ## S3: Aktionen, Sicherung, Fernzugriff
 
-**Umfang:** Tags (lokal, optional als IMAP-Keywords); `mark`, `move`, `trash` (nur bis zum Papierkorb, `confirm_count`); `attachments.save` ins Exportverzeichnis; Export (mbox/EML), Backup (`VACUUM INTO` + Blobs) und Restore; Löschkonzept; **HTTP-MCP mit OAuth 2.1** aus Standardkomponenten auf einem Dauerläufer (EU-VPS, privates Netz, TLS), Betriebsanleitung (Windows-Aufgabe, systemd, Docker).
+**Umfang:** Tags (lokal, optional als IMAP-Keywords); `mark`, `move`, `trash` (nur bis zum Papierkorb, `confirm_count`); `attachments.save` ins Exportverzeichnis; Export (mbox/EML), Backup (`VACUUM INTO` + Blobs) und Restore; Löschkonzept; **HTTP-MCP mit OAuth 2.1** aus Standardkomponenten auf einem Dauerläufer (EU-VPS, privates Netz, TLS), Betriebsanleitung (Windows-Aufgabe, systemd, Docker). **Anmeldung per OAuth2 für Microsoft-Postfächer** (Outlook.com, Hotmail, Microsoft 365; IMAP dort seit 16.09.2024 nur mit OAuth2): Prüfpunkt P3 fertigstellen — Anmelde-Flow (Device Code oder Loopback) und Refresh gegen den Token-Endpunkt, „bring your own client" (der Betreiber meldet eine eigene App bei Microsoft an; keine eigene verifizierte PostKauz-App). Betreiber 23.10.2026 `#`.
 
 **Akzeptanzkriterien:**
 
