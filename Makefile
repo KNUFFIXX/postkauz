@@ -99,16 +99,18 @@ cross:
 
 # Release (S1.11): dist/ mit den drei Programmen ohne Symboltabelle und
 # Debug-Informationen (-s -w), dem Windows-Skript für den täglichen
-# Audit-Export, VERSION und SHA256SUMS. Beispiel:
-#   make release VERSION=0.1.0-rc1
-# Den Git-Tag setzt der Betreiber erst nach der Abnahme (D3). Andere Dateien
+# Audit-Export, seit S2.9 den Beispiel-Hooks für die Prüfung vor der
+# Freigabe (Entscheid 42: check-example.ps1, check-example.sh), VERSION und
+# SHA256SUMS. Beispiel:
+#   make release VERSION=0.2.0-rc1
+# Den Git-Tag setzt der Betreiber erst nach der Abnahme. Andere Dateien
 # in dist/ (Abnahme-Zips) bleiben liegen.
 RELEASE_LDFLAGS = -s -w -X main.version=$(VERSION)
 SHA256 = $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo "shasum -a 256")
 release:
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release: give a version, e.g. make release VERSION=0.1.0-rc1 (got $(VERSION))"; exit 1;; esac
 	@mkdir -p dist
-	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION dist/*.ps1
+	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION dist/*.ps1 dist/check-example.sh
 	@set -e; for p in $(PLATFORMS); do \
 	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	  echo "build $$os/$$arch ($(VERSION))"; \
@@ -121,7 +123,11 @@ release:
 	@# Das Windows-Skript für den täglichen Audit-Export gehört dazu, mit
 	@# Zeilenenden CRLF (wie im Arbeitsbaum unter Windows, .gitattributes).
 	@sed 's/\r*$$/\r/' deploy/windows/Register-AuditExport.ps1 > dist/Register-AuditExport.ps1
-	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 VERSION > SHA256SUMS
+	@# Beispiel-Hooks (Entscheid 42): PowerShell mit CRLF, Shell mit LF und
+	@# ausführbar.
+	@sed 's/\r*$$/\r/' deploy/hooks/check-example.ps1 > dist/check-example.ps1
+	@sed 's/\r*$$//' deploy/hooks/check-example.sh > dist/check-example.sh && chmod 755 dist/check-example.sh
+	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 check-example.ps1 check-example.sh VERSION > SHA256SUMS
 	@cat dist/VERSION; echo; cat dist/SHA256SUMS; echo
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %10d bytes %6.1f MB\n", $$NF, $$5, $$5/1048576}'
 
