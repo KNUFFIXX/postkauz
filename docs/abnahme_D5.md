@@ -129,6 +129,12 @@ Im selben Fenster, `<deine Gmail-Adresse>` durch deine Adresse ersetzen:
 
 PostKauz fragt `Password for … at imap.gmail.com:`. Jetzt die 16 Buchstaben aus dem Google-Fenster eintippen **ohne Leerzeichen** (beim Tippen erscheint nichts, das ist richtig) → Enter.
 
+**Geht das Tippen nicht** (Befund 23.10.2026 auf dem Heim-PC im Windows Terminal: die verdeckte Abfrage nahm weder Tippen noch Einfügen an; Ursache offen), mit Strg+C abbrechen und stattdessen diese eine Zeile nehmen. Sie wartet, bis du das App-Passwort im Google-Fenster markiert und mit Strg+C kopiert hast, und holt es dann aus der Zwischenablage (Leerzeichen fallen weg, danach wird die Zwischenablage geleert):
+
+```powershell
+Read-Host 'App-Passwort kopieren, dann hier Enter druecken' | Out-Null; (Get-Clipboard) -replace '\s','' | .\postkauz.exe account add gmail --imap imap.gmail.com:993 --user <deine Gmail-Adresse> --auth app_password --password-stdin; Set-Clipboard -Value ' '
+```
+
 Erwartet: `account gmail added (imap.gmail.com:993, tls tls, user …); password stored in the OS keyring as account/…/gmail`.
 
 Danach das Google-Fenster mit dem App-Passwort schließen. Sag Claude Bescheid („Konto angelegt").
@@ -141,7 +147,7 @@ Danach das Google-Fenster mit dem App-Passwort schließen. Sag Claude Bescheid (
 .\postkauz.exe account test gmail
 ```
 
-Erwartet: Anmeldung gelingt, Liste der Ordner mit Rollen, darunter `inbox`, `drafts` und `sent`. Bei Gmail auf Deutsch meist `[Gmail]/Entwürfe` (Rolle `drafts`) und `[Gmail]/Gesendet` (Rolle `sent`). Claude merkt sich die beiden Ordnernamen für den kurzen Sync. Am Server ändert sich nichts.
+Erwartet: Anmeldung gelingt, Liste der Ordner mit Rollen, darunter `inbox`, `drafts` und `sent`. Bei Gmail auf Deutsch meist `[Gmail]/Entwürfe` (Rolle `drafts`) und `[Gmail]/Gesendet` (Rolle `sent`); manche deutschen Konten zeigen `[Google Mail]/Entwürfe` und `[Google Mail]/Gesendet` (gemessen an einem Konto, 23.10.2026). Die Befehle unten zeigen `[Gmail]/…`; es gilt, was `account test` zeigt. Claude merkt sich die beiden Ordnernamen für den kurzen Sync. Am Server ändert sich nichts.
 
 Abweichung `auth`: App-Passwort falsch abgetippt oder IMAP aus → Abschnitt 7.
 
@@ -153,7 +159,7 @@ Gespiegelt werden nur drei Ordner: Posteingang, Entwürfe, Gesendet. „Alle Nac
 .\postkauz.exe sync -a gmail --mailbox INBOX --mailbox "[Gmail]/Entwürfe" --mailbox "[Gmail]/Gesendet"
 ```
 
-(Ordnernamen so, wie `account test` sie zeigte.) Erwartet: je Ordner eine Zeile, am Ende `N messages mirrored` und `0 errors`. Ein großer Posteingang (mehrere zehntausend Mails) braucht beim ersten Mal länger; der Lauf lässt sich mit Strg+C abbrechen und mit demselben Befehl fortsetzen. Weitere `sync`-Aufrufe in dieser Anleitung meinen **genau diesen Befehl** (mit denselben `--mailbox`-Angaben).
+(Ordnernamen so, wie `account test` sie zeigte.) Erwartet: je Ordner eine Zeile, am Ende `N messages mirrored` und `0 errors`. **Großer Ordner Gesendet:** Vorher in `config.toml` unter `[imap]` die Zeile `max_message_bytes = 1048576` eintragen; dann holt der Sync nur Mails bis 1 MiB (für D5 genügt das, die Testmails sind klein), und jede größere zählt einmal als Fehler (`… is larger than imap.max_message_bytes …`); `N errors` ist dann richtig. Gemessen 23.10.2026: Gesendet mit 7.475 Mails, davon 423 größer, Erstsync in 9,6 Minuten. Ein großer Posteingang (mehrere zehntausend Mails) braucht beim ersten Mal länger; der Lauf lässt sich mit Strg+C abbrechen und mit demselben Befehl fortsetzen. Weitere `sync`-Aufrufe in dieser Anleitung meinen **genau diesen Befehl** (mit denselben `--mailbox`-Angaben).
 
 ## 4. Runde 1: Gmail im Browser
 
@@ -242,7 +248,7 @@ Im PowerShell-Fenster aus 3.1 (Servername und Adresse von Postfach B einsetzen; 
 .\postkauz.exe account add zweit --imap <IMAP-Server von Postfach B>:993 --user <Adresse von Postfach B> --auth app_password
 ```
 
-App-Passwort von Postfach B eintippen (ohne Leerzeichen) → Enter. Erwartet: `account zweit added (…); password stored in the OS keyring as account/…/zweit`. Claude Bescheid sagen. Vor 6.2 holt Claude deine Zustimmung für Postfach B ein und schreibt sie ins Protokoll (wie in 3.2).
+App-Passwort von Postfach B eintippen (ohne Leerzeichen) → Enter. Geht das Tippen nicht, wie in 3.2 über die Zwischenablage: `Read-Host 'Passwort kopieren, dann hier Enter druecken' | Out-Null; Get-Clipboard | Select-Object -First 1 | .\postkauz.exe account add zweit --imap <IMAP-Server>:993 --user <Adresse> --password-stdin; Set-Clipboard -Value ' '` (ohne `-replace`, ein normales Postfach-Passwort darf Leerzeichen enthalten; `--auth app_password` nur, wenn der Anbieter ein App-Passwort verlangt und du eins angelegt hast, sonst weglassen). Erwartet: `account zweit added (…); password stored in the OS keyring as account/…/zweit`. Claude Bescheid sagen. Vor 6.2 holt Claude deine Zustimmung für Postfach B ein und schreibt sie ins Protokoll (wie in 3.2).
 
 ### 6.2 Prüfen und kurz spiegeln [Claude]
 
@@ -253,6 +259,8 @@ Meldet der Sync `error: no_drafts_mailbox`, erkennt PostKauz den Entwürfe-Ordne
 ### 6.3 Mail an dich selbst [Du]
 
 In der Webmail von Postfach B eine Mail an die **eigene Adresse von Postfach B**: Betreff `PostKauz D5 Runde 3 PKD5R3`, Text `Test`. Senden.
+
+Ein ganz neues Postfach kann der Anbieter beim Senden noch sperren (gemessen 23.10.2026, Hostinger: „Ihre Domaineinrichtung ist noch nicht abgeschlossen", obwohl MX, SPF, DKIM und DMARC schon stimmten; laut Anbieter bis zu 24 Stunden). Dann Runde 3 später machen; Konto und Spiegel bleiben.
 
 ### 6.4 Entwurf anlegen und ablegen [Claude]
 

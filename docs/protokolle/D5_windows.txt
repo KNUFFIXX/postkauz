@@ -1,0 +1,190 @@
+D5 Abnahme Windows (Heim-PC des Betreibers, Windows 11, 23.10.2026)
+Programm: postkauz 0.2.0-rc1 (aus main 0dd9f2f, go1.27.3), C:\PostKauz\d5\postkauz.exe, sha256 23df671d7cd392762e8ef0a6b2c17867f8bbf437ebf4c2306e959639e15ed235 (gleich SHA256SUMS)
+Konfiguration: data_dir C:\PostKauz\d5\daten, [imap] max_message_bytes = 1048576 (Abweichung von der Anleitung: Gesendet von Postfach A hat rund 5.700 Verlaeufe, ueber 100 davon groesser als 5 MB), [draft] quote_line deutsch
+Postfach A: Gmail (<adresse-A>), Runden 1 und 2 (Runde 2 mit Thunderbird folgt auf dem Buero-PC); Postfach B: Hostinger, Runde 3
+Abweichung 3.2: verdeckte Passwortabfrage nahm im Windows Terminal keine Eingabe an (Betreiber: weder Tippen noch Einfuegen); Konto stattdessen mit --password-stdin aus der Zwischenablage angelegt (Read-Host; (Get-Clipboard) -replace '\s','' | postkauz account add ... --password-stdin). Ursache offen.
+
+Zustimmung des Betreibers zu D5 gegen echte Postfaecher: ja, 23.10.2026 18:49 (Postfach A)
+Zustimmung des Betreibers zu D5 gegen echte Postfaecher: ja, 23.10.2026 19:31 (Postfach B, Hostinger, neues Testpostfach; Konto per --password-stdin aus der Zwischenablage angelegt)
+Alle [Claude]-Kommandos mit --config C:\PostKauz\d5\config.toml (statt POSTKAUZ_CONFIG); Adressen, Namen, Domains und Message-IDs maskiert (abnahme_D5.md Abschnitt 2); Kopfzeilen aus show --headers nur ausgewertet.
+
+===== 2 Vorbereitung
+> postkauz version
+      postkauz 0.2.0-rc1 (go1.27.3 windows/amd64)
+> postkauz doctor  (vor dem ersten Kommando)
+      config: C:\PostKauz\d5\config.toml (exists: true) | data dir: C:\PostKauz\d5\daten | database: missing | keyring: available (Windows Credential Manager) | policy: not found, built-in defaults | attach: C:\PostKauz\d5\daten\attach
+
+===== 3.3 account test gmail (23.10.2026 18:49)
+> postkauz account test gmail
+      account:       gmail
+      login:         ok
+      sync strategy: condstore
+      capabilities:  APPENDLIMIT=35651584 CHILDREN COMPRESS=DEFLATE CONDSTORE ENABLE ESEARCH ID IDLE IMAP4rev1 LIST-EXTENDED LIST-STATUS LITERAL- MOVE NAMESPACE QUOTA SPECIAL-USE UIDPLUS UNSELECT UTF8=ACCEPT X-GM-EXT-1 XLIST
+      mailboxes:
+        <eigener Ordner 1>                          custom
+        <eigener Ordner 2>                        custom
+        <eigener Ordner 3>                 custom
+        INBOX                           inbox
+        <eigener Ordner 4>                         custom
+        [Google Mail]/Alle Nachrichten  all
+        [Google Mail]/Entwürfe          drafts
+        [Google Mail]/Gesendet          sent
+        <eigener Ordner 5>              custom
+        [Google Mail]/Papierkorb        trash
+        [Google Mail]/Spam              junk
+
+===== 3.4 Kurzer Sync (Erstsync, 18:49 - 18:59)
+> postkauz sync -a gmail --mailbox INBOX --mailbox "[Google Mail]/Entwürfe" --mailbox "[Google Mail]/Gesendet"
+      account gmail (strategy condstore, incremental sync, 574.5s)
+      MAILBOX                 ROLE    NEW   UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   8     0        0        2       8         10
+      [Google Mail]/Entwürfe  drafts  4     0        0        0       4         4
+      [Google Mail]/Gesendet  sent    7052  0        0        423     7052      7475
+        INBOX: uid 81561: message of 2056390 bytes is larger than imap.max_message_bytes (1048576); not fetched, sync --full checks it again
+        INBOX: uid 98469: message of 1139697 bytes is larger than imap.max_message_bytes (1048576); not fetched, sync --full checks it again
+      search index: 7063 messages indexed
+      7063 messages mirrored
+      425 errors
+        ... (10 weitere Zeilen dieser Art)
+
+===== 4.1 Mail an sich selbst [Betreiber] 18:51, Betreff PostKauz D5 Runde 1 PKD5R1
+> postkauz sync (gleicher Befehl)
+      account gmail (strategy condstore, incremental sync, 2.6s)
+      MAILBOX                 ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   1    0        0        0       9         11
+      [Google Mail]/Entwürfe  drafts  0    0        0        0       4         4
+      [Google Mail]/Gesendet  sent    0    0        0        0       7052      7475
+      7063 messages mirrored
+      0 errors
+
+===== 4.2 Entwurf anlegen und ablegen
+> postkauz search subject:PKD5R1 -a gmail
+      ID    DATE              FROM                            SUBJECT
+      7063  2026-10-23 18:51  <name-A> <<adresse-A>>  PostKauz D5 Runde 1 PKD5R1
+      1 of 1 results (by relevance)
+> postkauz draft reply 7063 --body-file C:\PostKauz\d5\runde1.md
+      draft 1 created (status draft, remote pending)
+      message-id:  <<msgid-1>>
+      from:        <adresse-A>
+      to:          <name-A> <<adresse-A>>
+      subject:     Re: PostKauz D5 Runde 1 PKD5R1
+      in-reply-to: <<msgid-2>>
+      
+      Hallo,
+      
+      das ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.
+      
+      Viele Grüße
+      
+      Am 23.10.2026 18:51 schrieb <name-A> <<adresse-A>>:
+      > Test
+      
+      note: no identity configured for this account: the sender is the account address without a name (add one with identity add)
+      remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+      nothing is sent: a human sends the draft in the mail client
+> postkauz sync (gleicher Befehl)
+      account gmail (strategy condstore, incremental sync, 11.2s)
+      MAILBOX                 ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   0    0        0        0       9         11
+      [Google Mail]/Entwürfe  drafts  1    0        0        0       5         5
+      [Google Mail]/Gesendet  sent    0    0        0        0       7052      7475
+      drafts: 1 put into [Google Mail]/Entwürfe (flags \Draft \Seen; nothing is sent)
+      search index: 1 messages indexed
+      7064 messages mirrored
+      0 errors
+> postkauz draft show 1
+      draft 1 (reply) in account gmail, status draft
+      remote:      pushed (in the Drafts folder (uid 66655))
+      copies:      uid 66655 (date of the copy: Fri, 23 Oct 2026 19:00:22 +0200)
+      message-id:  <<msgid-1>>
+      from:        <adresse-A>
+      to:          <name-A> <<adresse-A>>
+      subject:     Re: PostKauz D5 Runde 1 PKD5R1
+      in-reply-to: <<msgid-2>>
+      references:  <<msgid-2>>
+      created:     2026-10-23T17:00:10Z by cli, changed 2026-10-23T17:00:10Z
+      
+      Hallo,
+      
+      das ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.
+      
+      Viele Grüße
+      
+      Am 23.10.2026 18:51 schrieb <name-A> <<adresse-A>>:
+      > Test
+      
+      preview hash: <maskiert>
+
+===== 4.3 Im Mailprogramm gesendet [Betreiber] 19:03 (Gmail im Browser, Chrome): Verlauf richtig: ja
+
+===== 4.4 Ergebnis
+> postkauz sync (gleicher Befehl)
+      account gmail (strategy condstore, incremental sync, 21.6s)
+      MAILBOX                 ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   1    1        0        0       10        12
+      [Google Mail]/Entwürfe  drafts  0    0        1        0       4         4
+      [Google Mail]/Gesendet  sent    1    1        0        0       7053      7476
+      drafts: 1 copy/copies gone from the Drafts folder without a matching sent message (close with draft mark-sent or draft abandon)
+      search index: 1 messages indexed
+      7064 messages mirrored
+      0 errors
+> postkauz draft list -a gmail
+      ID  ACCOUNT  KIND   STATUS  APPROVAL  REMOTE   TO  ATT  CHANGED               SUBJECT
+      1   gmail    reply  draft   -         missing  1   0    2026-10-23T17:00:10Z  Re: PostKauz D5 Runde 1 PKD5R1
+> postkauz audit --since 1h --operation drafts.sent_detected
+      No audit entries in this period.
+> postkauz sync (zweiter Lauf, 19:07)
+      account gmail (strategy condstore, incremental sync, 2.0s)
+      MAILBOX                 ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   0    0        0        0       10        12
+      [Google Mail]/Entwürfe  drafts  0    0        0        0       4         4
+      [Google Mail]/Gesendet  sent    0    0        0        0       7053      7476
+      7064 messages mirrored
+      0 errors
+> postkauz search subject:PKD5R1 -a gmail
+      ID    DATE              FROM                            SUBJECT
+      7063  2026-10-23 18:51  <name-A> <<adresse-A>>  PostKauz D5 Runde 1 PKD5R1
+      7064  2026-10-23 19:00  <adresse-A>              Re: PostKauz D5 Runde 1 PKD5R1
+      7065  2026-10-23 19:03  <name-A> <<adresse-A>>   Re: PostKauz D5 Runde 1 PKD5R1
+      3 of 3 results (by relevance)
+Auswertung (show 7065 --headers nur gelesen): Message-ID gleich: nein (Gmail vergab eine neue) | Entwurf im Ordner Entwuerfe verschwunden: ja (7064 deleted on server) | Kopie in Gesendet: ja (7065 in INBOX und [Google Mail]/Gesendet) | Empfaenger, Betreff, Zeitfenster passen | Text: Gmail brach den Klartext neu um und sandte das Zitat ohne ">":
+> postkauz show 7065 (nur Text)
+      Hallo,
+      
+      das ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz
+      angelegt. Bitte unverändert senden.
+      
+      Viele Grüße
+      
+      Am 23.10.2026 18:51 schrieb <name-A> <<adresse-A>>:
+      
+      Test
+      -> StripQuotes laesst Einleitung und Zitat stehen (quoteFollows verlangt ">"), Jaccard der Wortmengen 19/33 = 0,58 < 0,9 -> kein Treffer.
+Ergebnis Runde 1: NICHT BESTANDEN (offen, remote: missing). Abschnitt 7: Betreiber schloss den Entwurf 19:09 mit "draft mark-sent 1" -> sent_by_human. Nachbesserung N1 (Rueckfall: zweite Lesart bis vor die Zitat-Einleitung); Runde 1 wird mit dem neuen Build auf dem Buero-PC wiederholt.
+
+===== 6.1/6.2 Postfach B (Hostinger, neues Testpostfach), 19:31
+> postkauz account test zweit
+      account:       zweit
+      login:         ok
+      sync strategy: condstore
+      capabilities:  BINARY CATENATE CHILDREN COMPRESS=DEFLATE CONDSTORE CONTEXT=SEARCH ENABLE ESEARCH ESORT I18NLEVEL=1 ID IDLE IMAP4rev1 LIST-EXTENDED LIST-STATUS LITERAL+ LOGIN-REFERRALS MOVE MULTIAPPEND NAMESPACE NOTIFY PREVIEW PREVIEW=FUZZY QRESYNC QUOTA SASL-IR SAVEDATE SEARCHRES SNIPPET=FUZZY SORT SORT=DISPLAY SPECIAL-USE STATUS=SIZE THREAD=ORDEREDSUBJECT THREAD=REFERENCES THREAD=REFS UIDPLUS UNSELECT URL-PARTIAL WITHIN
+      mailboxes:
+        INBOX         inbox
+        INBOX.Drafts  drafts
+        INBOX.Junk    junk
+        INBOX.Sent    sent
+        INBOX.Trash   trash
+> postkauz sync -a zweit --mailbox INBOX --mailbox INBOX.Drafts --mailbox INBOX.Sent
+      account zweit (strategy condstore, incremental sync, 0.5s)
+      MAILBOX       ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX         inbox   1    0        0        0       1         1
+      INBOX.Drafts  drafts  0    0        0        0       0         0
+      INBOX.Sent    sent    0    0        0        0       0         0
+      search index: 1 messages indexed
+      1 messages mirrored
+      0 errors
+
+===== 6.3 abgebrochen [Betreiber] 19:35: Webmail des Anbieters sperrt das Senden ("Ihre Domaineinrichtung ist noch nicht abgeschlossen"), obwohl MX, SPF, DKIM (3 CNAME) und DMARC oeffentlich abrufbar und im Anbieter-Panel gruen waren. Betreiber-Entscheid #2: Runden 2 und 3 auf dem Buero-PC.
+
+===== Nachtrag
+Nachbesserung N1 (zweite Lesart im Rueckfall: Text vor dem eigenen Zitat des Entwurfs, auch ohne ">") nach diesem Lauf; Wiederholung von Runde 1 sowie Runden 2 und 3 auf dem Buero-PC mit 0.2.0-rc2.
