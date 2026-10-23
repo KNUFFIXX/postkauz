@@ -23,6 +23,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - S2.7: CLI für Entwürfe vollständig (alle Optionen nach A02), `draft show --eml` liefert die abgelegte Kopie byte-gleich, `draft show`/`draft list` warnen vor älteren Kopien im Entwürfe-Ordner.
 - S2.8: Entwürfe über MCP für Schlüssel mit `mail:draft`: `mail_create_draft`, `mail_update_draft`, `mail_get_draft`, `mail_list_drafts`, `mail_request_ready`, `mail_get_approval`; Resources `mail://{account}/draft/{id}` und `mail://style/{identity}`; Prompt `draft_reply`; neue Operation `drafts.style` (CLI `draft style`).
 - Abnahme D4: `docs/abnahme_D4.ps1`, `docs/abnahme_D4_mcp.py`, `docs/abnahme_D4.md`, `scripts/abnahme-d4-trocken.sh`; Protokoll Windows `docs/protokolle/D4_windows.txt` (47 OK, 0 FAIL).
+- S2.9: ADR-009 (Schreiben auf den Server nur als Job, Operationen nur für Menschen), `docs/abnahme_D5.md`, README-Abschnitt „Drafts"; `make release` nimmt die Beispiel-Hooks ins Paket. Release-Kandidat 0.2.0-rc1 gebaut (noch nicht getaggt).
+- `drafts.request_ready` lehnt Entwürfe ohne Empfänger ab (`denied (no_recipients)`); `drafts.create`/`update` warnen, solange keiner da ist.
 
 ### Changed
 
@@ -40,6 +42,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- `draft reply` auf eine eigene Mail (an sich selbst) ergab einen Entwurf ohne Empfänger; jetzt gehen Antworten auf eigene Mails an deren Empfänger, sonst an die eigene Adresse.
 - RFC-2047-kodierte Anhangnamen wurden doppelt dekodiert.
 - Ein Fehler der Versandprüfung beendet den Sync nicht mehr vor Extraktion und Jobs.
 - Gegenprüfung S2.1–S2.3: Eingabewerte (Betreff, Begründung, Adressen, Datei- und Kontonamen) stehen nicht mehr in Fehlermeldungen, `--json`-Fehlern, Log oder Audit-Feldnamen.
