@@ -87,6 +87,12 @@ $env:POSTKAUZ_CONFIG = "C:\PostKauz\d5\config.toml"
 .\postkauz.exe doctor
 ```
 
+**Protokoll:** Claude schreibt jeden [Claude]-Schritt mit Kommando und Ausgabe in `docs/protokolle/D5_windows.txt` (wie bei D4). Dabei gilt:
+
+- **Maskieren:** Echte Adressen, Domains und Message-IDs stehen nie im Protokoll, auch nicht in Ausgaben, die Claude hineinkopiert. Claude ersetzt sie einheitlich: Adressen durch `<adresse-A>` bzw. `<adresse-B>` (Postfach A bzw. B), Domains durch `<domain-A>` bzw. `<domain-B>`, Message-IDs durch `<msgid-1>`, `<msgid-2>` … (dieselbe ID bekommt immer denselben Platzhalter, damit „gleich/ungleich" lesbar bleibt). Der Anbieter von Postfach B steht nur als Name (z. B. „GMX"), nie als Servername mit deiner Adresse.
+- **`show --headers` nur auswerten:** Die vollständigen Kopfzeilen (Schritt 4.4) liest Claude nur, um „Message-ID gleich?" und die Ordner abzulesen; sie kommen **nie** ins Protokoll, auch nicht maskiert. Ins Protokoll kommt nur das Ergebnis (z. B. `Message-ID gleich: ja`).
+- **Vor dem Commit** des Protokolls läuft `make pii-check` (findet Adressen außerhalb von `example.com|org|net`); ein Treffer heißt: nachmaskieren, nicht freigeben.
+
 Erwartet: `version` nennt `0.2.0-rc1`; `doctor` zeigt `config: C:\PostKauz\d5\config.toml (exists: true)`, `data dir: C:\PostKauz\d5\daten`, `keyring: available (Windows Credential Manager)`, `policy: … (not found, built-in defaults; …)` und `attach: C:\PostKauz\d5\daten\attach`; `database: missing` ist vor dem ersten Kommando richtig.
 
 ## 3. Postfach A anmelden
@@ -158,7 +164,7 @@ Erwartet:
 - zweiter `sync`: Zeile `drafts: 1 put into Drafts (flags \Draft \Seen; nothing is sent)`.
 - `draft show 1`: `remote: pushed`, eine Zeile `copies: uid …`, das Zitat beginnt mit `Am … schrieb …:`.
 
-Claude notiert die Message-ID aus `draft show` (Form `<pk.…@…>`).
+Claude notiert die Message-ID aus `draft show` (Form `<pk.…@…>`) für den Vergleich in 4.4; im Protokoll steht sie nur maskiert (`<msgid-1>`, Abschnitt 2).
 
 ### 4.3 Im Mailprogramm senden [Du]
 
@@ -184,7 +190,7 @@ Erwartet (beides ist bestanden):
 - `sync`: `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 1)` → Gmail hat die Message-ID behalten; **oder** `(1 by recipients, subject and text; draft 1)` → Gmail hat eine neue Message-ID vergeben, der Rückfall-Abgleich hat es erkannt. Für Gmail im Browser erwarten wir eher den Rückfall, aber **wir messen, nicht annehmen**.
 - `draft list`: Entwurf 1 mit Status `sent_by_human`.
 
-Claude liest daraus die Zeile für die Tabelle ab (Abschnitt 6): Message-ID gleich? (Kopfzeile `Message-ID` der gesendeten Mail gegen die des Entwurfs), Entwurf im Ordner Entwürfe verschwunden? (`show "<Message-ID des Entwurfs>"` nennt die Ordner bzw. „deleted on server"), Kopie in Gesendet? (Ordner der gesendeten Mail), Grund im Audit (`message_id` oder `fallback`).
+Claude liest daraus die Zeile für die Tabelle ab (Abschnitt 8; die Ausgabe von `show --headers` nur auswerten, nie ins Protokoll, Abschnitt 2): Message-ID gleich? (Kopfzeile `Message-ID` der gesendeten Mail gegen die des Entwurfs), Entwurf im Ordner Entwürfe verschwunden? (`show "<Message-ID des Entwurfs>"` nennt die Ordner bzw. „deleted on server"), Kopie in Gesendet? (Ordner der gesendeten Mail), Grund im Audit (`message_id` oder `fallback`).
 
 **Nicht bestanden** ist: Der Entwurf bleibt offen (`draft`, `REMOTE missing`). Dann Abschnitt 7.
 
@@ -273,7 +279,7 @@ Claude trägt die drei Zeilen in die Tabelle in [versanderkennung.md](versanderk
 | Ergebnis | `sent_by_human (message_id)`, `sent_by_human (fallback)` oder `offen, remote: missing` |
 | Datum, Bemerkung | Datum; Gesprächsverlauf beim Empfänger richtig (ja/nein, von dir); Auffälligkeiten |
 
-Du liest die Zeilen und sagst „passt" oder was zu ändern ist.
+Du liest die Zeilen und sagst „passt" oder was zu ändern ist. Vor dem Commit von Tabelle und Protokoll (`docs/protokolle/D5_windows.txt`) prüft Claude, dass darin keine echte Adresse, Domain oder Message-ID steht (Abschnitt 2), und lässt `make pii-check` laufen; erst wenn es grün ist, wird committet.
 
 ## 9. Abschluss
 
