@@ -1,6 +1,6 @@
 # Architektur
 
-Stand: S1.11 (16.10.2026, Schnitt 1 komplett; neu: `internal/crash`, `internal/secretscan`, Audit-Export mit Kette). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
+Stand: S2.9 (23.10.2026, Schnitt 2 komplett, Release-Kandidat 0.2.0-rc1; Abschnitte 6 und 7 und die Paketübersicht gegen den Code geprüft; neu in Schnitt 2: `internal/drafts`, `internal/compose`, `internal/hook`, Job `draft_push`, ADR-009). Dieses Dokument beschreibt die Zielarchitektur der Schnitte S1–S3 und markiert, was das Gerüst schon enthält. Verbindlich sind die Entscheidungen in [entscheidungen.md](entscheidungen.md); wo dieses Dokument davon abweicht, gilt entscheidungen.md.
 
 „PostKauz" ist ein Arbeitstitel. Alle Namen stehen in `internal/brand` (siehe unten, „Namen").
 
@@ -62,13 +62,13 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 |---|---|---|
 | `cmd/postkauz` | `main`, ruft `cli.Run` | fertig |
 | `internal/brand` | Name, Alias, Präfixe an einer Stelle | fertig |
-| `internal/ops` | Register, Executor (Schwärzung je Operation, Fortschrittsmeldungen, Prüfung der Eingabe gegen das `InputSchema`, Audit-ID im Ergebnis), `accounts.list/add/test/remove/set` (`accounts.set` seit S2.0, nur für Menschen: Aliasse, seit S2.1 auch das gespeicherte Passwort), `sync.run`, `mailboxes.list`, `messages.get`, `messages.search`, `threads.get`, `attachments.list`, `attachments.text`, `keys.create/list/revoke` und Anmeldung per Schlüssel, `audit.list/export/verify` (Export seit S1.11 mit Hash-Kette und Manifest), `policy.get`, `import.run`; Untrusted-Hülle und Budgets in Ausgaben mit Mailinhalt; Panics im Handler abgefangen (S1.11) | S1.11 + Tests |
+| `internal/ops` | Register, Executor (Schwärzung je Operation, Fortschrittsmeldungen, Prüfung der Eingabe gegen das `InputSchema`, Audit-ID im Ergebnis), `accounts.list/add/test/remove/set` (`accounts.set` seit S2.0, nur für Menschen: Aliasse, seit S2.1 auch das gespeicherte Passwort), `sync.run`, `mailboxes.list`, `messages.get`, `messages.search`, `threads.get`, `attachments.list`, `attachments.text`, `keys.create/list/revoke` und Anmeldung per Schlüssel, `audit.list/export/verify` (Export seit S1.11 mit Hash-Kette und Manifest), `policy.get`, `import.run`; seit S2.3 `drafts.create/update/get/list/request_ready/approve/reject/abandon/mark_sent`, `approvals.get`, `identities.add/list/set_default/remove`, seit S2.8 `drafts.style`; `DraftPusher` (fachlicher Teil des Jobs `draft_push`, S2.5), `HookChecker` (S2.4), Herkunft der Entwurfstexte (`draftview.go`, S2.8); Untrusted-Hülle und Budgets in Ausgaben mit Mailinhalt; Panics im Handler abgefangen (S1.11); Schlüsselprüfung vor jedem Aufruf (`KeyGuard`) | S2.8 + Tests, Vertragstest |
 | `internal/crash` | Panic bereinigt melden: Laufzeitmeldung oder Typ des Panic-Werts (nie dessen Inhalt), Stack nur mit Funktion und Datei:Zeile; genutzt vom Executor (Panic im Handler) und der CLI (Hauptablauf). Seit S2.0 `crash.Go(name, fn)` für eigene Hilfsgoroutinen und `crash.Do(name, fn)` für Arbeitsschritte: `recover`, Bericht ins Log (`crash.SetLogger`), Rückgabe `*crash.PanicError` (`errors.Is(err, crash.ErrInternal)`, derselbe Wert wie `ops.ErrInternal`) | S1.11/S2.0 + Tests |
 | `internal/secretscan` | Geheimnisse dort suchen, wo sie nie stehen dürfen (Werte und Schlüsselmuster, ohne sie auszugeben), Dateirechte prüfen; Grundlage von `doctor --secrets` | S1.11 + Tests |
-| `internal/policy` | Scope (dazu Pseudo-Scope `any`), Rollen, Risiko R0–R3, `Check` | Stub + Tests |
+| `internal/policy` | Scope (dazu Pseudo-Scope `any`), Rollen, Risiko R0–R3, `Check` (seit S2.0 mit `HumanOnly` und der Angabe, ob ein Mensch ohne Schlüssel ruft; ADR-009); seit S2.1 die Policy-Datei `policy.toml` (`file.go`: Laden, strenge Prüfung, SHA-256, Dokument für die Tabelle `policies`) | S2.1 + Tests |
 | `internal/audit` | Event-Typ, Writer-Schnittstelle | Typ + Stubs (SQLite-Writer im Store) |
 | `internal/store` | Migrationen mit Schema-Schutz und Snapshot (`VACUUM INTO`), Konten, SQLite-Audit-Writer, Spiegel (Ordner, Nachrichten, Zuordnungen, Fenster als Transaktion), Threads, Texte, Anhänge, Index-Warteschlange und Suche (FTS5), Jobs; seit S2.1 Entwürfe, Freigaben und Identitäten (`DraftTx`, `OwnAddresses`) | S2.1 + Tests |
-| `internal/drafts` | Dienst für Entwürfe (S2.1, A02 E5–E11): Zustandsmaschine der Freigabe (`draft` → `pending_approval` → `ready` → `sent_by_human`, `abandoned`; Tabelle aller erlaubten Übergänge), `preview_hash` über die kanonische Form, Grenzen (200.000 Zeichen, Betreff 500, 50 Empfänger je Feld, `net/mail`), Message-ID `pk.<20 Hex>@<Domain>` mit injizierbarem Zufall, Absender aus der Identität, eigene Adressen, Ablauf der Freigaben (`approval_ttl`) mit Systemereignis im Audit; jede Änderung eine kurze Transaktion (`store.DraftTx`, `BEGIN IMMEDIATE`). Noch ohne Operationen im Register (S2.3) und ohne Nachrichtenbau (S2.2) | S2.1 + Tests |
+| `internal/drafts` | Dienst für Entwürfe (S2.1, A02 E5–E11): Zustandsmaschine der Freigabe (`draft` → `pending_approval` → `ready` → `sent_by_human`, `abandoned`; Tabelle aller erlaubten Übergänge), `preview_hash` über die kanonische Form, Grenzen (200.000 Zeichen, Betreff 500, 50 Empfänger je Feld, `net/mail`), Message-ID `pk.<20 Hex>@<Domain>` mit injizierbarem Zufall, Absender aus der Identität, eigene Adressen, Ablauf der Freigaben (`approval_ttl`) mit Systemereignis im Audit; jede Änderung eine kurze Transaktion (`store.DraftTx`, `BEGIN IMMEDIATE`); seit S2.5 Übernahme-Erkennung (`remote.go`), seit S2.6 Versanderkennung nach jedem Sync (`detect.go`, `sentmatch.go`: Message-ID, Rückfall-Abgleich, Hochwassermarke). Operationen dazu in `internal/ops` (S2.3), Nachrichtenbau in `internal/compose` (S2.2) | S2.1–S2.6 + Tests, Integrationstest (Docker) |
 | `internal/config` | TOML-Konfiguration, Pfade (Konfiguration, Daten, Datenbank, Log) | S1.1 + Tests |
 | `internal/secrets` | Schlüsselbund (go-keyring), Umgebung, unsicherer Testspeicher, `Secret`-Typ | S1.1 + Tests |
 | `internal/imapx` | dünne Schicht über go-imap (ADR-007, v2.0.0-beta.8 gepinnt): Dial mit Watchdog (misst Schweigen, Rückrufe ausgenommen, plus Obergrenze je Kommando; ADR-007 Nachtrag 1) und TCP-Keepalive, `Session` mit Reconnect und Backoff, Login, SASL-OAuth (Entwurf), CAPABILITY, LIST mit SPECIAL-USE/LIST-STATUS, CREATE, NOOP, EXAMINE/SELECT (CONDSTORE), UID SEARCH (ESEARCH), FETCH (Metadaten, Flags mit CHANGEDSINCE, Rohmail gestreamt), STATUS, APPEND (seit S2.5 `AppendInfo` mit UIDVALIDITY aus APPENDUID), `UID SEARCH HEADER` (`SearchHeader`, S2.5), STORE (nur Testwerkzeuge/S3, kein `\Deleted`), IDLE mit eigenem Neustart | S1.5 + Tests, S2.5 |
@@ -88,8 +88,8 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 | `internal/provider/imap` | IMAP-Provider über `imapx`: `Connect`, Fähigkeiten, Strategie, `ListMailboxes` mit Rollen (SPECIAL-USE, Namen, Gmail-Namen) und Zustand, `Changes` (Fenster, CONDSTORE bzw. UID-Scan, UID-SEARCH-Abgleich), `FetchHeaders`, `FetchRaw`, `Idle` (eigene Verbindung), `Append` (S2.5: Flags, Datum, UID und UIDVALIDITY; ohne APPENDUID und nach einem Verbindungsabbruch per Message-ID wiedergefunden, damit kein blindes Wiederholen Dubletten erzeugt); Verbindungsprüfung für `account test` | S1.5 + Tests, S2.5, Integrationstest (Docker) |
 | `internal/mailsync` | Sync-Engine gegen eine schmale Provider-Schnittstelle: Ordnerabgleich, Fenster, Abgleich per Message-ID/Größe bzw. `content_hash`, Blob-Store, Parser, Aufbereitung (Text, Links, versteckter Text, Anhänge mit Typprüfung), Threads, Transaktion je Fenster; Nachziehen älterer Bestände; am Ende jedes Laufs die Jobs des Kontos (`internal/jobs`: Extraktion, Suchindex); `Watch` (IDLE + Intervall, seit S2.5 dazu die Jobs alle `JobsInterval`); `Runner` für `sync.run`; seit S2.5 der Job `draft_push` zu Beginn jedes Laufs (`drafts.go`: Entwürfe-Ordner finden, vor einer erneuten Ablage den Ordner spiegeln, `ops.DraftPusher` mit IMAP APPEND) | S1.7 + Tests, Leck-Tests, S2.5, Integrationstest (Docker) |
 | `internal/importer` | Import aus mbox (Thunderbird `berkeleystore`, mboxrd) und Maildir: Quellen finden (`.sbd`-Unterordner, Maildir++, IMAP-UTF-7-Namen, `.msf` übergehen), streamend lesen (Trennzeilen, `>From`-Quoting, `X-Mozilla-*` lesen und entfernen, Zeilenenden am Schluss vereinheitlichen), Abgleich per Message-ID und `content_hash` mit Varianten, Aufbereitung über `mailsync.Prepare`, Stapel mit Stand je Quelle (`import_sources`), `Runner` für `import.run` (Kontosperre wie der Sync, danach die Jobs des Kontos) | S1.10 + Tests (Thunderbird- und Maildir-Korpus, Überlappung mit gesynctem Konto, `kill -9`, 200 MB), Integrationstest (Dovecot) |
-| `internal/cli` | cobra-Adapter, Exit-Codes, `doctor` (seit S1.11 mit `--secrets` und Stand des Audit-Exports), Strg+C- und Panic-Behandlung, globale Optionen (`--json`, `--dry-run`, `-a`, `--key`, `--quiet`, `--profile`, `--explain`) | alle lesenden Kommandos (S1.8): `version`, `doctor`, `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show`, `search`, `thread`, `attach list/text`, `key create/list/revoke`, `audit`, `audit export/verify`, `policy show`; Vertragstest Register ↔ CLI |
-| `internal/mcp` | MCP-Adapter auf dem offiziellen Go-SDK (v1.8.0): Tabellen für Tools (Operation → Tool, Standardwerte, engere Grenzen), Resources (`mail://…` → Operationen) und Prompts; Scope-Filter je Schlüssel; Bereinigung aller Zeichenketten (Steuer- und Formatzeichen); Fehler als Ergebnis mit Status | S1.9 + Vertragstest Register ↔ MCP, Sitzungs- und stdio-Smoke-Test |
+| `internal/cli` | cobra-Adapter, Exit-Codes, `doctor` (seit S1.11 mit `--secrets` und Stand des Audit-Exports, seit S2.1 Policy-Datei und `attach_dir`), Strg+C- und Panic-Behandlung, globale Optionen (`--json`, `--dry-run`, `-a`, `--key`, `--quiet`, `--profile`, `--explain`, seit S2.0 `--config`, `--data-dir`) | alle lesenden Kommandos (S1.8): `version`, `doctor`, `accounts list`, `account add/test/remove`, `sync`, `mailbox list`, `show`, `search`, `thread`, `attach list/text`, `key create/list/revoke`, `audit`, `audit export/verify`, `policy show`; seit S2.0 `account set`; seit S2.3/S2.7 `draft new/reply/forward/edit/show/list/request/abandon/mark-sent`, `approve`, `reject`, `approval show`, `identity …`, seit S2.8 `draft style`; Vertragstest Register ↔ CLI |
+| `internal/mcp` | MCP-Adapter auf dem offiziellen Go-SDK (v1.8.0): Tabellen für Tools (Operation → Tool, Standardwerte, engere Grenzen), Resources (`mail://…` → Operationen) und Prompts; Scope-Filter je Schlüssel; Bereinigung aller Zeichenketten (Steuer- und Formatzeichen); Fehler als Ergebnis mit Status; seit S2.8 sechs Entwurfs-Tools, Resources `mail://{account}/draft/{id}` und `mail://style/{identity}`, Prompt `draft_reply`, `instructions` je Schlüssel; kein Passwort im Prozess (ADR-009) | S2.8 + Vertragstest Register ↔ MCP, Sitzungstests (`reader`, `assistant`), stdio-Smoke-Test |
 
  Der Sync heißt `internal/mailsync` (nicht `internal/sync`, das kollidierte mit dem Standardpaket `sync`).
 
@@ -182,6 +182,8 @@ type Operation struct {
     OutputSchema json.RawMessage
     Summary      string       // ein Satz für Hilfe und Tool-Beschreibung
     Handler      Handler
+    Redact       RedactFunc   // was ins Audit darf: Feldnamen, IDs, Zähler, nie Inhalt
+    HumanOnly    bool         // seit S2.0: nur der Mensch ohne API-Schlüssel (ADR-009)
 }
 ```
 
@@ -213,44 +215,47 @@ sequenceDiagram
   participant P as Policy
   participant A as Audit
   participant H as Handler
-  O->>X: Request(Key, Operation, Input, DryRun?)
+  O->>X: Request(Key, Actor, Operation, Input, DryRun?)
   X->>X: Register: Operation nachschlagen
-  X->>P: Check(Key, Operation, DryRun)
-  P-->>X: Decision (allow, deny, needs_approval; DryRun)
-  X->>A: Append(Event: Ergebnis der Prüfung)
+  X->>P: Check(Key, Requirement{Scope, Risk, HumanOnly}, DryRun)
+  P-->>X: Decision (allow, deny, needs_approval; DryRun; Grund)
+  X->>X: Schlüssel noch gültig? (KeyGuard, nur mit API-Schlüssel)
+  X->>A: Append(Event: Ergebnis der Prüfung, policy_version)
   alt allow
-    X->>H: Handler(Input, DryRun)
-    H-->>X: Output oder Fehler
-    opt Fehler
-      X->>A: Append(Event: error)
+    X->>X: Eingabe gegen InputSchema prüfen
+    X->>H: Handler(Input, DryRun, Key, Actor)
+    H-->>X: Output, fachliche Ablehnung oder Fehler
+    opt Ablehnung oder Fehler
+      X->>A: Append(Event: denied bzw. error mit Grund)
     end
-    X-->>O: Result
+    X-->>O: Result (mit Audit-ID)
   else deny oder needs_approval
     X-->>O: PolicyError (Exit 3 bzw. 4, MCP-Status)
   end
 ```
 
-- **Reihenfolge:** Policy-Entscheid → Audit-Eintrag → Prüfung der Eingabe gegen das `InputSchema` (seit S1.8) → Handler. Der Audit-Eintrag steht **vor** der Wirkung. Fehler im Handler oder eine ungültige Eingabe erzeugen einen zweiten Eintrag (`error`, Grund `handler_error` bzw. `invalid_input`). Das Ergebnis trägt die ID des Audit-Eintrags (CLI `--explain`).
-- **Trockenlauf:** `dry_run` gilt für jede schreibende Operation. Standard je Schlüssel (`dry_run_default`), ausdrücklich überschreibbar. Der Handler bekommt `Call.DryRun` und darf dann nichts verändern.
-- **`needs_approval` ist kein Fehler der Operation**, sondern ein Zustand: MCP liefert ihn als Ergebnis (nicht als `isError`), die CLI als Exit-Code 4.
-- **Freigabe-Erzwingung liegt im Executor**, nicht in einer Oberfläche. Ein zweiter MCP-Server oder später REST kann sie nicht umgehen.
-
-Stand im Gerüst: `policy.Check` ist ein Stub mit den Regeln „fehlender Scope → Deny, R0/R1 → Allow, R2 → Allow, R3 → NeedsApproval, Trockenlauf → Allow mit `DryRun`". Policy-Datei, Limits und die Freigabe-Zustandsmaschine kommen mit S2 (siehe [sicherheit.md](sicherheit.md)).
+- **Reihenfolge:** Policy-Entscheid → Prüfung des Schlüssels (widerrufen, abgelaufen; seit S1.9, Zwischenspeicher höchstens 2 s) → Audit-Eintrag → Prüfung der Eingabe gegen das `InputSchema` (seit S1.8) → Handler. Der Audit-Eintrag steht **vor** der Wirkung. Fehler im Handler, eine ungültige Eingabe oder eine fachliche Ablehnung (z. B. `draft_closed`, `approval_stale`) erzeugen einen zweiten Eintrag (`error` mit `handler_error` bzw. `invalid_input`, `denied` mit dem Grund). Das Ergebnis trägt die ID des Audit-Eintrags (CLI `--explain`, MCP `_meta.audit_id`).
+- **`policy.Check`** (`internal/policy/policy.go`, Stand S2.9), in dieser Reihenfolge: (1) `HumanOnly` und ein API-Schlüssel (jede Rolle, auch `admin`, auch die CLI-Probe `--key`, auch im Trockenlauf) → `deny`, Grund `human_only` (ADR-009); (2) fehlender Scope → `deny`, `missing_scope` (der Pseudo-Scope `any` gilt für jeden Schlüssel); (3) R0 → `allow`; (4) Trockenlauf → `allow` mit `DryRun`; (5) R1/R2 → `allow`; (6) R3 → `needs_approval`, Grund `risk_r3`. In S2 hat keine Operation R3; `needs_approval` und Exit 4 kommen deshalb nicht vor (Entscheid 44). Die Freigabe eines Entwurfs ist kein Zustand des Aufrufs, sondern eine eigene Operation (`drafts.request_ready` legt die Freigabe an, `drafts.approve` erteilt sie, beide über diese Kette; [sicherheit.md](sicherheit.md), Abschnitt 5).
+- **Trockenlauf:** `dry_run` gilt für jede schreibende Operation. Standard je Schlüssel (`dry_run_default`), ausdrücklich überschreibbar; der Mensch ohne Schlüssel hat keinen Standard-Trockenlauf. Der Handler bekommt `Call.DryRun` und darf dann nichts verändern (Entwürfe: dieselbe Transaktion mit allen Prüfungen, danach zurückgerollt).
+- **Policy-Datei** (seit S2.1): Jeder Prozess, der die Datenbank öffnet, lädt `policy.toml` beim Start und prüft sie streng; ihre Version steht in der Tabelle `policies` und in jedem Audit-Eintrag (`policy_version`). Wirksam sind `[agent_defaults] max_chars` und `[draft] check_hook`, `check_hook_timeout`, `require_approval_for_ready`; `[delete]`, `[move]` und `dry_run_default` werden geprüft und erst in S3 ausgewertet, ebenso die Verengung je Schlüssel.
+- **`needs_approval` ist kein Fehler der Operation**, sondern ein Zustand: MCP liefert ihn als Ergebnis (nicht als Protokollfehler), die CLI als Exit-Code 4.
+- **Freigabe-Erzwingung liegt im Executor und im Dienst**, nicht in einer Oberfläche: `human_only` entscheidet die Policy im Executor, Hash-Bindung, Ablauf und Zustandsmaschine prüft `internal/drafts`. Ein zweiter MCP-Server oder später REST kann das nicht umgehen.
+- **Audit der Übergänge:** Zusätzlich zum Eintrag des Executors schreibt der Entwurfsdienst je Übergang einen Eintrag mit Grund `transition` in derselben Transaktion wie den Übergang; Systemereignisse (`drafts.push`, `drafts.remote_check`, `drafts.sent_detected`, `drafts.expire`) tragen den Akteur `system`. Nie Betreff, Adressen oder Text.
 
 ## 7. Jobs und Prozessmodell
 
-Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `jobs`, kein Redis, kein externer Broker):
+Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `jobs`, kein Redis, kein externer Broker). Für das Schreiben auf den Server gilt seit Schnitt 2 ADR-009: Ausgeführt wird es nur vom Prozess mit Zugangsdaten unter der Kontosperre (`sync`, `sync --watch`); der MCP-Prozess und die Entwurfskommandos reihen nur ein. Stand S2.9: Genutzt werden die Typen `extract`, `index` und `draft_push`; `sync`, `import` und `export` stehen in der CHECK-Liste der Tabelle, laufen aber (noch) im Vordergrund ohne Zeile in `jobs`.
 
 | Job-Typ | Auslöser | Inhalt |
 |---|---|---|
-| `sync` | Intervall, IDLE-Signal, `postkauz sync`, `mail_sync_now` | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben |
+| `sync` | Intervall, IDLE-Signal, `postkauz sync`; ab S3 auch `mail_sync_now` (MCP reiht ein, Entscheid 23) | `Changes()` eines Ordners, Köpfe und Rohmails holen, Blobs schreiben. Stand S2.9: im Vordergrund (`postkauz sync`, `sync --watch`), noch ohne Zeile in `jobs` |
 | `index` | Trigger, sobald eine Nachricht, ihr Text oder ein Anhang entsteht oder sich ändert (`index_queue`) | FTS-Zeilen beider Tabellen schreiben, 200 Nachrichten je Transaktion, bis die Warteschlange leer ist (seit S1.7; die Body-Bereinigung macht seit S1.6 der Sync beim Speichern) |
 | `extract` | Trigger, sobald ein Anhang auf Extraktion wartet | Anhangstext in Subprozess mit Zeit- und Speicherlimit; Zeitbudget 60 s je Lauf, mindestens ein Anhang, Rest im nächsten Lauf (seit S1.7 über die Tabelle `jobs`; S1.6: am Ende des Syncs ohne Tabelle) |
 | `import` | `postkauz import mbox/maildir` | Einlesen mit Message-ID-/Hash-Abgleich. Seit S1.10 läuft der Import im Vordergrund ohne Eintrag in `jobs` (wie `sync`): Er sperrt das Konto, speichert je Stapel den Stand der Quelle (`import_sources`) und führt am Ende die Jobs `extract` und `index` des Kontos aus |
-| `export` | `postkauz export`, täglich (Audit) | mbox/EML-Verzeichnis, Audit-JSONL mit Prüfsumme |
+| `export` | `postkauz export` (S3), täglich (Audit) | mbox/EML-Verzeichnis (S3), Audit-JSONL mit Prüfsumme. Stand S2.9: Der Audit-Export läuft als `audit export` im Vordergrund, täglich über die Windows-Aufgabe bzw. den systemd-Timer (S1.11), ohne Zeile in `jobs` |
 | `draft_push` | `drafts.create`/`drafts.update` reihen ein (CLI, MCP; seit S2.3); ausgeführt seit S2.5 von `postkauz sync` zu Beginn jedes Laufs und von `sync --watch` alle `--jobs-interval` (10 s) | wartende Entwürfe des Kontos per IMAP APPEND im Entwürfe-Ordner ablegen (A02 E1, E6, E12; Abschnitt 3, Regel 5) |
 
-Regeln: Jobs sind **idempotent** und wiederholbar; Sperren über `locked_by`/`locked_at` mit Ablauf; `attempts` und `last_error` für Backoff; ein Job je (Konto, Ordner) gleichzeitig.
+Regeln: Jobs sind **idempotent** und wiederholbar; Sperren über `locked_by`/`locked_at` mit Ablauf; `attempts` und `last_error` für Backoff; höchstens ein offener Job je Konto und Art (partieller Unique-Index `jobs_open`). Einen Job führt nur ein Prozess aus, der die Kontosperre hält (`sync`, `sync --watch`, `import`).
 
 Umsetzung S1.7 (`internal/jobs`, `internal/store/jobs.go`): Ein Job gilt einem Konto und einer Art (`extract`, `index`), höchstens einer ist offen. Der Sync führt am Ende jedes Laufs (auch je Runde von `sync --watch`) die fälligen Jobs seines Kontos aus: zuerst die Extraktion, dann den Index, damit extrahierter Text im selben Lauf durchsuchbar wird; vorher baut er den Index neu auf, wenn sich `search.FTSVersion` geändert hat. Die Sperre gilt 2 Minuten und wird nach jedem Schritt erneuert; weil der Sync die Kontosperre hält, übernimmt er einen „laufenden" Job seines Kontos sofort (Abbruch per `kill -9` setzt ohne Wartezeit fort). Fehler des Jobs (nicht einzelner Anhänge) werden mit Wartezeit 1, 2, 4 … Minuten (höchstens 1 h) wiederholt, nach 5 Fehlern ist der Job `failed`; neue Arbeit legt dann einen neuen Job an. Strg+C gibt laufende Jobs zurück. Kurzlebige Prozesse (`search`, später MCP) führen keine Jobs aus; `search` meldet, wie viele Nachrichten noch auf den Index warten.
 
@@ -261,7 +266,7 @@ Umsetzung S1.7 (`internal/jobs`, `internal/store/jobs.go`): Ein Job gilt einem K
 Prozesse im MVP:
 
 - `postkauz sync --watch` (S1.5): Dauerläufer im Vordergrund. Er synct sofort, danach alle 5 Minuten (`--interval`; seit S2.0 stündlich mit vollem UID-Abgleich aller Ordner, `--full-check-interval`) und bei jeder IDLE-Meldung der INBOX (eigene Verbindung, IDLE-Neustart alle 5 bis 10 Minuten, Standard 8; ein Blackhole fällt beim Neustart am unbeantworteten `DONE` auf). Verbindungsfehler eines Laufs beenden ihn nicht (nächster Lauf, IDLE nach 30 s neu), ein Anmeldefehler schon. Nach jedem Lauf arbeitet er die Jobs seines Kontos ab (Extraktion, Index; seit S1.7); seit S2.5 legt er zu Beginn jedes Laufs und alle `--jobs-interval` (10 s) wartende Entwürfe ab (Job `draft_push`); seit S2.6 prüft er nach jedem Lauf die Entwürfe gegen den Spiegel (Versand erkannt, Freigabe abgelaufen, Kopie verschwunden; [versanderkennung.md](versanderkennung.md)). Später als Windows-Aufgabe, systemd-Dienst oder Docker-Container.
-- `postkauz mcp` (S1.9 ✓): kurzlebiger stdio-Prozess je Agent-Sitzung, **ohne** eigenen Sync und ohne Zugangsdaten; er liest die Datenbank und reiht Jobs ein (seit S2.3 `draft_push` über die Entwurfsoperationen; `mail_sync_now` folgt in S3). Der Schlüssel kommt aus `POSTKAUZ_KEY`; jeder Tool-Aufruf läuft mit Akteur `agent` durch den Executor.
+- `postkauz mcp` (S1.9 ✓): kurzlebiger stdio-Prozess je Agent-Sitzung, **ohne** eigenen Sync und ohne Zugangsdaten (ADR-009); er liest die Datenbank, schreibt Entwürfe lokal und reiht Jobs ein (seit S2.3 `draft_push` über die Entwurfsoperationen; `mail_sync_now` folgt in S3). Der Schlüssel kommt aus `POSTKAUZ_KEY` oder `POSTKAUZ_KEY_FILE`; jeder Tool-Aufruf läuft mit Akteur `agent` durch den Executor.
 - `postkauz …` (CLI): kurzlebig.
 
 Alle Prozesse teilen **eine SQLite-Datei** im WAL-Modus mit `busy_timeout` (5 s); schreibende Transaktionen beginnen mit `BEGIN IMMEDIATE` (`_txlock=immediate`), damit ein zweiter Schreiber wartet, statt mit `SQLITE_BUSY` abzubrechen (getestet). Zwei schreibende Syncs **desselben Kontos** schließt eine Dateisperre je Konto aus (`sync-<id>.lock`, flock bzw. `LockFileEx`); der zweite endet mit `sync_running`. Seit S1.10 nimmt der Import dieselbe Sperre (ein Import neben `sync --watch` desselben Kontos könnte sonst dieselbe Nachricht gleichzeitig neu anlegen). Es gibt genau einen schreibenden Dauerläufer je Datenbank; die kurzlebigen Prozesse schreiben nur kurze Transaktionen (Audit, Entwürfe, Job-Einreihung). Die Datenbank darf nie in einem Cloud-synchronisierten Ordner liegen (siehe [datenmodell.md](datenmodell.md)).
