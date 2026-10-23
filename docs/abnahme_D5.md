@@ -159,21 +159,23 @@ Gespiegelt werden nur drei Ordner: Posteingang, Entwürfe, Gesendet. „Alle Nac
 
 ### 4.1 Mail an dich selbst [Du]
 
-In Gmail im Browser eine neue Mail **an deine eigene Adresse**: Betreff `PostKauz D5 Runde 1`, Text `Test`. Senden.
+In Gmail im Browser eine neue Mail **an deine eigene Adresse**: Betreff `PostKauz D5 Runde 1 PKD5R1`, Text `Test`. Senden. (`PKD5R1` ist ein Suchwort, das sonst in keiner Mail vorkommt; Claude findet die Mail in 4.2 darüber.)
 
 ### 4.2 Entwurf anlegen und ablegen [Claude]
 
 ```powershell
 .\postkauz.exe sync -a gmail --mailbox INBOX --mailbox "[Gmail]/Entwürfe" --mailbox "[Gmail]/Gesendet"
-.\postkauz.exe search 'subject:"PostKauz D5 Runde 1"' -a gmail
+.\postkauz.exe search subject:PKD5R1 -a gmail
 .\postkauz.exe draft reply <ID aus der Suche> --body-file runde1.md
 .\postkauz.exe sync -a gmail --mailbox INBOX --mailbox "[Gmail]/Entwürfe" --mailbox "[Gmail]/Gesendet"
 .\postkauz.exe draft show <Entwurfs-ID>
 ```
 
+Das Suchwort steht ohne Anführungszeichen: Windows PowerShell 5.1 verschluckt innere `"` in einem Argument wie `'subject:"…"'`. Erwartet ist ein Treffer: Die Mail an dich selbst liegt zwar im Posteingang und in Gesendet, PostKauz führt sie aber als eine Nachricht mit beiden Ordnern.
+
 Erwartet:
 
-- `draft reply`: `draft 1 created (status draft, remote pending)`, Betreff `Re: PostKauz D5 Runde 1`, An: deine Adresse, Hinweis `nothing is sent: a human sends the draft in the mail client`.
+- `draft reply`: `draft 1 created (status draft, remote pending)`, Betreff `Re: PostKauz D5 Runde 1 PKD5R1`, An: deine Adresse (eine Antwort auf eine Mail an dich selbst geht an dich selbst), Hinweis `nothing is sent: a human sends the draft in the mail client`.
 - zweiter `sync`: Zeile `drafts: 1 put into <Pfad des Entwürfe-Ordners> (flags \Draft \Seen; nothing is sent)`, bei Gmail auf Deutsch zum Beispiel `drafts: 1 put into [Gmail]/Entwürfe (flags \Draft \Seen; nothing is sent)` (nur ein Beispiel: der Pfad hängt von Anbieter und Sprache ab, er ist der Ordner mit Rolle `drafts` aus 3.3).
 - `draft show 1`: `remote: pushed`, eine Zeile `copies: uid …`, das Zitat beginnt mit `Am … schrieb …:`.
 
@@ -182,7 +184,7 @@ Claude notiert die Message-ID aus `draft show` (Form `<pk.…@…>`) für den Ve
 ### 4.3 Im Mailprogramm senden [Du]
 
 1. Gmail im Browser neu laden (F5). Links „Entwürfe" anklicken.
-2. Den Entwurf `Re: PostKauz D5 Runde 1` öffnen.
+2. Den Entwurf `Re: PostKauz D5 Runde 1 PKD5R1` öffnen.
 3. Kurz ansehen (dein Urteil): Empfänger ist deine Adresse, Betreff stimmt, Text von `runde1.md`, darunter das Zitat. **Nichts ändern.**
 4. „Senden" klicken.
 5. Eine Minute warten. Im Posteingang nachsehen: Steht die Antwort im **selben Gesprächsverlauf** wie die Mail aus 4.1? Notiere ja oder nein und sag es Claude.
@@ -211,16 +213,16 @@ Claude liest daraus die Zeile für die Tabelle ab (Abschnitt 8; die Ausgabe von 
 
 ### 5.1 Mail an dich selbst [Du]
 
-Wie 4.1, Betreff `PostKauz D5 Runde 2`. Senden (aus Gmail oder aus Thunderbird, egal).
+Wie 4.1, Betreff `PostKauz D5 Runde 2 PKD5R2`. Senden (aus Gmail oder aus Thunderbird, egal).
 
 ### 5.2 Entwurf anlegen und ablegen [Claude]
 
-Wie 4.2 mit `PostKauz D5 Runde 2` und `runde2.md`. Erwartet wie dort (der Entwurf hat die nächste Nummer, z. B. `draft 2`).
+Wie 4.2 mit `search subject:PKD5R2` und `runde2.md`. Erwartet wie dort (der Entwurf hat die nächste Nummer, z. B. `draft 2`).
 
 ### 5.3 Im Mailprogramm senden [Du]
 
 1. Thunderbird öffnen. Links beim Gmail-Konto den Ordner „Entwürfe" anklicken (Thunderbird holt ihn dann frisch). Erscheint der Entwurf nicht: in der Symbolleiste oben auf „Abrufen" klicken (**Menübezeichnung ungeprüft**; heißt der Knopf bei dir anders, den nächsten Weg nehmen), oder kurz einen anderen Ordner (z. B. Posteingang) und dann wieder „Entwürfe" anklicken; notfalls eine Minute warten.
-2. Den Entwurf `Re: PostKauz D5 Runde 2` **doppelt anklicken**. Es öffnet sich das Fenster zum Verfassen.
+2. Den Entwurf `Re: PostKauz D5 Runde 2 PKD5R2` **doppelt anklicken**. Es öffnet sich das Fenster zum Verfassen.
 3. Ansehen wie in 4.3, **nichts ändern**, „Senden".
 4. Eine Minute warten. Im Posteingang (Thunderbird oder Gmail im Browser): Steht die Antwort im selben Gesprächsverlauf wie die Mail aus 5.1? Notiere ja oder nein, sag es Claude. Notiere auch die **Version** von Thunderbird: Ab Version 115 ist die Menüleiste meist ausgeblendet; dann einmal die Taste **Alt** drücken (die Menüleiste erscheint) oder rechts oben auf **≡** klicken, jeweils → „Hilfe" → „Über Thunderbird".
 
@@ -250,15 +252,15 @@ Meldet der Sync `error: no_drafts_mailbox`, erkennt PostKauz den Entwürfe-Ordne
 
 ### 6.3 Mail an dich selbst [Du]
 
-In der Webmail von Postfach B eine Mail an die **eigene Adresse von Postfach B**: Betreff `PostKauz D5 Runde 3`, Text `Test`. Senden.
+In der Webmail von Postfach B eine Mail an die **eigene Adresse von Postfach B**: Betreff `PostKauz D5 Runde 3 PKD5R3`, Text `Test`. Senden.
 
 ### 6.4 Entwurf anlegen und ablegen [Claude]
 
-Wie 4.2, mit `-a zweit` beim Sync, `PostKauz D5 Runde 3` und `runde3.md`.
+Wie 4.2, mit `-a zweit` bei Sync und Suche, `search subject:PKD5R3 -a zweit` und `runde3.md`.
 
 ### 6.5 Im Mailprogramm senden [Du]
 
-In der Webmail von Postfach B: Ordner „Entwürfe" öffnen (Seite neu laden), Entwurf `Re: PostKauz D5 Runde 3` öffnen, ansehen, **nichts ändern**, „Senden". Eine Minute warten; steht die Antwort im selben Gesprächsverlauf (falls die Webmail Gesprächsverläufe zeigt; sonst in Thunderbird, wenn Postfach B dort eingerichtet ist)? Notiere ja, nein oder „nicht sichtbar" und den **Anbieter**.
+In der Webmail von Postfach B: Ordner „Entwürfe" öffnen (Seite neu laden), Entwurf `Re: PostKauz D5 Runde 3 PKD5R3` öffnen, ansehen, **nichts ändern**, „Senden". Eine Minute warten; steht die Antwort im selben Gesprächsverlauf (falls die Webmail Gesprächsverläufe zeigt; sonst in Thunderbird, wenn Postfach B dort eingerichtet ist)? Notiere ja, nein oder „nicht sichtbar" und den **Anbieter**.
 
 ### 6.6 Ergebnis ablesen [Claude]
 
