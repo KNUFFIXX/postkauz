@@ -399,6 +399,12 @@ func toStoreAddrs(l []compose.Address) []store.Addr {
 	return out
 }
 
+// NoRecipientsWarning steht in warnings von drafts.create und
+// drafts.update, solange der Entwurf keinen Empfänger hat (To, Cc und Bcc
+// leer): Anlegen und Ändern geht (Entwurf in Arbeit), drafts.request_ready
+// lehnt ihn mit no_recipients ab (Gegenprüfung S2.9, B1).
+const NoRecipientsWarning = "the draft has no recipient (to, cc and bcc are empty); add one before drafts.request_ready"
+
 // attachmentWarning formuliert Entscheid 39. Der Anhang wird über seine
 // Stelle in attachments genannt, nie über den Namen: Der Name kann aus einer
 // E-Mail stammen (weitergeleiteter Anhang), und warnings steht ohne Hülle
@@ -784,6 +790,9 @@ func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Resul
 		out.ApprovalSuperseded = res.Approval.ID
 	}
 	out.Attachments, out.Warnings = attachmentOutputs(d.Attachments)
+	if drafts.CheckRecipients(d) != nil {
+		out.Warnings = append(out.Warnings, NoRecipientsWarning)
+	}
 	for _, n := range append(res.Notes, notes...) {
 		out.Notes = addNote(out.Notes, n)
 	}

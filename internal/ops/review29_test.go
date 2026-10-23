@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
@@ -37,5 +38,30 @@ func TestReviewB1RequestReadyNeedsRecipient(t *testing.T) {
 	e.must(t, assistant, "drafts.update", map[string]any{"draft_id": out.DraftID, "to": []string{"erika@example.org"}})
 	if r := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": out.DraftID}).(DraftsRequestOutput); r.Status != "pending_approval" {
 		t.Fatalf("request with recipient: %+v", r)
+	}
+}
+
+// Gegenprüfung S2.9, B1: drafts.create und drafts.update nennen einen
+// fehlenden Empfänger als Warnung im Ergebnis (der Entwurf entsteht
+// trotzdem); mit Empfänger fällt die Warnung weg.
+func TestReviewB1WarnWithoutRecipients(t *testing.T) {
+	e := newDraftEnv(t, true)
+	for _, dry := range []bool{true, false} {
+		out, err := e.do(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new", "subject": "Ohne Empfänger", "body_markdown": "Text"}, dry)
+		if err != nil {
+			t.Fatalf("create (dry %v): %v", dry, err)
+		}
+		if w := out.(DraftsWriteOutput).Warnings; !slices.Contains(w, NoRecipientsWarning) {
+			t.Fatalf("create (dry %v): warnings %q lack the no-recipient warning", dry, w)
+		}
+	}
+	id := e.must(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new", "subject": "Ohne Empfänger", "body_markdown": "Text"}).(DraftsWriteOutput).DraftID
+	up := e.must(t, assistant, "drafts.update", map[string]any{"draft_id": id, "body_markdown": "Text 2"}).(DraftsWriteOutput)
+	if !slices.Contains(up.Warnings, NoRecipientsWarning) {
+		t.Fatalf("update without recipients: warnings %q", up.Warnings)
+	}
+	up = e.must(t, assistant, "drafts.update", map[string]any{"draft_id": id, "bcc": []string{"erika@example.org"}}).(DraftsWriteOutput)
+	if slices.Contains(up.Warnings, NoRecipientsWarning) {
+		t.Fatalf("update with bcc: warnings %q", up.Warnings)
 	}
 }
