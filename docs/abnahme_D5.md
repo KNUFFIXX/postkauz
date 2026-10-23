@@ -47,8 +47,10 @@ Ein App-Passwort ist ein eigenes Passwort nur für ein Programm. Dein normales P
 
 **Gmail:**
 
-1. Ein App-Passwort gibt es bei Google **nur mit Bestätigung in zwei Schritten** (2FA). Ist sie aus: im Browser `myaccount.google.com` → „Sicherheit" → „Bestätigung in zwei Schritten" → einschalten.
-2. Im Browser `myaccount.google.com/apppasswords` öffnen (eventuell neu anmelden).
+(Die Bezeichnungen auf den Google-Seiten sind **ungeprüft**, Google ändert sie öfter; die beiden Links führen direkt zur richtigen Seite.)
+
+1. Ein App-Passwort gibt es bei Google **nur mit Bestätigung in zwei Schritten** (2FA). Ist sie aus: im Browser `https://myaccount.google.com/signinoptions/twosv` öffnen und einschalten.
+2. Im Browser `https://myaccount.google.com/apppasswords` öffnen (eventuell neu anmelden).
 3. Als Name `PostKauz D5` eintippen → „Erstellen".
 4. Google zeigt 16 Buchstaben in vier Gruppen. **Dieses Fenster offen lassen**, bis Schritt 3.2 erledigt ist. Nicht abschreiben, nicht in eine Datei kopieren.
 
@@ -302,7 +304,7 @@ Du liest die Zeilen und sagst „passt" oder was zu ändern ist. Vor dem Commit 
 
 **Entfernen:** `account remove` geht hier **nicht**: Es verweigert Konten mit gespiegelten Mails, weil PostKauz das Archiv nie nebenbei löscht (ADR-003; Meldung `account gmail has N archived messages`). Entfernt wird deshalb so:
 
-1. [Du] Die App-Passwörter beim Anbieter löschen (Gmail: `myaccount.google.com/apppasswords` → `PostKauz D5` → Papierkorb-Symbol; Postfach B entsprechend). Das ist der wichtigste Schritt: Danach kann niemand mehr mit diesen Passwörtern in dein Postfach.
+1. [Du] Die App-Passwörter beim Anbieter löschen (Gmail: `https://myaccount.google.com/apppasswords` → `PostKauz D5` → Papierkorb-Symbol, Bezeichnung ungeprüft; Postfach B entsprechend). Das ist der wichtigste Schritt: Danach kann niemand mehr mit diesen Passwörtern in dein Postfach.
 2. [Claude, mit deinem OK] Die beiden Einträge aus dem Windows-Anmeldeinformationsspeicher löschen. `cmdkey /list` zeigt sie als `LegacyGeneric:target=postkauz:account/<id>/gmail` bzw. `…/zweit`; `<id>` ist die Kennung aus der Ausgabe von `account add` (`password stored in the OS keyring as account/<id>/gmail`). Gelöscht wird mit dem Teil hinter `target=`: `cmdkey /delete:postkauz:account/<id>/gmail` und `cmdkey /delete:postkauz:account/<id>/zweit`. Von Hand: Systemsteuerung → „Anmeldeinformationsverwaltung" → „Windows-Anmeldeinformationen" → „Generische Anmeldeinformationen".
 3. [Claude, mit deinem OK] Den Ordner `C:\PostKauz\d5` löschen (darin liegen die gespiegelten Mails).
 
