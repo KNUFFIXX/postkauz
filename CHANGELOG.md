@@ -42,6 +42,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- Nachbesserung N1 (Abnahme D5, Runde 1, 23.10.2026): Die Versanderkennung verfehlte einen unverändert in Gmail im Browser gesendeten Entwurf, weil Gmail das Zitat ohne „>" sendet und Einleitung und Zitat im zitatfreien Text blieben (Ähnlichkeit 0,58). Der Rückfall-Abgleich zählt jetzt zusätzlich den Text vor dem eigenen Zitat (zweite Lesart: Text vor dem eigenen Zitat des Entwurfs, auch ohne „>"; `drafts.CutAtQuote`, `QuoteOf`; nur wenn Einleitungszeile und Rest zum Zitat des Entwurfs passen); Spiegel, Suche und Snippet bleiben unverändert.
 - `draft reply` auf eine eigene Mail (an sich selbst) ergab einen Entwurf ohne Empfänger; jetzt gehen Antworten auf eigene Mails an deren Empfänger, sonst an die eigene Adresse.
 - RFC-2047-kodierte Anhangnamen wurden doppelt dekodiert.
 - Ein Fehler der Versandprüfung beendet den Sync nicht mehr vor Extraktion und Jobs.

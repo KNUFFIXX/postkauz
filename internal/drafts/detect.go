@@ -378,7 +378,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 				continue
 			}
 		}
-		var w map[string]struct{} // Wortmenge des gesendeten Texts, nur bei Bedarf gelesen
+		var w *SentWords // Wortmengen des gesendeten Texts, nur bei Bedarf gelesen
 		for _, e := range list {
 			if !InFallbackWindow(changedAt(e.d), c.Date) {
 				continue
@@ -394,9 +394,10 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 				if err != nil {
 					return err
 				}
-				w = Words(SentOwnText(sentText(b)))
+				sw := NewSentWords(sentText(b))
+				w = &sw
 			}
-			if sc := e.fd.Score(w); sc >= FallbackMinJaccard {
+			if sc := e.fd.ScoreSent(*w); sc >= FallbackMinJaccard {
 				pairs = append(pairs, pair{e, ci, sc})
 			}
 		}

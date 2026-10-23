@@ -206,3 +206,91 @@ func TestFallbackWithComposedReply(t *testing.T) {
 }
 
 func sentTextOf(plain string) string { return sentText(store.Body{TextPlain: plain}) }
+
+// Abnahme D5 (23.10.2026, Gmail im Browser): Gmail sendet den unveränderten
+// Entwurf mit neuer Message-ID, bricht Zeilen neu um und schickt das Zitat
+// ohne „>". StripQuotes lässt Einleitung und Zitat dann stehen; ohne die
+// zweite Lesart (CutAtQuote am Zitat des Entwurfs) lag die Ähnlichkeit bei
+// 0,58.
+const (
+	d5Own   = "Hallo,\n\ndas ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.\n\nViele Grüße"
+	d5Intro = "Am 23.10.2026 18:51 schrieb Anna Beispiel <anna@example.org>:"
+)
+
+// d5Draft ist ein Antwort-Entwurf mit eigenem Text und dem Zitat, wie
+// compose es in body_text baut.
+func d5Draft(own, intro, quote string) store.Draft {
+	d := fbDraft(own)
+	d.BodyText = own + "\n\n" + intro + "\n> " + strings.ReplaceAll(quote, "\n", "\n> ") + "\n"
+	return d
+}
+
+func TestFallbackGmailQuoteWithoutMarker(t *testing.T) {
+	d := d5Draft(d5Own, d5Intro, "Test")
+	fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+	gmail := func(own, intro, quote string) string {
+		return strings.Replace(own, "PostKauz angelegt.", "PostKauz\nangelegt.", 1) + "\n\n" + intro + "\n\n" + quote + "\n"
+	}
+	sent := gmail(d5Own, d5Intro, "Test")
+	if full := fd.Score(Words(SentOwnText(sentTextOf(sent)))); full >= FallbackMinJaccard {
+		t.Fatalf("test is too weak: the full text already scores %.2f", full)
+	}
+	m := fbSent("Re: Termin am Montag", d.UpdatedAt.Add(3*time.Minute))
+	if s, ok := fd.Match(m, sentTextOf(sent)); !ok || s != 1 {
+		t.Fatalf("unchanged draft sent by Gmail not matched (score %.3f)", s)
+	}
+	// Einleitung über zwei Zeilen umbrochen.
+	wrapped := gmail(d5Own, "Am 23.10.2026 18:51 schrieb Anna Beispiel\n<anna@example.org>:", "Test")
+	if s, ok := fd.Match(m, sentTextOf(wrapped)); !ok {
+		t.Fatalf("wrapped intro not matched (score %.3f)", s)
+	}
+	for _, c := range []struct{ name, text string }{
+		{"text changed before the quote", gmail(strings.Replace(d5Own, "das ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz angelegt.",
+			"ich habe alles umgeschrieben, weil der Termin leider doch nicht passt und wir neu planen müssen.", 1), d5Intro, "Test")},
+		{"draft text only inside the quote of another reply", "Nein, das machen wir anders.\n\n" + d5Intro + "\n\n" + d5Own},
+		// Gegenprüfung N1, W1: eine Zeile, die nur wie eine Einleitung
+		// aussieht, und ein Nachsatz unter dem Zitat schneiden nicht.
+		{"own text after a look-alike intro", d5Own + "\n\nAm Freitag schrieb mir der Hausmeister:\nDie Heizung im Keller ist wieder kaputt, bitte schnell melden."},
+		{"other intro of the same sender", d5Own + "\n\nAnna Beispiel schrieb am Montag dazu:\nBitte noch die Rechnung von September schicken, die fehlt uns."},
+		{"postscript under the quote", gmail(d5Own, d5Intro, "Test\n\nPS: Bitte bring morgen auch die Schlüssel für den Keller und den Dachboden mit.")},
+	} {
+		if s, ok := fd.Match(m, sentTextOf(c.text)); ok {
+			t.Errorf("%s: matched (score %.3f)", c.name, s)
+		}
+	}
+	// Ohne Zitat im Entwurf gibt es keine zweite Lesart.
+	if _, ok := CutAtQuote(sent, NewFallbackDraft(fbDraft(d5Own), d5Own, "").Quote); ok {
+		t.Fatal("cut without a quote in the draft")
+	}
+}
+
+// Gegenprüfung N1, W2: Eine eigene [draft] quote_line, die der Filter für
+// Zitat-Einleitungen nicht kennt, hilft trotzdem, weil die zweite Lesart an
+// der Einleitung des Entwurfs selbst schneidet.
+func TestFallbackCustomQuoteLine(t *testing.T) {
+	intro := "Anna Beispiel <anna@example.org> meinte dazu:"
+	d := d5Draft(d5Own, intro, "Passt dir Montag?\nGruß Anna")
+	fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+	sent := d5Own + "\n\n" + intro + "\n\nPasst dir Montag?\nGruß Anna\n"
+	if s, ok := fd.Match(fbSent("Re: Termin am Montag", d.UpdatedAt), sentTextOf(sent)); !ok {
+		t.Fatalf("custom quote line not matched (score %.3f)", s)
+	}
+}
+
+// QuoteOf nimmt den letzten Block mit „>" und die Zeile davor; „>"-Zeilen
+// im eigenen Text davor zählen nicht.
+func TestQuoteOf(t *testing.T) {
+	q := QuoteOf("Zu deiner Frage:\n> Wann?\nMontag.\n\nAm 01.10.2026 schrieb Anna <anna@example.org>:\n> Wann?\n> Gruß\n")
+	if q.Line == nil || len(q.Line) != len(Words("Am 01.10.2026 schrieb Anna <anna@example.org>:")) {
+		t.Fatalf("line = %v", q.Line)
+	}
+	if _, ok := q.Words["montag"]; ok {
+		t.Fatal("own text counted as quote")
+	}
+	if q := QuoteOf("Nur eigener Text.\n\nGruß"); q.Line != nil {
+		t.Fatal("quote without > lines")
+	}
+	if q := QuoteOf("> nur Zitat"); q.Line != nil {
+		t.Fatal("quote without intro line")
+	}
+}

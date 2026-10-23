@@ -376,3 +376,30 @@ func TestCheckAfterSyncRefreshesRemoteState(t *testing.T) {
 		t.Fatalf("second check = %+v", rep)
 	}
 }
+
+// Abnahme D5 (23.10.2026): Ein unverändert in Gmail gesendeter Entwurf mit
+// neuer Message-ID, neu umbrochenem Text und Zitat ohne „>" wird über den
+// Rückfall erkannt (Nachbesserung N1).
+func TestDetectSentFallbackQuoteWithoutMarker(t *testing.T) {
+	e := newEnv(t)
+	m := newMirror(e)
+	intro := "Am 21.10.2026 09:15 schrieb Anna <anna@example.org>:"
+	r, err := e.svc.Create(context.Background(), NewDraft{AccountID: e.acc, Kind: KindReply, CreatedBy: "key:agent",
+		Content: Content{To: []store.Addr{{Name: "Anna", Address: "anna@example.org"}}, Cc: []store.Addr{{Address: "bob@example.org"}},
+			Subject: "Re: Termin am Montag", BodyMarkdown: fbBody, BodyText: fbBody + "\n\n" + intro + "\n> Passt dir Montag?\n> Gruß Anna\n"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := r.Draft
+	text := strings.Replace(fbBody, "passt mir gut. Ich", "passt mir gut.\nIch", 1) + "\n\n" + intro + "\n\nPasst dir Montag?\nGruß Anna\n"
+	id := m.put("sent", sentMsg{messageID: "gmail-neu@example.org", subject: "Re: Termin am Montag", from: "demo@example.org",
+		to: []store.Addr{{Name: "Anna", Address: "anna@example.org"}}, cc: []store.Addr{{Address: "bob@example.org"}},
+		date: e.now.Add(5 * time.Minute), text: text})
+	rep := e.check()
+	if rep.SentByFallback != 1 || len(rep.SentDraftIDs) != 1 || rep.SentDraftIDs[0] != d.ID {
+		t.Fatalf("report = %+v", rep)
+	}
+	if got := e.draft(d.ID); got.Status != string(StatusSentByHuman) || got.SentMessageID != id {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+}
