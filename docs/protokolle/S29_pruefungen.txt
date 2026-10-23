@@ -1,0 +1,21 @@
+# S2.9 Prüfläufe (Container, Linux, 2 Kerne), go version go1.27.3 linux/amd64, GOTOOLCHAIN=local
+# Branch s2.9, Basis dd022e1 (main). Go-Code in S2.9 unverändert; geändert: Makefile (Ziel release), Doku.
+# Zeiten in UTC; Laufzeit = Wanduhr des make-Aufrufs.
+
+Datum (Start)          Befehl            Ergebnis                                                         Laufzeit
+2026-10-23T02:28:31Z   make race         exit 0: 28 Pakete ok, 0 FAIL (CGO, -race, ohne -short;           1433 s
+                                         längste: ops 623 s, mailsync 555 s, cli 527 s, importer 524 s)
+2026-10-23T03:06:55Z   make check        exit 0: gofmt, vet, 28 Pakete ok (Test-Cache vorher geleert),     217 s
+                                         guard: ok, pii-check: ok  (Commit 324c909)
+2026-10-23T03:10:38Z   make integration  exit 0: 9 Integrationstests, 24 Teilfälle PASS, 0 SKIP gegen       158 s
+                                         Dovecot, Stalwart, GreenMail (Sync, IDLE, DraftPush,
+                                         DraftPushRefusals, DraftPushWatchAndOffline, SentDetection,
+                                         ImportOverlapDovecot, CapabilitiesAndRoles, WrongPassword)
+2026-10-23T03:13:22Z   make vuln         exit 0: govulncheck v1.9.0 "No vulnerabilities found."            18 s
+2026-10-23T03:13:44Z   make cross        exit 0: linux/amd64 26.3 MB, windows/amd64 26.1 MB,               40 s
+                                         darwin/arm64 24.8 MB
+
+# make race lief auf dem Arbeitsstand vor den Doku-Commits (Go-Code identisch mit 324c909).
+# make check lief zusätzlich vor jedem Commit von S2.9 (je exit 0, nur mit den Dateien des Commits).
+# Release-Paket (make release VERSION=0.2.0-rc1) wird nach diesem Commit aus dem sauberen Stand gebaut;
+# Prüfsummen stehen in dist/SHA256SUMS (dist/ ist nicht versioniert).

@@ -1,10 +1,10 @@
 # PostKauz
 
-> **Arbeitstitel.** "PostKauz" is a working title; the name is being checked and will probably change. Names live in `internal/brand` (see `docs/architektur.md`, section 8).
+> **Name.** "PostKauz" started as a working title; it was checked and stays (decision of 15.10.2026). Names live in one place, `internal/brand` (see `docs/architektur.md`, section 8).
 
 An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mailbox into a local, searchable archive (SQLite + raw `.eml` files) and exposes it through a CLI and an MCP server, with scopes, risk levels, dry runs, approvals and an append-only audit log. No GUI. The MVP is **draft-only**: it can write drafts into your Drafts folder, but it never sends mail; a human does that in their usual client.
 
-**Status: 0.1.0-rc2, slice 1 accepted (release candidate, pre-alpha).** Accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), import from mbox and Maildir (Thunderbird profiles), API keys with roles and scopes, a read-only stdio MCP server for agents such as Claude Code, and an append-only audit log with a daily export (SHA-256 hash chain, manifest) that `audit verify` checks. The name "PostKauz" is a working title and will still change.
+**Status: 0.2.0-rc1 (release candidate, pre-alpha): slice 2, drafts, is built; its acceptance with real mail clients (D5) is pending. Last published release: 0.1.0-rc2 (slice 1).** Slice 2 adds [drafts](#drafts): replies and new mails written by you or an agent, put into your Drafts folder, an approval step that only a human can complete, a check hook, and detection of the mail you then sent yourself. Slice 1: accounts, the IMAP mirror (windowed first sync, incremental sync, `sync --watch` with IDLE), threads, cleaned message text (HTML to text, hidden text removed and reported, links made visible, quotes stripped), attachments (type check by magic bytes, text extraction in a subprocess), German-aware full-text search (word forms, umlaut and ß spellings, parts of compound words, operators, cursor paging), import from mbox and Maildir (Thunderbird profiles), API keys with roles and scopes, a stdio MCP server for agents such as Claude Code (read-only keys, or drafts with the role `assistant`), and an append-only audit log with a daily export (SHA-256 hash chain, manifest) that `audit verify` checks.
 
 ## Who is it for
 
@@ -32,7 +32,7 @@ An agent-first e-mail client written in Go. It mirrors an **existing** IMAP mail
 6. Raw mails live in a content-addressed blob store, metadata and full-text index (FTS5) in SQLite.
 7. SQLite via `modernc.org/sqlite`: pure Go, no CGO, cross-compiles to Windows, macOS and Linux.
 8. German-aware search: unicode61 + trigram tokenizers plus an application-side German stemmer.
-9. Jobs (sync, index, extract, import) run from a table, no broker.
+9. Jobs (index, extract, draft push) run from a table, no broker; the only write to the server (a draft into the Drafts folder) happens in `sync`, the process that holds the mailbox password, never in the MCP server.
 10. Details: `docs/architektur.md`, `docs/datenmodell.md` (documentation is in German).
 
 ## Install in under 15 minutes
@@ -167,6 +167,33 @@ PostKauz has no PDF parser of its own (attack surface). If `pdftotext` from Popp
 
 After installing, the next `sync` also extracts the PDFs that were skipped because the tool was missing, and adds their text to the search index.
 
+## Drafts
+
+PostKauz is **draft-only**: it writes drafts into your Drafts folder; you send them from your usual mail client.
+
+**What works** (slice 2):
+
+- `draft new`, `draft reply` (`--all` for reply-all) and `draft forward` with a Markdown (`--body-file`) or HTML (`--html-file`) body. Replies get `In-Reply-To`, `References`, the `Re:` prefix and a quote; reply-all leaves out your own addresses (account address, aliases, identities). The Message-ID is fixed when the draft is created. Signature, reply prefix and a style file for agents come from an identity (`identity add`); attachments from the mirror (attachment id) or from files under `[paths] attach_dir`.
+- The next `postkauz sync` puts the draft into the Drafts folder (IMAP APPEND, flags `\Draft \Seen`); a running `sync --watch` does it within about 10 seconds. `draft show <id> --eml` prints exactly the bytes of that copy.
+- Optional approval: `draft request <id>` runs your check hook and asks for approval; `approve <approval-id>` (a human, no key) marks the draft `ready`. The approval is bound to the exact message: any change sends the draft back to `draft`.
+- When you have sent the draft from your mail client, the next `sync` finds it in Sent (by its Message-ID, or by recipients, subject, time and text when the client gave it a new Message-ID) and marks it `sent_by_human`. Otherwise you close it with `draft mark-sent <id>` or `draft abandon <id>`.
+- Agents with a key of the role `assistant` get six MCP tools: create, change, read and list drafts, submit one for approval, read the state of an approval.
+
+**What never happens:** PostKauz never sends mail (there is no SMTP code), never deletes, expunges or moves a message, and never overwrites a draft you changed in your mail client (further changes are refused with `draft_taken_over`). After a change it puts a new copy into Drafts and leaves the older one there; `draft list` and `draft show` warn about it, and you delete it in your mail client. The MCP server never holds the mailbox password. No API key, whatever its role, can approve, reject, abandon or mark a draft as sent, or manage identities (`human_only`).
+
+```sh
+postkauz identity add -a mail --email me@example.org --name "Me" --signature-file signature.txt
+postkauz draft reply 42 --body-file answer.md        # draft 1 created (status draft, remote pending)
+postkauz sync -a mail                                # puts it into the Drafts folder, then mirrors
+postkauz draft show 1                                # status, remote: pushed, copies, text
+postkauz draft request 1                             # check hook, then approval 1 (optional)
+postkauz approve 1                                   # only a human: status ready
+# now open the draft in your mail client and send it
+postkauz sync -a mail && postkauz draft list         # status sent_by_human
+```
+
+The check hook is a program you name as a list in `policy.toml` (`[draft] check_hook`, no shell); the examples `check-example.ps1` (Windows PowerShell 5.1) and `check-example.sh` come with each release and lie in `deploy/hooks/`. For a German quote line set `[draft] quote_line = 'Am {date_numeric} schrieb {from}:'` in `config.toml`. Details: `docs/cli.md` (sections 2j and 5), `docs/versanderkennung.md` (how sending is detected), `docs/sicherheit.md` (section 5).
+
 ## Set up MCP in Claude Code
 
 `postkauz mcp` is an MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. A reader key only reads; a key with the scope `mail:draft` (role `assistant`) can also create drafts and submit them for approval. Only a human approves and sends them from the mail client; nothing is ever sent, deleted or moved by PostKauz.
@@ -209,9 +236,9 @@ The Claude desktop app uses the same `mcpServers` block in `claude_desktop_confi
 
 Optional entries in `env`: `POSTKAUZ_DATA_DIR` to use another data directory (for example a test database), `POSTKAUZ_KEY_FILE` instead of `POSTKAUZ_KEY` (path to a file holding the key; on Linux and macOS it must be readable only by you).
 
-**3. Check it.** In Claude Code, `/mcp` lists the server and its tools: `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_list_accounts`, `mail_list_mailboxes`, `mail_list_attachments`, `mail_get_attachment_text`, `mail_audit_log`, `mail_get_policy`. Ask something like "Search my mail for invoices and summarise them"; afterwards `postkauz audit --since 10m --key-id key:claude-code` shows each call with the key name and without any mail text.
+**3. Check it.** In Claude Code, `/mcp` lists the server and its tools: `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_list_accounts`, `mail_list_mailboxes`, `mail_list_attachments`, `mail_get_attachment_text`, `mail_audit_log`, `mail_get_policy` (with a key of the role `assistant` also the six draft tools, see [Drafts](#drafts)). Ask something like "Search my mail for invoices and summarise them"; afterwards `postkauz audit --since 10m --key-id key:claude-code` shows each call with the key name and without any mail text.
 
-The server only reads the local mirror; keep it current with `postkauz sync` (or `sync --watch`). Revoke a key you no longer need: `postkauz key revoke claude-code`. Note that the client configuration stores the key in plain text in your user profile; use a short expiry and the narrowest role that works. Details: `docs/mcp.md`, `docs/sicherheit.md`.
+The server only reads the local mirror and writes drafts into it; keep it current with `postkauz sync` (or `sync --watch`), which also puts the drafts into the Drafts folder. Revoke a key you no longer need: `postkauz key revoke claude-code`. Note that the client configuration stores the key in plain text in your user profile; use a short expiry and the narrowest role that works. Details: `docs/mcp.md`, `docs/sicherheit.md`.
 
 ## Daily audit export
 
@@ -250,7 +277,7 @@ Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`.
 
 PostKauz assumes that **every mail may contain instructions** aimed at your agent, and that no filter recognises them reliably. Protection therefore lives outside the model. Details and honest limits: `docs/sicherheit.md`.
 
-- **Draft-only.** The MVP contains no SMTP code at all (`make guard` checks it). Agents can at most prepare drafts in a later slice; a human sends them in the usual mail client. There is no expunge in the provider interface; agents reach the trash at most (slice 3).
+- **Draft-only.** The MVP contains no SMTP code at all (`make guard` checks it). Agents can at most prepare drafts and submit them for approval; only a human approves, and a human sends them in the usual mail client. There is no expunge in the provider interface; agents reach the trash at most (slice 3).
 - **Scopes and roles.** Every agent gets its own API key (`key create`), only its SHA-256 hash is stored. Roles bundle scopes (`reader`: `mail:read`, `mail:search`, `audit:read`); `--scopes` can only narrow a role (for example `mail:search` without message bodies). The MCP server lists only the tools the key may use; revoking a key takes effect within seconds, also in a running session. `policy show --key <name>` shows what a key may do.
 - **Untrusted envelope.** Every output with mail content (CLI `show`, `thread`, `search`, `attach`; all MCP results) is marked `untrusted: true`, `source: "email"` with a notice to treat it as data. HTML is reduced to text, hidden text is removed and reported, links are listed with warnings, nothing is loaded remotely, control and invisible characters are removed.
 - **Audit.** Every call (CLI and MCP, allowed or denied) is written to an append-only table **before** it runs (fail closed), with key name and parameters but never mail text or search terms. The daily export to a second location with a hash chain and manifest makes later changes visible (`audit verify`).
@@ -281,6 +308,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: 0.1.0-rc2, Schnitt 1 abgenommen, S2.0 und A7 dabei (Release-Kandidat, Pre-Alpha; Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, lesender MCP-Server über stdio, Import aus mbox/Maildir, täglicher Audit-Export mit Hash-Kette). Installation in unter 15 Minuten: Abschnitt „Install in under 15 minutes"; Einrichtung in Claude Code: „Set up MCP in Claude Code". Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: Release-Kandidat 0.2.0-rc1 (Pre-Alpha), Schnitt 2 (Entwürfe) gebaut, Abnahme D5 mit echten Mailclients steht aus; zuletzt veröffentlicht: 0.1.0-rc2 (Schnitt 1). Schnitt 2: Entwürfe im Entwürfe-Ordner, Freigabe nur durch den Menschen, Prüf-Hook, Erkennung des Versands (Abschnitt „Drafts"). Schnitt 1: Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, MCP-Server über stdio (lesend, mit Rolle `assistant` auch Entwürfe), Import aus mbox/Maildir, täglicher Audit-Export mit Hash-Kette). Installation in unter 15 Minuten: Abschnitt „Install in under 15 minutes"; Einrichtung in Claude Code: „Set up MCP in Claude Code". Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.

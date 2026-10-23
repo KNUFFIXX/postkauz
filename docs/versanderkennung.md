@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: S2.6 (A02 E5, E6, E7; Entscheide 26, 38, 43). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) ist noch leer; sie entsteht in der Abnahme D5. PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -87,7 +87,7 @@ Damit nicht jeder Zwischenstand eine weitere Kopie im Entwürfe-Ordner hinterlä
 
 ## 9. Messtabelle (Abnahme D5, füllt der Betreiber)
 
-Ablauf je Zeile (Anleitung in `docs/abnahme_D5.md`, S2.9): `draft reply` auf eine eigene Mail, `sync` (Ablage), im Mailprogramm den Entwurf öffnen und **unverändert** senden, danach `sync` und `draft list`. Spalten:
+Ablauf je Zeile (Schritt für Schritt in [abnahme_D5.md](abnahme_D5.md)): `draft reply` auf eine eigene Mail, `sync` (Ablage), im Mailprogramm den Entwurf öffnen und **unverändert** senden, danach `sync` und `draft list`. Claude liest die Werte aus den Ausgaben ab und trägt die Zeile ein; der Betreiber bestätigt sie und ergänzt, ob die Antwort beim Empfänger im richtigen Gesprächsverlauf steht (Spalte „Datum, Bemerkung"). Spalten:
 
 - **Message-ID erhalten?** Steht in der gesendeten Nachricht dieselbe Message-ID wie im Entwurf (`draft show`)? ja/nein
 - **Entwurf gelöscht?** Ist die Kopie danach aus dem Entwürfe-Ordner verschwunden? ja/nein
