@@ -60,9 +60,11 @@ Das Skript hat dafür alles vorbereitet; die Angaben stehen im Protokoll im Absc
 1. **Claude trägt den Testserver ein.** Er übernimmt den Eintrag aus `mcp-eintrag-d4.json` (Laufordner) als MCP-Server `postkauz-d4` in deine Claude-App (bei Claude Code: `claude mcp add-json postkauz-d4 '<Inhalt der Datei>' --scope user`). Der Schlüssel steht nicht im Eintrag, sondern in der Datei `keys\test-assistant.key`, auf die er zeigt. Danach die App neu starten.
 2. **Du sagst in einem neuen Chat** (die Nummer steht im Protokoll unter D4.8):
 
-   > Beantworte Mail 2 kurz, dass der Termin passt.
+   > Beantworte im PostKauz-Testpostfach (Werkzeuge postkauz-d4) Mail 2 kurz, dass der Termin passt.
 
-   Erwartet: Dein Claude ruft `mail_create_draft` auf (vielleicht erst mit `dry_run: true` zur Vorschau, dann mit `dry_run: false`). Seine Antwort nennt eine Entwurfsnummer (`draft_id`), eine `message_id` und `remote: pending`. Er sagt dir, dass er nichts sendet.
+   Den Server ausdrücklich nennen: Hat dein Claude weitere Mail-Werkzeuge (etwa die Gmail-Integration), nimmt er sonst womöglich die und sucht „Mail 2" in deinem echten Postfach (Befund D4.8 vom 23.10.2026; er fragte nach, statt zu raten).
+
+   Erwartet: Dein Claude ruft `mail_create_draft` auf (vielleicht erst mit `dry_run: true` zur Vorschau, dann mit `dry_run: false`). Seine Antwort nennt eine Entwurfsnummer (`draft_id`), eine `message_id` und `remote: pending`. Er sagt dir, dass er nichts sendet. Reicht er den Entwurf von sich aus zur Freigabe ein (`mail_request_ready`), ist das auch richtig: Freigeben kann er nicht.
 3. **Claude prüft nach** (Kommandos mit `--data-dir` und `--config` des Laufordners): `draft list` zeigt den neuen Entwurf; `audit --since 10m --key-id key:test-assistant` zeigt Akteur `agent`, Schlüssel `key:test-assistant` und keinen Text aus dem Entwurf.
 4. **Punkt 9 im Chat:** Claude verwirft den Entwurf (`draft abandon <Nummer>`). Dann sagst du:
 

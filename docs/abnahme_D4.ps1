@@ -537,7 +537,7 @@ Erika Beispiel
     $sj = Get-Json $snippet
     $ok = $null -ne $sj -and -not (Test-Has $snippet 'pk_key_')
     Add-Check '8.0' 'MCP-Eintrag fuer test-assistant geschrieben (gueltiges JSON, Schluessel nur als Datei, nicht im Eintrag; derselbe Weg wie 7.2)' $ok ('Datei: ' + $snipFile + "`n" + $snippet)
-    Write-Log ('      Satz fuer den Claude des Betreibers: "Beantworte Mail ' + $mailId + ' kurz, dass der Termin passt."')
+    Write-Log ('      Satz fuer den Claude des Betreibers: "Beantworte im PostKauz-Testpostfach (Werkzeuge postkauz-d4) Mail ' + $mailId + ' kurz, dass der Termin passt."')
     Write-Log ('      Erwartet: mail_create_draft mit dry_run: false; Ergebnis mit draft_id, message_id, remote: pending; danach "draft list" und "audit --since 10m --key-id key:test-assistant" (Akteur agent, kein Text)')
 
     # ------------------------------------------------ Punkt 9
