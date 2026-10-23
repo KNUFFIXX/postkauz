@@ -172,7 +172,7 @@ In Gmail im Browser eine neue Mail **an deine eigene Adresse**: Betreff `PostKau
 Erwartet:
 
 - `draft reply`: `draft 1 created (status draft, remote pending)`, Betreff `Re: PostKauz D5 Runde 1`, An: deine Adresse, Hinweis `nothing is sent: a human sends the draft in the mail client`.
-- zweiter `sync`: Zeile `drafts: 1 put into Drafts (flags \Draft \Seen; nothing is sent)`.
+- zweiter `sync`: Zeile `drafts: 1 put into <Pfad des Entwürfe-Ordners> (flags \Draft \Seen; nothing is sent)`, bei Gmail auf Deutsch zum Beispiel `drafts: 1 put into [Gmail]/Entwürfe (flags \Draft \Seen; nothing is sent)` (nur ein Beispiel: der Pfad hängt von Anbieter und Sprache ab, er ist der Ordner mit Rolle `drafts` aus 3.3).
 - `draft show 1`: `remote: pushed`, eine Zeile `copies: uid …`, das Zitat beginnt mit `Am … schrieb …:`.
 
 Claude notiert die Message-ID aus `draft show` (Form `<pk.…@…>`) für den Vergleich in 4.4; im Protokoll steht sie nur maskiert (`<msgid-1>`, Abschnitt 2).
