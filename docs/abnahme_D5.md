@@ -244,7 +244,7 @@ App-Passwort von Postfach B eintippen (ohne Leerzeichen) → Enter. Erwartet: `a
 
 `account test zweit` (Ordner mit Rollen `inbox`, `drafts`, `sent`; die Namen heißen je Anbieter anders, z. B. `Entwürfe` und `Gesendet`), dann der kurze Sync wie 3.4 mit `-a zweit` und den Ordnernamen von Postfach B.
 
-Meldet der Sync `error: no_drafts_mailbox`, erkennt PostKauz den Entwürfe-Ordner dieses Anbieters nicht; Claude trägt dann in `config.toml` unter `[draft]` die Zeile `mailbox = '<Name des Entwürfe-Ordners>'` ein und wiederholt den Sync.
+Meldet der Sync `error: no_drafts_mailbox`, erkennt PostKauz den Entwürfe-Ordner dieses Anbieters nicht; Claude trägt dann in `config.toml` unter `[draft]` die Zeile `mailbox = '<Name des Entwürfe-Ordners>'` ein und wiederholt den Sync. **Achtung:** `[draft] mailbox` gilt für **alle** Konten in dieser `config.toml`, also auch für Gmail. Deshalb entfernt Claude die Zeile direkt nach Runde 3 (nach 6.6) wieder; ein `sync -a gmail` mit der Zeile würde Entwürfe in einen Ordner legen wollen, den es bei Gmail so nicht gibt.
 
 ### 6.3 Mail an dich selbst [Du]
 
@@ -261,6 +261,8 @@ In der Webmail von Postfach B: Ordner „Entwürfe" öffnen (Seite neu laden), E
 ### 6.6 Ergebnis ablesen [Claude]
 
 Wie 4.4 mit `-a zweit` und der Entwurfs-ID aus 6.4. Erwartet: `sent_by_human`, Grund `message_id` oder `fallback`.
+
+Hat Claude in 6.2 die Zeile `mailbox = '…'` unter `[draft]` eingetragen, entfernt es sie jetzt wieder aus `config.toml` (sie gilt für alle Konten, auch Gmail) und prüft mit `doctor`, dass die Konfiguration gültig ist.
 
 ## 7. Wenn etwas anders ist
 
