@@ -220,7 +220,7 @@ Wie 4.2 mit `PostKauz D5 Runde 2` und `runde2.md`. Erwartet wie dort (der Entwur
 1. Thunderbird öffnen. Links beim Gmail-Konto den Ordner „Entwürfe" anklicken (Thunderbird holt ihn dann frisch). Erscheint der Entwurf nicht: in der Symbolleiste oben auf „Abrufen" klicken **[Bezeichnung unsicher]**, oder kurz einen anderen Ordner (z. B. Posteingang) und dann wieder „Entwürfe" anklicken; notfalls eine Minute warten.
 2. Den Entwurf `Re: PostKauz D5 Runde 2` **doppelt anklicken**. Es öffnet sich das Fenster zum Verfassen.
 3. Ansehen wie in 4.3, **nichts ändern**, „Senden".
-4. Eine Minute warten. Im Posteingang (Thunderbird oder Gmail im Browser): Steht die Antwort im selben Gesprächsverlauf wie die Mail aus 5.1? Notiere ja oder nein, sag es Claude. Notiere auch die **Version** von Thunderbird (Menü „Hilfe" → „Über Thunderbird").
+4. Eine Minute warten. Im Posteingang (Thunderbird oder Gmail im Browser): Steht die Antwort im selben Gesprächsverlauf wie die Mail aus 5.1? Notiere ja oder nein, sag es Claude. Notiere auch die **Version** von Thunderbird: Ab Version 115 ist die Menüleiste meist ausgeblendet; dann einmal die Taste **Alt** drücken (die Menüleiste erscheint) oder rechts oben auf **≡** klicken, jeweils → „Hilfe" → „Über Thunderbird".
 
 ### 5.4 Ergebnis ablesen [Claude]
 
