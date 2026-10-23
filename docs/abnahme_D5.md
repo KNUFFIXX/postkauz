@@ -20,6 +20,15 @@ Jeder Schritt ist markiert (Entscheid 35):
 
 Dein **App-Passwort tippst nur du** ein. Claude sieht es nie, und es steht nie in einer Datei, einem Protokoll oder im Audit.
 
+**Ausnahme von zwei Regeln, nur für D5:** Der Auftrag A02 sagt „Echte Konten prüft nur der Betreiber", und `CLAUDE.md` sagt „Niemals gegen echte Postfächer entwickeln oder testen". In D5 führt Claude trotzdem Kommandos gegen dein echtes Postfach aus, aber eng begrenzt:
+
+- **Nur lesende Kommandos:** `account test`, `sync`, `search`, `show`, `draft show`, `draft list`, `audit` (dazu `version` und `doctor`, die dein Postfach gar nicht berühren).
+- **Genau ein `draft reply` je Runde.** Der nächste `sync` legt diesen einen Entwurf in „Entwürfe" ab; das ist das Einzige, was in D5 auf den Server geschrieben wird.
+- **Nur mit deiner ausdrücklichen Zustimmung**, die Claude vor Schritt 3.3 einholt (Abschnitt 3.2) und als Zeile ins Protokoll schreibt, z. B. `Zustimmung des Betreibers zu D5 gegen echte Postfächer: ja, 23.10.2026 14:05`. Ohne diese Zeile startet Claude kein Kommando gegen dein Postfach. Gilt für Postfach B genauso (Zustimmung vor 6.2).
+- Alles andere (`draft edit`, `draft request`, `approve`, `draft mark-sent`, `account remove` …) führt Claude in D5 **nicht** aus; wo ein solcher Schritt nötig ist, machst du ihn (Abschnitt 7).
+
+**Gut zu wissen:** `sync` spiegelt den **ganzen Posteingang** samt den Mails Dritter (dazu Entwürfe und Gesendet) nach `C:\PostKauz\d5\daten`. Das bleibt auf deinem Rechner, nichts davon geht ins Repository oder ins Protokoll. Der Abbau (Abschnitt 9.1, „Entfernen") löscht den Ordner wieder.
+
 Wenn du einen Schritt selbst machen willst statt Claude: Die Kommandos stehen vollständig da. Jedes Kommando beginnt mit `.\postkauz.exe` und läuft in einem PowerShell-Fenster, das wie in Schritt 3.1 vorbereitet ist.
 
 ## 0. Was du brauchst
@@ -121,6 +130,8 @@ PostKauz fragt `Password for … at imap.gmail.com:`. Jetzt die 16 Buchstaben au
 Erwartet: `account gmail added (imap.gmail.com:993, tls tls, user …); password stored in the OS keyring as account/…/gmail`.
 
 Danach das Google-Fenster mit dem App-Passwort schließen. Sag Claude Bescheid („Konto angelegt").
+
+**Zustimmung [Du]:** Bevor Claude in 3.3 das erste Kommando gegen dein Postfach startet, fragt es dich, ob es die Kommandos aus „So ist die Arbeit verteilt" (Ausnahme für D5) ausführen darf. Antworte „ja" oder „nein". Claude schreibt die Antwort mit Datum und Uhrzeit als Zeile ins Protokoll; bei „nein" führst du die [Claude]-Schritte selbst aus (die Kommandos stehen vollständig da).
 
 ### 3.3 Konto prüfen [Claude]
 
@@ -227,7 +238,7 @@ Im PowerShell-Fenster aus 3.1 (Servername und Adresse von Postfach B einsetzen; 
 .\postkauz.exe account add zweit --imap <IMAP-Server von Postfach B>:993 --user <Adresse von Postfach B> --auth app_password
 ```
 
-App-Passwort von Postfach B eintippen (ohne Leerzeichen) → Enter. Erwartet: `account zweit added (…); password stored in the OS keyring as account/…/zweit`. Claude Bescheid sagen.
+App-Passwort von Postfach B eintippen (ohne Leerzeichen) → Enter. Erwartet: `account zweit added (…); password stored in the OS keyring as account/…/zweit`. Claude Bescheid sagen. Vor 6.2 holt Claude deine Zustimmung für Postfach B ein und schreibt sie ins Protokoll (wie in 3.2).
 
 ### 6.2 Prüfen und kurz spiegeln [Claude]
 
