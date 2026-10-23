@@ -160,7 +160,10 @@ func TestReviewW1ApprovalBindsBuiltMessage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newDraftEnv(t, false)
-			out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": 1, "body_markdown": "Antwort"}).(DraftsWriteOutput)
+			// Die Ausgangsnachricht hat kein From: Empfänger ausdrücklich
+			// (ohne Empfänger keine Vorlage, Gegenprüfung S2.9, B1).
+			out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": 1, "body_markdown": "Antwort",
+				"to": []string{"erika@example.org"}}).(DraftsWriteOutput)
 			req := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": out.DraftID}).(DraftsRequestOutput)
 			if len(req.MessageHash) != 64 {
 				t.Fatalf("request = %+v", req)

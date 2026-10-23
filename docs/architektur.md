@@ -244,7 +244,7 @@ sequenceDiagram
 
 ## 7. Jobs und Prozessmodell
 
-Alles, was den Server berührt oder lange dauert, läuft als **Job** (Tabelle `jobs`, kein Redis, kein externer Broker). Für das Schreiben auf den Server gilt seit Schnitt 2 ADR-009: Ausgeführt wird es nur vom Prozess mit Zugangsdaten unter der Kontosperre (`sync`, `sync --watch`); der MCP-Prozess und die Entwurfskommandos reihen nur ein. Stand S2.9: Genutzt werden die Typen `extract`, `index` und `draft_push`; `sync`, `import` und `export` stehen in der CHECK-Liste der Tabelle, laufen aber (noch) im Vordergrund ohne Zeile in `jobs`.
+Was auf den Server schreibt oder im Hintergrund lange dauert, läuft als **Job** (Tabelle `jobs`, kein Redis, kein externer Broker). Für das Schreiben auf den Server gilt seit Schnitt 2 ADR-009: Ausgeführt wird es nur vom Prozess mit Zugangsdaten unter der Kontosperre (`sync`, `sync --watch`); der MCP-Prozess und die Entwurfskommandos reihen nur ein. Stand S2.9: Genutzt werden die Typen `extract`, `index` und `draft_push`; `sync`, `import` und `export` stehen in der CHECK-Liste der Tabelle, laufen aber (noch) im Vordergrund ohne Zeile in `jobs`.
 
 | Job-Typ | Auslöser | Inhalt |
 |---|---|---|
