@@ -149,9 +149,16 @@ func domainOf(addr string) string {
 func normAddr(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
 // ReplyRecipients leitet die Empfänger einer Antwort auf o ab (E11): To =
-// Reply-To von o, sonst From; ist der Absender eine eigene Adresse, To von o.
-// Mit all („Allen antworten") Cc = alle übrigen To/Cc von o. Eigene Adressen
-// (own) und Dubletten fehlen in beiden Listen.
+// Reply-To von o, sonst From. Mit all („Allen antworten") Cc = alle übrigen
+// To/Cc von o. Eigene Adressen (own) und Dubletten fehlen in beiden Listen.
+//
+// Ist der Absender eine eigene Adresse (Nachricht aus Gesendet oder an sich
+// selbst), geht die Antwort wie in Gmail und Thunderbird an die
+// ursprünglichen Empfänger: To = To von o, mit all Cc = Cc von o. Eigene
+// Adressen fallen dabei nur weg, solange mindestens ein Empfänger bleibt
+// (ist To danach leer, rückt Cc nach To); bleibt keiner, ist To die
+// ursprüngliche (eigene) Adresse: Eine Mail an sich selbst wird an sich
+// selbst beantwortet, nie mit leeren Empfängern (Gegenprüfung S2.9, B1).
 func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
 	ownSet := map[string]bool{}
 	for _, a := range own {
@@ -169,15 +176,12 @@ func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
 			allOwn = false
 		}
 	}
-	if allOwn {
-		sender = o.To
-	}
 	seen := map[string]bool{}
-	pick := func(list []Address) []Address {
+	pick := func(list []Address, dropOwn bool) []Address {
 		var out []Address
 		for _, a := range list {
 			n := normAddr(a.Address)
-			if n == "" || ownSet[n] || seen[n] {
+			if n == "" || (dropOwn && ownSet[n]) || seen[n] {
 				continue
 			}
 			seen[n] = true
@@ -185,9 +189,27 @@ func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
 		}
 		return out
 	}
-	to = pick(sender)
+	if !allOwn {
+		to = pick(sender, true)
+		if all {
+			cc = pick(append(append([]Address{}, o.To...), o.Cc...), true)
+		}
+		return to, cc
+	}
+	to = pick(o.To, true)
 	if all {
-		cc = pick(append(append([]Address{}, o.To...), o.Cc...))
+		cc = pick(o.Cc, true)
+	}
+	if len(to) == 0 && len(cc) > 0 {
+		to, cc = cc, nil
+	}
+	if len(to) == 0 {
+		// Nur eigene Adressen: an die ursprüngliche Adresse (To von o,
+		// ohne To der Absender selbst).
+		clear(seen)
+		if to = pick(o.To, false); len(to) == 0 {
+			to = pick(sender, false)
+		}
 	}
 	return to, cc
 }
