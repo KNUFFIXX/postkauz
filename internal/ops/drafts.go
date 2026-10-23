@@ -1729,6 +1729,10 @@ func DraftsRequestReady(d Deps) Operation {
 			if _, err := drafts.Next(drafts.Status(dr.Status), drafts.EvRequestReady); err != nil {
 				return nil, draftErr(err)
 			}
+			// Ohne Empfänger keine Vorlage und kein Hook (B1, S2.9).
+			if err := drafts.CheckRecipients(dr); err != nil {
+				return nil, draftErr(err)
+			}
 			acc, err := o.accountByID(ctx, dr.AccountID)
 			if err != nil {
 				return nil, err

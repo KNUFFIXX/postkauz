@@ -151,4 +151,5 @@ var deniedHints = map[string]string{
 	"hidden_text_in_draft": "the HTML contains text a reader would not see; remove it",
 	"too_large":            "shorten the field named in the message (limits: docs/cli.md)",
 	"draft_changed":        "the draft was changed by someone else meanwhile; check it with: draft show <id>, then try again",
+	"no_recipients":        "the draft has no recipient; add one with: draft edit <id> --to <address>, then request again",
 }

@@ -422,7 +422,8 @@ type Checked struct {
 // dauern, die Schreibsperre nicht). Hat ein anderer Schreiber den Entwurf
 // inzwischen geändert (Fingerprint weicht ab), ist das draft_changed und
 // nichts wird geschrieben: Sonst bände die Freigabe einen Stand, den weder
-// Hook noch Nachrichtenbau gesehen haben (Gegenprüfung S2.3, W2).
+// Hook noch Nachrichtenbau gesehen haben (Gegenprüfung S2.3, W2). Ein
+// Entwurf ohne Empfänger ist no_recipients (CheckRecipients).
 func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook string, chk Checked) (Result, error) {
 	switch hook {
 	case HookPass, HookFail, HookTimeout, HookError:
@@ -443,6 +444,9 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		}
 		if chk.Fingerprint != "" && Fingerprint(d) != chk.Fingerprint {
 			return changed(d.ID)
+		}
+		if err := CheckRecipients(d); err != nil {
+			return err
 		}
 		res.From = from
 		d.HookResult, d.UpdatedAt = hook, now
@@ -479,6 +483,17 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		return s.record(x, now, d, from, t.To, a.ID, hook)
 	})
 	return res, err
+}
+
+// CheckRecipients lehnt einen Entwurf ohne jeden Empfänger (To, Cc und Bcc
+// leer) mit no_recipients ab. RequestReady prüft das in der Transaktion,
+// drafts.request_ready schon vor dem Prüf-Hook (Gegenprüfung S2.9, B1):
+// Eine Freigabe für eine Mail an niemanden ist sinnlos.
+func CheckRecipients(d store.Draft) error {
+	if len(d.To)+len(d.Cc)+len(d.Bcc) == 0 {
+		return denied(ReasonNoRecipients, "draft %d has no recipient (to, cc and bcc are empty)", d.ID)
+	}
+	return nil
 }
 
 // staleCopy prüft bei Vorlage und Freigabe, ob die Kopie im Entwürfe-Ordner

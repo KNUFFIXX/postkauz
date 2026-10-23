@@ -107,6 +107,10 @@ const (
 	// hätte sonst einen anderen Stand gebunden oder überschrieben
 	// (Gegenprüfung S2.3, W2/W4).
 	ReasonDraftChanged = "draft_changed"
+	// ReasonNoRecipients: Der Entwurf hat keinen Empfänger (To, Cc und Bcc
+	// leer). Anlegen und ändern darf man ihn so (der Mensch ergänzt),
+	// vorlegen nicht (Gegenprüfung S2.9, B1).
+	ReasonNoRecipients = "no_recipients"
 )
 
 // ErrDenied ist die Wurzel aller Ablehnungen (errors.Is). Die Oberflächen
