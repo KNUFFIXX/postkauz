@@ -16,6 +16,19 @@ Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen, Nachbesserunge
 
 Aufwandsschätzung für S1–S3: **40–80 Sitzungen, drei bis sechs Monate** (Code-Anteil schnell, Tests gegen echte Server und Entscheidungen des Betreibers bestimmen das Tempo). Die Schätzung ist grob und wird nach S1 neu gesetzt. **Ist nach S2 (24.10.2026):** 8 Arbeitssitzungen vom 14. bis 23.10.2026 für Schnitt 1 und 2 (Code, Tests, Gegenprüfungen, Abnahmen D1–D4); offen sind die Teile, die der Betreiber trägt (D5, D6, Lastenheft, Betriebsentscheid, Echtdaten).
 
+## Abnahmemaßstab des Betreibers (Lastenheft, angenommen 24.10.2026)
+
+Neben den technischen Akzeptanzkriterien je Schnitt gilt das Ein-Seiten-Lastenheft des Betreibers (außerhalb des Repos, enthält Postfachdetails). Sechs Vorgänge in der Reihenfolge ihres Nutzens, jeder mit „fertig, wenn":
+
+1. **Posteingang abarbeiten** (täglich): ungelesene Mails eines Ordners lesen (Text bereinigt, Anhänge als Text), zusammenfassen, danach den Ordner/das Label entfernen — fertig, wenn der Agent das vollständig über PostKauz-MCP erledigt, ohne die bisherigen Gmail-Werkzeuge; „ungelesen" stimmt mit dem Server überein. → S1 (lesen) + S3 (Postfach-Aktion).
+2. **Antwort im Thread als Entwurf** (mehrmals täglich): Zitat, korrekte Thread-Kopfzeilen, Signatur, Empfänger beim Anlegen gefüllt, Prüf-Hook, Entwurf im Entwürfe-Ordner des Anbieters; der Mensch sendet — fertig, wenn der Entwurf binnen 10 s dort liegt (D4), beim Empfänger im Thread ankommt und der Versand erkannt wird (D5). → S2.
+3. **Vorgänge recherchieren** (mehrmals wöchentlich): Suche in Betreff, Text und Anhangstext über Jahre, Threads vollständig — fertig, wenn zehn echte Suchen des Betreibers treffen und sich „sofort" anfühlen; Erstbestand aus dem Thunderbird-Spiegel einmal importiert. → S1 + Import auf dem Büro-PC (**noch offen**).
+4. **Weiterleitung im Thread** (wöchentlich): Weiterleitungs-Entwurf mit Zitatkopf und Anhängen, nur im Original-Thread — fertig, wenn der Entwurf im Entwürfe-Ordner liegt und der Mensch sendet. → S2 (`forward`).
+5. **Unbeaufsichtigte Triage** (nachts): neue Mails klassifizieren, Tags vergeben, Antwortentwürfe vorbereiten, Bericht — fertig, wenn ein eigener Schlüssel mit den Scopes lesen + Entwurf + Tag läuft, der Vertragstest beweist, dass er nichts anderes kann, und das Audit die Nachtaktionen zeigt. → S2 + S3 (Tags).
+6. **Dauerbetrieb ohne Eingriff:** `sync --watch` als Dienst/Aufgabe, Index aktuell binnen 5 min, täglicher Audit-Export, Backup/Restore geprüft — fertig nach sieben Tagen ohne Handeingriff, `doctor` ohne Warnung, Restore auf einen zweiten Rechner. → S3 + **Betriebsentscheid: 24.10.2026 Option A — Phase 1 auf dem Büro-PC (Standby bei Netzbetrieb aus), bis auf Weiteres; Mini-Server oder EU-VPS erst nach sieben Tagen Echtbetrieb neu bewerten.**
+
+Gesamterfolg aus Betreibersicht: Die Werkzeugliste des Betreibers nennt für Lesen, Suchen, Antworten, Weiterleiten und Anhänge nur noch PostKauz; jede Agentenaktion ist im Audit nachlesbar; nichts wird ohne Menschen gesendet. Nicht gefordert (nach hinten oder streichen): REST, automatische Regeln, JMAP, semantische Suche, eigene Google-OAuth-App, GUI/TUI, Mehrbenutzer-Rollen, SMTP-Versand, Kalender/Kontakte/Chat. Stand 24.10.2026: **keiner der sechs Vorgänge ist fertig** — der Code für 2 und 4 ist da (D5 offen), 3 wartet auf den Import der Echtdaten, 1/5/6 auf Schnitt 3.
+
 ## Phase 0: Gerüst und Gate
 
 **Erledigt:** Repository, Lizenz, ADR-001 bis ADR-006, Architektur-/Datenmodell-/MCP-/CLI-/Sicherheitsdokumente, Go-Gerüst (Register, Executor, Policy-Stub, Audit-Typ, Migrationen mit FTS5, Provider-Interface, CLI mit `version`/`doctor`/`accounts list`), CI, Testserver-Compose.

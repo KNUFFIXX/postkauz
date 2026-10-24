@@ -9,6 +9,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - `docs/roadmap.md` auf den Stand (ein Bildschirm) gekürzt; der Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen) liegt wortgleich in `docs/roadmap_verlauf.md`; Statustabelle auf S2.9 nachgezogen.
 - Gegenprüfung des Gesamtstands vor Schnitt 3: `docs/protokolle/review_gesamtstand_2026-10-24.md` (ein Blocker für S3.2: UID 0 = „*" in go-imap; fünf wichtige Punkte) → `auftraege/A03_s3.md`, Nachtrag 24.10.2026 (Teil A6–A11, Vorschlag Schnittfolge S3a/S3b).
 - `docs/protokolle/D3_windows.txt`: Betreiber-Pfad maskiert.
+- `docs/roadmap.md`: Abschnitt „Abnahmemaßstab des Betreibers" (sechs Vorgänge mit „fertig, wenn", anonymisiert; Lastenheft angenommen 24.10.2026) und Betriebsentscheid Option A (Phase 1 auf dem Büro-PC).
 
 ### Added
 
