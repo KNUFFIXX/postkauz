@@ -79,16 +79,16 @@ secrets:
 
 [exit 0]
 ===== D3.3c Audit-Export als Windows-Aufgabe
-G:\Meine Ablage fehlt -> Ausweichordner C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+G:\Meine Ablage fehlt -> Ausweichordner C:\<Ausweichordner des Betreibers>\PostKauz-Audit
 
 > Register-AuditExport.ps1
 == Program: C:\PostKauz\postkauz.exe
-== Export folder: C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+== Export folder: C:\<Ausweichordner des Betreibers>\PostKauz-Audit
 == Task 'PostKauz audit export' registered: daily at 12:30 for DRACO\Admin (missed runs start as soon as possible)
 == Starting the task once to check it ...
 WARNING: The task ran (result 0) but no new export was found.
 WARNING: Run the export by hand to see the error message:
-WARNING:   C:\PostKauz\postkauz.exe audit export --to C:\Users\Admin\AI\GD_THV\Cowork\PostKauz-Audit
+WARNING:   C:\PostKauz\postkauz.exe audit export --to C:\<Ausweichordner des Betreibers>\PostKauz-Audit
 WARNING: If that works, register again with -ShowWindow (the hidden console may be blocked on this PC).
 
 [exit 1]
