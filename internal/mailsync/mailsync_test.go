@@ -777,8 +777,9 @@ func TestMirrorRawHashesWholeUnreadableMessage(t *testing.T) {
 	}
 }
 
-// Varianten am Zeilenende (S1.10): exakter Wert zuerst, gleich ContentHash;
-// dazu 0, 1, 2 Zeilenenden am Schluss.
+// Varianten am Zeilenende (S1.10, erweitert mit C2): exakter Wert zuerst,
+// gleich ContentHash; dazu eines weniger, eines mehr und 0, 1, 2
+// Zeilenenden am Schluss.
 func TestContentHasherVariants(t *testing.T) {
 	sum := func(s string) string {
 		h, _ := ContentHash(strings.NewReader(s))
@@ -789,13 +790,26 @@ func TestContentHasherVariants(t *testing.T) {
 		_, _ = h.Write([]byte(part))
 	}
 	exact, variants := h.Sums()
-	if exact != sum("Subject: x\n\nText\n\n") || len(variants) != 3 || variants[0] != exact ||
-		!slices.Contains(variants, sum("Subject: x\n\nText")) || !slices.Contains(variants, sum("Subject: x\n\nText\n")) {
+	// Zwei Zeilenenden am Schluss: 2, 1, 3, 0 (die 2 nur einmal).
+	if exact != sum("Subject: x\n\nText\n\n") || len(variants) != 4 || variants[0] != exact ||
+		!slices.Contains(variants, sum("Subject: x\n\nText")) || !slices.Contains(variants, sum("Subject: x\n\nText\n")) ||
+		!slices.Contains(variants, sum("Subject: x\n\nText\n\n\n")) {
 		t.Fatalf("variants wrong: %v", variants)
+	}
+	// Fünf Zeilenenden: 5, 4, 6 und die festen 1, 0, 2.
+	h = NewContentHasher()
+	_, _ = h.Write([]byte("Subject: x\r\n\r\nText" + strings.Repeat("\r\n", 5)))
+	exact, variants = h.Sums()
+	want := []string{exact}
+	for _, n := range []int{4, 6, 1, 0, 2} {
+		want = append(want, sum("Subject: x\n\nText"+strings.Repeat("\n", n)))
+	}
+	if exact != sum("Subject: x\n\nText\n\n\n\n\n") || !slices.Equal(variants, want) {
+		t.Fatalf("variants with five line ends = %v, want %v", variants, want)
 	}
 	h = NewContentHasher()
 	_, _ = h.Write([]byte("\n\n"))
-	if e, v := h.Sums(); e != sum("\n\n") || len(v) != 3 {
+	if e, v := h.Sums(); e != sum("\n\n") || len(v) != 4 { // 2, 1, 3, 0
 		t.Fatalf("only line breaks: %s %v", e, v)
 	}
 }

@@ -9,13 +9,17 @@ import (
 )
 
 // ContentHasher berechnet content_hash (SHA-256 über die Rohmail ohne
-// CR-Bytes) und dazu Varianten mit 0, 1 und 2 Zeilenenden am Schluss. Der
-// mbox-Import speichert seit Entscheid C2 (25.10.2026) byte-genau (nur die
-// Leerzeile des Rahmens fällt weg), bis 0.2.0-rc2 aber mit genau einem
-// Zeilenende am Schluss; und ob die letzte Leerzeile vor der Trennzeile
-// Rahmen oder Inhalt ist, ist nicht eindeutig. Die Kopie des Servers kann am
-// Ende also anders aussehen. Sync und Import suchen deshalb mit allen
-// Varianten (S1.10; Rückfall, wenn Message-ID und Größe nicht passen);
+// CR-Bytes) und dazu Varianten am Zeilenende: eines weniger und eines mehr
+// als die Nachricht selbst hat, dazu 0, 1 und 2 Zeilenenden am Schluss.
+// Der mbox-Import speichert seit Entscheid C2 (25.10.2026) byte-genau und
+// entfernt nur die Leerzeile des Rahmens; ob die letzte Leerzeile vor der
+// Trennzeile Rahmen oder Inhalt ist, ist aber nicht eindeutig (mboxrd-Quellen
+// und die letzte Nachricht einer Datei haben sie nicht immer). Deshalb
+// weicht eine Kopie um höchstens ein Zeilenende ab, gleich wie viele
+// Leerzeilen die Nachricht am Ende hat (±1). Bis 0.2.0-rc2 speicherte der
+// Import immer genau ein Zeilenende am Schluss; diese Bestände findet die
+// feste Variante 1 (0 und 2 bleiben aus S1.10). Sync und Import suchen mit
+// allen Varianten (Rückfall, wenn Message-ID und Größe nicht passen);
 // gespeichert wird immer der exakte Wert.
 type ContentHasher struct {
 	h       hash.Hash
@@ -65,7 +69,8 @@ func (v *ContentHasher) Write(p []byte) (int, error) {
 }
 
 // Sums liefert den Hash des Geschriebenen (exact) und die Varianten mit
-// 0, 1 und 2 Zeilenenden am Schluss (ohne Dubletten, exact zuerst).
+// einem Zeilenende weniger und einem mehr am Schluss sowie mit 0, 1 und 2
+// (ohne Dubletten, exact zuerst; höchstens sechs Werte).
 func (v *ContentHasher) Sums() (exact string, variants []string) {
 	state, err := v.h.(encoding.BinaryMarshaler).MarshalBinary()
 	if err != nil {
@@ -76,15 +81,19 @@ func (v *ContentHasher) Sums() (exact string, variants []string) {
 		if err := h.(encoding.BinaryUnmarshaler).UnmarshalBinary(state); err != nil {
 			panic(err)
 		}
-		for range n {
-			h.Write(newlines[:1])
+		for n > 0 {
+			k := min(n, len(newlines))
+			h.Write(newlines[:k])
+			n -= k
 		}
 		return hex.EncodeToString(h.Sum(nil))
 	}
 	exact = sum(v.pending)
 	variants = []string{exact}
-	for _, n := range []int{1, 0, 2} {
-		if n != v.pending {
+	seen := []int{v.pending}
+	for _, n := range []int{v.pending - 1, v.pending + 1, 1, 0, 2} {
+		if n >= 0 && !slices.Contains(seen, n) {
+			seen = append(seen, n)
 			variants = append(variants, sum(n))
 		}
 	}

@@ -246,3 +246,76 @@ func TestSyncAfterImportLinksByHeader(t *testing.T) {
 		})
 	}
 }
+
+// writeNoFrame schreibt eine mboxrd-Datei ohne Rahmen-Leerzeile: Auf das
+// Ende einer Nachricht folgt direkt die nächste Trennzeile bzw. das
+// Dateiende (andere Programme als Thunderbird, letzte Nachricht einer
+// Datei).
+func writeNoFrame(t testing.TB, path string, raws [][]byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	for _, raw := range raws {
+		buf.WriteString("From someone@example.org Thu Oct 15 10:00:00 2026\r\n")
+		for _, l := range bytes.SplitAfter(raw, []byte("\n")) {
+			if bytes.HasPrefix(l, []byte("From ")) {
+				buf.WriteByte('>')
+			}
+			buf.Write(l)
+		}
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Gegenprüfung C2 (Wichtig 1): Ohne Rahmen-Leerzeile hält der Leser eine
+// echte Leerzeile für den Rahmen; die Kopie weicht dann um ein Zeilenende
+// ab, bei beliebig vielen Leerzeilen am Ende. Die Varianten ±1 finden sie
+// in beiden Richtungen (Import, dann Sync; Sync, dann Import), mit und ohne
+// Message-ID; ein alter gekürzter Bestand wird weiter gefunden.
+func TestNoFrameLineNoDuplicates(t *testing.T) {
+	for k := range 6 {
+		for _, mid := range []string{fmt.Sprintf("nf-%d@example.org", k), ""} {
+			raw := c2Raw(k, mid, k)
+			name := fmt.Sprintf("%d blank lines, message-id %v", k, mid != "")
+			t.Run("import then sync/"+name, func(t *testing.T) {
+				dir := t.TempDir()
+				writeNoFrame(t, filepath.Join(dir, "INBOX"), [][]byte{raw})
+				e := newEnv(t)
+				if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 1 {
+					t.Fatalf("import = %+v", rep)
+				}
+				srep := e.sync(t, c2Server(t, [][]byte{raw}))
+				if n := e.count(t, `SELECT count(*) FROM messages`); n != 1 || srep.Errors != 0 {
+					t.Fatalf("messages = %d (errors %d), want 1 (no duplicate)", n, srep.Errors)
+				}
+			})
+			t.Run("sync then import/"+name, func(t *testing.T) {
+				e := newEnv(t)
+				if srep := e.sync(t, c2Server(t, [][]byte{raw})); srep.New != 1 {
+					t.Fatalf("sync = %+v", srep)
+				}
+				dir := t.TempDir()
+				writeNoFrame(t, filepath.Join(dir, "INBOX"), [][]byte{raw})
+				if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 0 || rep.Existing != 1 {
+					t.Fatalf("import = new %d existing %d, want 0/1", rep.New, rep.Existing)
+				}
+				if n := e.count(t, `SELECT count(*) FROM messages`); n != 1 {
+					t.Fatalf("messages = %d, want 1", n)
+				}
+			})
+			t.Run("old trimmed store then sync/"+name, func(t *testing.T) {
+				dir := t.TempDir()
+				writeTB(t, filepath.Join(dir, "INBOX"), [][]byte{oldForm(raw)})
+				e := newEnv(t)
+				if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 1 {
+					t.Fatalf("import = %+v", rep)
+				}
+				e.sync(t, c2Server(t, [][]byte{raw}))
+				if n := e.count(t, `SELECT count(*) FROM messages`); n != 1 {
+					t.Fatalf("messages = %d, want 1", n)
+				}
+			})
+		}
+	}
+}

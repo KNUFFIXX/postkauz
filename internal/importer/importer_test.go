@@ -263,7 +263,8 @@ func TestImportThunderbirdCorpus(t *testing.T) {
 		for _, v := range variants {
 			args = append(args, v)
 		}
-		if n := e.count(t, `SELECT count(*) FROM messages WHERE account_id = ? AND content_hash IN (?,?,?)`, args...); n != 1 {
+		in := strings.TrimSuffix(strings.Repeat("?,", len(variants)), ",")
+		if n := e.count(t, `SELECT count(*) FROM messages WHERE account_id = ? AND content_hash IN (`+in+`)`, args...); n != 1 {
 			t.Errorf("%s: content differs from the original after import", c.Manifest.Messages[i].File)
 		}
 	}
