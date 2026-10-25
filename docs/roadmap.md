@@ -4,7 +4,7 @@
 
 **25.10.2026, Entscheid C2 (Echtdaten-Probe Gmail + Thunderbird):** Import byte-genau (mbox: nur die Rahmen-Leerzeile am Ende entfernt; Maildir ganz), `content_hash`-Varianten ±1 Zeilenende, `sync` zählt „already known, downloaded anyway"; Build **0.2.0-rc3** = 0.2.0-rc2 plus Fix C2 (nicht getaggt).
 
-**Als Nächstes:** Echtdaten-Probe mit 0.2.0-rc3 fortsetzen → D5 Runden 1 (Wiederholung), 2 und 3 auf dem Büro-PC mit 0.2.0-rc3 → D6 (Tag auf den dann aktuellen Build, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Echtdaten:** Die Probe läuft seit 25.10.2026 auf dem Heim-PC (THV): erster Import des Thunderbird-Spiegels und lesende Anbindung des Gmail-Postfachs; ihr erster Befund (Größe nach Import, unnötige Downloads) ist mit C2 behoben. Abnahmen D2 bis D4.8 liefen auf dem synthetischen Korpus.
+**Als Nächstes:** Echtdaten-Probe mit 0.2.0-rc3 fortsetzen → D5 Runden 1 (Wiederholung), 2 und 3 auf dem Büro-PC mit 0.2.0-rc3 → D6 (Tag auf den dann aktuellen Build, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Echtdaten:** Die Probe läuft seit 25.10.2026 auf dem Heim-PC des Betreibers: erster Import des Thunderbird-Spiegels und lesende Anbindung des Gmail-Postfachs; ihr erster Befund (Größe nach Import, unnötige Downloads) ist mit C2 behoben. Abnahmen D2 bis D4.8 liefen auf dem synthetischen Korpus.
 
 Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen, Nachbesserungen): [roadmap_verlauf.md](roadmap_verlauf.md). Versionen: [CHANGELOG.md](../CHANGELOG.md). Am Ende jeder Arbeitssitzung werden dieser Stand, der Verlauf und das CHANGELOG gepflegt.
 
