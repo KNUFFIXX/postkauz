@@ -1,10 +1,10 @@
 # Roadmap
 
-**Stand 24.10.2026:** Schnitt 1 veröffentlicht (**0.1.0-rc2**, 22.10.2026), Schnitt 2 fertig gebaut und gegengeprüft (**S2.9**, 23.10.2026; Schema 16; Abnahmen D2, D3, D4, D4.8 bestanden). **D5 Runde 1 nicht bestanden** (Gmail sendet das Zitat ohne „>") → Nachbesserung N1, Build **0.2.0-rc2** (nicht getaggt). Gegenprüfung des Gesamtstands am 24.10.2026: ein Blocker für Schnitt 3 (UID 0 in `imapx` = „*"), fünf wichtige Punkte → `auftraege/A03_s3.md`, Nachtrag 24.10.
+**Stand 25.10.2026:** Schnitt 1 veröffentlicht (**0.1.0-rc2**, 22.10.2026), Schnitt 2 fertig gebaut und gegengeprüft (**S2.9**, 23.10.2026; Schema 16; Abnahmen D2, D3, D4, D4.8 bestanden). **D5 Runde 1 nicht bestanden** (Gmail sendet das Zitat ohne „>") → Nachbesserung N1, Build **0.2.0-rc2** (nicht getaggt). Gegenprüfung des Gesamtstands am 24.10.2026: ein Blocker für Schnitt 3 (UID 0 in `imapx` = „*"), fünf wichtige Punkte → `auftraege/A03_s3.md`, Nachtrag 24.10.
 
 **25.10.2026, Entscheid C2 (Echtdaten-Probe Gmail + Thunderbird):** Import byte-genau (mbox: nur die Rahmen-Leerzeile am Ende entfernt; Maildir ganz), `content_hash`-Varianten ±1 Zeilenende, `sync` zählt „already known, downloaded anyway"; Build **0.2.0-rc3** = 0.2.0-rc2 plus Fix C2 (nicht getaggt).
 
-**Als Nächstes:** D5 Runden 1 (Wiederholung), 2 und 3 auf dem Büro-PC mit 0.2.0-rc2 → D6 (Tag `v0.2.0-rc2`, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Noch ohne Echtdaten:** alle Importe und Abnahmen liefen bisher auf dem synthetischen Korpus; der erste Import des Thunderbird-Spiegels und die Anbindung des Betreiber-Postfachs (lesend) stehen vor Schnitt 3 an (Vorschlag 24.10.2026, Entscheid des Betreibers offen).
+**Als Nächstes:** Echtdaten-Probe mit 0.2.0-rc3 fortsetzen → D5 Runden 1 (Wiederholung), 2 und 3 auf dem Büro-PC mit 0.2.0-rc3 → D6 (Tag auf den dann aktuellen Build, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Echtdaten:** Die Probe läuft seit 25.10.2026 auf dem Heim-PC (THV): erster Import des Thunderbird-Spiegels und lesende Anbindung des Gmail-Postfachs; ihr erster Befund (Größe nach Import, unnötige Downloads) ist mit C2 behoben. Abnahmen D2 bis D4.8 liefen auf dem synthetischen Korpus.
 
 Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen, Nachbesserungen): [roadmap_verlauf.md](roadmap_verlauf.md). Versionen: [CHANGELOG.md](../CHANGELOG.md). Am Ende jeder Arbeitssitzung werden dieser Stand, der Verlauf und das CHANGELOG gepflegt.
 
