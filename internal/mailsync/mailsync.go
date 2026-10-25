@@ -61,7 +61,7 @@ type Store interface {
 	MailboxUIDs(ctx context.Context, mailboxID int64) ([]uint32, error)
 	LinkCount(ctx context.Context, mailboxID int64) (int, error)
 	CountPresentMessages(ctx context.Context, accountID int64) (int, error)
-	FindLinkCandidate(ctx context.Context, accountID, mailboxID int64, messageID string, size int64) (int64, bool, error)
+	FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, messageID string, size, maxExtra int64) (id, extra int64, ok bool, err error)
 	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hashes ...string) (int64, bool, error)
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
@@ -146,6 +146,10 @@ type MailboxReport struct {
 	// Nicht im JSON je Ordner (ops.SyncMailbox), nur in der Summe des Laufs.
 	KnownDownloaded      int   `json:"-"`
 	KnownDownloadedBytes int64 `json:"-"`
+	// LinkedSizeDiff zählt Nachrichten, die per Message-ID ohne
+	// Inhaltsabruf verknüpft wurden, obwohl die lokale Kopie bis zu
+	// MaxLinkSizeExtra Bytes größer ist (Thunderbird-Import).
+	LinkedSizeDiff int `json:"-"`
 	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
@@ -162,6 +166,7 @@ type Report struct {
 	// KnownDownloaded(Bytes): Summe der Ordner (MailboxReport).
 	KnownDownloaded      int   `json:"already_known_downloaded,omitempty"`
 	KnownDownloadedBytes int64 `json:"already_known_downloaded_bytes,omitempty"`
+	LinkedSizeDiff       int   `json:"linked_despite_size_difference,omitempty"`
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
@@ -201,6 +206,7 @@ func (r *Report) add(m MailboxReport) {
 	r.Errors += m.Errors
 	r.KnownDownloaded += m.KnownDownloaded
 	r.KnownDownloadedBytes += m.KnownDownloadedBytes
+	r.LinkedSizeDiff += m.LinkedSizeDiff
 }
 
 // Engine synct ein Konto.
@@ -250,6 +256,19 @@ func (e *Engine) emit(ev Event) {
 	}
 }
 
+// MaxLinkSizeExtra: So viele Bytes darf die lokale Kopie größer sein als
+// die des Servers, damit der Sync sie per Message-ID ohne Inhaltsabruf
+// verknüpft (Restfall von C2, Befund mit Echtdaten 25.10.2026: Thunderbird
+// ergänzt ein fehlendes Zeilenende, +2, bzw. eine abgeschnittene
+// abschließende MIME-Grenze, +5). Nie für Entwürfe, nie Server größer.
+const MaxLinkSizeExtra = 6
+
+// isDraftsMailbox: Ordner mit Rolle drafts oder der konfigurierte
+// Entwürfe-Ordner ([draft] mailbox).
+func (e *Engine) isDraftsMailbox(mb store.Mailbox) bool {
+	return mb.Role == string(provider.RoleDrafts) || (e.Drafts != nil && e.Drafts.Mailbox != "" && mb.Path == e.Drafts.Mailbox)
+}
+
 // ErrAborted kennzeichnet einen Abbruch durch AfterBatch.
 var ErrAborted = errors.New("mailsync: aborted")
 
@@ -264,8 +283,9 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		// Auch bei Abbruch (Jobs, Verbindung, ctx): nur Zahlen, keine
 		// Inhalte. Wie viel wurde geladen, obwohl es lokal schon da war
 		// (Erstabgleich nach Import, C2)?
-		if rep.KnownDownloaded > 0 {
-			e.log().Info("already known messages downloaded anyway", "count", rep.KnownDownloaded, "bytes", rep.KnownDownloadedBytes)
+		if rep.KnownDownloaded > 0 || rep.LinkedSizeDiff > 0 {
+			e.log().Info("messages already known locally", "downloaded_anyway", rep.KnownDownloaded,
+				"downloaded_anyway_bytes", rep.KnownDownloadedBytes, "linked_despite_size_difference", rep.LinkedSizeDiff)
 		}
 	}()
 	// Zuerst die Entwürfe (A02 E1): Der Spiegel sieht ihre Kopien dann in
@@ -302,7 +322,7 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	// Prüfung der Entwürfe danach darf (drafts.CheckOptions).
 	var check drafts.CheckOptions
 	for _, mb := range local {
-		isDrafts := mb.Role == string(provider.RoleDrafts) || (e.Drafts != nil && e.Drafts.Mailbox != "" && mb.Path == e.Drafts.Mailbox)
+		isDrafts := e.isDraftsMailbox(mb)
 		isSent := mb.Role == string(provider.RoleSent) || mb.Role == string(provider.RoleAll)
 		if len(o.Mailboxes) > 0 && !slices.Contains(o.Mailboxes, mb.Path) {
 			check.SkipSent = check.SkipSent || isDrafts
@@ -489,6 +509,7 @@ func (e *Engine) SyncMailbox(ctx context.Context, mb store.Mailbox, o Options) (
 
 // applyChanges verarbeitet ein ChangeSet und speichert es samt Zustand.
 func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provider.SyncState, cs provider.ChangeSet, full bool, rep *MailboxReport) error {
+	draftsBox := e.isDraftsMailbox(mb)
 	uv := cs.NewState.UIDValidity
 	batch := store.MirrorBatch{AccountID: e.AccountID, MailboxID: mb.ID}
 	if cs.Reset {
@@ -581,10 +602,20 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 		var need []provider.Header
 		for _, h := range headers {
-			if id, ok, err := e.Store.FindLinkCandidate(ctx, e.AccountID, mb.ID, h.MessageID, h.Size); err != nil {
+			// Toleranz nur für Nachrichten, die keine Entwürfe sind: Im
+			// Entwürfe-Ordner und bei \Draft bleibt es exakt
+			// (Übernahme-Erkennung, Versanderkennung).
+			var maxExtra int64
+			if !draftsBox && !h.Flags.Draft {
+				maxExtra = MaxLinkSizeExtra
+			}
+			if id, extra, ok, err := e.Store.FindLinkCandidateUpTo(ctx, e.AccountID, mb.ID, h.MessageID, h.Size, maxExtra); err != nil {
 				return err
 			} else if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: linkFlags(h.UID, h.ModSeq, h.Flags)})
+				if extra != 0 {
+					rep.LinkedSizeDiff++
+				}
 				continue
 			}
 			need = append(need, h)

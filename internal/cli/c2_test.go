@@ -35,8 +35,20 @@ func TestRenderSyncAlreadyKnownDownloaded(t *testing.T) {
 	if !bytes.Contains(j, []byte(`"already_known_downloaded":12,"already_known_downloaded_bytes":3400000`)) {
 		t.Fatalf("json = %s", j)
 	}
+	// Toleranz bei der Größe (Restfall C2): eigene Zeile, eigenes Feld.
+	b.Reset()
+	o = ops.SyncOutput{Account: "demo", Mode: "incremental", LinkedDespiteSizeDifference: 3}
+	if err := renderSync(&b, o); err != nil {
+		t.Fatal(err)
+	}
+	if want := "\nlinked despite size difference: 3 messages\n0 messages mirrored\n0 errors\n"; !strings.HasSuffix(b.String(), want) {
+		t.Fatalf("sync output = %q, want suffix %q", b.String(), want)
+	}
+	if j, _ := json.Marshal(o); !bytes.Contains(j, []byte(`"linked_despite_size_difference":3`)) {
+		t.Fatalf("json = %s", j)
+	}
 	j, _ = json.Marshal(ops.SyncOutput{})
-	if bytes.Contains(j, []byte("already_known")) {
+	if bytes.Contains(j, []byte("already_known")) || bytes.Contains(j, []byte("linked_despite")) {
 		t.Fatalf("json without downloads = %s", j)
 	}
 }

@@ -164,6 +164,10 @@ func renderSync(w io.Writer, out any) error {
 		// Messbarkeit (C2): Inhalt geladen, obwohl lokal schon vorhanden.
 		fmt.Fprintf(w, "already known, downloaded anyway: %d messages (%s)\n", o.AlreadyKnownDownloaded, humanBytes(o.AlreadyKnownDownloadedBytes))
 	}
+	if o.LinkedDespiteSizeDifference > 0 {
+		// Per Message-ID verknüpft, lokale Kopie bis 6 Bytes größer (C2).
+		fmt.Fprintf(w, "linked despite size difference: %d messages\n", o.LinkedDespiteSizeDifference)
+	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {
