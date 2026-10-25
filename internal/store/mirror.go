@@ -205,18 +205,41 @@ func (s *SQLite) CountPresentMessages(ctx context.Context, accountID int64) (int
 // UIDVALIDITY-Wechsel). So wird der Inhalt nicht erneut geladen und es
 // entsteht keine Dublette.
 func (s *SQLite) FindLinkCandidate(ctx context.Context, accountID, mailboxID int64, messageID string, size int64) (int64, bool, error) {
-	if messageID == "" {
-		return 0, false, nil
+	id, _, ok, err := s.FindLinkCandidateUpTo(ctx, accountID, mailboxID, messageID, size, 0)
+	return id, ok, err
+}
+
+// FindLinkCandidateUpTo wie FindLinkCandidate, aber die lokale Kopie darf
+// bis zu maxExtra Bytes größer sein als die des Servers (nie kleiner).
+// Grund (Befund mit Echtdaten 25.10.2026, Restfall von C2): Thunderbird
+// ergänzt beim Speichern ein fehlendes Zeilenende am Schluss (+2) bzw. eine
+// abgeschnittene abschließende MIME-Grenze samt Zeilenende (+5). Vorrang hat
+// die exakte Größe, dann die kleinste Differenz, dann die niedrigste ID;
+// extra ist die Differenz des Treffers (lokal minus Server). maxExtra 0 =
+// exakt (Entwürfe, Versand- und Übernahme-Erkennung).
+//
+// Ein Kandidat mit abweichender Größe ist nie ein Entwurf: nicht mit
+// \Draft, nicht im Ordner mit Rolle drafts, nicht die Message-ID eines
+// Entwurfs von PostKauz. Sonst könnte die gesendete Fassung eines Entwurfs
+// (gleiche Message-ID, wenige Bytes kleiner) an die Entwurfskopie gehängt
+// werden, und die Versanderkennung sähe sie nicht (sie schließt Inhalte
+// abgelegter Entwürfe aus).
+func (s *SQLite) FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, messageID string, size, maxExtra int64) (id, extra int64, ok bool, err error) {
+	if messageID == "" || maxExtra < 0 {
+		return 0, 0, false, nil
 	}
-	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m
-		WHERE m.account_id = ? AND m.message_id_header = ? AND m.size = ? AND m.blob_sha256 IS NOT NULL
+	err = s.db.QueryRowContext(ctx, `SELECT m.id, m.size - ? FROM messages m
+		WHERE m.account_id = ? AND m.message_id_header = ? AND m.size BETWEEN ? AND ? AND m.blob_sha256 IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id AND mm.mailbox_id = ?)
-		ORDER BY m.id LIMIT 1`, accountID, messageID, size, mailboxID).Scan(&id)
+		  AND (m.size = ? OR (m.flag_draft = 0
+		    AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
+		                    WHERE mm.message_id = m.id AND b.role = 'drafts')
+		    AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.account_id = m.account_id AND d.message_id_header = m.message_id_header)))
+		ORDER BY m.size - ?, m.id LIMIT 1`, size, accountID, messageID, size, size+maxExtra, mailboxID, size, size).Scan(&id, &extra)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		return 0, 0, false, nil
 	}
-	return id, err == nil, err
+	return id, extra, err == nil, err
 }
 
 // FindByContentHash sucht wie FindLinkCandidate, aber über content_hash
