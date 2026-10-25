@@ -143,8 +143,9 @@ type MailboxReport struct {
 	// (Message-ID fehlte oder die Größe wich von der lokalen Kopie ab, z. B.
 	// nach einem älteren Import); KnownDownloadedBytes sind ihre Bytes. Das
 	// macht unnötige Downloads messbar (Betreiber-Entscheid C2, 25.10.2026).
-	KnownDownloaded      int   `json:"already_known_downloaded,omitempty"`
-	KnownDownloadedBytes int64 `json:"already_known_downloaded_bytes,omitempty"`
+	// Nicht im JSON je Ordner (ops.SyncMailbox), nur in der Summe des Laufs.
+	KnownDownloaded      int   `json:"-"`
+	KnownDownloadedBytes int64 `json:"-"`
 	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
@@ -259,6 +260,14 @@ var ErrAborted = errors.New("mailsync: aborted")
 func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	start := time.Now()
 	var rep Report
+	defer func() {
+		// Auch bei Abbruch (Jobs, Verbindung, ctx): nur Zahlen, keine
+		// Inhalte. Wie viel wurde geladen, obwohl es lokal schon da war
+		// (Erstabgleich nach Import, C2)?
+		if rep.KnownDownloaded > 0 {
+			e.log().Info("already known messages downloaded anyway", "count", rep.KnownDownloaded, "bytes", rep.KnownDownloadedBytes)
+		}
+	}()
 	// Zuerst die Entwürfe (A02 E1): Der Spiegel sieht ihre Kopien dann in
 	// diesem Lauf. Ein Push-Fehler hält den Lauf nur bei Verbindungs- und
 	// Anmeldefehlern auf (die Entwürfe bleiben pending, der nächste Lauf
@@ -357,11 +366,6 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			rep.Duration = time.Since(start)
 			return rep, fmt.Errorf("jobs: %w", err)
 		}
-	}
-	if rep.KnownDownloaded > 0 {
-		// Nur Zahlen, keine Inhalte: Wie viel wurde geladen, obwohl es lokal
-		// schon da war (Erstabgleich nach Import, C2)?
-		e.log().Info("already known messages downloaded anyway", "count", rep.KnownDownloaded, "bytes", rep.KnownDownloadedBytes)
 	}
 	if rep.Mirrored, err = e.Store.CountPresentMessages(ctx, e.AccountID); err != nil {
 		return rep, err
@@ -616,6 +620,10 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				return err
 			} else if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: nm.Link})
+				// Gezählt wird beim Laden, nicht erst nach ApplyBatch: Der
+				// Zähler misst Übertragung, und geladen ist geladen (auch wenn
+				// das Speichern danach scheitert und der nächste Lauf erneut
+				// lädt).
 				rep.KnownDownloaded++
 				rep.KnownDownloadedBytes += nm.Size
 				return nil
