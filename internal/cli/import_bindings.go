@@ -20,7 +20,7 @@ import (
 func importFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String("mailbox", "", "target folder (a file or the maildir root) or prefix of the folders below (default: from the paths)")
-	f.StringArray("labels-from", nil, "folder whose messages are only linked to existing ones by Message-ID, e.g. Gmail labels (repeatable)")
+	f.StringArray("labels-from", nil, "folder whose messages are only linked to existing ones with the same content, e.g. Gmail labels; copies with other content are skipped with a note, partial Thunderbird copies are linked (repeatable)")
 	f.Bool("rescan", false, "read sources again that did not change since the last import")
 	f.Bool("no-extract", false, "do not extract all attachment text now (only the time budget of a sync; the next syncs continue)")
 }

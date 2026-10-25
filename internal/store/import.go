@@ -116,16 +116,18 @@ func (s *SQLite) MessageByContentHash(ctx context.Context, accountID int64, hash
 // Das ist dieselbe Nachricht, die Thunderbird beim Speichern am Ende
 // ergänzt hat (fehlendes Zeilenende, abschließende MIME-Grenze; Restfall
 // von C2), nachdem der Sync die Fassung des Servers gespeichert hatte.
-// Vorrang: kleinste Differenz, dann niedrigste ID.
+// Vorrang: kleinste Differenz, dann niedrigste ID. Nie ein Entwurf (wie
+// FindLinkCandidateUpTo) und nur mit Rohmail.
 func (s *SQLite) MessageNearImport(ctx context.Context, accountID int64, messageID string, size, maxExtra int64, subject string, dateHeader time.Time) (int64, bool, error) {
 	if messageID == "" || maxExtra <= 0 {
 		return 0, false, nil
 	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM messages
-		WHERE account_id = ? AND message_id_header = ? AND size BETWEEN ? AND ?
-		  AND COALESCE(subject, '') = ? AND date_header IS ?
-		ORDER BY ? - size, id LIMIT 1`, accountID, messageID, size-maxExtra, size-1, subject, nullTime(dateHeader), size).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m
+		WHERE m.account_id = ? AND m.message_id_header = ? AND m.size BETWEEN ? AND ? AND m.blob_sha256 IS NOT NULL
+		  AND COALESCE(m.subject, '') = ? AND m.date_header IS ?
+		  AND `+notDraftCond+`
+		ORDER BY ? - m.size, m.id LIMIT 1`, accountID, messageID, size-maxExtra, size-1, subject, nullTime(dateHeader), size).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
 	}

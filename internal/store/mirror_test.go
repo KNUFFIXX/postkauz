@@ -286,3 +286,56 @@ func TestFindLinkCandidateUpToSmallestDifference(t *testing.T) {
 		t.Fatalf("id %d extra %d ok %v err %v, want %d / 2", id, extra, ok, err, smallID)
 	}
 }
+
+// MessageNearImport (rc6/rc7): gespeicherte Nachricht 1 bis maxExtra Bytes
+// kleiner als die importierte Kopie, gleicher Betreff und gleiches Date;
+// gleiche Größe ist nie „dieselbe Nachricht mit ergänztem Ende", ein
+// Entwurf und eine Nachricht ohne Rohmail nie ein Kandidat.
+func TestMessageNearImport(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acct := newAccount(t, s)
+	if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+		t.Fatal(err)
+	}
+	boxes, _ := s.Mailboxes(ctx, acct)
+	m := newMsg(1, "n@example.org", false)
+	m.DateHeader = time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: boxes[0].ID, New: []NewMessage{m},
+		State: &MailboxState{UIDValidity: 1, UIDNext: 2, Phase: PhaseReady, Total: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	near := func(size int64, subject string, date time.Time) bool {
+		t.Helper()
+		_, ok, err := s.MessageNearImport(ctx, acct, "n@example.org", size, 6, subject, date)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	d, subj := m.DateHeader, "Betreff n@example.org"
+	if near(102, subj, d) {
+		t.Fatal("message without raw mail must not be a candidate")
+	}
+	_ = s.ExecForTest(`INSERT INTO blobs(sha256,size,created_at) VALUES ('x',1,1)`)
+	_ = s.ExecForTest(`UPDATE messages SET blob_sha256 = 'x'`)
+	for _, c := range []struct {
+		size int64
+		subj string
+		date time.Time
+		want bool
+	}{
+		{102, subj, d, true}, {106, subj, d, true}, {107, subj, d, false},
+		{100, subj, d, false}, // gleiche Größe: anderer Inhalt (Hash passte nicht)
+		{99, subj, d, false},  // Import kleiner
+		{102, "anders", d, false}, {102, subj, d.Add(time.Hour), false}, {102, subj, time.Time{}, false},
+	} {
+		if got := near(c.size, c.subj, c.date); got != c.want {
+			t.Errorf("size %d subject %q date %v: %v, want %v", c.size, c.subj, c.date, got, c.want)
+		}
+	}
+	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 1`)
+	if near(102, subj, d) {
+		t.Fatal("draft must not be a candidate")
+	}
+}

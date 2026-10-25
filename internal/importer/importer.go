@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"time"
 
@@ -228,21 +229,19 @@ type item struct {
 	skip    bool
 	partial bool
 	// reopen liest dieselbe Nachricht noch einmal von vorn (Kopf ohne
-	// Thunderbird-Zeilen, Rumpf); close gibt die zweite Datei frei. Gebraucht,
-	// wenn eine Nachricht mit bekannter Message-ID erst gehasht wurde und sich
-	// als andere Fassung herausstellt (sie wird dann gespeichert).
-	reopen func() (header []byte, body io.Reader, drain func() error, close func() error, err error)
-	close  func() error
+	// Thunderbird-Zeilen, Rumpf), über dasselbe Datei-Handle (ReadAt): Ersetzt
+	// Thunderbird die Datei inzwischen (Kompaktieren), liest es weiter die
+	// alte. Gebraucht, wenn eine Nachricht mit bekannter Message-ID erst
+	// gehasht wurde und sich als andere Fassung herausstellt.
+	reopen func() (header []byte, body io.Reader, drain func() error, err error)
+	// expect: content_hash des ersten Lesens; das zweite muss ihn ergeben,
+	// sonst wird nichts gespeichert (Datei an Ort und Stelle geändert).
+	expect string
 }
 
 // handle gleicht eine Nachricht ab und legt sie bei Bedarf an.
 func (r *run) handle(src Source, it item, rep *SourceReport) error {
-	defer func() {
-		_ = it.drain()
-		if it.close != nil {
-			_ = it.close()
-		}
-	}()
+	defer func() { _ = it.drain() }()
 	if it.skip {
 		rep.Skipped++
 		return nil
@@ -290,6 +289,14 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 		return nil
 	}
 	exact, variants := h.Sums()
+	if it.expect != "" && exact != it.expect {
+		// Zweites Lesen ergab etwas anderes (Datei an Ort und Stelle
+		// geändert): nichts speichern. Ein schon geschriebener Blob bleibt
+		// ohne Verweis.
+		rep.Errors++
+		rep.problem("%s: message changed between two reads (file rewritten, e.g. compacted by Thunderbird); not stored, run the import again", it.pos)
+		return nil
+	}
 	if ok, err := r.existing(variants, it.flags, rep); err != nil || ok {
 		return err
 	}
@@ -352,6 +359,30 @@ func (r *run) knownMID(mid string) (bool, error) {
 	return ok, nil
 }
 
+// linkByMID ordnet den Ordner der (ältesten) Nachricht mit dieser
+// Message-ID zu, auch einer noch nicht gespeicherten des Stapels.
+func (r *run) linkByMID(mid string, f store.ImportFolderFlags, rep *SourceReport) error {
+	if idx, ok := r.pendingMID[mid]; ok {
+		rep.Existing++
+		if idx >= 0 {
+			addFolder(&r.batch.New[idx], f)
+		}
+		return nil
+	}
+	id, ok, err := r.e.Store.MessageByHeaderID(r.ctx, r.e.AccountID, mid)
+	if err != nil {
+		return storeError{err}
+	}
+	if !ok {
+		return errors.New("message with this Message-ID vanished")
+	}
+	rep.Existing++
+	if !r.o.DryRun {
+		r.batch.Links = append(r.batch.Links, store.ImportLink{MessageID: id, ImportFolderFlags: f})
+	}
+	return nil
+}
+
 // knownVersion: Eine Nachricht mit dieser Message-ID gibt es schon. Gmail
 // führt aber teils zwei verschiedene Nachrichten mit derselben Message-ID
 // (z. B. die Fassung des Absenders und die empfangene); vorhanden ist die
@@ -377,16 +408,24 @@ func (r *run) knownVersion(src Source, it *item, hf headerInfo, rep *SourceRepor
 	if ok, err := r.existing(variants, it.flags, rep); err != nil || ok {
 		return true, err
 	}
-	id, ok, err := r.e.Store.MessageNearImport(r.ctx, r.e.AccountID, hf.MessageID, n, mailsync.MaxLinkSizeExtra, hf.Subject, hf.Date)
-	if err != nil {
-		return true, storeError{err}
-	}
-	if ok {
-		rep.Existing++
-		if !r.o.DryRun {
-			r.batch.Links = append(r.batch.Links, store.ImportLink{MessageID: id, ImportFolderFlags: it.flags})
+	if !it.flags.Draft {
+		id, ok, err := r.e.Store.MessageNearImport(r.ctx, r.e.AccountID, hf.MessageID, n, mailsync.MaxLinkSizeExtra, hf.Subject, hf.Date)
+		if err != nil {
+			return true, storeError{err}
 		}
-		return true, nil
+		if ok {
+			rep.Existing++
+			if !r.o.DryRun {
+				r.batch.Links = append(r.batch.Links, store.ImportLink{MessageID: id, ImportFolderFlags: it.flags})
+			}
+			return true, nil
+		}
+	}
+	if it.partial {
+		// Thunderbird hat nur einen Teil geladen (Bit 0x0400): keine eigene,
+		// abgeschnittene Nachricht, sondern die vorhandene bekommt den Ordner.
+		rep.problem("%s: only partly downloaded by Thunderbird; linked to the stored message with the same Message-ID", it.pos)
+		return true, r.linkByMID(hf.MessageID, it.flags, rep)
 	}
 	if src.Mode == store.ImportLabels {
 		rep.Skipped++
@@ -402,11 +441,11 @@ func (r *run) knownVersion(src Source, it *item, hf headerInfo, rep *SourceRepor
 		return true, errors.New("message can not be read a second time")
 	}
 	_ = it.drain()
-	hdr, body, drain, closeFn, err := it.reopen()
+	hdr, body, drain, err := it.reopen()
 	if err != nil {
 		return true, err
 	}
-	it.header, it.body, it.drain, it.close = hdr, body, drain, closeFn
+	it.header, it.body, it.drain, it.expect = hdr, body, drain, exact
 	return false, nil
 }
 
@@ -586,7 +625,7 @@ func (r *run) mbox(src Source, rep *SourceReport) error {
 		}
 		it := item{pos: fmt.Sprintf("offset %d", m.Offset), header: m.Header, tooLong: m.TooLong, body: m.Body,
 			drain: m.Body.drain, date: m.Date, flags: mozFlags(src.Folder, m.Status), skip: m.Status.deleted(),
-			partial: m.Status.Flags&mozPartial != 0, reopen: reopenMbox(src.Path, m.Offset, sc.quote)}
+			partial: m.Status.Flags&mozPartial != 0, reopen: reopenMbox(f, m.Offset, sc.quote)}
 		if err := r.handle(src, it, rep); err != nil {
 			if fatal(r.ctx, err) {
 				return err
@@ -693,7 +732,7 @@ func (r *run) maildirFile(src Source, ent maildirEntry, rep *SourceReport) error
 	fl.Flagged = fl.Flagged || ent.has('F')
 	fl.Draft = ent.has('D')
 	it := item{pos: ent.Key, header: hdr, tooLong: tooLong, body: mr, drain: mr.drain, date: ent.MTime, flags: fl,
-		skip: ent.has('T') || moz.deleted(), reopen: reopenMaildir(ent.Path)}
+		skip: ent.has('T') || moz.deleted(), reopen: reopenMaildir(f)}
 	if err := r.handle(src, it, rep); err != nil {
 		if fatal(r.ctx, err) {
 			return err
@@ -705,43 +744,30 @@ func (r *run) maildirFile(src Source, ent maildirEntry, rep *SourceReport) error
 }
 
 // reopenMbox liest die Nachricht an offset (Beginn ihrer Trennzeile) noch
-// einmal, mit dem Quoting der Datei, über eine zweite Datei-Öffnung (die
-// des laufenden Imports bleibt, wo sie ist).
-func reopenMbox(path string, offset int64, q quoting) func() ([]byte, io.Reader, func() error, func() error, error) {
-	return func() ([]byte, io.Reader, func() error, func() error, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		if _, err := f.Seek(offset, io.SeekStart); err != nil {
-			_ = f.Close()
-			return nil, nil, nil, nil, err
-		}
-		sc := newMboxScanner(f, offset)
+// einmal, mit dem Quoting der Datei, über dasselbe Datei-Handle (ReadAt;
+// die Leseposition des laufenden Imports bleibt, wo sie ist).
+func reopenMbox(f io.ReaderAt, offset int64, q quoting) func() ([]byte, io.Reader, func() error, error) {
+	return func() ([]byte, io.Reader, func() error, error) {
+		sc := newMboxScanner(io.NewSectionReader(f, offset, math.MaxInt64-offset), offset)
 		sc.started, sc.quote = true, q
 		m, err := sc.Next()
 		if err != nil {
-			_ = f.Close()
-			return nil, nil, nil, nil, fmt.Errorf("read the message again: %w", err)
+			return nil, nil, nil, fmt.Errorf("read the message again: %w", err)
 		}
-		return m.Header, m.Body, m.Body.drain, f.Close, nil
+		return m.Header, m.Body, m.Body.drain, nil
 	}
 }
 
-// reopenMaildir liest eine Maildir-Datei noch einmal.
-func reopenMaildir(path string) func() ([]byte, io.Reader, func() error, func() error, error) {
-	return func() ([]byte, io.Reader, func() error, func() error, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		mr := newMsgReader(newSource(f, 0), false, quoteNone)
+// reopenMaildir liest eine Maildir-Datei über dasselbe Handle noch einmal
+// (ein Umbenennen durch einen anderen Client stört so nicht).
+func reopenMaildir(f io.ReaderAt) func() ([]byte, io.Reader, func() error, error) {
+	return func() ([]byte, io.Reader, func() error, error) {
+		mr := newMsgReader(newSource(io.NewSectionReader(f, 0, math.MaxInt64), 0), false, quoteNone)
 		hdr, _, err := mr.readHeader()
 		if err != nil {
-			_ = f.Close()
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, err
 		}
 		hdr, _ = stripMozilla(hdr)
-		return hdr, mr, mr.drain, f.Close, nil
+		return hdr, mr, mr.drain, nil
 	}
 }

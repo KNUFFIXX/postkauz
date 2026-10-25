@@ -251,12 +251,7 @@ func (s *SQLite) FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID
 	err = s.db.QueryRowContext(ctx, `SELECT m.id, m.size - ? FROM messages m
 		WHERE m.account_id = ? AND m.message_id_header = ? AND m.size BETWEEN ? AND ? AND m.blob_sha256 IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id AND mm.mailbox_id = ?)
-		  AND (m.size = ? OR (m.flag_draft = 0
-		    AND COALESCE(m.subject, '') = ? AND m.date_header IS ?
-		    AND NOT EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
-		      WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
-		        OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
-		    AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.account_id = m.account_id AND d.message_id_header = m.message_id_header)))
+		  AND (m.size = ? OR (COALESCE(m.subject, '') = ? AND m.date_header IS ? AND `+notDraftCond+`))
 		ORDER BY m.size - ?, m.id LIMIT 1`, q.Size, accountID, q.MessageID, q.Size, q.Size+maxExtra, mailboxID, q.Size,
 		q.Subject, nullTime(q.DateHeader), q.Size).Scan(&id, &extra)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -264,6 +259,17 @@ func (s *SQLite) FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID
 	}
 	return id, extra, err == nil, err
 }
+
+// notDraftCond: Die Nachricht m ist kein Entwurf (nicht \Draft, auch an
+// keiner Ordnerkopie; in keinem Ordner mit Rolle drafts oder in den
+// PostKauz Entwürfe ablegt; nicht die Message-ID eines PostKauz-Entwurfs).
+// Wie die Versanderkennung (sentdetect.go); für Verknüpfungen trotz
+// Größenunterschied.
+const notDraftCond = `m.flag_draft = 0
+	AND NOT EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
+		WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
+			OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
+	AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.account_id = m.account_id AND d.message_id_header = m.message_id_header)`
 
 // FindByContentHash sucht wie FindLinkCandidate, aber über content_hash
 // (Nachrichten ohne oder mit abweichend gelesener Message-ID). hashes sind

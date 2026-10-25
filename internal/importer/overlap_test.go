@@ -102,6 +102,12 @@ func serveMem(t testing.TB, u *imapmemserver.User, bodies *atomic.Int64) string 
 
 func (e *env) sync(t testing.TB, addr string) mailsync.Report {
 	t.Helper()
+	return e.syncWith(t, addr, e.st)
+}
+
+// syncWith synct mit einem anderen Store (Tests, die Fehler einspeisen).
+func (e *env) syncWith(t testing.TB, addr string, st mailsync.Store) mailsync.Report {
+	t.Helper()
 	host, port, _ := net.SplitHostPort(addr)
 	p, _ := strconv.Atoi(port)
 	prov, err := imapprov.Connect(context.Background(), imapprov.Config{Host: host, Port: p, TLS: "none", Username: memUser,
@@ -110,7 +116,7 @@ func (e *env) sync(t testing.TB, addr string) mailsync.Report {
 		t.Fatal(err)
 	}
 	defer prov.Close()
-	rep, err := (&mailsync.Engine{Store: e.st, Blobs: e.blobs, Remote: prov, AccountID: e.acct}).SyncAll(context.Background(), mailsync.Options{})
+	rep, err := (&mailsync.Engine{Store: st, Blobs: e.blobs, Remote: prov, AccountID: e.acct}).SyncAll(context.Background(), mailsync.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

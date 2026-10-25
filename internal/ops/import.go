@@ -108,7 +108,7 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
     "path": {"type": "string", "minLength": 1, "description": "mbox file, folder with mbox files (Thunderbird profile folder) or maildir"},
     "mailbox": {"type": "string", "minLength": 1, "maxLength": 512, "description": "target folder (a file or the maildir root) or prefix of the folders below"},
     "labels_from": {"type": "array", "items": {"type": "string", "minLength": 1},
-      "description": "folders whose messages are only linked to existing messages by Message-ID (Gmail labels); nothing is stored from them"},
+      "description": "folders whose messages are only linked to existing messages with the same content (Gmail labels); nothing is stored from them; copies with other content are skipped with a note, partial Thunderbird copies are linked"},
     "rescan": {"type": "boolean", "description": "read sources again that did not change since the last import"},
     "no_extract": {"type": "boolean", "description": "do not extract all attachment text now; only the time budget of a sync, the next syncs continue"}
   },
