@@ -22,6 +22,7 @@ Format je Eintrag: Kontext · Entscheidung · Folgen · Status. Neue Entscheidun
 - **Entscheidung:** **Der Server ist die Wahrheit für den aktuellen Postfachzustand** (Flags, Ordner, Existenz). **Die lokale Datenbank ist die Wahrheit für Beobachtung, Archiv, Index, Freigaben und Audit.** Ein Anbieterwechsel synchronisiert das Archiv nie in das neue Postfach zurück. Import und Erstabgleich laufen über `Message-ID`/`content_hash` mit Überlappung, nicht über „ab Datum".
 - **Folgen:** Serverseitig gelöschte Nachrichten bleiben lokal (`deleted_remote_at`); Löschung ist eine eigene, ausdrückliche Operation (Löschkonzept, S3). Konflikte beim Zustand löst „Server gewinnt", ausgenommen lokale Tags. Das Archiv wächst und braucht Sicherung und ein Löschkonzept.
 - **Status:** akzeptiert; umgesetzt in S1.4 bis S1.10 (Spiegel mit `deleted_remote_at`, Abgleich per Message-ID bzw. `content_hash`, UIDVALIDITY-Wechsel ohne Verlust, Import nur ins lokale Archiv, nie zurück auf den Server).
+- **Nachtrag 25.10.2026 (0.2.0-rc6):** „Message-ID/`content_hash`" heißt nicht „Message-ID allein": Gmail führt teils zwei verschiedene Nachrichten mit derselben Message-ID. Der Import prüft bei bekannter Message-ID den Inhalt und legt eine andere Fassung als eigene Nachricht an; der Sync verknüpft per Message-ID nur bei gleicher Größe (bzw. bei bis zu 6 Bytes größerer lokaler Kopie mit gleichem Betreff und Date, nie bei Entwürfen). Grund: nie doppelt, nie verloren (docs/architektur.md, Abschnitt 3 Punkt 4).
 
 ## ADR-004: Operationsregister als Tabelle mit expliziten Adaptern
 

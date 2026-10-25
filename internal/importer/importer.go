@@ -1,8 +1,10 @@
 // Package importer liest mbox-Dateien und Maildir-Ordner in ein Konto ein
 // (S1.10, `postkauz import`). Abgleich über Identität, nicht über Datum
 // (ADR-003, docs/architektur.md Abschnitt 3 Regel 4): Gibt es eine Nachricht
-// im Konto schon (Message-ID, sonst content_hash samt Varianten des
-// Zeilenendes am Schluss), bekommt sie nur den Ordner zugeordnet; sonst
+// im Konto schon (content_hash samt Varianten des Zeilenendes am Schluss;
+// bei bekannter Message-ID zählt der Inhalt, denn Gmail führt teils zwei
+// Fassungen mit derselben Message-ID), bekommt sie nur den Ordner
+// zugeordnet; sonst
 // läuft sie durch dieselbe Aufbereitung wie beim Sync (Blob-Store, Parser,
 // Bereinigung, Anhänge, Threads; danach Extraktion und Suchindex als Jobs).
 //
@@ -29,6 +31,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
+	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -36,6 +39,7 @@ import (
 type Store interface {
 	MessageByHeaderID(ctx context.Context, accountID int64, messageID string) (int64, bool, error)
 	MessageByContentHash(ctx context.Context, accountID int64, hashes ...string) (int64, bool, error)
+	MessageNearImport(ctx context.Context, accountID int64, messageID string, size, maxExtra int64, subject string, dateHeader time.Time) (int64, bool, error)
 	ImportSourceState(ctx context.Context, accountID int64, source, folder, mode string) (store.ImportSource, bool, error)
 	ApplyImport(ctx context.Context, b store.ImportBatch) (store.ImportResult, error)
 }
@@ -223,22 +227,40 @@ type item struct {
 	flags   store.ImportFolderFlags
 	skip    bool
 	partial bool
+	// reopen liest dieselbe Nachricht noch einmal von vorn (Kopf ohne
+	// Thunderbird-Zeilen, Rumpf); close gibt die zweite Datei frei. Gebraucht,
+	// wenn eine Nachricht mit bekannter Message-ID erst gehasht wurde und sich
+	// als andere Fassung herausstellt (sie wird dann gespeichert).
+	reopen func() (header []byte, body io.Reader, drain func() error, close func() error, err error)
+	close  func() error
 }
 
 // handle gleicht eine Nachricht ab und legt sie bei Bedarf an.
 func (r *run) handle(src Source, it item, rep *SourceReport) error {
-	defer func() { _ = it.drain() }()
+	defer func() {
+		_ = it.drain()
+		if it.close != nil {
+			_ = it.close()
+		}
+	}()
 	if it.skip {
 		rep.Skipped++
 		return nil
 	}
-	mid := ""
+	var hf headerInfo
 	if !it.tooLong {
-		mid = headerMessageID(it.header)
+		hf = readHeaderInfo(it.header)
 	}
+	mid := hf.MessageID
 	if mid != "" {
-		if ok, err := r.existing(mid, nil, it.flags, rep); err != nil || ok {
+		known, err := r.knownMID(mid)
+		if err != nil {
 			return err
+		}
+		if known {
+			if done, err := r.knownVersion(src, &it, hf, rep); err != nil || done {
+				return err
+			}
 		}
 	}
 	h := mailsync.NewContentHasher()
@@ -268,7 +290,7 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 		return nil
 	}
 	exact, variants := h.Sums()
-	if ok, err := r.existing("", variants, it.flags, rep); err != nil || ok {
+	if ok, err := r.existing(variants, it.flags, rep); err != nil || ok {
 		return err
 	}
 	if src.Mode == store.ImportLabels {
@@ -317,33 +339,91 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 	return nil
 }
 
-// existing sucht die Nachricht (Message-ID oder Hashes) unter den noch nicht
-// gespeicherten und in der Datenbank und ordnet sie dem Ordner zu.
-func (r *run) existing(mid string, hashes []string, f store.ImportFolderFlags, rep *SourceReport) (bool, error) {
-	idx, ok := -2, false
-	if mid != "" {
-		idx, ok = r.pendingMID[mid]
+// knownMID meldet, ob es im Konto (oder im noch nicht gespeicherten
+// Stapel) schon eine Nachricht mit dieser Message-ID gibt.
+func (r *run) knownMID(mid string) (bool, error) {
+	if _, ok := r.pendingMID[mid]; ok {
+		return true, nil
 	}
-	for _, h := range hashes {
-		if ok {
-			break
-		}
-		idx, ok = r.pendingHash[h]
+	_, ok, err := r.e.Store.MessageByHeaderID(r.ctx, r.e.AccountID, mid)
+	if err != nil {
+		return false, storeError{err}
+	}
+	return ok, nil
+}
+
+// knownVersion: Eine Nachricht mit dieser Message-ID gibt es schon. Gmail
+// führt aber teils zwei verschiedene Nachrichten mit derselben Message-ID
+// (z. B. die Fassung des Absenders und die empfangene); vorhanden ist die
+// neue nur, wenn der Inhalt passt (content_hash samt Varianten am
+// Zeilenende) oder sie die Thunderbird-Fassung einer schon gesyncten
+// Nachricht ist (am Ende 1 bis MaxLinkSizeExtra Bytes länger, gleicher
+// Betreff und Date; Restfall von C2). Dafür wird sie zuerst nur gehasht
+// (nichts gespeichert). Ist sie eine andere Fassung, liest reopen sie noch
+// einmal, und handle legt sie an (done false). done true: erledigt
+// (vorhanden, übersprungen, im Trockenlauf gezählt).
+func (r *run) knownVersion(src Source, it *item, hf headerInfo, rep *SourceReport) (done bool, err error) {
+	h := mailsync.NewContentHasher()
+	n, err := io.Copy(h, io.MultiReader(bytes.NewReader(it.header), it.body))
+	if err != nil {
+		return true, err
+	}
+	if n == 0 {
+		rep.Skipped++
+		rep.problem("%s: empty message", it.pos)
+		return true, nil
+	}
+	exact, variants := h.Sums()
+	if ok, err := r.existing(variants, it.flags, rep); err != nil || ok {
+		return true, err
+	}
+	id, ok, err := r.e.Store.MessageNearImport(r.ctx, r.e.AccountID, hf.MessageID, n, mailsync.MaxLinkSizeExtra, hf.Subject, hf.Date)
+	if err != nil {
+		return true, storeError{err}
 	}
 	if ok {
 		rep.Existing++
-		if idx >= 0 {
-			addFolder(&r.batch.New[idx], f)
+		if !r.o.DryRun {
+			r.batch.Links = append(r.batch.Links, store.ImportLink{MessageID: id, ImportFolderFlags: it.flags})
 		}
 		return true, nil
 	}
-	var id int64
-	var err error
-	if mid != "" {
-		id, ok, err = r.e.Store.MessageByHeaderID(r.ctx, r.e.AccountID, mid)
-	} else {
-		id, ok, err = r.e.Store.MessageByContentHash(r.ctx, r.e.AccountID, hashes...)
+	if src.Mode == store.ImportLabels {
+		rep.Skipped++
+		rep.problem("%s: same Message-ID as a stored message but different content; not stored (labels only)", it.pos)
+		return true, nil
 	}
+	if r.o.DryRun {
+		rep.New++
+		r.pendingHash[exact] = -1
+		return true, nil
+	}
+	if it.reopen == nil {
+		return true, errors.New("message can not be read a second time")
+	}
+	_ = it.drain()
+	hdr, body, drain, closeFn, err := it.reopen()
+	if err != nil {
+		return true, err
+	}
+	it.header, it.body, it.drain, it.close = hdr, body, drain, closeFn
+	return false, nil
+}
+
+// existing sucht die Nachricht über ihre Hashes (Wert und Varianten) unter
+// den noch nicht gespeicherten und in der Datenbank und ordnet sie dem
+// Ordner zu.
+func (r *run) existing(hashes []string, f store.ImportFolderFlags, rep *SourceReport) (bool, error) {
+	for _, h := range hashes {
+		if idx, ok := r.pendingHash[h]; ok {
+			rep.Existing++
+			if idx >= 0 {
+				addFolder(&r.batch.New[idx], f)
+			}
+			return true, nil
+		}
+	}
+	id, ok, err := r.e.Store.MessageByContentHash(r.ctx, r.e.AccountID, hashes...)
 	if err != nil {
 		return false, storeError{err}
 	}
@@ -409,15 +489,30 @@ func (r *run) flush(src Source, state store.ImportSource, rep *SourceReport) err
 	return nil
 }
 
-// headerMessageID liest die Message-ID aus dem Kopf (wie der Parser beim
-// Speichern; "" ohne oder bei unlesbarem Kopf).
-func headerMessageID(hdr []byte) string {
+// headerInfo sind die Kopffelder für den Abgleich, gelesen wie beim
+// Speichern (Message-ID ohne <>, bereinigter Betreff, Date nur aus der
+// Kopfzeile; leer bei unlesbarem Kopf).
+type headerInfo struct {
+	MessageID string
+	Subject   string
+	Date      time.Time
+}
+
+func readHeaderInfo(hdr []byte) headerInfo {
 	m, err := mimeparse.Parse(bytes.NewReader(hdr), mimeparse.Options{})
 	if err != nil {
-		return ""
+		return headerInfo{}
 	}
-	return m.MessageID
+	hi := headerInfo{MessageID: m.MessageID, Subject: sanitize.Text(m.Subject)}
+	if m.DateSource == mimeparse.DateFromHeader {
+		hi.Date = m.Date
+	}
+	return hi
 }
+
+// headerMessageID liest die Message-ID aus dem Kopf (wie der Parser beim
+// Speichern; "" ohne oder bei unlesbarem Kopf).
+func headerMessageID(hdr []byte) string { return readHeaderInfo(hdr).MessageID }
 
 func mozFlags(folder string, st mozStatus) store.ImportFolderFlags {
 	f := store.ImportFolderFlags{Folder: folder, Seen: st.Flags&mozRead != 0, Answered: st.Flags&mozReplied != 0,
@@ -491,7 +586,7 @@ func (r *run) mbox(src Source, rep *SourceReport) error {
 		}
 		it := item{pos: fmt.Sprintf("offset %d", m.Offset), header: m.Header, tooLong: m.TooLong, body: m.Body,
 			drain: m.Body.drain, date: m.Date, flags: mozFlags(src.Folder, m.Status), skip: m.Status.deleted(),
-			partial: m.Status.Flags&mozPartial != 0}
+			partial: m.Status.Flags&mozPartial != 0, reopen: reopenMbox(src.Path, m.Offset, sc.quote)}
 		if err := r.handle(src, it, rep); err != nil {
 			if fatal(r.ctx, err) {
 				return err
@@ -598,7 +693,7 @@ func (r *run) maildirFile(src Source, ent maildirEntry, rep *SourceReport) error
 	fl.Flagged = fl.Flagged || ent.has('F')
 	fl.Draft = ent.has('D')
 	it := item{pos: ent.Key, header: hdr, tooLong: tooLong, body: mr, drain: mr.drain, date: ent.MTime, flags: fl,
-		skip: ent.has('T') || moz.deleted()}
+		skip: ent.has('T') || moz.deleted(), reopen: reopenMaildir(ent.Path)}
 	if err := r.handle(src, it, rep); err != nil {
 		if fatal(r.ctx, err) {
 			return err
@@ -607,4 +702,46 @@ func (r *run) maildirFile(src Source, ent maildirEntry, rep *SourceReport) error
 		rep.problem("%s: %v", ent.Key, err)
 	}
 	return nil
+}
+
+// reopenMbox liest die Nachricht an offset (Beginn ihrer Trennzeile) noch
+// einmal, mit dem Quoting der Datei, über eine zweite Datei-Öffnung (die
+// des laufenden Imports bleibt, wo sie ist).
+func reopenMbox(path string, offset int64, q quoting) func() ([]byte, io.Reader, func() error, func() error, error) {
+	return func() ([]byte, io.Reader, func() error, func() error, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			_ = f.Close()
+			return nil, nil, nil, nil, err
+		}
+		sc := newMboxScanner(f, offset)
+		sc.started, sc.quote = true, q
+		m, err := sc.Next()
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, nil, nil, fmt.Errorf("read the message again: %w", err)
+		}
+		return m.Header, m.Body, m.Body.drain, f.Close, nil
+	}
+}
+
+// reopenMaildir liest eine Maildir-Datei noch einmal.
+func reopenMaildir(path string) func() ([]byte, io.Reader, func() error, func() error, error) {
+	return func() ([]byte, io.Reader, func() error, func() error, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		mr := newMsgReader(newSource(f, 0), false, quoteNone)
+		hdr, _, err := mr.readHeader()
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, nil, nil, err
+		}
+		hdr, _ = stripMozilla(hdr)
+		return hdr, mr, mr.drain, f.Close, nil
+	}
 }

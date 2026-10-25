@@ -109,6 +109,29 @@ func (s *SQLite) MessageByContentHash(ctx context.Context, accountID int64, hash
 	return id, err == nil, err
 }
 
+// MessageNearImport sucht für den Import eine gespeicherte Nachricht mit
+// dieser Message-ID, die 1 bis maxExtra Bytes KLEINER ist als die
+// importierte Kopie und denselben Betreff und dieselbe Date-Kopfzeile hat
+// (subject bereinigt wie beim Speichern; dateHeader Nullzeit = keine).
+// Das ist dieselbe Nachricht, die Thunderbird beim Speichern am Ende
+// ergänzt hat (fehlendes Zeilenende, abschließende MIME-Grenze; Restfall
+// von C2), nachdem der Sync die Fassung des Servers gespeichert hatte.
+// Vorrang: kleinste Differenz, dann niedrigste ID.
+func (s *SQLite) MessageNearImport(ctx context.Context, accountID int64, messageID string, size, maxExtra int64, subject string, dateHeader time.Time) (int64, bool, error) {
+	if messageID == "" || maxExtra <= 0 {
+		return 0, false, nil
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM messages
+		WHERE account_id = ? AND message_id_header = ? AND size BETWEEN ? AND ?
+		  AND COALESCE(subject, '') = ? AND date_header IS ?
+		ORDER BY ? - size, id LIMIT 1`, accountID, messageID, size-maxExtra, size-1, subject, nullTime(dateHeader), size).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
+}
+
 // ImportSourceState liefert den gespeicherten Stand einer Quelle.
 func (s *SQLite) ImportSourceState(ctx context.Context, accountID int64, source, folder, mode string) (ImportSource, bool, error) {
 	src := ImportSource{AccountID: accountID, Source: source, Folder: folder, Mode: mode}
