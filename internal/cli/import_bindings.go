@@ -22,6 +22,7 @@ func importFlags(cmd *cobra.Command) {
 	f.String("mailbox", "", "target folder (a file or the maildir root) or prefix of the folders below (default: from the paths)")
 	f.StringArray("labels-from", nil, "folder whose messages are only linked to existing ones by Message-ID, e.g. Gmail labels (repeatable)")
 	f.Bool("rescan", false, "read sources again that did not change since the last import")
+	f.Bool("no-extract", false, "do not extract all attachment text now (only the time budget of a sync; the next syncs continue)")
 }
 
 // importInput: import <mbox|maildir> <pfad>.
@@ -33,10 +34,11 @@ func importInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, se
 	mailbox, _ := f.GetString("mailbox")
 	labels, _ := f.GetStringArray("labels-from")
 	rescan, _ := f.GetBool("rescan")
+	noExtract, _ := f.GetBool("no-extract")
 	if f.Changed("mailbox") && mailbox == "" {
 		return nil, "", usageError{errors.New("--mailbox must not be empty")}
 	}
-	in := ops.ImportRunInput{Account: accountFlag(cmd), Format: args[0], Path: args[1], Mailbox: mailbox, LabelsFrom: labels, Rescan: rescan}
+	in := ops.ImportRunInput{Account: accountFlag(cmd), Format: args[0], Path: args[1], Mailbox: mailbox, LabelsFrom: labels, Rescan: rescan, NoExtract: noExtract}
 	b, err := json.Marshal(in)
 	return b, "", err
 }
@@ -78,6 +80,12 @@ func importProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 			}
 			last = time.Now()
 			fmt.Fprintf(a.stderr, "  search index: %d/%d\n", p.Done, p.Total)
+		case "extract":
+			if p.Done >= p.Total || time.Since(last) < time.Second {
+				return
+			}
+			last = time.Now()
+			fmt.Fprintf(a.stderr, "  attachment text: %d/%d\n", p.Done, p.Total)
 		}
 	}
 }
@@ -137,6 +145,13 @@ func renderImport(w io.Writer, out any) error {
 	}
 	if o.Linked > 0 {
 		fmt.Fprintf(w, "%d folder assignments added to existing messages\n", o.Linked)
+	}
+	if o.AttachmentsExtracted > 0 || o.ExtractPending > 0 {
+		line := fmt.Sprintf("attachment text: %d attachments extracted", o.AttachmentsExtracted)
+		if o.ExtractPending > 0 {
+			line += fmt.Sprintf(", %d still pending (the next sync continues)", o.ExtractPending)
+		}
+		fmt.Fprintln(w, line)
 	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)

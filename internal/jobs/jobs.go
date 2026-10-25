@@ -41,6 +41,7 @@ type Store interface {
 	RequeueSkipped(ctx context.Context, accountID int64, reason string) (int, error)
 	IndexBatch(ctx context.Context, accountID int64, limit int, build func(search.Source) search.Doc) (int, error)
 	IndexPending(ctx context.Context, accountID int64) (int, error)
+	ExtractPending(ctx context.Context, accountID int64) (int, error)
 }
 
 // Blobs liest Anhänge aus dem Blob-Store.
@@ -53,6 +54,9 @@ const (
 	// DefaultExtractBudget begrenzt die Zeit für Textextraktion je Lauf;
 	// der Rest folgt im nächsten Lauf (der Job bleibt fällig).
 	DefaultExtractBudget = 60 * time.Second
+	// NoExtractBudget als ExtractBudget: bis nichts mehr wartet (der
+	// Import, A rc6); ein Abbruch (ctx) lässt den Rest pending.
+	NoExtractBudget time.Duration = -1
 	// DefaultLease: So lange gilt die Sperre eines Arbeiters ohne
 	// Lebenszeichen; danach darf ein anderer den Job übernehmen.
 	DefaultLease = 2 * time.Minute
@@ -86,7 +90,7 @@ type Runner struct {
 	// Extractor gewinnt Text aus Anhängen; nil = extract-Jobs bleiben
 	// liegen (Anhänge bleiben pending).
 	Extractor     *extract.Extractor
-	ExtractBudget time.Duration // 0 = DefaultExtractBudget
+	ExtractBudget time.Duration // 0 = DefaultExtractBudget, NoExtractBudget = ohne Grenze
 	Log           *slog.Logger
 	// TakeOver: Der Aufrufer hält die Kontosperre des Syncs. Ein laufender
 	// Job dieses Kontos stammt dann von einem abgebrochenen Prozess und
@@ -187,20 +191,29 @@ func (r *Runner) fail(ctx context.Context, j store.Job, err error) error {
 }
 
 // runExtract extrahiert wartende Anhänge, bis nichts mehr wartet oder das
-// Zeitbudget erschöpft ist (dann bleibt der Job fällig).
+// Zeitbudget erschöpft ist (dann bleibt der Job fällig). Ohne Budget
+// (NoExtractBudget) läuft es bis zum Ende; Fortschritt mit Gesamtzahl.
 func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 	j, ok, err := r.Store.ClaimJob(ctx, store.JobExtract, accountID, r.owner(), r.lease(), r.TakeOver)
 	if err != nil || !ok {
 		return 0, err
 	}
 	budget := r.ExtractBudget
-	if budget <= 0 {
+	if budget == 0 {
 		budget = DefaultExtractBudget
 	}
+	unlimited := budget < 0
 	deadline := time.Now().Add(budget)
+	inTime := func() bool { return unlimited || time.Now().Before(deadline) }
+	total := 0
+	if r.Progress != nil {
+		if total, err = r.Store.ExtractPending(ctx, accountID); err != nil {
+			return 0, r.fail(ctx, j, err)
+		}
+	}
 	done := 0
 	// Mindestens ein Anhang je Lauf, auch bei winzigem Budget (Fortschritt).
-	for done == 0 || time.Now().Before(deadline) {
+	for done == 0 || inTime() {
 		items, err := r.Store.PendingExtractions(ctx, accountID, 20)
 		if err != nil {
 			return done, r.fail(ctx, j, err)
@@ -221,11 +234,11 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 				return done, r.fail(ctx, j, err)
 			}
 			done++
-			if !time.Now().Before(deadline) {
+			if !inTime() {
 				break
 			}
 		}
-		r.emit(Event{Kind: "extract", Done: done})
+		r.emit(Event{Kind: "extract", Done: done, Total: max(total, done)})
 		if ctx.Err() != nil {
 			r.release(ctx, j)
 			return done, ctx.Err()

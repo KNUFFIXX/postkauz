@@ -220,7 +220,7 @@ var contractInputs = map[string]struct {
 	"accounts.set":       {input: `{"name":"demo","aliases":["Alias@Example.org","zweit@example.net"],"replace_password":true}`, secret: canary},
 	"accounts.test":      {input: `{"name":"demo"}`},
 	"sync.run":           {input: `{"account":"demo"}`},
-	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true}`},
+	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true,"no_extract":true}`},
 	"mailboxes.list":     {input: `{"account":"demo"}`},
 	"mailboxes.overview": {input: `{"account":"demo","mailbox":1,"since":"3650d","limit":5}`},
 	"messages.get":       {input: `{"message_id":"a@example.org","account":"demo","headers":true}`},

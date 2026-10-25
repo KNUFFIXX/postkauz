@@ -27,6 +27,9 @@ type Runner struct {
 	Extractor *extract.Extractor
 	// AfterBatch: Tests (Absturz simulieren).
 	AfterBatch func(src Source, position int64) error
+	// BudgetWithoutExtract: Zeitbudget der Extraktion bei --no-extract
+	// (0 = jobs.DefaultExtractBudget wie beim Sync; Tests setzen weniger).
+	BudgetWithoutExtract time.Duration
 }
 
 var _ ops.ImportRunner = (*Runner)(nil)
@@ -77,11 +80,21 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 			ex = extract.New(extract.Options{})
 		}
 		jr := &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Extractor: ex, Log: r.Log, TakeOver: locked}
+		// Der Import arbeitet die Extraktion bis zum Ende ab (rc6); der Sync
+		// behält sein Budget, ebenso der Import mit --no-extract. Strg+C
+		// lässt den Rest pending, der nächste Sync macht weiter.
+		jr.ExtractBudget = jobs.NoExtractBudget
+		if o.NoExtract {
+			jr.ExtractBudget = r.BudgetWithoutExtract
+		}
 		if progress != nil {
 			jr.Progress = func(ev jobs.Event) { progress(ops.Progress{Event: ev.Kind, Done: ev.Done, Total: ev.Total}) }
 		}
 		rep, err := jr.RunAccount(ctx, a.ID)
 		out.AttachmentsExtracted, out.MessagesIndexed, out.IndexPending = rep.Extracted, rep.Indexed, rep.IndexPending
+		if n, perr := r.Store.ExtractPending(context.WithoutCancel(ctx), a.ID); perr == nil {
+			out.ExtractPending = n
+		}
 		if err != nil {
 			out.DurationMS = time.Since(start).Milliseconds()
 			return out, fmt.Errorf("jobs: %w", err)

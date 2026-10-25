@@ -19,6 +19,9 @@ type ImportOptions struct {
 	LabelsFrom []string // Ordner, deren Nachrichten nur zugeordnet werden
 	Rescan     bool
 	DryRun     bool
+	// NoExtract: Textextraktion der Anhänge nicht bis zum Ende abarbeiten,
+	// nur mit dem Zeitbudget wie der Sync (rc6).
+	NoExtract bool
 }
 
 // ImportSource ist das Ergebnis einer Quelle (Datei bzw. Maildir-Ordner).
@@ -61,8 +64,11 @@ type ImportOutput struct {
 	AttachmentsExtracted int   `json:"attachments_extracted,omitempty"`
 	MessagesIndexed      int   `json:"messages_indexed,omitempty"`
 	IndexPending         int   `json:"index_pending,omitempty"`
-	DurationMS           int64 `json:"duration_ms"`
-	DryRun               bool  `json:"dry_run"`
+	// ExtractPending: Anhänge, deren Text danach noch aussteht (Abbruch oder
+	// --no-extract; der nächste Sync macht weiter).
+	ExtractPending int   `json:"extract_pending,omitempty"`
+	DurationMS     int64 `json:"duration_ms"`
+	DryRun         bool  `json:"dry_run"`
 }
 
 // ImportRunner führt den Import aus (internal/importer). Im Trockenlauf
@@ -79,6 +85,7 @@ type ImportRunInput struct {
 	Mailbox    string   `json:"mailbox,omitempty"`
 	LabelsFrom []string `json:"labels_from,omitempty"`
 	Rescan     bool     `json:"rescan,omitempty"`
+	NoExtract  bool     `json:"no_extract,omitempty"`
 }
 
 // ImportRun liest mbox-Dateien bzw. Maildir-Ordner in ein Konto ein, mit
@@ -102,7 +109,8 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
     "mailbox": {"type": "string", "minLength": 1, "maxLength": 512, "description": "target folder (a file or the maildir root) or prefix of the folders below"},
     "labels_from": {"type": "array", "items": {"type": "string", "minLength": 1},
       "description": "folders whose messages are only linked to existing messages by Message-ID (Gmail labels); nothing is stored from them"},
-    "rescan": {"type": "boolean", "description": "read sources again that did not change since the last import"}
+    "rescan": {"type": "boolean", "description": "read sources again that did not change since the last import"},
+    "no_extract": {"type": "boolean", "description": "do not extract all attachment text now; only the time budget of a sync, the next syncs continue"}
   },
   "required": ["format", "path"],
   "additionalProperties": false
@@ -122,7 +130,7 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
     "new": {"type": "integer"}, "existing": {"type": "integer"}, "skipped": {"type": "integer"}, "errors": {"type": "integer"},
     "linked": {"type": "integer"}, "sources_unchanged": {"type": "integer"}, "files_ignored": {"type": "integer"},
     "bytes": {"type": "integer"}, "attachments_extracted": {"type": "integer"}, "messages_indexed": {"type": "integer"},
-    "index_pending": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
+    "index_pending": {"type": "integer"}, "extract_pending": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
   },
   "required": ["account", "format", "sources", "new", "existing", "skipped", "errors", "linked", "sources_unchanged",
     "files_ignored", "bytes", "duration_ms", "dry_run"]
@@ -148,7 +156,7 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
 				return nil, err
 			}
 			out, err := runner.Import(ctx, a, ImportOptions{Format: in.Format, Path: in.Path, Mailbox: in.Mailbox,
-				LabelsFrom: in.LabelsFrom, Rescan: in.Rescan, DryRun: call.DryRun}, call.Progress)
+				LabelsFrom: in.LabelsFrom, Rescan: in.Rescan, DryRun: call.DryRun, NoExtract: in.NoExtract}, call.Progress)
 			if err != nil {
 				return nil, err
 			}

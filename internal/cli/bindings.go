@@ -70,7 +70,7 @@ var bindings = []binding{
 		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes"}},
 	{op: "import.run", path: []string{"import"}, use: "<mbox|maildir> <file-or-folder>", args: cobra.ExactArgs(2),
 		flags: importFlags, input: importInput, human: renderImport, progress: importProgress,
-		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan"}},
+		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan", "no_extract"}},
 	{op: "mailboxes.list", path: []string{"mailbox", "list"}, args: cobra.NoArgs, input: accountOnlyInput,
 		human: renderMailboxes, covers: []string{"account"}},
 	{op: "mailboxes.overview", path: []string{"mailbox", "overview"}, use: "<mailbox-id>", args: cobra.ExactArgs(1),

@@ -13,6 +13,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- 0.2.0-rc6: `import` arbeitet die Textextraktion der Anhänge bis zum Ende ab (Fortschritt `attachment text: N/M` auf stderr, Zeile `attachment text: …`, `--json` `extract_pending`); Strg+C lässt den Rest `pending` für den nächsten Sync. `--no-extract` lässt es beim Zeitbudget des Syncs (60 s). `sync` behält sein Budget.
 - S2.1: Schema 10 (Migration 0010): Entwürfe, Freigaben, Identitäten neu gebaut, Job-Typ `draft_push`, `policies.sha256`, `policy_version` in jedem Audit-Eintrag.
 - S2.1: `internal/drafts`: Zustandsmaschine der Freigabe, `preview_hash`, Eingabegrenzen, Message-IDs, Identitäten und eigene Adressen, Ablauf von Freigaben (noch ohne Operationen).
 - S2.1: Policy-Datei `policy.toml` (oder `POSTKAUZ_POLICY`), bei jedem Start geprüft; `[agent_defaults] max_chars` setzt das Budget der Agenten; `doctor` zeigt Policy und `attach_dir`. Neuer Fehlercode `policy_invalid` (Exit 1).
