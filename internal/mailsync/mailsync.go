@@ -138,6 +138,13 @@ type MailboxReport struct {
 	Total    int      `json:"total"`           // laut Server
 	Mirrored int      `json:"mirrored"`        // lokal nach dem Lauf
 	Problems []string `json:"problems,omitempty"`
+	// KnownDownloaded zählt Nachrichten, deren Inhalt geladen wurde, obwohl
+	// sie danach per content_hash als schon vorhanden zugeordnet wurden
+	// (Message-ID fehlte oder die Größe wich von der lokalen Kopie ab, z. B.
+	// nach einem älteren Import); KnownDownloadedBytes sind ihre Bytes. Das
+	// macht unnötige Downloads messbar (Betreiber-Entscheid C2, 25.10.2026).
+	KnownDownloaded      int   `json:"already_known_downloaded,omitempty"`
+	KnownDownloadedBytes int64 `json:"already_known_downloaded_bytes,omitempty"`
 	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
@@ -151,6 +158,9 @@ type Report struct {
 	Updated   int             `json:"updated"`
 	Removed   int             `json:"removed"`
 	Errors    int             `json:"errors"`
+	// KnownDownloaded(Bytes): Summe der Ordner (MailboxReport).
+	KnownDownloaded      int   `json:"already_known_downloaded,omitempty"`
+	KnownDownloadedBytes int64 `json:"already_known_downloaded_bytes,omitempty"`
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
@@ -188,6 +198,8 @@ func (r *Report) add(m MailboxReport) {
 	r.Updated += m.Updated
 	r.Removed += m.Removed
 	r.Errors += m.Errors
+	r.KnownDownloaded += m.KnownDownloaded
+	r.KnownDownloadedBytes += m.KnownDownloadedBytes
 }
 
 // Engine synct ein Konto.
@@ -345,6 +357,11 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			rep.Duration = time.Since(start)
 			return rep, fmt.Errorf("jobs: %w", err)
 		}
+	}
+	if rep.KnownDownloaded > 0 {
+		// Nur Zahlen, keine Inhalte: Wie viel wurde geladen, obwohl es lokal
+		// schon da war (Erstabgleich nach Import, C2)?
+		e.log().Info("already known messages downloaded anyway", "count", rep.KnownDownloaded, "bytes", rep.KnownDownloadedBytes)
 	}
 	if rep.Mirrored, err = e.Store.CountPresentMessages(ctx, e.AccountID); err != nil {
 		return rep, err
@@ -599,6 +616,8 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				return err
 			} else if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: nm.Link})
+				rep.KnownDownloaded++
+				rep.KnownDownloadedBytes += nm.Size
 				return nil
 			}
 			pending.New = append(pending.New, nm)

@@ -160,6 +160,10 @@ func renderSync(w io.Writer, out any) error {
 	// die Skripte auswerten.
 	renderSyncDrafts(w, o.Drafts)
 	renderDraftCheck(w, o.DraftCheck)
+	if o.AlreadyKnownDownloaded > 0 {
+		// Messbarkeit (C2): Inhalt geladen, obwohl lokal schon vorhanden.
+		fmt.Fprintf(w, "already known, downloaded anyway: %d messages (%s)\n", o.AlreadyKnownDownloaded, humanBytes(o.AlreadyKnownDownloadedBytes))
+	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {
