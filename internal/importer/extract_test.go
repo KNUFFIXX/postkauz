@@ -95,7 +95,7 @@ func TestImportExtractInterrupted(t *testing.T) {
 	e := newEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err := e.importRunner(t).Import(ctx, store.Account{ID: e.acct, Name: "demo"},
+	out, err := e.importRunner(t).Import(ctx, store.Account{ID: e.acct, Name: "demo"},
 		ops.ImportOptions{Format: FormatMbox, Path: dir}, func(p ops.Progress) {
 			if p.Event == "extract" {
 				cancel()
@@ -109,5 +109,26 @@ func TestImportExtractInterrupted(t *testing.T) {
 	}
 	if k := e.count(t, `SELECT count(*) FROM attachments WHERE extract_status = 'failed'`); k != 0 {
 		t.Fatalf("%d attachments failed after interrupt", k)
+	}
+	// Bericht trotz Abbruch (rc7, W3): Der Index lief vor der Extraktion,
+	// die neuen Nachrichten sind suchbar; extract_pending stimmt.
+	if out.New != 45 || out.MessagesIndexed < 45 || out.ExtractPending != e.extractPending(t) || out.ExtractPending == 0 {
+		t.Fatalf("report on interrupt: new %d indexed %d extract_pending %d (store %d)", out.New, out.MessagesIndexed,
+			out.ExtractPending, e.extractPending(t))
+	}
+}
+
+// Budget 0 heißt Standardbudget (60 s), nicht „sofort aufhören": Mit
+// --no-extract und ohne eigenes Budget werden 5 Anhänge alle fertig.
+func TestImportNoExtractDefaultBudget(t *testing.T) {
+	dir := attachmentMbox(t, 5)
+	e := newEnv(t)
+	out, err := e.importRunner(t).Import(context.Background(), store.Account{ID: e.acct, Name: "demo"},
+		ops.ImportOptions{Format: FormatMbox, Path: dir, NoExtract: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AttachmentsExtracted != 5 || out.ExtractPending != 0 {
+		t.Fatalf("extracted %d, pending %d; want 5/0", out.AttachmentsExtracted, out.ExtractPending)
 	}
 }

@@ -79,21 +79,37 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 		if ex == nil {
 			ex = extract.New(extract.Options{})
 		}
-		jr := &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Extractor: ex, Log: r.Log, TakeOver: locked}
-		// Der Import arbeitet die Extraktion bis zum Ende ab (rc6); der Sync
-		// behält sein Budget, ebenso der Import mit --no-extract. Strg+C
-		// lässt den Rest pending, der nächste Sync macht weiter.
-		jr.ExtractBudget = jobs.NoExtractBudget
-		if o.NoExtract {
-			jr.ExtractBudget = r.BudgetWithoutExtract
-		}
+		jr := &jobs.Runner{Store: r.Store, Blobs: r.Blobs, Log: r.Log, TakeOver: locked}
 		if progress != nil {
 			jr.Progress = func(ev jobs.Event) { progress(ops.Progress{Event: ev.Kind, Done: ev.Done, Total: ev.Total}) }
 		}
-		rep, err := jr.RunAccount(ctx, a.ID)
-		out.AttachmentsExtracted, out.MessagesIndexed, out.IndexPending = rep.Extracted, rep.Indexed, rep.IndexPending
+		// Zuerst nur der Index (ohne Extraktor): Die neuen Nachrichten sind
+		// suchbar, auch wenn die lange Extraktion danach abgebrochen wird.
+		// Dann die Extraktion, beim Import bis zum Ende (rc6; mit
+		// --no-extract nur das Budget wie beim Sync), und der Index des
+		// extrahierten Textes. Strg+C lässt den Rest pending, der nächste
+		// Sync macht weiter; der Bericht kommt trotzdem (W3, rc7).
+		first, err := jr.RunAccount(ctx, a.ID)
+		out.MessagesIndexed, out.IndexPending = first.Indexed, first.IndexPending
+		if err == nil {
+			jr.Extractor = ex
+			jr.ExtractBudget = jobs.NoExtractBudget
+			if o.NoExtract {
+				jr.ExtractBudget = r.BudgetWithoutExtract
+			}
+			var second jobs.Report
+			second, err = jr.RunAccount(ctx, a.ID)
+			out.AttachmentsExtracted = second.Extracted
+			out.MessagesIndexed += second.Indexed
+			if second.Indexed > 0 || err == nil {
+				out.IndexPending = second.IndexPending
+			}
+		}
 		if n, perr := r.Store.ExtractPending(context.WithoutCancel(ctx), a.ID); perr == nil {
 			out.ExtractPending = n
+		}
+		if n, perr := r.Store.IndexPending(context.WithoutCancel(ctx), a.ID); perr == nil {
+			out.IndexPending = n
 		}
 		if err != nil {
 			out.DurationMS = time.Since(start).Milliseconds()

@@ -65,7 +65,8 @@ type ImportOutput struct {
 	MessagesIndexed      int   `json:"messages_indexed,omitempty"`
 	IndexPending         int   `json:"index_pending,omitempty"`
 	// ExtractPending: Anhänge, deren Text danach noch aussteht (Abbruch oder
-	// --no-extract; der nächste Sync macht weiter).
+	// --no-extract; der nächste Sync macht weiter). Bei einem Abbruch kommt
+	// der Bericht mit dem Fehler zurück (Executor, Result.Output).
 	ExtractPending int   `json:"extract_pending,omitempty"`
 	DurationMS     int64 `json:"duration_ms"`
 	DryRun         bool  `json:"dry_run"`
@@ -157,13 +158,19 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
 			}
 			out, err := runner.Import(ctx, a, ImportOptions{Format: in.Format, Path: in.Path, Mailbox: in.Mailbox,
 				LabelsFrom: in.LabelsFrom, Rescan: in.Rescan, DryRun: call.DryRun, NoExtract: in.NoExtract}, call.Progress)
-			if err != nil {
-				return nil, err
-			}
 			if out.Sources == nil {
 				out.Sources = []ImportSource{}
 			}
 			out.Account, out.Format, out.DryRun = a.Name, in.Format, call.DryRun
+			if err != nil {
+				// Abbruch (Strg+C): Der Bericht bis dahin geht mit dem Fehler
+				// zurück (die CLI zeigt ihn, Exit bleibt interrupted). Sonst
+				// nur der Fehler.
+				if ctx.Err() != nil {
+					return out, err
+				}
+				return nil, err
+			}
 			return out, nil
 		},
 	}

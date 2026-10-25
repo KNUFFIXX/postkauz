@@ -52,6 +52,10 @@ type binding struct {
 	// allein der Ausgabe gehört (draft show --eml); mit --json stehen sie in
 	// der Ausgabe der Operation.
 	notes func(out any) []string
+	// outputOnError: Liefert die Operation bei einem Fehler (Abbruch) noch
+	// eine Ausgabe, wird sie geschrieben, bevor der Fehler gemeldet wird
+	// (import: Bericht trotz Strg+C; Exit bleibt interrupted).
+	outputOnError bool
 }
 
 var bindings = []binding{
@@ -70,7 +74,7 @@ var bindings = []binding{
 		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes"}},
 	{op: "import.run", path: []string{"import"}, use: "<mbox|maildir> <file-or-folder>", args: cobra.ExactArgs(2),
 		flags: importFlags, input: importInput, human: renderImport, progress: importProgress,
-		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan", "no_extract"}},
+		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan", "no_extract"}, outputOnError: true},
 	{op: "mailboxes.list", path: []string{"mailbox", "list"}, args: cobra.NoArgs, input: accountOnlyInput,
 		human: renderMailboxes, covers: []string{"account"}},
 	{op: "mailboxes.overview", path: []string{"mailbox", "overview"}, use: "<mailbox-id>", args: cobra.ExactArgs(1),
@@ -199,6 +203,13 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 		// Aufrufers enthalten (Gegenprüfung S2.3, B1).
 		code, reason := errLogInfo(err)
 		a.log.Warn("operation failed", "op", b.op, "code", code, "reason", reason)
+		if b.outputOnError && res.Output != nil {
+			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+				_ = json.NewEncoder(a.stdout).Encode(res.Output)
+			} else {
+				_ = b.human(a.stdout, res.Output)
+			}
+		}
 		return err
 	}
 	a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)

@@ -274,7 +274,9 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
 		_, _ = x.appendAudit(actx, ev)
 		cancel()
-		return Result{Decision: dec, AuditID: auditID}, herr
+		// Output trotz Fehler: nur, wenn der Handler ihn ausdrücklich liefert
+		// (import.run bei Abbruch: Bericht bis dahin); sonst nil.
+		return Result{Output: out, Decision: dec, AuditID: auditID}, herr
 	}
 	return Result{Output: out, Decision: dec, AuditID: auditID}, nil
 }
