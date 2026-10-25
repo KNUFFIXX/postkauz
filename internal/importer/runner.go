@@ -71,6 +71,11 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 	rep, err := eng.Run(ctx, Options{Sources: srcs, DryRun: o.DryRun, Rescan: o.Rescan})
 	fill(&out, rep)
 	if err != nil {
+		// Auch bei Abbruch schon beim Einlesen: offene Arbeit aus der
+		// Datenbank (ohne den beendeten Kontext).
+		if !o.DryRun {
+			r.pending(ctx, a.ID, &out)
+		}
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out, err
 	}
@@ -90,7 +95,7 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 		// extrahierten Textes. Strg+C lässt den Rest pending, der nächste
 		// Sync macht weiter; der Bericht kommt trotzdem (W3, rc7).
 		first, err := jr.RunAccount(ctx, a.ID)
-		out.MessagesIndexed, out.IndexPending = first.Indexed, first.IndexPending
+		out.MessagesIndexed = first.Indexed
 		if err == nil {
 			jr.Extractor = ex
 			jr.ExtractBudget = jobs.NoExtractBudget
@@ -101,16 +106,8 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 			second, err = jr.RunAccount(ctx, a.ID)
 			out.AttachmentsExtracted = second.Extracted
 			out.MessagesIndexed += second.Indexed
-			if second.Indexed > 0 || err == nil {
-				out.IndexPending = second.IndexPending
-			}
 		}
-		if n, perr := r.Store.ExtractPending(context.WithoutCancel(ctx), a.ID); perr == nil {
-			out.ExtractPending = n
-		}
-		if n, perr := r.Store.IndexPending(context.WithoutCancel(ctx), a.ID); perr == nil {
-			out.IndexPending = n
-		}
+		r.pending(ctx, a.ID, &out)
 		if err != nil {
 			out.DurationMS = time.Since(start).Milliseconds()
 			return out, fmt.Errorf("jobs: %w", err)
@@ -118,6 +115,18 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 	}
 	out.DurationMS = time.Since(start).Milliseconds()
 	return out, nil
+}
+
+// pending trägt die offene Arbeit (Extraktion, Index) aus der Datenbank
+// ein, auch nach einem Abbruch (ohne den beendeten Kontext).
+func (r *Runner) pending(ctx context.Context, accountID int64, out *ops.ImportOutput) {
+	c := context.WithoutCancel(ctx)
+	if n, err := r.Store.ExtractPending(c, accountID); err == nil {
+		out.ExtractPending = n
+	}
+	if n, err := r.Store.IndexPending(c, accountID); err == nil {
+		out.IndexPending = n
+	}
 }
 
 // inputError: Pfad fehlt, kein mbox/Maildir o. Ä. ist ein Eingabefehler

@@ -235,3 +235,62 @@ func TestLinkedSizeDiffCountedAfterSave(t *testing.T) {
 		t.Fatalf("after a successful sync: %d, want 1", srep.LinkedSizeDiff)
 	}
 }
+
+// Eine Importkopie mit \Draft (Maildir-Flag D) nutzt die Toleranz für die
+// Thunderbird-Fassung nie: Erst Sync, dann Import der um 4 Bytes längeren
+// Kopie: ohne D dieselbe Nachricht, mit D eine eigene (rc8).
+func TestImportNearMatchNotForDrafts(t *testing.T) {
+	full := rc4Multipart(10)
+	server := full[:len(full)-4]
+	for _, tc := range []struct {
+		flags    string
+		messages int
+	}{{"S", 1}, {"DS", 2}} {
+		t.Run(tc.flags, func(t *testing.T) {
+			e := newEnv(t)
+			addr, _ := rc4Server(t, "INBOX", []imap.Flag{imap.FlagSeen}, server)
+			if srep := e.sync(t, addr); srep.New != 1 {
+				t.Fatalf("sync = %+v", srep)
+			}
+			dir := t.TempDir()
+			for _, s := range []string{"cur", "new", "tmp"} {
+				if err := os.MkdirAll(filepath.Join(dir, s), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, "cur", "1700000000.M1P1.rc8:2,"+tc.flags), full, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			e.run(t, dir, FormatMaildir, "", Options{})
+			if n := e.count(t, `SELECT count(*) FROM messages`); n != tc.messages {
+				t.Fatalf("messages = %d, want %d", n, tc.messages)
+			}
+		})
+	}
+}
+
+// Teilkopie bei zwei Nachrichten mit gleicher Message-ID: Zugeordnet wird
+// die mit Rohmail, die kein Entwurf ist (rc8).
+func TestImportPartialPrefersNonDraft(t *testing.T) {
+	full := rc4Multipart(11)
+	partial := append(append([]byte{}, full[:bytes.Index(full, []byte("\r\n\r\n"))+4]...), "\r\n"...)
+	other := bytes.Replace(full, []byte("Text 11"), []byte("Text elf"), 1) // zweite Fassung, gleiche Message-ID
+	dir := t.TempDir()
+	writeTBStatus(t, filepath.Join(dir, "A"), "0001", [][]byte{full, other})
+	e := newEnv(t)
+	e.run(t, dir, FormatMbox, "", Options{})
+	// Die ältere Fassung wird zum Entwurf (Flag), die jüngere nicht.
+	if err := e.st.ExecForTest(`UPDATE messages SET flag_draft = 1 WHERE id = (SELECT min(id) FROM messages)`); err != nil {
+		t.Fatal(err)
+	}
+	dir2 := t.TempDir()
+	writeTBStatus(t, filepath.Join(dir2, "B"), "0401", [][]byte{partial})
+	e.run(t, dir2, FormatMbox, "", Options{})
+	if n := e.count(t, `SELECT count(*) FROM messages`); n != 2 {
+		t.Fatalf("messages = %d, want 2", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM message_import_folders mf JOIN import_folders f ON f.id = mf.folder_id
+		JOIN messages m ON m.id = mf.message_id WHERE f.path = 'B' AND m.flag_draft = 0`); n != 1 {
+		t.Fatal("partial copy not linked to the non-draft message")
+	}
+}

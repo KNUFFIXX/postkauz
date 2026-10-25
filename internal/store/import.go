@@ -90,6 +90,23 @@ func (s *SQLite) MessageByHeaderID(ctx context.Context, accountID int64, message
 	return id, err == nil, err
 }
 
+// MessageForLink wählt unter den Nachrichten mit dieser Message-ID die, der
+// eine Teilkopie zugeordnet wird: bevorzugt eine mit Rohmail, die kein
+// Entwurf ist (wie notDraftCond), sonst die älteste.
+func (s *SQLite) MessageForLink(ctx context.Context, accountID int64, messageID string) (int64, bool, error) {
+	if messageID == "" {
+		return 0, false, nil
+	}
+	var id int64
+	err := s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m WHERE m.account_id = ? AND m.message_id_header = ?
+		ORDER BY CASE WHEN m.blob_sha256 IS NOT NULL AND `+notDraftCond+` THEN 0 ELSE 1 END, m.id LIMIT 1`,
+		accountID, messageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
+}
+
 // MessageByContentHash sucht die älteste Nachricht des Kontos mit einem der
 // Hashes (content_hash; der Import prüft Varianten der Zeilenenden am Ende).
 func (s *SQLite) MessageByContentHash(ctx context.Context, accountID int64, hashes ...string) (int64, bool, error) {

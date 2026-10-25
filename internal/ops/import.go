@@ -67,9 +67,12 @@ type ImportOutput struct {
 	// ExtractPending: Anhänge, deren Text danach noch aussteht (Abbruch oder
 	// --no-extract; der nächste Sync macht weiter). Bei einem Abbruch kommt
 	// der Bericht mit dem Fehler zurück (Executor, Result.Output).
-	ExtractPending int   `json:"extract_pending,omitempty"`
-	DurationMS     int64 `json:"duration_ms"`
-	DryRun         bool  `json:"dry_run"`
+	ExtractPending int `json:"extract_pending,omitempty"`
+	// Interrupted: Der Import wurde abgebrochen (Strg+C); der Bericht
+	// zeigt den Stand bis dahin, Exit interrupted.
+	Interrupted bool  `json:"interrupted,omitempty"`
+	DurationMS  int64 `json:"duration_ms"`
+	DryRun      bool  `json:"dry_run"`
 }
 
 // ImportRunner führt den Import aus (internal/importer). Im Trockenlauf
@@ -132,7 +135,7 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
     "new": {"type": "integer"}, "existing": {"type": "integer"}, "skipped": {"type": "integer"}, "errors": {"type": "integer"},
     "linked": {"type": "integer"}, "sources_unchanged": {"type": "integer"}, "files_ignored": {"type": "integer"},
     "bytes": {"type": "integer"}, "attachments_extracted": {"type": "integer"}, "messages_indexed": {"type": "integer"},
-    "index_pending": {"type": "integer"}, "extract_pending": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
+    "index_pending": {"type": "integer"}, "extract_pending": {"type": "integer"}, "interrupted": {"type": "boolean"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"}
   },
   "required": ["account", "format", "sources", "new", "existing", "skipped", "errors", "linked", "sources_unchanged",
     "files_ignored", "bytes", "duration_ms", "dry_run"]
@@ -168,6 +171,7 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
 				// zurück (die CLI zeigt ihn, Exit bleibt interrupted). Sonst
 				// nur der Fehler.
 				if ctx.Err() != nil {
+					out.Interrupted = true
 					return out, err
 				}
 				return nil, err

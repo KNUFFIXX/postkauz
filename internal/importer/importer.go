@@ -39,6 +39,7 @@ import (
 // Store ist der Teil des Stores, den der Import braucht.
 type Store interface {
 	MessageByHeaderID(ctx context.Context, accountID int64, messageID string) (int64, bool, error)
+	MessageForLink(ctx context.Context, accountID int64, messageID string) (int64, bool, error)
 	MessageByContentHash(ctx context.Context, accountID int64, hashes ...string) (int64, bool, error)
 	MessageNearImport(ctx context.Context, accountID int64, messageID string, size, maxExtra int64, subject string, dateHeader time.Time) (int64, bool, error)
 	ImportSourceState(ctx context.Context, accountID int64, source, folder, mode string) (store.ImportSource, bool, error)
@@ -230,8 +231,10 @@ type item struct {
 	partial bool
 	// reopen liest dieselbe Nachricht noch einmal von vorn (Kopf ohne
 	// Thunderbird-Zeilen, Rumpf), über dasselbe Datei-Handle (ReadAt): Ersetzt
-	// Thunderbird die Datei inzwischen (Kompaktieren), liest es weiter die
-	// alte. Gebraucht, wenn eine Nachricht mit bekannter Message-ID erst
+	// Thunderbird die Datei inzwischen (Kompaktieren), liest es unter Linux
+	// und macOS weiter die alte. Unter Windows öffnet os.Open ohne
+	// FILE_SHARE_DELETE: Thunderbird kann die Datei während des Imports
+	// nicht ersetzen und kompaktiert später. Gebraucht, wenn eine Nachricht mit bekannter Message-ID erst
 	// gehasht wurde und sich als andere Fassung herausstellt.
 	reopen func() (header []byte, body io.Reader, drain func() error, err error)
 	// expect: content_hash des ersten Lesens; das zweite muss ihn ergeben,
@@ -294,7 +297,7 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 		// geändert): nichts speichern. Ein schon geschriebener Blob bleibt
 		// ohne Verweis.
 		rep.Errors++
-		rep.problem("%s: message changed between two reads (file rewritten, e.g. compacted by Thunderbird); not stored, run the import again", it.pos)
+		rep.problem("%s: message changed between two reads (file rewritten, e.g. compacted by Thunderbird); not stored; the source counts as done, so run the import again with --rescan", it.pos)
 		return nil
 	}
 	if ok, err := r.existing(variants, it.flags, rep); err != nil || ok {
@@ -369,7 +372,7 @@ func (r *run) linkByMID(mid string, f store.ImportFolderFlags, rep *SourceReport
 		}
 		return nil
 	}
-	id, ok, err := r.e.Store.MessageByHeaderID(r.ctx, r.e.AccountID, mid)
+	id, ok, err := r.e.Store.MessageForLink(r.ctx, r.e.AccountID, mid)
 	if err != nil {
 		return storeError{err}
 	}
