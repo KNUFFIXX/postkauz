@@ -82,10 +82,26 @@ func TestMirrorBatchIdempotentLinksFlagsRemoval(t *testing.T) {
 		ok    bool
 		extra int64
 	}{{100, true, 0}, {96, true, 4}, {94, true, 6}, {93, false, 0}, {101, false, 0}} {
-		id, extra, ok, err := s.FindLinkCandidateUpTo(ctx, acct, archiv, "a@example.org", c.size, 6)
+		id, extra, ok, err := s.FindLinkCandidateUpTo(ctx, acct, archiv,
+			LinkQuery{MessageID: "a@example.org", Size: c.size, MaxExtra: 6, Subject: "Betreff a@example.org"})
 		if err != nil || ok != c.ok || extra != c.extra || (ok && id != mid) {
 			t.Fatalf("server size %d: id %d extra %d ok %v err %v, want ok %v extra %d", c.size, id, extra, ok, err, c.ok, c.extra)
 		}
+	}
+	// Anderer Betreff oder anderes Date (wiederverwendete Message-ID): keine
+	// Toleranz; exakte Größe bleibt unabhängig vom Kopf; negatives MaxExtra
+	// gilt als 0.
+	for _, q := range []LinkQuery{
+		{MessageID: "a@example.org", Size: 98, MaxExtra: 6, Subject: "anderer Betreff"},
+		{MessageID: "a@example.org", Size: 98, MaxExtra: 6, Subject: "Betreff a@example.org", DateHeader: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)},
+		{MessageID: "a@example.org", Size: 98, MaxExtra: -1, Subject: "Betreff a@example.org"},
+	} {
+		if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, archiv, q); ok {
+			t.Fatalf("%+v: linked despite different header or no tolerance", q)
+		}
+	}
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, archiv, LinkQuery{MessageID: "a@example.org", Size: 100, MaxExtra: -1, Subject: "x"}); !ok {
+		t.Fatal("exact size must link whatever the header")
 	}
 	if res, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: archiv,
 		Links: []Link{{MessageID: mid, Flags: LinkFlags{UID: 40, Flagged: true, Keywords: []string{"$Label1"}}}}}); err != nil || res.Linked != 1 {
@@ -169,21 +185,104 @@ func TestFindLinkCandidateUpToSkipsDrafts(t *testing.T) {
 	}
 	_ = s.ExecForTest(`INSERT INTO blobs(sha256,size,created_at) VALUES ('x',1,1)`)
 	_ = s.ExecForTest(`UPDATE messages SET blob_sha256 = 'x'`)
+	dq := func(size int64) LinkQuery {
+		return LinkQuery{MessageID: "d@example.org", Size: size, MaxExtra: 6, Subject: "Betreff d@example.org"}
+	}
 	// Im Entwürfe-Ordner (Größe 100): Server 98 nicht, Server 100 schon.
-	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], "d@example.org", 98, 6); ok {
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); ok {
 		t.Fatal("copy in the Drafts folder linked despite size difference")
 	}
-	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], "d@example.org", 100, 6); !ok {
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(100)); !ok {
 		t.Fatal("exact size must still link")
 	}
 	// Nur \Draft, nicht im Entwürfe-Ordner: ebenso.
 	_ = s.ExecForTest(`DELETE FROM message_mailboxes`)
 	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 1`)
-	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], "d@example.org", 98, 6); ok {
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); ok {
 		t.Fatal("\\Draft message linked despite size difference")
 	}
 	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 0`)
-	if _, extra, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], "d@example.org", 98, 6); !ok || extra != 2 {
+	if _, extra, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); !ok || extra != 2 {
 		t.Fatalf("plain message: ok %v extra %d, want true 2", ok, extra)
+	}
+	// Ordnerkopie mit \Draft (nur am Link), in einem gewöhnlichen Ordner.
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: ids["INBOX"],
+		Links: []Link{{MessageID: e1(t, s, "d@example.org"), Flags: LinkFlags{UID: 5, Draft: true}}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 0`) // nur das Flag der Ordnerkopie prüfen
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); ok {
+		t.Fatal("folder copy with \\Draft linked despite size difference")
+	}
+	_ = s.ExecForTest(`DELETE FROM message_mailboxes`)
+	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 0`) // der Link oben kann das Flag der Nachricht gesetzt haben
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); !ok {
+		t.Fatal("plain message again: must link")
+	}
+	// Ordner, in den PostKauz Entwürfe abgelegt hat (remote_mailbox_id), und
+	// die Message-ID eines PostKauz-Entwurfs: je keine Toleranz, exakt ja.
+	if err := s.ExecForTest(`INSERT INTO drafts(account_id, kind, message_id_header, created_at, updated_at) VALUES (?, 'new', 'd@example.org', 1, 1)`, acct); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); ok {
+		t.Fatal("message with the Message-ID of a PostKauz draft linked despite size difference")
+	}
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(100)); !ok {
+		t.Fatal("exact size must still link")
+	}
+	_ = s.ExecForTest(`UPDATE drafts SET message_id_header = 'other@example.org', remote_mailbox_id = ?`, ids["INBOX"])
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: ids["INBOX"],
+		Links: []Link{{MessageID: e1(t, s, "d@example.org"), Flags: LinkFlags{UID: 6}}}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.ExecForTest(`UPDATE messages SET flag_draft = 0`)
+	if _, _, ok, _ := s.FindLinkCandidateUpTo(ctx, acct, ids["Sent"], dq(98)); ok {
+		t.Fatal("copy in a folder PostKauz pushes drafts to linked despite size difference")
+	}
+}
+
+// e1 liefert die ID der (einzigen) Nachricht mit dieser Message-ID.
+func e1(t *testing.T, s *SQLite, mid string) int64 {
+	t.Helper()
+	n, err := s.QueryIntForTest(`SELECT id FROM messages WHERE message_id_header = ?`, mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return int64(n)
+}
+
+// Zwei tolerante Kandidaten (+2 und +5, gleicher Kopf): die kleinere
+// Differenz gewinnt, auch wenn sie die höhere ID hat.
+func TestFindLinkCandidateUpToSmallestDifference(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acct := newAccount(t, s)
+	if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+		{Path: "Archiv", Name: "Archiv", Role: "archive"}}); err != nil {
+		t.Fatal(err)
+	}
+	boxes, _ := s.Mailboxes(ctx, acct)
+	inbox, archiv := boxes[0].ID, boxes[1].ID
+	if boxes[0].Path != "INBOX" {
+		inbox, archiv = archiv, inbox
+	}
+	big, small := newMsg(1, "z@example.org", false), newMsg(2, "z@example.org", false)
+	big.Size, small.Size = 105, 102
+	small.ContentHash = "h-other"
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: inbox, New: []NewMessage{big, small},
+		State: &MailboxState{UIDValidity: 1, UIDNext: 3, Phase: PhaseReady, Total: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.QueryIntForTest(`SELECT count(*) FROM messages`); n != 2 {
+		t.Fatalf("messages = %d, want 2 (test setup)", n)
+	}
+	_ = s.ExecForTest(`INSERT INTO blobs(sha256,size,created_at) VALUES ('x',1,1)`)
+	_ = s.ExecForTest(`UPDATE messages SET blob_sha256 = 'x'`)
+	_ = s.ExecForTest(`DELETE FROM message_mailboxes`)
+	smallID, _ := s.QueryIntForTest(`SELECT id FROM messages WHERE size = 102`)
+	id, extra, ok, err := s.FindLinkCandidateUpTo(ctx, acct, archiv,
+		LinkQuery{MessageID: "z@example.org", Size: 100, MaxExtra: 6, Subject: "Betreff z@example.org"})
+	if err != nil || !ok || id != int64(smallID) || extra != 2 {
+		t.Fatalf("id %d extra %d ok %v err %v, want %d / 2", id, extra, ok, err, smallID)
 	}
 }

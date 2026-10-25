@@ -205,37 +205,60 @@ func (s *SQLite) CountPresentMessages(ctx context.Context, accountID int64) (int
 // UIDVALIDITY-Wechsel). So wird der Inhalt nicht erneut geladen und es
 // entsteht keine Dublette.
 func (s *SQLite) FindLinkCandidate(ctx context.Context, accountID, mailboxID int64, messageID string, size int64) (int64, bool, error) {
-	id, _, ok, err := s.FindLinkCandidateUpTo(ctx, accountID, mailboxID, messageID, size, 0)
+	id, _, ok, err := s.FindLinkCandidateUpTo(ctx, accountID, mailboxID, LinkQuery{MessageID: messageID, Size: size})
 	return id, ok, err
 }
 
+// LinkQuery beschreibt eine Servernachricht für FindLinkCandidateUpTo.
+type LinkQuery struct {
+	MessageID string // ohne <>
+	Size      int64  // RFC822.SIZE
+	// MaxExtra: so viele Bytes darf die lokale Kopie größer sein (0 oder
+	// negativ = exakt).
+	MaxExtra int64
+	// Subject und DateHeader aus dem Kopf der Servernachricht, gelesen wie
+	// beim Speichern (bereinigter Betreff; Nullzeit = keine lesbare
+	// Date-Kopfzeile). Nur für Kandidaten mit abweichender Größe geprüft.
+	Subject    string
+	DateHeader time.Time
+}
+
 // FindLinkCandidateUpTo wie FindLinkCandidate, aber die lokale Kopie darf
-// bis zu maxExtra Bytes größer sein als die des Servers (nie kleiner).
+// bis zu q.MaxExtra Bytes größer sein als die des Servers (nie kleiner).
 // Grund (Befund mit Echtdaten 25.10.2026, Restfall von C2): Thunderbird
 // ergänzt beim Speichern ein fehlendes Zeilenende am Schluss (+2) bzw. eine
-// abgeschnittene abschließende MIME-Grenze samt Zeilenende (+5). Vorrang hat
-// die exakte Größe, dann die kleinste Differenz, dann die niedrigste ID;
-// extra ist die Differenz des Treffers (lokal minus Server). maxExtra 0 =
-// exakt (Entwürfe, Versand- und Übernahme-Erkennung).
+// abgeschnittene abschließende MIME-Grenze samt Zeilenende (+4, gemessen
+// auch +5). Vorrang hat die exakte Größe, dann die kleinste Differenz, dann
+// die niedrigste ID; extra ist die Differenz des Treffers (lokal minus
+// Server).
 //
-// Ein Kandidat mit abweichender Größe ist nie ein Entwurf: nicht mit
-// \Draft, nicht im Ordner mit Rolle drafts, nicht die Message-ID eines
-// Entwurfs von PostKauz. Sonst könnte die gesendete Fassung eines Entwurfs
-// (gleiche Message-ID, wenige Bytes kleiner) an die Entwurfskopie gehängt
-// werden, und die Versanderkennung sähe sie nicht (sie schließt Inhalte
-// abgelegter Entwürfe aus).
-func (s *SQLite) FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, messageID string, size, maxExtra int64) (id, extra int64, ok bool, err error) {
-	if messageID == "" || maxExtra < 0 {
+// Ein Kandidat mit abweichender Größe muss außerdem
+//   - denselben Kopf haben: gleicher Betreff und gleiche Date-Kopfzeile
+//     (Thunderbird ändert nur das Ende; eine wiederverwendete Message-ID
+//     mit anderem Inhalt wird so nicht verknüpft), und
+//   - kein Entwurf sein: nicht mit \Draft (Nachricht oder eine Ordnerkopie),
+//     nicht im Ordner mit Rolle drafts oder in einem Ordner, in den PostKauz
+//     Entwürfe abgelegt hat (wie die Versanderkennung, sentdetect.go), nicht
+//     die Message-ID eines Entwurfs von PostKauz. Sonst könnte die gesendete
+//     Fassung eines Entwurfs an der Entwurfskopie hängen, und die
+//     Versanderkennung, die Inhalte abgelegter Entwürfe ausschließt, sähe
+//     sie nicht.
+func (s *SQLite) FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, q LinkQuery) (id, extra int64, ok bool, err error) {
+	if q.MessageID == "" {
 		return 0, 0, false, nil
 	}
+	maxExtra := max(q.MaxExtra, 0)
 	err = s.db.QueryRowContext(ctx, `SELECT m.id, m.size - ? FROM messages m
 		WHERE m.account_id = ? AND m.message_id_header = ? AND m.size BETWEEN ? AND ? AND m.blob_sha256 IS NOT NULL
 		  AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id AND mm.mailbox_id = ?)
 		  AND (m.size = ? OR (m.flag_draft = 0
-		    AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
-		                    WHERE mm.message_id = m.id AND b.role = 'drafts')
+		    AND COALESCE(m.subject, '') = ? AND m.date_header IS ?
+		    AND NOT EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
+		      WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
+		        OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
 		    AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.account_id = m.account_id AND d.message_id_header = m.message_id_header)))
-		ORDER BY m.size - ?, m.id LIMIT 1`, size, accountID, messageID, size, size+maxExtra, mailboxID, size, size).Scan(&id, &extra)
+		ORDER BY m.size - ?, m.id LIMIT 1`, q.Size, accountID, q.MessageID, q.Size, q.Size+maxExtra, mailboxID, q.Size,
+		q.Subject, nullTime(q.DateHeader), q.Size).Scan(&id, &extra)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, false, nil
 	}

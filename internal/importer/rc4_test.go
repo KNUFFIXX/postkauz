@@ -59,9 +59,16 @@ func TestSyncLinksDespiteSmallSizeDifference(t *testing.T) {
 		// Server endet mit der abschließenden Grenze ohne Zeilenende;
 		// Thunderbird hat CRLF ergänzt: Spiegel +2.
 		{"boundary without line end", "INBOX", seen, noEOL, full, 1, false, 1},
-		// Server endet mitten in der Grenzzeile; Thunderbird hat sie samt
-		// "--" und CRLF ergänzt: Spiegel +5.
+		// Server endet mit "--grenze-1" ohne "--" und ohne Zeilenende;
+		// Thunderbird hat "--" und CRLF ergänzt: Spiegel +4.
+		{"boundary without closing dashes", "INBOX", seen, full[:len(full)-4], full, 1, false, 1},
+		// Gemessen auch +5 (ein Zeichen mehr fehlt am Server; Ursache offen,
+		// hier nur abgesichert).
 		{"cut inside boundary", "INBOX", seen, full[:len(full)-5], full, 1, false, 1},
+		// Gleiche Message-ID, 2 Bytes kleiner, aber anderer Betreff
+		// (wiederverwendete Message-ID): keine Verknüpfung per Kopfdaten;
+		// der Inhalt ist anders, also eine zweite Nachricht.
+		{"other subject", "INBOX", seen, bytes.Replace(noEOL, []byte("Subject: rc4 1"), []byte("Subject: rc4 X"), 1), full, 0, true, 2},
 		// Entwürfe: exakt, Inhalt wird geladen (dann per content_hash).
 		{"drafts folder", "Drafts", seen, noEOL, full, 0, true, 1},
 		{"draft flag", "INBOX", []imap.Flag{imap.FlagSeen, imap.FlagDraft}, noEOL, full, 0, true, 1},
@@ -137,5 +144,34 @@ func TestSyncPrefersExactSizeCandidate(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT message_id FROM message_mailboxes`); n != exactID {
 		t.Fatalf("linked message %d, want the exact one %d", n, exactID)
+	}
+}
+
+// Gmail führt eine Mail in INBOX und „Alle Nachrichten": Der Zähler nennt
+// verschiedene Nachrichten, nicht Ordnerkopien.
+func TestSyncLinkedSizeDiffCountsMessages(t *testing.T) {
+	full := rc4Multipart(3)
+	noEOL := bytes.TrimSuffix(full, []byte("\r\n"))
+	dir := t.TempDir()
+	writeTB(t, filepath.Join(dir, "INBOX"), [][]byte{full})
+	e := newEnv(t)
+	if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 1 {
+		t.Fatalf("import = %+v", rep)
+	}
+	u := imapmemserver.NewUser(memUser, string(memPass))
+	for _, f := range []string{"INBOX", "Alle Nachrichten"} {
+		_ = u.Create(f, nil)
+		if _, err := u.Append(f, rawLit{bytes.NewReader(noEOL)}, &imap.AppendOptions{Flags: []imap.Flag{imap.FlagSeen},
+			Time: time.Date(2026, 10, 15, 8, 0, 0, 0, time.UTC)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bodies := &atomic.Int64{}
+	srep := e.sync(t, serveMem(t, u, bodies))
+	if bodies.Load() != 0 || srep.LinkedSizeDiff != 1 || srep.Errors != 0 {
+		t.Fatalf("fetched %d, linked despite size difference %d (want 1 message), errors %d", bodies.Load(), srep.LinkedSizeDiff, srep.Errors)
+	}
+	if n := e.count(t, `SELECT count(*) FROM message_mailboxes`); n != 2 {
+		t.Fatalf("folder copies = %d, want 2", n)
 	}
 }

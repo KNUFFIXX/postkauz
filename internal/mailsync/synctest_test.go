@@ -82,7 +82,7 @@ func (nopStore) Mailboxes(context.Context, int64) ([]store.Mailbox, error) { ret
 func (nopStore) MailboxUIDs(context.Context, int64) ([]uint32, error)      { return nil, nil }
 func (nopStore) LinkCount(context.Context, int64) (int, error)             { return 0, nil }
 func (nopStore) CountPresentMessages(context.Context, int64) (int, error)  { return 0, nil }
-func (nopStore) FindLinkCandidateUpTo(context.Context, int64, int64, string, int64, int64) (int64, int64, bool, error) {
+func (nopStore) FindLinkCandidateUpTo(context.Context, int64, int64, store.LinkQuery) (int64, int64, bool, error) {
 	return 0, 0, false, nil
 }
 func (nopStore) FindByContentHash(context.Context, int64, int64, ...string) (int64, bool, error) {

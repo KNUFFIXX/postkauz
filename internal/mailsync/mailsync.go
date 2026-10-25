@@ -20,6 +20,7 @@
 package mailsync
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -61,7 +62,7 @@ type Store interface {
 	MailboxUIDs(ctx context.Context, mailboxID int64) ([]uint32, error)
 	LinkCount(ctx context.Context, mailboxID int64) (int, error)
 	CountPresentMessages(ctx context.Context, accountID int64) (int, error)
-	FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, messageID string, size, maxExtra int64) (id, extra int64, ok bool, err error)
+	FindLinkCandidateUpTo(ctx context.Context, accountID, mailboxID int64, q store.LinkQuery) (id, extra int64, ok bool, err error)
 	FindByContentHash(ctx context.Context, accountID, mailboxID int64, hashes ...string) (int64, bool, error)
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
@@ -146,10 +147,10 @@ type MailboxReport struct {
 	// Nicht im JSON je Ordner (ops.SyncMailbox), nur in der Summe des Laufs.
 	KnownDownloaded      int   `json:"-"`
 	KnownDownloadedBytes int64 `json:"-"`
-	// LinkedSizeDiff zählt Nachrichten, die per Message-ID ohne
-	// Inhaltsabruf verknüpft wurden, obwohl die lokale Kopie bis zu
-	// MaxLinkSizeExtra Bytes größer ist (Thunderbird-Import).
-	LinkedSizeDiff int `json:"-"`
+	// LinkedSizeDiff sind die lokalen Nachrichten, an die eine Ordnerkopie
+	// per Message-ID ohne Inhaltsabruf gehängt wurde, obwohl die lokale
+	// Kopie bis zu MaxLinkSizeExtra Bytes größer ist (Thunderbird-Import).
+	LinkedSizeDiff []int64 `json:"-"`
 	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
@@ -166,7 +167,10 @@ type Report struct {
 	// KnownDownloaded(Bytes): Summe der Ordner (MailboxReport).
 	KnownDownloaded      int   `json:"already_known_downloaded,omitempty"`
 	KnownDownloadedBytes int64 `json:"already_known_downloaded_bytes,omitempty"`
-	LinkedSizeDiff       int   `json:"linked_despite_size_difference,omitempty"`
+	// LinkedSizeDiff zählt verschiedene Nachrichten (nicht Ordnerkopien:
+	// Gmail führt eine Mail in INBOX und „Alle Nachrichten").
+	LinkedSizeDiff int `json:"linked_despite_size_difference,omitempty"`
+	linkedSizeIDs  map[int64]bool
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
@@ -206,7 +210,13 @@ func (r *Report) add(m MailboxReport) {
 	r.Errors += m.Errors
 	r.KnownDownloaded += m.KnownDownloaded
 	r.KnownDownloadedBytes += m.KnownDownloadedBytes
-	r.LinkedSizeDiff += m.LinkedSizeDiff
+	for _, id := range m.LinkedSizeDiff {
+		if r.linkedSizeIDs == nil {
+			r.linkedSizeIDs = map[int64]bool{}
+		}
+		r.linkedSizeIDs[id] = true
+	}
+	r.LinkedSizeDiff = len(r.linkedSizeIDs)
 }
 
 // Engine synct ein Konto.
@@ -260,8 +270,10 @@ func (e *Engine) emit(ev Event) {
 // die des Servers, damit der Sync sie per Message-ID ohne Inhaltsabruf
 // verknüpft (Restfall von C2, Befund mit Echtdaten 25.10.2026: Thunderbird
 // ergänzt ein fehlendes Zeilenende, +2, bzw. eine abgeschnittene
-// abschließende MIME-Grenze, +5). Nie für Entwürfe, nie Server größer.
-const MaxLinkSizeExtra = 6
+// abschließende MIME-Grenze, +4/+5). Nie für Entwürfe, nie Server größer;
+// Betreff und Date müssen gleich sein. Der Wert steht in ops, weil das
+// Ausgabeschema von sync.run ihn nennt.
+const MaxLinkSizeExtra = ops.MaxLinkSizeExtra
 
 // isDraftsMailbox: Ordner mit Rolle drafts oder der konfigurierte
 // Entwürfe-Ordner ([draft] mailbox).
@@ -605,16 +617,14 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 			// Toleranz nur für Nachrichten, die keine Entwürfe sind: Im
 			// Entwürfe-Ordner und bei \Draft bleibt es exakt
 			// (Übernahme-Erkennung, Versanderkennung).
-			var maxExtra int64
-			if !draftsBox && !h.Flags.Draft {
-				maxExtra = MaxLinkSizeExtra
-			}
-			if id, extra, ok, err := e.Store.FindLinkCandidateUpTo(ctx, e.AccountID, mb.ID, h.MessageID, h.Size, maxExtra); err != nil {
+			id, extra, ok, err := e.findLinkCandidate(ctx, mb.ID, h, !draftsBox && !h.Flags.Draft)
+			if err != nil {
 				return err
-			} else if ok && !linked(pending, id) {
+			}
+			if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: linkFlags(h.UID, h.ModSeq, h.Flags)})
 				if extra != 0 {
-					rep.LinkedSizeDiff++
+					rep.LinkedSizeDiff = append(rep.LinkedSizeDiff, id)
 				}
 				continue
 			}
@@ -686,6 +696,27 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 	}
 	return flush(true)
+}
+
+// findLinkCandidate sucht die lokale Nachricht zu einer Servernachricht
+// ohne Inhaltsabruf: zuerst mit exakter Größe; nur ohne Treffer und wenn
+// tolerant erlaubt ist (kein Entwurf), mit bis zu MaxLinkSizeExtra Bytes
+// größerer lokaler Kopie und gleichem Betreff und Date (aus dem schon
+// geholten Kopf, gelesen wie beim Speichern).
+func (e *Engine) findLinkCandidate(ctx context.Context, mailboxID int64, h provider.Header, tolerant bool) (id, extra int64, ok bool, err error) {
+	q := store.LinkQuery{MessageID: h.MessageID, Size: h.Size}
+	if id, extra, ok, err = e.Store.FindLinkCandidateUpTo(ctx, e.AccountID, mailboxID, q); err != nil || ok || !tolerant || h.MessageID == "" {
+		return id, extra, ok, err
+	}
+	m, perr := mimeparse.Parse(bytes.NewReader(h.RawHeader), mimeparse.Options{InternalDate: h.InternalDate})
+	if perr != nil {
+		return 0, 0, false, nil // Kopf unlesbar: keine Toleranz
+	}
+	q.MaxExtra, q.Subject = MaxLinkSizeExtra, sanitize.Text(m.Subject)
+	if m.DateSource == mimeparse.DateFromHeader {
+		q.DateHeader = m.Date
+	}
+	return e.Store.FindLinkCandidateUpTo(ctx, e.AccountID, mailboxID, q)
 }
 
 // skipTooLarge sortiert Nachrichten aus, die laut Server (RFC822.SIZE)

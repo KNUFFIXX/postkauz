@@ -165,7 +165,8 @@ func renderSync(w io.Writer, out any) error {
 		fmt.Fprintf(w, "already known, downloaded anyway: %d messages (%s)\n", o.AlreadyKnownDownloaded, humanBytes(o.AlreadyKnownDownloadedBytes))
 	}
 	if o.LinkedDespiteSizeDifference > 0 {
-		// Per Message-ID verknüpft, lokale Kopie bis 6 Bytes größer (C2).
+		// Per Message-ID verknüpft, lokale Kopie bis ops.MaxLinkSizeExtra
+		// Bytes größer (Restfall C2); gezählt werden Nachrichten.
 		fmt.Fprintf(w, "linked despite size difference: %d messages\n", o.LinkedDespiteSizeDifference)
 	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
