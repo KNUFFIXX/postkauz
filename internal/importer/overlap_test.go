@@ -52,6 +52,13 @@ func memServer(t testing.TB, c *corpus.Corpus, keep func(i int) bool) string {
 			t.Fatal(err)
 		}
 	}
+	return serveMem(t, u)
+}
+
+// serveMem startet einen IMAP-Server im Prozess für den Benutzer u
+// (nur localhost) und liefert seine Adresse.
+func serveMem(t testing.TB, u *imapmemserver.User) string {
+	t.Helper()
 	srv := imapserver.New(&imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			return imapmemserver.NewUserSession(u), nil, nil

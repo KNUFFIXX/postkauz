@@ -40,9 +40,13 @@ func TestMboxFramingQuotingAndTrailingLines(t *testing.T) {
 		"From - Thu Oct 15 10:01:00 2026\n" +
 		"Subject: zwei\n\nletzte Zeile ohne Ende"
 	got := readAll(t, mbox)
+	// Seit C2 (25.10.2026) byte-genau: Von den zwei Leerzeilen vor der
+	// Trennzeile ist nur die letzte Rahmen, die erste bleibt; die letzte
+	// Zeile der Datei bekommt kein Zeilenende mehr (früher: alle Leerzeilen
+	// weg, Zeilenende ergänzt).
 	want := []string{
-		"Subject: eins\nMessage-ID: <a@example.org>\n\nFrom the desk: Text\n>>From zwei\nFrom the desk of nobody (kein Datum, also keine Trennzeile)\n",
-		"Subject: zwei\n\nletzte Zeile ohne Ende\n",
+		"Subject: eins\nMessage-ID: <a@example.org>\n\nFrom the desk: Text\n>>From zwei\nFrom the desk of nobody (kein Datum, also keine Trennzeile)\n\n",
+		"Subject: zwei\n\nletzte Zeile ohne Ende",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("messages =\n%q\nwant\n%q", got, want)
@@ -84,7 +88,8 @@ func TestMboxNotMboxAndLongLines(t *testing.T) {
 	}
 	long := strings.Repeat("y", 3*readBufSize+17)
 	got := readAll(t, "From - Thu Oct 15 10:00:00 2026\nSubject: lang\n\n"+long+"\nFrom x\n\n\nFrom - Thu Oct 15 10:00:00 2026\nSubject: b\n\nb\n")
-	if len(got) != 2 || got[0] != "Subject: lang\n\n"+long+"\nFrom x\n" || got[1] != "Subject: b\n\nb\n" {
+	// Zwei Leerzeilen vor der Trennzeile: eine ist Rahmen, eine Inhalt (C2).
+	if len(got) != 2 || got[0] != "Subject: lang\n\n"+long+"\nFrom x\n\n" || got[1] != "Subject: b\n\nb\n" {
 		t.Fatalf("long line: %d messages, first %d bytes", len(got), len(got[0]))
 	}
 }
@@ -127,5 +132,103 @@ func TestStripMozillaLeavesOtherHeaders(t *testing.T) {
 	same := []byte("Subject: s\r\n\r\n")
 	if out, _ := stripMozilla(same); !bytes.Equal(out, same) {
 		t.Fatal("header without Thunderbird lines changed")
+	}
+}
+
+// mboxCase erzeugt eine Nachricht im mbox-Rahmen: raw ist die Nachricht
+// wie auf dem Server, file ihre Form in der Datei (gequotet, ohne
+// Trennzeile und ohne die Leerzeile des Rahmens).
+type mboxCase struct {
+	name, raw, file string
+}
+
+func trailingCases(eol string, rd bool) []mboxCase {
+	var out []mboxCase
+	for blanks := range 4 {
+		tail := strings.Repeat(eol, blanks)
+		head := "Subject: s" + eol + "Message-ID: <m@example.org>" + eol + eol + "Text" + eol
+		// mboxo (Thunderbird): nur ">From " wird zurückgenommen, ">>From "
+		// bleibt; mboxrd: jede Stufe eine Ebene weniger.
+		raw := head + "From x" + eol + ">>From y" + eol + "Ende" + eol + tail
+		file := head + ">From x" + eol + ">>From y" + eol + "Ende" + eol + tail
+		if rd {
+			raw = head + "From x" + eol + ">From y" + eol + "Ende" + eol + tail
+		}
+		out = append(out, mboxCase{name: strings.Repeat("blank", blanks), raw: raw, file: file})
+	}
+	return out
+}
+
+// C2 (25.10.2026): Eine mbox-Nachricht ist byte-gleich mit dem Original;
+// entfernt werden nur Trennzeile, X-Mozilla-Zeilen, Quoting und genau eine
+// Leerzeile vor der nächsten Trennzeile bzw. dem Dateiende. 0 bis 3
+// Leerzeilen am Ende, CRLF und LF, mboxo und mboxrd, letzte Nachricht mit
+// und ohne Rahmen-Leerzeile.
+func TestMboxTrailingBlankLinesByteExact(t *testing.T) {
+	for _, eol := range []string{"\r\n", "\n"} {
+		for _, rd := range []bool{false, true} {
+			sep := "From - Thu Oct 15 10:00:00 2026" + eol + "X-Mozilla-Status: 0001" + eol
+			if rd {
+				sep = "From someone@example.org Thu Oct 15 10:00:00 2026" + eol
+			}
+			cases := trailingCases(eol, rd)
+			var mbox strings.Builder
+			var want []string
+			for _, c := range cases {
+				mbox.WriteString(sep + c.file + eol)
+				want = append(want, c.raw)
+			}
+			// Letzte Nachricht mit Rahmen-Leerzeile vor dem Dateiende.
+			if got := readAll(t, mbox.String()); !slices.Equal(got, want) {
+				t.Fatalf("eol %q mboxrd %v:\n got %q\nwant %q", eol, rd, got, want)
+			}
+			// Letzte Nachricht ohne Rahmen-Leerzeile (Datei endet nach dem
+			// Zeilenende der Nachricht).
+			last := cases[0]
+			got := readAll(t, mbox.String()+sep+last.file)
+			if g := got[len(got)-1]; g != last.raw {
+				t.Fatalf("eol %q mboxrd %v: last message without frame line = %q, want %q", eol, rd, g, last.raw)
+			}
+			// Letzte Zeile ohne Zeilenende: bleibt ohne.
+			got = readAll(t, mbox.String()+sep+"Subject: z"+eol+eol+"ohne Ende")
+			if g := got[len(got)-1]; g != "Subject: z"+eol+eol+"ohne Ende" {
+				t.Fatalf("eol %q mboxrd %v: last line without end = %q", eol, rd, g)
+			}
+			// Nachricht nur aus Kopf: Die Leerzeile vor der Trennzeile ist
+			// Rahmen, eine zweite die Grenze zum (leeren) Rumpf.
+			got = readAll(t, sep+"Subject: k"+eol+eol+sep+"Subject: l"+eol+eol+eol+sep+"Subject: m"+eol)
+			if w := []string{"Subject: k" + eol, "Subject: l" + eol + eol, "Subject: m" + eol}; !slices.Equal(got, w) {
+				t.Fatalf("eol %q mboxrd %v: header only = %q, want %q", eol, rd, got, w)
+			}
+		}
+	}
+}
+
+// Eine Maildir-Datei bleibt ganz: kein Kürzen am Ende, kein ergänztes
+// Zeilenende, Zeilenenden unverändert (auch gemischt).
+func TestMaildirReaderByteExact(t *testing.T) {
+	for _, raw := range []string{
+		"Subject: a\r\n\r\nText\r\n",
+		"Subject: a\r\n\r\nText\r\n\r\n",
+		"Subject: a\r\n\r\nText\r\n\r\n\r\n\r\n",
+		"Subject: a\n\nText\n\n\n",
+		"Subject: a\r\n\r\nohne Ende",
+		"Subject: a\r\n\r\n",
+		"Subject: nur Kopf",
+		"Subject: gemischt\r\n\nText\n\r\n",
+		"Subject: a\r\n\r\nFrom - Thu Oct 15 10:00:00 2026\r\n>From x\r\n",
+	} {
+		mr := newMsgReader(newSource(strings.NewReader(raw), 0), false, quoteNone)
+		hdr, _, err := mr.readHeader()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(mr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(hdr) + string(body); got != raw {
+			t.Errorf("maildir %q read as %q", raw, got)
+		}
 	}
 }

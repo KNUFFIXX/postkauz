@@ -9,23 +9,29 @@ import (
 
 // Lesen einer Nachricht aus einem Datenstrom (mbox oder Maildir-Datei),
 // streamend: Kopf bis zur Leerzeile im Speicher (höchstens maxHeaderBytes),
-// der Rest wird zeilenweise weitergereicht. Dabei
+// der Rest wird zeilenweise weitergereicht. Die Nachricht bleibt Byte für
+// Byte, wie sie in der Datei steht (Zeilenenden CRLF/LF unverändert, kein
+// Zeilenende ergänzt; Betreiber-Entscheid C2, 25.10.2026). Entfernt wird nur
+// der mbox-Rahmen:
 //
-//   - endet eine mbox-Nachricht vor der nächsten Trennzeile (die Zeile
+//   - eine mbox-Nachricht endet vor der nächsten Trennzeile (die Zeile
 //     bleibt ungelesen für die nächste Nachricht),
-//   - wird das mbox-Quoting zurückgenommen (">From " → "From "),
-//   - werden Leerzeilen am Ende weggelassen und die letzte Zeile mit genau
-//     einem Zeilenende abgeschlossen. In mbox gehört die Leerzeile vor dem
-//     nächsten "From " zum Rahmen; wie viele Zeilenenden die Nachricht
-//     selbst hatte, ist nicht eindeutig. Der Abgleich per content_hash
-//     prüft deshalb Varianten (hash.go).
+//   - das mbox-Quoting wird zurückgenommen (">From " → "From "),
+//   - genau EINE Leerzeile am Ende einer mbox-Nachricht (die vor der
+//     nächsten Trennzeile bzw. vor dem Dateiende) gehört zum Rahmen und
+//     fällt weg; weitere Leerzeilen davor sind Teil der Nachricht (der
+//     Server hat sie auch, und nur so stimmt die Größe für den Abgleich per
+//     Message-ID und Größe, FindLinkCandidate). Die Thunderbird-Zeilen
+//     X-Mozilla-* entfernt stripMozilla (mbox.go).
+//
+// Eine Maildir-Datei hat keinen Rahmen und bleibt ganz (außer
+// X-Mozilla-*). Bis 0.2.0-rc2 fielen alle Leerzeilen am Ende weg und die
+// letzte Zeile bekam ein Zeilenende; solche Bestände findet der Abgleich per
+// content_hash weiter über die Varianten (hash.go).
 
 const (
 	readBufSize    = 256 << 10
 	maxHeaderBytes = 1 << 20
-	// maxHeldBlank begrenzt zurückgehaltene Leerzeilen; mehr werden als
-	// Inhalt weitergegeben (Speicher bleibt flach, auch bei Unsinn).
-	maxHeldBlank = 64 << 10
 	// peekSeparator: so weit wird eine mögliche Trennzeile vorausgelesen.
 	peekSeparator = 1024
 )
@@ -93,18 +99,18 @@ func (s *source) skipLine() ([]byte, error) {
 // msgReader liest eine Nachricht (Kopf und Rumpf) aus source.
 type msgReader struct {
 	src       *source
-	mbox      bool // Ende vor einer Trennzeile
+	mbox      bool // Ende vor einer Trennzeile, letzte Leerzeile ist Rahmen
 	quote     quoting
 	lineStart bool
 	ended     bool // keine Zeilen mehr
-	finished  bool // Ende verarbeitet (Zeilenende ergänzt)
+	finished  bool // Ende verarbeitet
 
-	out      []byte
-	outOff   int
-	held     []byte // zurückgehaltene Leerzeilen
-	lastEOL  string // Zeilenende der letzten Inhaltszeile
-	partial  bool   // letzte ausgegebene Zeile ohne Zeilenende
-	content  bool   // überhaupt Inhalt ausgegeben
+	out    []byte
+	outOff int
+	// held ist höchstens eine zurückgehaltene Leerzeile (nur mbox): Sie ist
+	// der Rahmen, wenn danach die Trennzeile oder das Dateiende kommt, sonst
+	// Inhalt. Der Speicher bleibt so flach, auch bei vielen Leerzeilen.
+	held     []byte
 	readErr  error
 	consumed int64 // gelesene Bytes der Quelle (ohne Trennzeile)
 }
@@ -172,41 +178,45 @@ func isBlank(line []byte) bool {
 	return len(line) == 1 && line[0] == '\n' || len(line) == 2 && line[0] == '\r' && line[1] == '\n'
 }
 
-func eolOf(line []byte) string {
-	if bytes.HasSuffix(line, []byte("\r\n")) {
-		return "\r\n"
+// atEnd meldet, ob die mbox-Nachricht hier endet (nächste Zeile ist eine
+// Trennzeile oder das Dateiende), ohne etwas zu lesen. Nur am Zeilenanfang
+// sinnvoll.
+func (m *msgReader) atEnd() bool {
+	if m.ended {
+		return true
 	}
-	return "\n"
+	if _, err := m.src.br.Peek(1); err != nil {
+		return true
+	}
+	if m.src.startsWithFrom() {
+		if line, ok := m.src.peekLine(peekSeparator); ok && isSeparator(line) {
+			return true
+		}
+	}
+	return false
 }
 
 // readHeader liest den Kopf bis einschließlich der Leerzeile (bzw. bis zum
 // Ende der Nachricht). tooLong: Grenze erreicht, der Rest folgt im Rumpf.
+// Folgt in mbox auf die Leerzeile gleich das Ende (Nachricht nur aus Kopf),
+// ist sie der Rahmen und gehört nicht zum Kopf.
 func (m *msgReader) readHeader() (hdr []byte, tooLong bool, err error) {
 	for {
 		b, complete, atStart, err := m.chunk()
 		if err == io.EOF {
-			if len(hdr) > 0 && hdr[len(hdr)-1] != '\n' {
-				eol := m.lastEOL
-				if eol == "" {
-					eol = "\n"
-				}
-				hdr = append(hdr, eol...)
-			}
 			return hdr, false, nil
 		}
 		if err != nil {
 			return hdr, false, err
 		}
 		hdr = append(hdr, b...)
-		if complete {
-			m.lastEOL = eolOf(b)
-		}
 		if complete && atStart && isBlank(b) {
+			if m.mbox && m.atEnd() {
+				hdr = hdr[:len(hdr)-len(b)]
+			}
 			return hdr, false, nil
 		}
 		if len(hdr) > maxHeaderBytes {
-			m.partial = !complete
-			m.content = true
 			return hdr, true, nil
 		}
 	}
@@ -250,16 +260,8 @@ func (m *msgReader) Read(p []byte) (int, error) {
 func (m *msgReader) fill() error {
 	b, complete, atStart, err := m.chunk()
 	if err == io.EOF {
-		// Leerzeilen am Ende fallen weg; letzte Zeile bekommt ein Zeilenende.
+		// Eine Leerzeile direkt vor Trennzeile/Dateiende ist der Rahmen.
 		m.held = m.held[:0]
-		if m.partial {
-			eol := m.lastEOL
-			if eol == "" {
-				eol = "\n"
-			}
-			m.out = append(m.out, eol...)
-			m.partial = false
-		}
 		m.finished = true
 		return nil
 	}
@@ -267,22 +269,15 @@ func (m *msgReader) fill() error {
 		m.readErr = err
 		return err
 	}
-	if complete && atStart && isBlank(b) {
-		m.held = append(m.held, b...)
-		if len(m.held) > maxHeldBlank {
-			m.out = append(m.out, m.held...)
-			m.held = m.held[:0]
-		}
+	if m.mbox && complete && atStart && isBlank(b) {
+		// Die vorige Leerzeile war nicht die letzte: Inhalt.
+		m.out = append(m.out, m.held...)
+		m.held = append(m.held[:0], b...)
 		return nil
 	}
 	m.out = append(m.out, m.held...)
 	m.held = m.held[:0]
 	m.out = append(m.out, b...)
-	m.content = true
-	m.partial = !complete
-	if complete {
-		m.lastEOL = eolOf(b)
-	}
 	return nil
 }
 

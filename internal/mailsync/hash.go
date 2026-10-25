@@ -9,12 +9,14 @@ import (
 )
 
 // ContentHasher berechnet content_hash (SHA-256 über die Rohmail ohne
-// CR-Bytes) und dazu Varianten mit 0, 1 und 2 Zeilenenden am Schluss. Eine
-// Nachricht aus einem mbox-Import hat am Ende genau ein Zeilenende (die
-// Leerzeile vor der nächsten Trennzeile gehört zum Rahmen und ist nicht
-// eindeutig); die Kopie des Servers kann dort anders aussehen. Sync und
-// Import suchen deshalb mit allen Varianten (S1.10); gespeichert wird immer
-// der exakte Wert.
+// CR-Bytes) und dazu Varianten mit 0, 1 und 2 Zeilenenden am Schluss. Der
+// mbox-Import speichert seit Entscheid C2 (25.10.2026) byte-genau (nur die
+// Leerzeile des Rahmens fällt weg), bis 0.2.0-rc2 aber mit genau einem
+// Zeilenende am Schluss; und ob die letzte Leerzeile vor der Trennzeile
+// Rahmen oder Inhalt ist, ist nicht eindeutig. Die Kopie des Servers kann am
+// Ende also anders aussehen. Sync und Import suchen deshalb mit allen
+// Varianten (S1.10; Rückfall, wenn Message-ID und Größe nicht passen);
+// gespeichert wird immer der exakte Wert.
 type ContentHasher struct {
 	h       hash.Hash
 	pending int // zurückgehaltene "\n" am Ende
