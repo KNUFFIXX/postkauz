@@ -319,3 +319,20 @@ func TestNoFrameLineNoDuplicates(t *testing.T) {
 		}
 	}
 }
+
+// Ein mbox-Eintrag nur aus der Rahmen-Leerzeile ist leer: übersprungen mit
+// Hinweis (bis 0.2.0-rc2 eine Nachricht aus einem Zeilenende).
+func TestMboxEmptyEntrySkipped(t *testing.T) {
+	dir := t.TempDir()
+	mbox := "From - Thu Oct 15 10:00:00 2026\r\n\r\n" +
+		"From - Thu Oct 15 10:01:00 2026\r\nSubject: da\r\nMessage-ID: <c2-empty@example.org>\r\n\r\nText\r\n\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "INBOX"), []byte(mbox), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t)
+	rep := e.run(t, dir, FormatMbox, "", Options{})
+	if rep.New != 1 || rep.Skipped != 1 || rep.Errors != 0 || len(rep.Sources) != 1 ||
+		len(rep.Sources[0].Problems) != 1 || !strings.HasSuffix(rep.Sources[0].Problems[0], ": empty message") {
+		t.Fatalf("import = new %d skipped %d errors %d, sources %+v", rep.New, rep.Skipped, rep.Errors, rep.Sources)
+	}
+}
