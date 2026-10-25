@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -175,6 +176,14 @@ func TestReimportOverOldTrimmedStore(t *testing.T) {
 // c2Server: IMAP-Server im Prozess, INBOX mit den Rohmails.
 func c2Server(t testing.TB, raws [][]byte) string {
 	t.Helper()
+	addr, _ := c2CountingServer(t, raws)
+	return addr
+}
+
+// c2CountingServer wie c2Server, dazu der Zähler der Inhaltsabrufe
+// (FETCH BODY[]).
+func c2CountingServer(t testing.TB, raws [][]byte) (string, *atomic.Int64) {
+	t.Helper()
 	u := imapmemserver.NewUser(memUser, string(memPass))
 	_ = u.Create("INBOX", nil)
 	for _, raw := range raws {
@@ -183,7 +192,8 @@ func c2Server(t testing.TB, raws [][]byte) string {
 			t.Fatal(err)
 		}
 	}
-	return serveMem(t, u)
+	bodies := &atomic.Int64{}
+	return serveMem(t, u, bodies), bodies
 }
 
 // Erstabgleich nach einem Import (ADR-003): Eine Nachricht mit zwei
@@ -209,7 +219,13 @@ func TestSyncAfterImportLinksByHeader(t *testing.T) {
 			if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 1 {
 				t.Fatalf("import = %+v", rep)
 			}
-			srep := e.sync(t, c2Server(t, [][]byte{raw}))
+			addr, bodies := c2CountingServer(t, [][]byte{raw})
+			srep := e.sync(t, addr)
+			// Direkt am Server gemessen: ohne Inhaltsabruf heißt kein
+			// FETCH BODY[] (Köpfe und Größe kommen über BODY.PEEK[HEADER]).
+			if got := bodies.Load(); (got == 0) != (tc.wantCount == 0) {
+				t.Fatalf("FETCH BODY[] commands = %d, want %s", got, map[bool]string{true: "0", false: "at least 1"}[tc.wantCount == 0])
+			}
 			if srep.Errors != 0 || srep.New != 1 || srep.Mirrored != 1 {
 				t.Fatalf("sync = errors %d new %d mirrored %d", srep.Errors, srep.New, srep.Mirrored)
 			}

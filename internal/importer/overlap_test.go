@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,15 +53,38 @@ func memServer(t testing.TB, c *corpus.Corpus, keep func(i int) bool) string {
 			t.Fatal(err)
 		}
 	}
-	return serveMem(t, u)
+	return serveMem(t, u, nil)
+}
+
+// countingSession zählt FETCH-Kommandos, die den ganzen Inhalt anfordern
+// (BODY[] bzw. BINARY[]), nicht nur Kopf oder Größe.
+type countingSession struct {
+	*imapmemserver.UserSession
+	bodies *atomic.Int64
+}
+
+func (s countingSession) Fetch(w *imapserver.FetchWriter, numSet imap.NumSet, options *imap.FetchOptions) error {
+	for _, sec := range options.BodySection {
+		if sec.Specifier == imap.PartSpecifierNone && len(sec.Part) == 0 {
+			s.bodies.Add(1)
+		}
+	}
+	if len(options.BinarySection) > 0 {
+		s.bodies.Add(1)
+	}
+	return s.UserSession.Fetch(w, numSet, options)
 }
 
 // serveMem startet einen IMAP-Server im Prozess für den Benutzer u
-// (nur localhost) und liefert seine Adresse.
-func serveMem(t testing.TB, u *imapmemserver.User) string {
+// (nur localhost) und liefert seine Adresse. bodies (optional) zählt die
+// Inhaltsabrufe.
+func serveMem(t testing.TB, u *imapmemserver.User, bodies *atomic.Int64) string {
 	t.Helper()
 	srv := imapserver.New(&imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
+			if bodies != nil {
+				return countingSession{UserSession: imapmemserver.NewUserSession(u), bodies: bodies}, nil, nil
+			}
 			return imapmemserver.NewUserSession(u), nil, nil
 		},
 		Caps:         imap.CapSet{imap.CapIMAP4rev1: {}, imap.CapIMAP4rev2: {}},
