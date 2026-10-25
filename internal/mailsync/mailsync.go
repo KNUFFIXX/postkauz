@@ -585,6 +585,9 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 	}
 
 	var pending store.MirrorBatch
+	// tolerant: lokale Nachrichten, an die im laufenden Stapel eine Kopie
+	// trotz Größenunterschied gehängt wird; gezählt erst nach dem Speichern.
+	var tolerant []int64
 	var pendingBytes int64
 	flush := func(final bool) error {
 		b := pending
@@ -601,6 +604,8 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		rep.Removed += res.Removed
 		rep.Mirrored += res.New + res.Linked - res.Removed
 		pending, pendingBytes = store.MirrorBatch{}, 0
+		rep.LinkedSizeDiff = append(rep.LinkedSizeDiff, tolerant...)
+		tolerant = nil
 		return nil
 	}
 
@@ -624,7 +629,7 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 			if ok && !linked(pending, id) {
 				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: linkFlags(h.UID, h.ModSeq, h.Flags)})
 				if extra != 0 {
-					rep.LinkedSizeDiff = append(rep.LinkedSizeDiff, id)
+					tolerant = append(tolerant, id)
 				}
 				continue
 			}

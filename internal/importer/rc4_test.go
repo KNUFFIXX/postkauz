@@ -175,3 +175,30 @@ func TestSyncLinkedSizeDiffCountsMessages(t *testing.T) {
 		t.Fatalf("folder copies = %d, want 2", n)
 	}
 }
+
+// Gmail-typischer Kopf (Gegenprüfung rc5): Date mit Zeitzone und Kommentar,
+// gefalteter RFC-2047-Betreff. Betreff und Date werden auf beiden Seiten
+// gleich gelesen; die Thunderbird-Fassung (+2) wird ohne Inhaltsabruf
+// verknüpft.
+func TestSyncToleranceGmailStyleHeader(t *testing.T) {
+	full := []byte("Delivered-To: empfaenger@example.org\r\nFrom: =?UTF-8?Q?J=C3=BCrgen?= <absender@example.org>\r\n" +
+		"To: empfaenger@example.org\r\nSubject: =?UTF-8?Q?Gr=C3=BC=C3=9Fe_aus_dem?=\r\n =?UTF-8?Q?_B=C3=BCro?=\r\n" +
+		"Date: Thu, 15 Oct 2026 10:00:00 +0200 (CEST)\r\nMessage-ID: <rc5-gmail@example.org>\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"000000000000abcdef\"\r\n\r\n" +
+		"--000000000000abcdef\r\nContent-Type: text/plain; charset=\"UTF-8\"\r\n\r\nHallo\r\n--000000000000abcdef--\r\n")
+	server := bytes.TrimSuffix(full, []byte("\r\n"))
+	dir := t.TempDir()
+	writeTB(t, filepath.Join(dir, "INBOX"), [][]byte{full})
+	e := newEnv(t)
+	if rep := e.run(t, dir, FormatMbox, "", Options{}); rep.New != 1 {
+		t.Fatalf("import = %+v", rep)
+	}
+	if n := e.count(t, `SELECT count(*) FROM messages WHERE subject = 'Grüße aus dem Büro' AND date_header IS NOT NULL`); n != 1 {
+		t.Fatalf("parsed header not as expected (%d)", n)
+	}
+	addr, bodies := rc4Server(t, "INBOX", []imap.Flag{imap.FlagSeen}, server)
+	srep := e.sync(t, addr)
+	if bodies.Load() != 0 || srep.LinkedSizeDiff != 1 || srep.Errors != 0 {
+		t.Fatalf("fetched %d, linked despite size difference %d, errors %d; want 0/1/0", bodies.Load(), srep.LinkedSizeDiff, srep.Errors)
+	}
+}
