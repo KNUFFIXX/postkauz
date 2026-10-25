@@ -129,3 +129,21 @@ func TestImportRunReportOnInterrupt(t *testing.T) {
 		t.Fatalf("other error: err %v output %+v, want error without output", err, res.Output)
 	}
 }
+
+// Ohne OutputOnError gibt der Executor bei einem Fehler keine Ausgabe
+// weiter, auch wenn der Handler eine liefert (rc8).
+func TestExecutorOutputOnErrorIsOptIn(t *testing.T) {
+	e := newMirrorEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	op := ImportRun(e.st, &fakeImporter{interrupt: cancel})
+	op.Name, op.OutputOnError = "import.noopt", false
+	if err := e.x.Registry.Register(op); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(ImportRunInput{Format: "mbox", Path: "/x"})
+	res, err := e.x.Execute(ctx, Request{Key: adminKey, Actor: audit.ActorHuman, Operation: "import.noopt", Input: b})
+	if err == nil || res.Output != nil {
+		t.Fatalf("err %v output %+v, want error without output", err, res.Output)
+	}
+}

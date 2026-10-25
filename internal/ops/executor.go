@@ -108,7 +108,9 @@ type Request struct {
 	Narrow *jsonschema.Resolved
 }
 
-// Result ist das Ergebnis eines erfolgreichen Aufrufs.
+// Result ist das Ergebnis eines Aufrufs. Bei einem Fehler ist Output nil,
+// außer die Operation erklärt OutputOnError und der Handler liefert eine
+// Ausgabe (Bericht bis zum Abbruch).
 type Result struct {
 	Output   any
 	Decision policy.Decision
@@ -274,9 +276,14 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
 		_, _ = x.appendAudit(actx, ev)
 		cancel()
-		// Output trotz Fehler: nur, wenn der Handler ihn ausdrücklich liefert
-		// (import.run bei Abbruch: Bericht bis dahin); sonst nil.
-		return Result{Output: out, Decision: dec, AuditID: auditID}, herr
+		// Output trotz Fehler nur mit Opt-in der Operation (OutputOnError,
+		// import.run: Bericht bis zum Abbruch); sonst nil, auch wenn der
+		// Handler etwas liefert.
+		res := Result{Decision: dec, AuditID: auditID}
+		if op.OutputOnError {
+			res.Output = out
+		}
+		return res, herr
 	}
 	return Result{Output: out, Decision: dec, AuditID: auditID}, nil
 }

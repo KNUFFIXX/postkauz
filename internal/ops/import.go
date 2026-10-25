@@ -96,11 +96,12 @@ type ImportRunInput struct {
 // MCP-Tool).
 func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
 	return Operation{
-		Name:       "import.run",
-		Scope:      policy.ScopeAdmin,
-		Risk:       policy.R1,
-		Idempotent: true,
-		Summary:    "Import mbox files or maildir folders into an account; messages that exist already only get the folder.",
+		Name:          "import.run",
+		OutputOnError: true,
+		Scope:         policy.ScopeAdmin,
+		Risk:          policy.R1,
+		Idempotent:    true,
+		Summary:       "Import mbox files or maildir folders into an account; messages that exist already only get the folder.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {

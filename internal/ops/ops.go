@@ -127,6 +127,11 @@ type Operation struct {
 	// Handler läuft nie, die Ablehnung steht im Audit. Solche Operationen
 	// haben kein MCP-Tool (notOverMCP).
 	HumanOnly bool
+	// OutputOnError: Der Executor reicht die Ausgabe des Handlers auch bei
+	// einem Fehler weiter (Result.Output), etwa den Bericht bis zu einem
+	// Abbruch (import.run). Ohne diese Erklärung ist Output bei Fehler nil,
+	// auch wenn der Handler etwas liefert.
+	OutputOnError bool
 
 	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
 	input *jsonschema.Resolved
