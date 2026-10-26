@@ -99,5 +99,6 @@ Ablauf je Zeile (Schritt für Schritt in [abnahme_D5.md](abnahme_D5.md)): `draft
 | Mailprogramm (Version) | Konto/Anbieter | Message-ID erhalten? | Entwurf gelöscht? | Kopie in Gesendet? | Ergebnis | Datum, Bemerkung |
 |---|---|---|---|---|---|---|
 | Webmail: Gmail im Browser (Chrome, Windows 11) | Gmail | nein | ja | ja | offen, `remote: missing` (0.2.0-rc1, Rückfall 0,58 wegen Zitat ohne „>"); vom Betreiber mit `draft mark-sent` geschlossen | 23.10.2026; Verlauf beim Empfänger richtig (ja); Nachbesserung N1, Wiederholung mit dem neuen Build offen |
-| Desktop-Client: | | | | | | |
+| Webmail: Gmail im Browser (Chrome, Windows 11), Wiederholung | Gmail | nein | ja | ja | `sent_by_human` per `fallback` (0.2.0-rc8, mit N1) | 26.10.2026; Verlauf richtig (ja); ausgeführt von Claude auf Anweisung des Betreibers |
+| Desktop-Client: Thunderbird 154.0 (Windows 11) | Gmail | nein | ja | ja | `sent_by_human` per `fallback` (0.2.0-rc8) | 26.10.2026; Verlauf richtig (ja); Gmail-Webansicht klappt den Antworttext hinter „•••“ ein; ausgeführt von Claude auf Anweisung des Betreibers |
 | zweites Postfach, anderer Anbieter: | | | | | | |

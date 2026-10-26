@@ -1,10 +1,10 @@
 # Roadmap
 
-**Stand 25.10.2026:** Schnitt 1 veröffentlicht (**0.1.0-rc2**, 22.10.2026), Schnitt 2 fertig gebaut und gegengeprüft (**S2.9**, 23.10.2026; Schema 16; Abnahmen D2, D3, D4, D4.8 bestanden). **D5 Runde 1 nicht bestanden** (Gmail sendet das Zitat ohne „>") → Nachbesserung N1, Build **0.2.0-rc2** (nicht getaggt). Gegenprüfung des Gesamtstands am 24.10.2026: ein Blocker für Schnitt 3 (UID 0 in `imapx` = „*"), fünf wichtige Punkte → `auftraege/A03_s3.md`, Nachtrag 24.10.
+**Stand 26.10.2026:** Echtbetrieb lesend auf dem Büro-PC begonnen (0.2.0-rc8: Thunderbird-Spiegel importiert, 22.941 Nachrichten, 0 Fehler; zehn Suchen 75/76; Erstabgleich mit Gmail läuft in Etappen wegen des IMAP-Tageslimits). **D5 Runden 1 (Wiederholung) und 2 (Thunderbird) bestanden** (`sent_by_human` per Rückfall), Runde 3 offen. Weitere Prüfläufe: neue Blocker für S3.2/S3.4 → `auftraege/A03_s3.md`, Nachtrag 26.10.2026 (A13/A14). — **Stand 25.10.2026:** Schnitt 1 veröffentlicht (**0.1.0-rc2**, 22.10.2026), Schnitt 2 fertig gebaut und gegengeprüft (**S2.9**, 23.10.2026; Schema 16; Abnahmen D2, D3, D4, D4.8 bestanden). **D5 Runde 1 nicht bestanden** (Gmail sendet das Zitat ohne „>") → Nachbesserung N1, Build **0.2.0-rc2** (nicht getaggt). Gegenprüfung des Gesamtstands am 24.10.2026: ein Blocker für Schnitt 3 (UID 0 in `imapx` = „*"), fünf wichtige Punkte → `auftraege/A03_s3.md`, Nachtrag 24.10.
 
 **25.10.2026, Entscheid C2 (Echtdaten-Probe Gmail + Thunderbird):** Import byte-genau (mbox: nur die Rahmen-Leerzeile am Ende entfernt; Maildir ganz), `content_hash`-Varianten ±1 Zeilenende, `sync` zählt „already known, downloaded anyway"; Build **0.2.0-rc3** = 0.2.0-rc2 plus Fix C2 (nicht getaggt). **rc4** (25.10.2026, Restfall C2, vom Betreiber genehmigt): Verknüpfung per Message-ID auch bei 0 bis 6 Bytes größerer lokaler Kopie (Thunderbird ergänzt Zeilenende bzw. abschließende MIME-Grenze), nie für Entwürfe; Build **0.2.0-rc4** (nicht getaggt). **rc5:** Auflagen der Gegenprüfung (zusätzlich gleicher Betreff und Date, Entwurfs-Ausschluss wie Versanderkennung, Zähler je Nachricht). **rc6** (Echtdaten rc5): Import trennt zwei Fassungen mit gleicher Message-ID (Gmail), `import` extrahiert Anhangstext bis zum Ende (`--no-extract`); Build **0.2.0-rc6** (nicht getaggt). **rc7:** Auflagen der Gegenprüfung (Teilkopien, zweites Lesen über dasselbe Handle mit Hash-Prüfung, Bericht bei Strg+C). **rc8:** Auflagen der Gegenprüfung rc7 (Ausgabe bei Fehler nur mit Opt-in der Operation, `interrupted` im Importbericht).
 
-**Als Nächstes:** Echtdaten-Probe mit 0.2.0-rc8 fortsetzen (bestehenden Bestand einmal mit `import … --rescan` ergänzen) → D5 Runden 1 (Wiederholung), 2 und 3 auf dem Büro-PC mit 0.2.0-rc8 → D6 (Tag auf den dann aktuellen Build, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Echtdaten:** Die Probe läuft seit 25.10.2026 auf dem Heim-PC des Betreibers: erster Import des Thunderbird-Spiegels und lesende Anbindung des Gmail-Postfachs; ihr erster Befund (Größe nach Import, unnötige Downloads) ist mit C2 behoben. Abnahmen D2 bis D4.8 liefen auf dem synthetischen Korpus.
+**Als Nächstes:** Echtdaten-Probe mit 0.2.0-rc8 fortsetzen (bestehenden Bestand einmal mit `import … --rescan` ergänzen) → D5 Runde 3 (Postfach B) → D6 (Tag auf den dann aktuellen Build, GitHub-Release) → A03 Teil A (Nachbesserungen, inkl. Blocker) → Schnitt 3. **Echtdaten:** Die Probe läuft seit 25.10.2026 auf dem Heim-PC des Betreibers: erster Import des Thunderbird-Spiegels und lesende Anbindung des Gmail-Postfachs; ihr erster Befund (Größe nach Import, unnötige Downloads) ist mit C2 behoben. Abnahmen D2 bis D4.8 liefen auf dem synthetischen Korpus.
 
 Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen, Nachbesserungen): [roadmap_verlauf.md](roadmap_verlauf.md). Versionen: [CHANGELOG.md](../CHANGELOG.md). Am Ende jeder Arbeitssitzung werden dieser Stand, der Verlauf und das CHANGELOG gepflegt.
 
@@ -12,7 +12,7 @@ Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen, Nachbesserunge
 |---|---|---|
 | Phase 0 | Gerüst, Architektur, ADRs, Testserver, Spike mit `go-imap/v2`, Gate Go vs. Python | erledigt 14./15.10.2026 (Gate Go bestanden mit Auflagen, ADR-007/008) |
 | S1 | Konto, Sync, Spiegel, Threads, Suche, CLI lesend, stdio-MCP lesend, Audit, Import | komplett 16.10.2026; D2/D3 bestanden 21.10.; **veröffentlicht 0.1.0-rc2** 22.10.2026 |
-| S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook, Versanderkennung, MCP | **komplett (S2.0 bis S2.9) 23.10.2026**; D4/D4.8 bestanden; D5 offen (Runde 1 nicht bestanden → N1, 0.2.0-rc2); D6 offen |
+| S2 | Entwürfe als draft-only, Policy-Datei, Freigabe-Zustände, Prüf-Hook, Versanderkennung, MCP | **komplett (S2.0 bis S2.9) 23.10.2026**; D4/D4.8 bestanden; D5: Runden 1 (Wdh.) und 2 bestanden 26.10.2026, Runde 3 offen; D6 offen |
 | S3 | Tags und Postfach-Aktionen, Export/Backup/Restore, HTTP-MCP mit OAuth 2.1 | Auftrag A03 im Entwurf; Baustart nach D6 und Teil A |
 | S4+ | SMTP-Versand mit Freigabe, Regeln, REST, JMAP, später GUI | nicht begonnen |
 
@@ -46,7 +46,7 @@ Komplett seit 16.10.2026 (S1.1 bis S1.11), veröffentlicht als 0.1.0-rc2 am 22.1
 
 ## S2: Entwürfe (draft-only)
 
-Komplett seit 23.10.2026 (S2.0 bis S2.9, Schema 16, ADR-009). Abnahmen D4 (47 OK) und D4.8 bestanden; D5 Runde 1 nicht bestanden → N1 (Rückfall schneidet am eigenen Zitat des Entwurfs), Wiederholung mit 0.2.0-rc2 offen; D6 offen. Einzelschritte, Gegenprüfungen, Abnahmeprotokolle: [roadmap_verlauf.md](roadmap_verlauf.md), Abschnitt S2.
+Komplett seit 23.10.2026 (S2.0 bis S2.9, Schema 16, ADR-009). Abnahmen D4 (47 OK) und D4.8 bestanden; D5 Runde 1 nicht bestanden → N1 (Rückfall schneidet am eigenen Zitat des Entwurfs); mit 0.2.0-rc8 am 26.10.2026 Runde 1 (Gmail im Browser) und Runde 2 (Thunderbird) bestanden, beide per Rückfall ([protokolle/D5_windows.txt](protokolle/D5_windows.txt), Messtabelle [versanderkennung.md](versanderkennung.md) Abschnitt 9); Runde 3 und D6 offen. Einzelschritte, Gegenprüfungen, Abnahmeprotokolle: [roadmap_verlauf.md](roadmap_verlauf.md), Abschnitt S2.
 
 ## S3: Aktionen, Sicherung, Fernzugriff
 

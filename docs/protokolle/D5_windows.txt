@@ -188,3 +188,122 @@ Ergebnis Runde 1: NICHT BESTANDEN (offen, remote: missing). Abschnitt 7: Betreib
 
 ===== Nachtrag
 Nachbesserung N1 (zweite Lesart im Rueckfall: Text vor dem eigenen Zitat des Entwurfs, auch ohne ">") nach diesem Lauf; Wiederholung von Runde 1 sowie Runden 2 und 3 auf dem Buero-PC mit 0.2.0-rc2.
+
+######## D5 Wiederholung auf dem Buero-PC (DRACO, Windows 11 26H2), 26.10.2026, DRACO-PK07 ########
+Programm: postkauz 0.2.0-rc8 (main 99a7cc0, go1.27.3), C:\PostKauz\d5\postkauz.exe, sha256 0ff34a5f3204600eb8fcf2debf54a0d89cff1962b582aff33f1f2ec2aad53cdf (gleich SHA256SUMS); enthaelt N1
+Konfiguration: data_dir C:\PostKauz\d5\daten, [imap] max_message_bytes = 1048576, [draft] quote_line = 'Am {date_numeric} schrieb {from}:'
+Konto udo = Postfach A (Gmail), App-Passwort neu (Betreiber), per --password-stdin aus der Zwischenablage angelegt (verdeckte Abfrage nicht erneut getestet).
+Zustimmung des Betreibers zu D5 gegen echte Postfaecher: ja (Entschieden 46, 23.10.2026; erneuert 26.10.2026 13:32 mit dem App-Passwort). Betreiber 26.10.2026 14:07: Runden 1 und 2 darf Claude selbst ausfuehren -> die [Du]-Schritte 4.1/4.3 und 5.1/5.3 (Selbst-Mail schreiben, Entwurf unveraendert senden) hat Claude im Mailprogramm ausgefuehrt: Runde 1 Gmail im Browser (Chrome, Erweiterung Claude in Chrome), Runde 2 Thunderbird 154.0 (Bildschirmsteuerung). Je Runde genau ein draft reply (Skript d5_runde.ps1: wartet per sync/search auf den Betreff PKD5R<n>, legt einen Entwurf an, sync legt ihn ab).
+Adressen, Namen und Message-IDs maskiert; Kopfzeilen aus show --headers nur ausgewertet.
+
+===== 2 Vorbereitung
+> postkauz version
+      postkauz 0.2.0-rc8 (go1.27.3 windows/amd64)
+===== 3.3 account test udo (13:33)
+> postkauz account test udo
+      account:       udo
+      login:         ok
+      sync strategy: condstore
+      capabilities:  APPENDLIMIT=35651584 CHILDREN COMPRESS=DEFLATE CONDSTORE ENABLE ESEARCH ID IDLE IMAP4rev1 LIST-EXTENDED LIST-STATUS LITERAL- MOVE NAMESPACE QUOTA SPECIAL-USE UIDPLUS UNSELECT UTF8=ACCEPT X-GM-EXT-1 XLIST
+      mailboxes:
+        <eigener Ordner>  custom
+        <eigener Ordner>  custom
+        <eigener Ordner>  custom
+        INBOX                           inbox
+        <eigener Ordner>  custom
+        [Google Mail]/Alle Nachrichten  all
+        [Google Mail]/Entwürfe          drafts
+        [Google Mail]/Gesendet          sent
+        [Google Mail]/Markiert          custom
+        [Google Mail]/Papierkorb        trash
+        [Google Mail]/Spam              junk
+===== 3.4 Kurzer Sync (Erstsync 13:33 - 13:45)
+> postkauz sync -a udo --mailbox INBOX --mailbox "[Google Mail]/Entwürfe" --mailbox "[Google Mail]/Gesendet"
+      account udo (strategy condstore, incremental sync, 678.0s)
+      MAILBOX                 ROLE    NEW   UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX                   inbox   15    0        0        2       15        17
+      [Google Mail]/Entwürfe  drafts  4     0        0        0       4         4
+      [Google Mail]/Gesendet  sent    7053  0        0        424     7053      7476
+      search index: 7071 messages indexed
+      7071 messages mirrored
+      426 errors
+      (426 Hinweise "larger than imap.max_message_bytes" gekuerzt)
+
+===== Runde 1 (Gmail im Browser)
+[Claude im Mailprogramm] Mail an sich selbst, Betreff PKD5R1, gesendet.
+> postkauz search PKD5R1 -a udo --json   (Treffer: 1)
+> postkauz draft reply <id> --body-file C:\PostKauz\d5\runde1.md
+      draft 1 created (status draft, remote pending)
+      message-id:  <msgid-1>
+      from:        <adresse-A>
+      to:          <Name-A> <adresse-A>
+      subject:     Re: PKD5R1
+      in-reply-to: <msgid-2>
+      Hallo,
+      das ist Runde 1 der Abnahme D5 (Webmail). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.
+      Viele Grüße
+      Am 26.10.2026 14:11 schrieb <Name-A> <adresse-A>:
+      > Mit freundlichen Grüssen
+      > <Name-A> (<Telefon>)
+      note: no identity configured for this account: the sender is the account address without a name (add one with identity add)
+      remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+      nothing is sent: a human sends the draft in the mail client
+> postkauz sync -a udo --mailbox INBOX --mailbox "[Google Mail]/Entwürfe" --mailbox "[Google Mail]/Gesendet"
+      drafts: 1 put into [Google Mail]/Entwürfe (flags \Draft \Seen; nothing is sent)
+      7071 messages mirrored
+      0 errors
+> postkauz draft show 1
+      draft 1 (reply) in account udo, status draft
+      remote:      pushed (in the Drafts folder (uid 66669))
+      copies:      uid 66669 (date of the copy: Mon, 26 Oct 2026 14:11:28 +0100)
+      message-id:  <msgid-1>
+      from:        <adresse-A>
+[Claude im Mailprogramm] Entwurf Re: PKD5R1 im Ordner Entwürfe geoeffnet, Empfaenger/Betreff/Text/Zitat ("Am 26.10.2026 14:1x schrieb ...:") geprueft, unveraendert gesendet.
+
+===== Runde 2 (Thunderbird 154.0)
+[Claude im Mailprogramm] Mail an sich selbst, Betreff PKD5R2, gesendet.
+> postkauz search PKD5R2 -a udo --json   (Treffer: 1)
+> postkauz draft reply <id> --body-file C:\PostKauz\d5\runde2.md
+      draft 2 created (status draft, remote pending)
+      message-id:  <msgid-3>
+      from:        <adresse-A>
+      to:          <adresse-A>
+      subject:     Re: PKD5R2
+      in-reply-to: <msgid-4>
+      Hallo,
+      das ist Runde 2 der Abnahme D5 (Thunderbird). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.
+      Viele Grüße
+      Am 26.10.2026 14:15 schrieb <Name-A> <adresse-A>:
+      > Test D5 Runde 2
+      note: no identity configured for this account: the sender is the account address without a name (add one with identity add)
+      remote: the copy in the Drafts folder is queued: it appears in the mail client after the next sync; a running sync --watch pushes it within 10 s
+      nothing is sent: a human sends the draft in the mail client
+> postkauz sync -a udo --mailbox INBOX --mailbox "[Google Mail]/Entwürfe" --mailbox "[Google Mail]/Gesendet"
+      drafts: 1 put into [Google Mail]/Entwürfe (flags \Draft \Seen; nothing is sent)
+      7073 messages mirrored
+      0 errors
+> postkauz draft show 2
+      draft 2 (reply) in account udo, status draft
+      remote:      pushed (in the Drafts folder (uid 66670))
+      copies:      uid 66670 (date of the copy: Mon, 26 Oct 2026 14:16:15 +0100)
+      message-id:  <msgid-3>
+      from:        <adresse-A>
+[Claude im Mailprogramm] Entwurf Re: PKD5R2 im Ordner Entwürfe geoeffnet, Empfaenger/Betreff/Text/Zitat ("Am 26.10.2026 14:1x schrieb ...:") geprueft, unveraendert gesendet.
+
+===== 4.4/5.4 Ergebnis (14:18)
+> postkauz sync ...
+      drafts: 1 sent in the mail client, now sent_by_human (1 by recipients, subject and text; draft 2)
+      7073 messages mirrored
+      0 errors
+> postkauz draft list -a udo
+      ID  ACCOUNT  KIND   STATUS         APPROVAL  REMOTE  TO  ATT  CHANGED               SUBJECT
+      2   udo      reply  sent_by_human  -         pushed  1   0    2026-10-26T13:18:26Z  Re: PKD5R2
+      1   udo      reply  sent_by_human  -         pushed  1   0    2026-10-26T13:13:59Z  Re: PKD5R1
+> postkauz audit --since 1h --operation drafts.sent_detected --json
+      draft 1: draft -> sent_by_human, reason fallback, sent_message_id 7075
+      draft 2: draft -> sent_by_human, reason fallback, sent_message_id 7078
+Ausgewertet (show <sent_message_id> --headers, nur Ergebnis):
+      Runde 1: Message-ID gleich: nein (Gmail vergibt eine neue) | In-Reply-To/References = Ausgangsmail: ja | Ordner: INBOX + [Google Mail]/Gesendet | Entwurf aus Entwürfe verschwunden: ja | Gmail-Verlauf: Antwort im selben Verlauf (2 Nachrichten)
+      Runde 2: Message-ID gleich: nein (Thunderbird vergibt beim Senden eine neue) | In-Reply-To/References = Ausgangsmail: ja | Ordner: INBOX + [Google Mail]/Gesendet | Entwurf aus Entwürfe verschwunden: ja | Gmail-Verlauf: selber Verlauf (2 Nachrichten); Gmail klappt den Text der Antwort komplett hinter "•••" ein (Inhalt vollstaendig)
+Ergebnis Runde 1 (Wiederholung): BESTANDEN (sent_by_human per Rueckfall). Ergebnis Runde 2: BESTANDEN (sent_by_human per Rueckfall).
+Runde 3 (Postfach B, Hostinger): offen (braucht Passwort und Webmail-Anmeldung des Betreibers).

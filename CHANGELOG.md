@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- D5 auf dem Büro-PC mit 0.2.0-rc8: Runde 1 (Wiederholung, Gmail im Browser) und Runde 2 (Thunderbird) bestanden, beide `sent_by_human` per Rückfall; Protokoll `docs/protokolle/D5_windows.txt`, Messtabelle `docs/versanderkennung.md` Abschnitt 9.
+- `auftraege/A03_s3.md`, Nachtrag 26.10.2026: Funde aus fünf weiteren Prüfläufen (A13 Blocker vor S3.2/S3.4, A14 wichtige Punkte, kleinere Punkte).
 - `docs/roadmap.md` auf den Stand (ein Bildschirm) gekürzt; der Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen) liegt wortgleich in `docs/roadmap_verlauf.md`; Statustabelle auf S2.9 nachgezogen.
 - Gegenprüfung des Gesamtstands vor Schnitt 3: `docs/protokolle/review_gesamtstand_2026-10-24.md` (ein Blocker für S3.2: UID 0 = „*" in go-imap; fünf wichtige Punkte) → `auftraege/A03_s3.md`, Nachtrag 24.10.2026 (Teil A6–A11, Vorschlag Schnittfolge S3a/S3b).
 - `docs/protokolle/D3_windows.txt`: Betreiber-Pfad maskiert.
