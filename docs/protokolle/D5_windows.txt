@@ -307,3 +307,74 @@ Ausgewertet (show <sent_message_id> --headers, nur Ergebnis):
       Runde 2: Message-ID gleich: nein (Thunderbird vergibt beim Senden eine neue) | In-Reply-To/References = Ausgangsmail: ja | Ordner: INBOX + [Google Mail]/Gesendet | Entwurf aus Entwürfe verschwunden: ja | Gmail-Verlauf: selber Verlauf (2 Nachrichten); Gmail klappt den Text der Antwort komplett hinter "•••" ein (Inhalt vollstaendig)
 Ergebnis Runde 1 (Wiederholung): BESTANDEN (sent_by_human per Rueckfall). Ergebnis Runde 2: BESTANDEN (sent_by_human per Rueckfall).
 Runde 3 (Postfach B, Hostinger): offen (braucht Passwort und Webmail-Anmeldung des Betreibers).
+
+===== Runde 3 (Postfach B, Hostinger Webmail im Browser), 14:50 - 14:56
+Konto zweit = Postfach B (Hostinger, Testpostfach), Passwort vom Betreiber in die Zwischenablage kopiert, per --password-stdin angelegt; Webmail-Anmeldung hatte der Betreiber im Browser bestehen.
+Zustimmung des Betreibers zu D5 gegen Postfach B: ja (Entschieden 46; 26.10.2026 14:49 Passwort uebergeben).
+> postkauz account test zweit
+      account:       zweit
+      login:         ok
+      sync strategy: condstore
+      capabilities:  BINARY CATENATE CHILDREN COMPRESS=DEFLATE CONDSTORE CONTEXT=SEARCH ENABLE ESEARCH ESORT I18NLEVEL=1 ID IDLE IMAP4rev1 LIST-EXTENDED LIST-STATUS LITERAL+ LOGIN-REFERRALS MOVE MULTIAPPEND NAMESPACE NOTIFY PREVIEW PREVIEW=FUZZY QRESYNC QUOTA SASL-IR SAVEDATE SEARCHRES SNIPPET=FUZZY SORT SORT=DISPLAY SPECIAL-USE STATUS=SIZE THREAD=ORDEREDSUBJECT THREAD=REFERENCES THREAD=REFS UIDPLUS UNSELECT URL-PARTIAL WITHIN
+      mailboxes:
+        INBOX         inbox
+        INBOX.Drafts  drafts
+        INBOX.Junk    junk
+        INBOX.Sent    sent
+        INBOX.Trash   trash
+> postkauz sync -a zweit --mailbox INBOX --mailbox INBOX.Drafts --mailbox INBOX.Sent
+      account zweit (strategy condstore, incremental sync, 0.3s)
+      MAILBOX       ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX         inbox   1    0        0        0       2         2
+      INBOX.Drafts  drafts  0    0        0        0       0         0
+      INBOX.Sent    sent    1    0        0        0       1         1
+      search index: 2 messages indexed
+      3 messages mirrored
+      0 errors
+[Claude im Mailprogramm] Webmail: neue Nachricht an Postfach B selbst, Betreff PKD5R3, ohne Text, gesendet. Das Senden war diesmal nicht gesperrt (23.10.: "Domaineinrichtung nicht abgeschlossen").
+> postkauz search PKD5R3 -a zweit --json   (2 Treffer: empfangene Kopie und Kopie in Gesendet, gleiche Message-ID, verschiedener Inhalt -> zwei Nachrichten; genommen: die neuere)
+> postkauz draft reply <id> --body-file C:\PostKauz\d5\runde3.md
+      draft 3 created (status draft, remote pending)
+      message-id:  <msgid-B1>
+      from:        <adresse-B>
+      to:          <adresse-B>
+      subject:     Re: PKD5R3
+      in-reply-to: <msgid-B2>
+      
+      Hallo,
+      
+      das ist Runde 3 der Abnahme D5 (zweites Postfach). Diesen Entwurf hat PostKauz angelegt. Bitte unverändert senden.
+      
+      Viele Grüße
+      
+      Am 26.10.2026 13:53 schrieb <adresse-B>:
+      > --
+      >
+> postkauz sync ...   (Ablage)
+      drafts: 1 put into INBOX.Drafts (flags \Draft \Seen; nothing is sent)
+      4 messages mirrored
+      0 errors
+[Claude im Mailprogramm] Webmail: Ordner Entwürfe, Entwurf Re: PKD5R3 geoeffnet (Empfaenger, Betreff, Text, Zitat geprueft), unveraendert gesendet. Entwürfe danach leer.
+===== 6.6 Ergebnis (14:56)
+> postkauz sync -a zweit --mailbox INBOX --mailbox INBOX.Drafts --mailbox INBOX.Sent
+      account zweit (strategy condstore, incremental sync, 0.4s)
+      MAILBOX       ROLE    NEW  UPDATED  REMOVED  ERRORS  MIRRORED  TOTAL
+      INBOX         inbox   1    0        0        0       3         3
+      INBOX.Drafts  drafts  0    0        1        0       0         0
+      INBOX.Sent    sent    1    0        0        0       2         2
+      drafts: 1 sent in the mail client, now sent_by_human (1 by recipients, subject and text; draft 3)
+      search index: 2 messages indexed
+      5 messages mirrored
+      0 errors
+> postkauz draft list
+      ID  ACCOUNT  KIND   STATUS         APPROVAL  REMOTE  TO  ATT  CHANGED               SUBJECT
+      3   zweit    reply  sent_by_human  -         pushed  1   0    2026-10-26T13:55:12Z  Re: PKD5R3
+      2   udo      reply  sent_by_human  -         pushed  1   0    2026-10-26T13:18:26Z  Re: PKD5R2
+      1   udo      reply  sent_by_human  -         pushed  1   0    2026-10-26T13:13:59Z  Re: PKD5R1
+> postkauz audit --since 2h --operation drafts.sent_detected --json
+      draft 3: draft -> sent_by_human, reason fallback
+Ausgewertet (show <sent_message_id> --headers, nur Ergebnis): Message-ID gleich: nein (Webmail vergibt eine neue) | In-Reply-To und References: FEHLEN in der gesendeten Nachricht (die Webmail entfernt sie beim Senden eines vorhandenen Entwurfs) | Ordner: INBOX.Sent | Entwurf aus Entwürfe verschwunden: ja (Sync: INBOX.Drafts removed 1) | Verlauf in der Webmail: als ein Gespraech PKD5R3 angezeigt (Gruppierung offenbar ueber den Betreff); ein Empfaenger mit Header-Threading saehe die Antwort nur ueber den Betreff zugeordnet.
+Hinweis: Die Zitatzeile nennt 13:53, die Zeit der Date-Kopfzeile der Ausgangsmail (Webmail schreibt UTC); so vorgesehen (cli.md, Zitatzeile).
+Ergebnis Runde 3: BESTANDEN fuer die Versanderkennung (sent_by_human per Rueckfall); Befund Anbieter: Webmail entfernt die Thread-Kopfzeilen.
+
+Gesamtergebnis D5 (26.10.2026): alle drei Runden sent_by_human, jeweils ueber den Rueckfall (kein Mailprogramm behaelt die Message-ID des Entwurfs). Abbau nach Abschnitt 9.1 entscheidet der Betreiber.
