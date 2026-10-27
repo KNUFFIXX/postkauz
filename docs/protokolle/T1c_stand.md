@@ -84,7 +84,17 @@ Die Gegenprüfung (unabhängiger Prüfer, am Code belegt) ergab PASS ohne Blocke
 | `make lint` | 80 Befunde, eingestuft in `lint_erstlauf.md` (Berichtsmodus, kein Abbruchkriterium) |
 | Linux-Pseudo-Terminal (`script`) | `internal prompt-probe` mit Leser `term`: Hash eines Umlaut-Werts stimmt mit `sha256sum` überein; `--timeout 1s` bricht ab, Terminal danach wieder normal |
 
-**Build `0.3.0-alpha.c1`** (`make release VERSION=0.3.0-alpha.c1`, Code-Stand `e6f8be8`; danach nur dieser Doku-Nachtrag; `dist/` ist nicht versioniert, die Prüfsitzung baut nach und vergleicht):
+**Nachbesserung (27.10.2026, gleicher Container):** `make check` vor jedem der elf Commits grün; `make race` grün (Exit 0); `make cross` grün; Guard von Hand mit rohen Bidi-Zeichen (schlägt an); `prompt-probe` im Linux-PTY mit `--expect-sha256` (richtig → `hash_match: true`, falsch → `false`, kein Hash, kein Wert, kein Datenverzeichnis). **Nicht gelaufen:** `make integration` (die Nachbesserung berührt Import und IMAP nicht; `sync --watch` nur in der Summierung, durch Unit-Test gedeckt), `make vuln` (Netz gesperrt, wie oben), PowerShell (nicht im Container; Download von der Rechteprüfung abgelehnt, deshalb `abnahme_A3.ps1` nur gelesen und unabhängig gegengelesen, nicht ausgeführt).
+
+**Build `0.3.0-alpha.c2`** (`make release VERSION=0.3.0-alpha.c2`, Code-Stand `c6c617f`; danach nur dieser Doku-Nachtrag; die Prüfsitzung baut nach und vergleicht):
+
+```
+cd607fee27ddb946651ff9d248b6891641f2a7b6c0fc819e8910e751ea736994  postkauz-linux-amd64
+a92d3b1d02939cc115a706bf5dfe051542a2fb3c6e85a1e0e60f868e1367ec07  postkauz-windows-amd64.exe
+5f095105645c6de7be0664d4019979f8dbb7649df8b3d3526b74b3368f2d0505  postkauz-darwin-arm64
+```
+
+**Build `0.3.0-alpha.c1`** (abgelöst; `make release VERSION=0.3.0-alpha.c1`, Code-Stand `e6f8be8`; danach nur dieser Doku-Nachtrag; `dist/` ist nicht versioniert, die Prüfsitzung baut nach und vergleicht):
 
 ```
 0455c194443ac262b93e81220413e7ae6c1c118ccc545e49f4dcdea8a25d2d68  postkauz-linux-amd64
