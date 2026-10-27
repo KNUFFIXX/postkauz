@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -40,7 +41,10 @@ func (p *Provider) cached(mailbox string, st imapx.SelectInfo) []uint32 {
 }
 
 // searchAll liefert alle UIDs des Ordners; fresh fragt den Server auch dann,
-// wenn der Zwischenspeicher passt (voller Abgleich).
+// wenn der Zwischenspeicher passt (voller Abgleich). Liefert der Server
+// eine andere Zahl von UIDs als EXISTS aus demselben SELECT, ist das
+// provider.ErrIncomplete (T1a Punkt 3): Aus einer leeren oder gekürzten
+// Liste folgten sonst Löschungen, die es nicht gab.
 func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) ([]uint32, error) {
 	if uids := p.cached(mailbox, st); uids != nil && !fresh {
 		return uids, nil
@@ -48,6 +52,9 @@ func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInf
 	uids, err := c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
 	if err != nil {
 		return nil, err
+	}
+	if len(uids) != int(st.Messages) {
+		return nil, fmt.Errorf("%w: UID SEARCH ALL returned %d UIDs, EXISTS is %d", provider.ErrIncomplete, len(uids), st.Messages)
 	}
 	p.mu.Lock()
 	if p.cache == nil {

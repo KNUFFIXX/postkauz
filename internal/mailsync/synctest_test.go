@@ -43,7 +43,9 @@ func (r *clockRemote) ListMailboxes(context.Context) ([]provider.Mailbox, error)
 	if d > 0 {
 		time.Sleep(d)
 	}
-	return nil, nil
+	// Mit INBOX: eine leere Liste bricht den Lauf ab, sobald der Store
+	// Ordner kennt (T1a Punkt 3).
+	return []provider.Mailbox{{Path: "INBOX", Name: "INBOX", Role: provider.RoleInbox}}, nil
 }
 
 func (r *clockRemote) Changes(context.Context, string, provider.SyncState, provider.ChangesOptions) (provider.ChangeSet, error) {

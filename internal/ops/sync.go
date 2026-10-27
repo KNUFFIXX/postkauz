@@ -71,6 +71,10 @@ type SyncOutput struct {
 	// obwohl die lokale Kopie bis zu MaxLinkSizeExtra Bytes größer ist
 	// (Thunderbird-Import, nie Entwürfe). Fehlt bei 0.
 	LinkedDespiteSizeDifference int `json:"linked_despite_size_difference,omitempty"`
+	// IncompleteAnswers zählt leere oder unvollständige Serverantworten
+	// (T1a Punkt 3: LIST ohne Ordner bzw. INBOX, UID SEARCH ALL ungleich
+	// EXISTS); dabei wurde nichts gelöst oder entfernt. Fehlt bei 0.
+	IncompleteAnswers int `json:"incomplete_answers,omitempty"`
 	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
 	// extrahiert hat (S1.6).
 	AttachmentsExtracted int `json:"attachments_extracted,omitempty"`
@@ -214,6 +218,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "already_known_downloaded": {"type": "integer", "description": "messages downloaded although they turned out to be known locally (matched by content hash)"},
     "already_known_downloaded_bytes": {"type": "integer"},
     "linked_despite_size_difference": {"type": "integer", "description": "messages linked by Message-ID without download although the local copy is up to ` + strconv.Itoa(MaxLinkSizeExtra) + ` bytes larger"},
+    "incomplete_answers": {"type": "integer", "description": "empty or incomplete server answers (mailbox list without INBOX, UID list not matching EXISTS); nothing was removed"},
     "attachments_extracted": {"type": "integer"},
     "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"},
     "drafts": {"type": "object", "properties": {

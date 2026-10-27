@@ -49,6 +49,12 @@ var (
 	// Verbindung ist in Ordnung; dieselbe Nachricht erneut abzulegen hilft
 	// nicht, eine andere kann gelingen (Gegenprüfung S2.4/S2.5, W3).
 	ErrRejected = errors.New("provider: the server refused to store the message")
+	// ErrIncomplete: Die Antwort des Servers ist leer oder unvollständig,
+	// obwohl sie es nicht sein kann (T1a Punkt 3): UID SEARCH ALL liefert
+	// eine andere Zahl als EXISTS desselben SELECT, oder LIST liefert keine
+	// Ordner bzw. kein INBOX. Der Aufrufer löst und löscht daraufhin nichts
+	// und versucht es im nächsten Lauf erneut.
+	ErrIncomplete = errors.New("provider: incomplete server answer")
 )
 
 // Capabilities beschreibt, was der Server kann. Sie werden beim Verbinden

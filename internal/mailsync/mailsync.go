@@ -155,6 +155,9 @@ type MailboxReport struct {
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
 	Failed bool `json:"-"`
+	// Incomplete: übersprungen, weil UID SEARCH ALL nicht zu EXISTS passte
+	// (provider.ErrIncomplete).
+	Incomplete bool `json:"-"`
 }
 
 // Report ist das Ergebnis eines Laufs.
@@ -174,6 +177,11 @@ type Report struct {
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
+	// Incomplete zählt leere oder unvollständige Serverantworten dieses
+	// Laufs (provider.ErrIncomplete, T1a Punkt 3): LIST ohne Ordner bzw.
+	// ohne INBOX (der Lauf bricht ab) und UID SEARCH ALL mit anderer Zahl
+	// als EXISTS (der Ordner wird übersprungen). Beides löst nichts.
+	Incomplete int `json:"incomplete_answers,omitempty"`
 	// Extracted zählt Anhänge, deren Text in diesem Lauf extrahiert wurde
 	// (oder deren Extraktion endgültig scheiterte).
 	Extracted int `json:"attachments_extracted"`
@@ -204,6 +212,9 @@ func (r Report) failedMailboxes() int {
 
 func (r *Report) add(m MailboxReport) {
 	r.Mailboxes = append(r.Mailboxes, m)
+	if m.Incomplete {
+		r.Incomplete++
+	}
 	r.New += m.New
 	r.Updated += m.Updated
 	r.Removed += m.Removed
@@ -313,18 +324,12 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		}
 		e.log().Warn("drafts not pushed", "error", err.Error())
 	}
-	boxes, err := e.Remote.ListMailboxes(ctx)
-	if err != nil {
+	if err := e.syncMailboxList(ctx); err != nil {
+		if errors.Is(err, provider.ErrIncomplete) {
+			rep.Incomplete++
+		}
+		rep.Duration = time.Since(start)
 		return rep, err
-	}
-	specs := make([]store.MailboxSpec, 0, len(boxes))
-	for _, b := range boxes {
-		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
-	}
-	if _, removed, err := e.Store.SyncMailboxes(ctx, e.AccountID, specs); err != nil {
-		return rep, err
-	} else if len(removed) > 0 {
-		e.log().Info("mailboxes removed on the server", "count", len(removed))
 	}
 	local, err := e.Store.Mailboxes(ctx, e.AccountID)
 	if err != nil {
@@ -358,6 +363,10 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			// setzt am gespeicherten Stand wieder an.
 			mr.Errors++
 			mr.Failed = true
+			if errors.Is(err, provider.ErrIncomplete) {
+				mr.Incomplete = true
+				e.log().Warn("incomplete UID list from the server; mailbox skipped, nothing removed", "mailbox", mb.Path)
+			}
 			mr.problem(err.Error())
 			check.SkipSent = check.SkipSent || isDrafts
 			check.KeepMark = check.KeepMark || isSent
@@ -432,6 +441,47 @@ func (e *Engine) backlog(ctx context.Context) error {
 	}
 	if n > 0 {
 		e.log().Info("cleaned up messages mirrored with an older version", "count", n)
+	}
+	return nil
+}
+
+// ErrIncompleteList: LIST lieferte keine Ordner oder kein INBOX, obwohl
+// lokal Ordner bekannt sind (T1a Punkt 3).
+var ErrIncompleteList = fmt.Errorf("%w: the mailbox list from the server is empty or has no INBOX; nothing removed, retrying in the next run", provider.ErrIncomplete)
+
+// syncMailboxList holt die Ordnerliste und gleicht sie lokal ab. Eine
+// leere Liste oder eine ohne INBOX ist nie die Wahrheit, sobald lokal
+// Ordner bekannt sind: Der Abgleich entfernte sonst alle Ordner, löste
+// alle Zuordnungen (deleted_remote_at), setzte abgelegte Entwürfe auf
+// missing und erzwänge danach einen vollen Neuabgleich (Tageslimit des
+// Anbieters). Dann ErrIncompleteList, nichts wird geändert.
+func (e *Engine) syncMailboxList(ctx context.Context) error {
+	boxes, err := e.Remote.ListMailboxes(ctx)
+	if err != nil {
+		return err
+	}
+	hasInbox := false
+	specs := make([]store.MailboxSpec, 0, len(boxes))
+	for _, b := range boxes {
+		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
+		hasInbox = hasInbox || b.Role == provider.RoleInbox || strings.EqualFold(b.Path, "INBOX")
+	}
+	if !hasInbox {
+		local, err := e.Store.Mailboxes(ctx, e.AccountID)
+		if err != nil {
+			return err
+		}
+		if len(local) > 0 {
+			e.log().Warn("incomplete mailbox list from the server; nothing removed", "mailboxes", len(boxes), "known", len(local))
+			return ErrIncompleteList
+		}
+	}
+	_, removed, err := e.Store.SyncMailboxes(ctx, e.AccountID, specs)
+	if err != nil {
+		return err
+	}
+	if len(removed) > 0 {
+		e.log().Info("mailboxes removed on the server", "count", len(removed))
 	}
 	return nil
 }

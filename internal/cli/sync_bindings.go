@@ -169,6 +169,10 @@ func renderSync(w io.Writer, out any) error {
 		// Bytes größer (Restfall C2); gezählt werden Nachrichten.
 		fmt.Fprintf(w, "linked despite size difference: %d messages\n", o.LinkedDespiteSizeDifference)
 	}
+	if o.IncompleteAnswers > 0 {
+		// T1a Punkt 3: leere oder unvollständige Antwort, nichts entfernt.
+		fmt.Fprintf(w, "incomplete server answers: %d (nothing removed; the next sync retries)\n", o.IncompleteAnswers)
+	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {
