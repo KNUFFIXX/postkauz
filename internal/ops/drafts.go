@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
@@ -1689,6 +1690,18 @@ type DraftsRequestOutput struct {
 	// (compose.MessageHash); die Freigabe bindet ihn (W1).
 	MessageHash string `json:"message_hash"`
 	DryRun      bool   `json:"dry_run"`
+	// NextStep sagt, wie der Mensch freigibt oder ablehnt (A2, T1b); nur
+	// mit Freigabe (approval_id).
+	NextStep string `json:"next_step,omitempty"`
+	// HumanOnly: Freigeben und Ablehnen kann nur ein Mensch (immer true).
+	HumanOnly bool `json:"human_only"`
+}
+
+// ApprovalNextStep ist der Satz für next_step (A2): Kommandos des Menschen
+// mit der ID der Freigabe; der Server kann weder freigeben noch senden.
+func ApprovalNextStep(approvalID int64) string {
+	return fmt.Sprintf("A human approves with: %s approve %d — or rejects with: %s reject %d --reason '…'. "+
+		"This server cannot approve or send.", brand.Name, approvalID, brand.Name, approvalID)
 }
 
 // DraftsRequestReady legt einen Entwurf zur Freigabe durch einen Menschen
@@ -1720,9 +1733,11 @@ func DraftsRequestReady(d Deps) Operation {
     "hook": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
     "hook_output": ` + hookOutputSchema + `, "approval_id": {"type": "integer"},
     "expires_at": {"type": "string", "format": "date-time"}, "preview_hash": {"type": "string"},
-    "message_hash": {"type": "string"}, "dry_run": {"type": "boolean"}
+    "message_hash": {"type": "string"}, "dry_run": {"type": "boolean"},
+    "next_step": {"type": "string", "description": "how a human approves or rejects (only with approval_id)"},
+    "human_only": {"type": "boolean", "description": "always true: only a human can approve or reject"}
   },
-  "required": ["draft_id", "status", "previous_status", "hook", "preview_hash", "message_hash", "dry_run"]
+  "required": ["draft_id", "status", "previous_status", "hook", "preview_hash", "message_hash", "dry_run", "human_only"]
 }`),
 		Redact: redactDraftInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -1764,12 +1779,13 @@ func DraftsRequestReady(d Deps) Operation {
 				return nil, draftErr(err)
 			}
 			out := DraftsRequestOutput{DraftID: res.Draft.ID, Status: string(res.To), PreviousStatus: string(res.From), Hook: hook.Result,
-				PreviewHash: res.Draft.PreviewHash, MessageHash: mh, DryRun: call.DryRun}
+				PreviewHash: res.Draft.PreviewHash, MessageHash: mh, DryRun: call.DryRun, HumanOnly: true}
 			if hook.Result != drafts.HookPass {
 				out.HookOutput = hookOutputEnvelope(hook)
 			}
 			if res.Approval != nil && !call.DryRun {
 				out.ApprovalID, out.ExpiresAt = res.Approval.ID, rfc3339(res.Approval.ExpiresAt)
+				out.NextStep = ApprovalNextStep(res.Approval.ID)
 			}
 			return out, nil
 		},

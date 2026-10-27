@@ -254,7 +254,7 @@ func TestInstructionsFollowDraftScope(t *testing.T) {
 		t.Fatalf("reader instructions: %s", r)
 	}
 	if !strings.Contains(d, "can create drafts in the Drafts folder") || !strings.Contains(d, "a human approves and sends") ||
-		!strings.Contains(d, "Nothing is sent, deleted or moved") {
+		!strings.Contains(d, "Nothing is sent, deleted or moved") || !strings.Contains(d, "postkauz approve <approval_id>") {
 		t.Fatalf("draft instructions: %s", d)
 	}
 }

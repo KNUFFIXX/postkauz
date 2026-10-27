@@ -196,6 +196,11 @@ func TestMCPAssistantSession(t *testing.T) {
 	if v["status"] != "pending_approval" || v["hook"] != "pass" || v["approval_id"] != 1.0 || v["hook_output"] != nil {
 		t.Fatalf("request = %v", v)
 	}
+	// A2 (T1b): Das Ergebnis sagt, wie der Mensch freigibt.
+	if s, _ := v["next_step"].(string); v["human_only"] != true || !strings.Contains(s, "postkauz approve 1") ||
+		!strings.Contains(s, "cannot approve or send") {
+		t.Fatalf("request next_step = %v / %v", v["next_step"], v["human_only"])
+	}
 	v, _ = callTool(t, cs, "mail_get_approval", map[string]any{"approval_id": 1})
 	if v["status"] != "pending" || v["draft_status"] != "pending_approval" || v["decided_by"] != nil {
 		t.Fatalf("approval = %v", v)

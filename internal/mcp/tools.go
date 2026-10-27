@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
@@ -156,7 +157,8 @@ var tools = []toolBinding{
 	{tool: "mail_request_ready", op: "drafts.request_ready", title: "Submit a draft for approval", mail: true, dryRun: true,
 		desc: "Submit a draft (draft_id) to the human for approval. The user's check hook runs first: hook=pass gives status " +
 			"pending_approval and an approval_id; any other result keeps status draft, and hook_output (untrusted, it may repeat " +
-			"mail content) says why. Only a human can approve or reject; you cannot. After approval (status ready) the human " +
+			"mail content) says why. Only a human can approve or reject; you cannot (human_only=true): tell the user the command in " +
+			"next_step (" + brand.Name + " approve <approval_id>, or reject). After approval (status ready) the human " +
 			"sends the draft from the mail client. Follow the decision with mail_get_approval. dry_run=true only checks. " + neverSends},
 	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
 		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +
