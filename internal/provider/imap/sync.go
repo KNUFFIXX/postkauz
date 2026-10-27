@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -257,7 +258,7 @@ func (p *Provider) FetchHeaders(ctx context.Context, mailbox string, uidValidity
 		}
 		todo = slices.DeleteFunc(todo, func(u uint32) bool { return got[u] })
 	}
-	slices.SortFunc(out, func(a, b provider.Header) int { return int(a.UID) - int(b.UID) })
+	slices.SortFunc(out, func(a, b provider.Header) int { return cmp.Compare(a.UID, b.UID) })
 	return out, nil
 }
 

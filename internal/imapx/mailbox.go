@@ -2,6 +2,7 @@ package imapx
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -387,7 +388,9 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 		}
 		return cmd.Close()
 	})
-	slices.SortFunc(out, func(a, b MessageMeta) int { return int(a.UID) - int(b.UID) })
+	// cmp.Compare statt int-Differenz: Auf 32-Bit-Systemen (int = int32)
+	// liefe int(a.UID) - int(b.UID) bei UIDs über 2^31 über (K5).
+	slices.SortFunc(out, func(a, b MessageMeta) int { return cmp.Compare(a.UID, b.UID) })
 	if aborted {
 		c.closeNow()
 		return out, ErrHeaderBudget

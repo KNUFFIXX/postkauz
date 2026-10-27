@@ -27,7 +27,7 @@ import (
 // in UID-Sets“) und beantwortet SEARCH mit der Zeile aus search.
 type strictServer struct {
 	addr   string
-	exists int
+	exists int64
 	search string // Antwortzeile auf UID SEARCH (ohne Tag), "" = leer
 
 	// fetch beantwortet UID FETCH selbst (Tests mit großen Köpfen).
@@ -44,7 +44,7 @@ func (s *strictServer) log() []string {
 	return slices.Clone(s.cmds)
 }
 
-func newStrictServer(t *testing.T, exists int, search string) *strictServer {
+func newStrictServer(t *testing.T, exists int64, search string) *strictServer {
 	t.Helper()
 	s := &strictServer{exists: exists, search: search}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -187,7 +187,7 @@ func uidSetOnly() error {
 func TestReceivedUIDSetsAreBounded(t *testing.T) {
 	cases := []struct {
 		name, search string
-		exists       int
+		exists       int64
 		want         []uint32
 		bad          bool
 	}{
@@ -358,6 +358,30 @@ func TestFetchMetaLimitsHeaders(t *testing.T) {
 	}
 	if len(meta) != 1 || meta[0].UID != 1 || len(meta[0].HeaderFields) != 80 {
 		t.Fatalf("budget = %+v", summary(meta))
+	}
+}
+
+// K5: Die Ergebnisse sind nach UID sortiert, auch über 2^31 (auf
+// 32-Bit-Systemen lief die alte int-Differenz dort über).
+func TestFetchMetaSortsLargeUIDs(t *testing.T) {
+	s := newStrictServer(t, 4, "")
+	s.fetch = func(w io.Writer, tag string) {
+		for i, uid := range []uint32{4294967294, 1, 2147483648, 2147483647} {
+			fmt.Fprintf(w, "* %d FETCH (UID %d RFC822.SIZE 10 FLAGS ())\r\n", i+1, uid)
+		}
+		_, _ = io.WriteString(w, tag+" OK done\r\n")
+	}
+	c := dialStrict(t, s)
+	meta, err := c.FetchMeta([]uint32{1, 2147483647, 2147483648, 4294967294}, MetaOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []uint32
+	for _, m := range meta {
+		got = append(got, m.UID)
+	}
+	if !slices.Equal(got, []uint32{1, 2147483647, 2147483648, 4294967294}) {
+		t.Fatalf("order = %v", got)
 	}
 }
 
