@@ -219,6 +219,9 @@ type MessageMeta struct {
 	Size         int64
 	// HeaderFields sind der Kopf bzw. die angeforderten Kopfzeilen, roh.
 	HeaderFields []byte
+	// HeaderSkipped nennt, warum HeaderFields fehlt ("" = gelesen):
+	// HeaderTooLarge oder HeaderOverBudget.
+	HeaderSkipped string
 }
 
 // MetaOptions steuert FetchMeta.
@@ -230,6 +233,10 @@ type MetaOptions struct {
 	// Feldnamen in Anführungszeichen setzt; der Sync nutzt deshalb Header.
 	HeaderFields []string
 	ModSeq       bool // MODSEQ mitholen (CONDSTORE)
+	// MaxHeaderBytes begrenzt einen Kopf (0 = DefaultMaxHeaderBytes),
+	// HeaderBudget die Köpfe eines Aufrufs (0 = DefaultHeaderBudget).
+	MaxHeaderBytes int64
+	HeaderBudget   int64
 }
 
 // maxUID (4294967295) wird nie gesendet und nie als Ende eines
@@ -264,9 +271,32 @@ func uidSet(uids []uint32) (imap.UIDSet, error) {
 	return s, nil
 }
 
+// Grenzen für Köpfe in FetchMeta (A12.4): go-imap läse ein Literal sonst
+// unbegrenzt in den Speicher, und ein Absender bestimmt die Größe des
+// Kopfes.
+const (
+	// DefaultMaxHeaderBytes: größter Kopf, der gelesen wird (1 MiB; echte
+	// Köpfe haben wenige KB, lange Signaturketten einige 10 KB).
+	DefaultMaxHeaderBytes int64 = 1 << 20
+	// DefaultHeaderBudget: Summe der Köpfe je FETCH (16 MiB).
+	DefaultHeaderBudget int64 = 16 << 20
+)
+
+// Gründe, aus denen FetchMeta einen Kopf nicht liefert.
+const (
+	// HeaderTooLarge: Der Kopf ist größer als MaxHeaderBytes; er wird nicht
+	// gelesen, die übrigen Angaben (Größe, Flags) schon.
+	HeaderTooLarge = "too_large"
+	// HeaderOverBudget: Das Budget dieses FETCH ist erschöpft; der Aufrufer
+	// holt den Kopf mit einem neuen FETCH (internal/provider/imap).
+	HeaderOverBudget = "budget"
+)
+
 // FetchMeta holt UID, FLAGS, INTERNALDATE, RFC822.SIZE (und MODSEQ sowie
 // gewählte Kopfzeilen per BODY.PEEK) der angegebenen UIDs im gewählten
-// Ordner. Nicht mehr vorhandene UIDs fehlen im Ergebnis.
+// Ordner. Nicht mehr vorhandene UIDs fehlen im Ergebnis. Köpfe werden
+// gestreamt und begrenzt gelesen (A12.4): höchstens MaxHeaderBytes je Kopf
+// und HeaderBudget je Aufruf; was nicht passt, trägt HeaderSkipped.
 func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) {
 	if len(uids) == 0 {
 		return nil, nil
@@ -275,38 +305,90 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 	if err != nil {
 		return nil, err
 	}
+	maxHeader, budget := o.MaxHeaderBytes, o.HeaderBudget
+	if maxHeader <= 0 {
+		maxHeader = DefaultMaxHeaderBytes
+	}
+	if budget <= 0 {
+		budget = DefaultHeaderBudget
+	}
+	budget = max(budget, maxHeader) // ein Kopf bis zur Grenze passt immer
 	opts := &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, RFC822Size: true, ModSeq: o.ModSeq}
-	var sec *imap.FetchItemBodySection
 	if o.Header || len(o.HeaderFields) > 0 {
-		sec = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, Peek: true}
+		sec := &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, Peek: true}
 		if !o.Header {
 			sec.HeaderFields = o.HeaderFields
 		}
 		opts.BodySection = []*imap.FetchItemBodySection{sec}
 	}
-	var bufs []*imapclient.FetchMessageBuffer
+	var out []MessageMeta
 	err = c.run(func() error {
-		var err error
-		bufs, err = c.c.Fetch(set, opts).Collect()
-		return err
+		out = nil
+		left := budget
+		cmd := c.c.Fetch(set, opts)
+		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
+			var m MessageMeta
+			for item := msg.Next(); item != nil; item = msg.Next() {
+				switch it := item.(type) {
+				case imapclient.FetchItemDataUID:
+					m.UID = uint32(it.UID)
+				case imapclient.FetchItemDataFlags:
+					m.Flags = flagStrings(it.Flags)
+				case imapclient.FetchItemDataInternalDate:
+					m.InternalDate = it.Time
+				case imapclient.FetchItemDataRFC822Size:
+					m.Size = it.Size
+				case imapclient.FetchItemDataModSeq:
+					m.ModSeq = it.ModSeq
+				case imapclient.FetchItemDataBodySection:
+					if it.Literal == nil {
+						continue
+					}
+					var err error
+					m.HeaderFields, m.HeaderSkipped, err = readHeader(it.Literal, maxHeader, &left)
+					if err != nil {
+						_ = cmd.Close()
+						return err
+					}
+				}
+			}
+			if m.UID != 0 {
+				out = append(out, m)
+			}
+		}
+		return cmd.Close()
 	})
 	if err != nil {
 		return nil, cmdErr(err)
 	}
-	out := make([]MessageMeta, 0, len(bufs))
-	for _, b := range bufs {
-		if b.UID == 0 {
-			continue
-		}
-		m := MessageMeta{UID: uint32(b.UID), Flags: flagStrings(b.Flags), ModSeq: b.ModSeq,
-			InternalDate: b.InternalDate, Size: b.RFC822Size}
-		if sec != nil {
-			m.HeaderFields = b.FindBodySection(sec)
-		}
-		out = append(out, m)
-	}
 	slices.SortFunc(out, func(a, b MessageMeta) int { return int(a.UID) - int(b.UID) })
 	return out, nil
+}
+
+// readHeader liest einen Kopf, höchstens maxHeader Bytes und höchstens den
+// Rest *left des Budgets. Was größer ist (angekündigt oder tatsächlich),
+// wird nicht weiter gelesen; go-imap verwirft den Rest des Literals.
+func readHeader(lit imap.LiteralReader, maxHeader int64, left *int64) ([]byte, string, error) {
+	size := lit.Size()
+	switch {
+	case size > maxHeader:
+		return nil, HeaderTooLarge, nil
+	case size > *left:
+		return nil, HeaderOverBudget, nil
+	}
+	limit := min(maxHeader, *left)
+	b, err := io.ReadAll(io.LimitReader(lit, limit+1))
+	if err != nil {
+		return nil, "", err
+	}
+	*left -= int64(len(b))
+	switch {
+	case int64(len(b)) > maxHeader:
+		return nil, HeaderTooLarge, nil
+	case int64(len(b)) > limit:
+		return nil, HeaderOverBudget, nil
+	}
+	return b, "", nil
 }
 
 func flagStrings(fs []imap.Flag) []string {

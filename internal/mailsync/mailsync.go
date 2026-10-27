@@ -669,6 +669,18 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 		var need []provider.Header
 		for _, h := range headers {
+			if h.HeaderTooLarge {
+				// A12.4: Kopf über der Grenze des Providers, nicht gelesen.
+				// Fehler dieser Nachricht, gemerkt wie eine zu große
+				// Nachricht (sync --full prüft erneut).
+				if err := e.Store.MarkSkipped(ctx, mb.ID, uv, uint32(h.UID), h.Size, store.SkipTooLarge); err != nil {
+					return err
+				}
+				rep.Errors++
+				rep.problem(fmt.Sprintf("uid %d: header larger than the limit; message not fetched, sync --full checks it again", h.UID))
+				e.log().Warn("message header too large; not fetched", "mailbox", mb.Path, "uid", h.UID, "size", h.Size)
+				continue
+			}
 			// Toleranz nur für Nachrichten, die keine Entwürfe sind: Im
 			// Entwürfe-Ordner und bei \Draft bleibt es exakt
 			// (Übernahme-Erkennung, Versanderkennung).

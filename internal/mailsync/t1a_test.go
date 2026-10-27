@@ -156,3 +156,44 @@ func TestIncompleteServerAnswersRemoveNothing(t *testing.T) {
 		t.Fatalf("removed mailbox still known: %d", n)
 	}
 }
+
+// bigHeaderRemote meldet für eine UID einen zu großen Kopf (wie der
+// IMAP-Provider bei einem Kopf über 1 MiB, A12.4).
+type bigHeaderRemote struct {
+	Remote
+	big provider.UID
+}
+
+func (r bigHeaderRemote) FetchHeaders(ctx context.Context, mb string, uv uint32, uids []provider.UID) ([]provider.Header, error) {
+	hs, err := r.Remote.FetchHeaders(ctx, mb, uv, uids)
+	for i := range hs {
+		if hs[i].UID == r.big {
+			hs[i] = provider.Header{UID: hs[i].UID, Size: hs[i].Size, Flags: hs[i].Flags, InternalDate: hs[i].InternalDate, HeaderTooLarge: true}
+		}
+	}
+	return hs, err
+}
+
+// A12.4: Eine Nachricht mit zu großem Kopf wird nicht geladen, zählt als
+// Fehler, wird gemerkt; die übrigen kommen.
+func TestHeaderTooLargeSkipsMessage(t *testing.T) {
+	addr, _ := newLossyServer(t)
+	e := newEnv(t, addr)
+	eng := e.engine(t, bigHeaderRemote{Remote: connect(t, addr, 0), big: 2})
+	rep, err := eng.SyncAll(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// UID 2 gibt es in beiden Ordnern.
+	if rep.Errors != 2 || rep.New != 3 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if n := e.count(t, `SELECT count(*) FROM skipped_messages WHERE uid = 2`); n != 2 {
+		t.Fatalf("skipped = %d", n)
+	}
+	// Der nächste Lauf fordert sie nicht erneut an.
+	rep, err = eng.SyncAll(context.Background(), Options{CheckDeleted: true})
+	if err != nil || rep.Errors != 0 {
+		t.Fatalf("second run: %v %+v", err, rep)
+	}
+}

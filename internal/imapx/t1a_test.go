@@ -26,6 +26,9 @@ type strictServer struct {
 	exists int
 	search string // Antwortzeile auf UID SEARCH (ohne Tag), "" = leer
 
+	// fetch beantwortet UID FETCH selbst (Tests mit großen Köpfen).
+	fetch func(w io.Writer, tag string)
+
 	mu   sync.Mutex
 	cmds []string
 	star int
@@ -86,6 +89,9 @@ func (s *strictServer) serve(c net.Conn) {
 				s.star++
 				s.mu.Unlock()
 				reply = tag + " NO [CANNOT] star in UID set\r\n"
+			} else if s.fetch != nil && strings.HasPrefix(rest, "UID FETCH") {
+				s.fetch(c, tag)
+				continue
 			}
 		case strings.HasPrefix(rest, "UID SEARCH"):
 			reply = ""
@@ -259,4 +265,71 @@ func TestSessionDoOnceDoesNotRepeat(t *testing.T) {
 		calls != 0 || s2.Dials() != 3 {
 		t.Fatalf("DoOnce dial: err=%v calls=%d dials=%d", err, calls, s2.Dials())
 	}
+}
+
+// fetchHeaders schreibt je Kopfgröße eine FETCH-Antwort mit BODY[HEADER]
+// (UID 1, 2, …); die Bytes werden gestreamt, nicht im Speicher gebaut.
+func fetchHeaders(sizes ...int64) func(io.Writer, string) {
+	return func(w io.Writer, tag string) {
+		for i, n := range sizes {
+			fmt.Fprintf(w, "* %d FETCH (UID %d RFC822.SIZE %d FLAGS () BODY[HEADER] {%d}\r\n", i+1, i+1, n+10, n)
+			head := []byte("Subject: x\r\n")
+			if n < int64(len(head)) {
+				head = head[:n]
+			}
+			_, _ = w.Write(head)
+			_, _ = io.CopyN(w, zeros{}, n-int64(len(head)))
+			_, _ = io.WriteString(w, ")\r\n")
+		}
+		_, _ = io.WriteString(w, tag+" OK done\r\n")
+	}
+}
+
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	return len(p), nil
+}
+
+// A12.4: Ein Kopf von 50 MB wird nicht gelesen (HeaderTooLarge), die
+// übrigen kommen; Köpfe, die nicht mehr ins Budget passen, sind
+// HeaderOverBudget.
+func TestFetchMetaLimitsHeaders(t *testing.T) {
+	s := newStrictServer(t, 3, "")
+	s.fetch = fetchHeaders(100, 50<<20, 200)
+	c := dialStrict(t, s)
+	c.timeout = 30 * time.Second
+	meta, err := c.FetchMeta([]uint32{1, 2, 3}, MetaOptions{Header: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta) != 3 || meta[0].HeaderSkipped != "" || len(meta[0].HeaderFields) != 100 ||
+		meta[1].HeaderSkipped != HeaderTooLarge || meta[1].HeaderFields != nil || meta[1].Size != 50<<20+10 ||
+		meta[2].HeaderSkipped != "" || len(meta[2].HeaderFields) != 200 {
+		t.Fatalf("meta = %+v", summary(meta))
+	}
+	// Budget: 100 Bytes je Kopf, 150 je Aufruf (auf die Kopfgrenze
+	// angehoben, wenn kleiner).
+	s.fetch = fetchHeaders(80, 80, 80)
+	meta, err = c.FetchMeta([]uint32{1, 2, 3}, MetaOptions{Header: true, MaxHeaderBytes: 100, HeaderBudget: 150})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(meta) != 3 || meta[0].HeaderSkipped != "" || meta[1].HeaderSkipped != HeaderOverBudget || meta[2].HeaderSkipped != HeaderOverBudget {
+		t.Fatalf("budget = %+v", summary(meta))
+	}
+	if err := c.Noop(); err != nil {
+		t.Fatalf("connection unusable after skipped literals: %v", err)
+	}
+}
+
+func summary(ms []MessageMeta) []string {
+	var out []string
+	for _, m := range ms {
+		out = append(out, fmt.Sprintf("uid=%d len=%d skipped=%q size=%d", m.UID, len(m.HeaderFields), m.HeaderSkipped, m.Size))
+	}
+	return out
 }

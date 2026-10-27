@@ -186,6 +186,10 @@ type Header struct {
 	// Roh-Kopfzeilen (IMAP: BODY.PEEK[HEADER]); geparst wird
 	// im Store-nahen Code (einheitlich für IMAP, Import und Tests).
 	RawHeader []byte
+	// HeaderTooLarge: Der Kopf ist größer als die Grenze des Providers
+	// (IMAP 1 MiB, A12.4) und wurde nicht gelesen; RawHeader und MessageID
+	// sind leer. Der Sync zählt das als Fehler dieser Nachricht.
+	HeaderTooLarge bool
 }
 
 // FlagUpdate meldet geänderte Flags einer bekannten Nachricht.
