@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -96,7 +97,7 @@ func newAccountsEnv(t *testing.T) *accountsEnv {
 	}
 	e := &accountsEnv{st: st, sec: newMemSecrets(), prober: &fakeProber{}, au: &audit.Memory{}}
 	reg := NewRegistry()
-	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec), AccountsRemove(st, e.sec), AccountsTest(st, Credentials{Secrets: e.sec}, e.prober)} {
+	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec, oauth.Microsoft{}), AccountsRemove(st, e.sec), AccountsTest(st, Credentials{Secrets: e.sec}, e.prober)} {
 		if err := reg.Register(op); err != nil {
 			t.Fatal(err)
 		}
@@ -248,7 +249,7 @@ func TestAccountsAddPasswordFromEnv(t *testing.T) {
 	// Umgebung über den Speicher legen wie im CLI (secrets.WithEnv).
 	reg := NewRegistry()
 	sec := secrets.WithEnv(e.sec)
-	_ = reg.Register(AccountsAdd(e.st, sec))
+	_ = reg.Register(AccountsAdd(e.st, sec, oauth.Microsoft{}))
 	x := &Executor{Registry: reg, Audit: e.au}
 	t.Setenv(secrets.EnvName(e.ref(t, "demo")), canary)
 	in := demoInput()

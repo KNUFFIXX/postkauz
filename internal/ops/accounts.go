@@ -371,7 +371,9 @@ func (in *AccountsAddInput) normalize() error {
 
 // AccountsAdd legt ein Konto an; das Passwort landet im Schlüsselbund (bzw.
 // dem gewählten Speicher), in der Datenbank nur der Verweis. R1, Scope admin.
-func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
+// ms liefert die Anmeldeadressen für OAuth2-Konten (insecure-file nur mit
+// lokalem Fake-AS, Gegenprüfung T4 K3).
+func AccountsAdd(repo AccountRepo, sec secrets.Store, ms oauth.Microsoft) Operation {
 	return Operation{
 		Name:    "accounts.add",
 		Scope:   policy.ScopeAdmin,
@@ -443,7 +445,7 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 				if !call.Secret.IsZero() {
 					return nil, inputErr("auth_type oauth2 uses no password; sign in with account login after adding the account")
 				}
-				if _, err := oauthStoreAllowed(sec, in.InsecureTestServer); err != nil {
+				if _, err := oauthStoreAllowed(sec, in.InsecureTestServer, ms, oauth.Client{ClientID: in.ClientID, Tenant: in.Tenant}); err != nil {
 					return nil, err
 				}
 			} else if in.PasswordFromEnv {

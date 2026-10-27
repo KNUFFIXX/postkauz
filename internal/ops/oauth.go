@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
@@ -81,7 +82,7 @@ func (c Credentials) For(a store.Account, dryRun bool) (provider.Credential, err
 	}
 	// Auch hier, nicht nur bei add und login: Die Quelle speichert jedes
 	// erneuerte Refresh-Token (etwa nach einem Wechsel von secrets.backend).
-	if _, err := oauthStoreAllowed(c.Secrets, a.InsecureTestServer); err != nil {
+	if _, err := oauthStoreAllowed(c.Secrets, a.InsecureTestServer, c.OAuth, client); err != nil {
 		return provider.Credential{}, fmt.Errorf("account %s: %w", a.Name, err)
 	}
 	saved, err := oauth.Load(c.Secrets, a.CredentialRef)
@@ -215,7 +216,7 @@ func AccountsLogin(repo AccountRepo, creds Credentials) Operation {
 			if err != nil {
 				return nil, err
 			}
-			st, err := oauthStoreAllowed(creds.Secrets, a.InsecureTestServer)
+			st, err := oauthStoreAllowed(creds.Secrets, a.InsecureTestServer, creds.OAuth, client)
 			if err != nil {
 				return nil, err
 			}
@@ -252,14 +253,33 @@ func AccountsLogin(repo AccountRepo, creds Credentials) Operation {
 // oauthStoreAllowed prüft, ob der Speicher ein Refresh-Token aufnehmen darf
 // (Rückfrage R2): nur ein erreichbarer Schlüsselbund. Der unsichere
 // Testspeicher insecure-file meldet sich zwar als verfügbar, gilt aber nur
-// für Konten mit insecure_test_server (lokaler Testserver, Fake-AS);
-// sonst läge ein echtes Refresh-Token in insecure-secrets/secrets.json.
-func oauthStoreAllowed(sec secrets.Store, insecureTestServer bool) (secrets.Status, error) {
+// für Konten mit insecure_test_server (IMAP auf localhost) und nur, wenn
+// auch die Anmeldeadressen des Clients lokal sind (Fake-AS; Gegenprüfung
+// T4, K3): Ein Konto mit lokalem IMAP-Host, aber echtem Microsoft-Endpunkt
+// legte sonst ein echtes Refresh-Token in insecure-secrets/secrets.json.
+func oauthStoreAllowed(sec secrets.Store, insecureTestServer bool, ms oauth.Microsoft, c oauth.Client) (secrets.Status, error) {
 	st := secrets.Stored(sec).Status()
-	if !st.Available || (st.Insecure && !insecureTestServer) {
+	if !st.Available || (st.Insecure && !(insecureTestServer && oauthEndpointLocal(ms, c))) {
 		return st, oauthNeedsKeyring(st)
 	}
 	return st, nil
+}
+
+// oauthEndpointLocal: Alle Anmeldeadressen (Anmeldeseite, Token-Endpunkt,
+// Device-Code) zeigen auf localhost. Microsoft selbst ist nie lokal; nur
+// ein Fake-AS in Tests (oauth.Microsoft.Endpoint).
+func oauthEndpointLocal(ms oauth.Microsoft, c oauth.Client) bool {
+	ep := ms.Config(c).Endpoint
+	for _, raw := range []string{ep.AuthURL, ep.TokenURL, ep.DeviceAuthURL} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || !IsLoopbackHost(u.Hostname()) {
+			return false
+		}
+	}
+	return true
 }
 
 // oauthNeedsKeyring ist die Ablehnung ohne Schlüsselbund (Rückfrage R2:
@@ -269,7 +289,7 @@ func oauthStoreAllowed(sec secrets.Store, insecureTestServer bool) (secrets.Stat
 func oauthNeedsKeyring(st secrets.Status) error {
 	if st.Available && st.Insecure {
 		return fmt.Errorf("%w (%s is the insecure test store): OAuth2 accounts need the OS keyring; "+
-			"secrets.backend = \"insecure-file\" is only allowed for accounts with --insecure-test-server", secrets.ErrUnavailable, st.Backend)
+			"secrets.backend = \"insecure-file\" is only allowed for accounts with --insecure-test-server against a local test sign-in server", secrets.ErrUnavailable, st.Backend)
 	}
 	return fmt.Errorf("%w (%s): OAuth2 accounts need the OS keyring, because the refresh token changes with every renewal; "+
 		"on servers without a keyring use an account with an app password instead", secrets.ErrUnavailable, st.Detail)

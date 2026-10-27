@@ -57,7 +57,7 @@ type Deps struct {
 func Catalog(d Deps) []Operation {
 	return []Operation{
 		AccountsList(d.Accounts),
-		AccountsAdd(d.Accounts, d.Secrets),
+		AccountsAdd(d.Accounts, d.Secrets, d.OAuth),
 		AccountsSet(d.Accounts, d.Secrets),
 		AccountsRemove(d.Accounts, d.Secrets),
 		AccountsTest(d.Accounts, d.credentials(), d.Prober),

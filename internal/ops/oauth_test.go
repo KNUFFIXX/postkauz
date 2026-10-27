@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
@@ -49,7 +52,7 @@ func newOAuthEnv(t *testing.T) *oauthEnv {
 	creds := Credentials{Secrets: e.sec, Audit: sys,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}
 	reg := NewRegistry()
-	for _, op := range []Operation{AccountsAdd(e.st, e.sec), AccountsSet(e.st, e.sec), AccountsRemove(e.st, e.sec),
+	for _, op := range []Operation{AccountsAdd(e.st, e.sec, creds.OAuth), AccountsSet(e.st, e.sec), AccountsRemove(e.st, e.sec),
 		AccountsTest(e.st, creds, &tokenProber{}), AccountsLogin(e.st, creds)} {
 		if err := reg.Register(op); err != nil {
 			t.Fatal(err)
@@ -290,6 +293,75 @@ func TestOAuth2RejectsInsecureFileStore(t *testing.T) {
 	}
 	if _, err := e.run("accounts.test", map[string]any{"name": "lokal"}, "", false); err != nil {
 		t.Fatalf("test for a test server: %v", err)
+	}
+}
+
+// K3 (zweite Nachbesserung T4): insecure_test_server prüft nur den
+// IMAP-Host. Mit insecure-file gilt OAuth2 nur, wenn auch die
+// Anmeldeadressen lokal sind (Fake-AS); ein Konto mit lokalem IMAP-Host
+// und echtem Microsoft-Endpunkt legte sonst ein echtes Refresh-Token in
+// insecure-secrets/secrets.json.
+func TestOAuth2InsecureFileNeedsLocalSignIn(t *testing.T) {
+	e := newOAuthEnv(t)
+	lokal := outlookInput()
+	lokal["name"], lokal["host"], lokal["tls"], lokal["insecure_test_server"] = "lokal", "127.0.0.1", "none", true
+	if _, err := e.run("accounts.add", lokal, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "lokal"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	e.sec.insecure = true
+	before := len(e.sec.m)
+	authorize, refreshes := e.as.Count("/authorize"), e.as.Count("refresh_token")
+	orig := e.x
+
+	remote := func(string) oauth2.Endpoint {
+		return oauth2.Endpoint{AuthURL: "https://login.example.org/authorize", TokenURL: "https://login.example.org/token",
+			DeviceAuthURL: "https://login.example.org/devicecode"}
+	}
+	half := func(tenant string) oauth2.Endpoint {
+		ep := e.as.Endpoint(tenant)
+		ep.TokenURL = "https://login.example.org/token"
+		return ep
+	}
+	for name, ms := range map[string]oauth.Microsoft{
+		"microsoft":         {OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second},
+		"remote endpoint":   {Endpoint: remote, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second},
+		"remote token only": {Endpoint: half, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second},
+	} {
+		creds := e.creds
+		creds.OAuth = ms
+		reg := NewRegistry()
+		for _, op := range []Operation{AccountsAdd(e.st, e.sec, ms), AccountsTest(e.st, creds, &tokenProber{}), AccountsLogin(e.st, creds)} {
+			if err := reg.Register(op); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e.x = &Executor{Registry: reg, Audit: e.au}
+		run := func(op string, in map[string]any) error {
+			_, err := e.run(op, in, "", false)
+			return err
+		}
+		in := maps.Clone(lokal)
+		in["name"] = "lokal2"
+		if err := run("accounts.add", in); !errors.Is(err, secrets.ErrUnavailable) {
+			t.Errorf("%s: add: %v", name, err)
+		}
+		if err := run("accounts.login", map[string]any{"name": "lokal"}); !errors.Is(err, secrets.ErrUnavailable) {
+			t.Errorf("%s: login: %v", name, err)
+		}
+		if err := run("accounts.test", map[string]any{"name": "lokal"}); !errors.Is(err, secrets.ErrUnavailable) {
+			t.Errorf("%s: test: %v", name, err)
+		}
+	}
+	e.x = orig
+	if len(e.sec.m) != before || e.as.Count("/authorize") != authorize || e.as.Count("refresh_token") != refreshes {
+		t.Fatal("nothing may be signed in, refreshed or stored with a remote sign-in server")
+	}
+	// Mit lokalem Fake-AS bleibt der Testweg offen.
+	if _, err := e.run("accounts.test", map[string]any{"name": "lokal"}, "", false); err != nil {
+		t.Fatalf("test with the local fake AS: %v", err)
 	}
 }
 
