@@ -27,7 +27,14 @@ type AuditFilter struct {
 	Operation    string
 	Result       string
 	AfterID      int64 // nur Einträge mit größerer ID (Seiten)
-	Limit        int
+	// UpToID: nur Einträge mit ID bis einschließlich (0 = ohne Grenze).
+	UpToID int64
+	// OpenSince/OpenAfterID: nur Einträge mit ts >= OpenSince ODER
+	// id > OpenAfterID (beide gesetzt; Kandidaten der noch offenen
+	// Exporttage, ops.buildAuditPlan).
+	OpenSince   time.Time
+	OpenAfterID int64
+	Limit       int
 }
 
 const auditCols = `id, ts, actor_type, COALESCE(api_key_id,''), COALESCE(scope,''), operation, params_redacted, targets,
@@ -77,6 +84,13 @@ func (s *SQLite) AuditQuery(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 	}
 	if f.AfterID > 0 {
 		add("id > ?", f.AfterID)
+	}
+	if f.UpToID > 0 {
+		add("id <= ?", f.UpToID)
+	}
+	if !f.OpenSince.IsZero() {
+		where = append(where, "(ts >= ? OR id > ?)")
+		args = append(args, f.OpenSince.UnixMilli(), f.OpenAfterID)
 	}
 	q := `SELECT ` + auditCols + ` FROM audit_events`
 	if len(where) > 0 {

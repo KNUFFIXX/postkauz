@@ -258,3 +258,103 @@ func TestAuditListMergesStartAndEnd(t *testing.T) {
 		t.Fatalf("open starts after a crash = %d %v", n, err)
 	}
 }
+
+// countingRepo zählt die Einträge, die Export und Prüfung aus der
+// Datenbank lesen.
+type countingRepo struct {
+	AuditRepo
+	rows int
+}
+
+func (c *countingRepo) AuditQuery(ctx context.Context, f store.AuditFilter) ([]store.AuditRecord, error) {
+	l, err := c.AuditRepo.AuditQuery(ctx, f)
+	c.rows += len(l)
+	return l, err
+}
+
+// Nachprüfung T1a: Der Plan von Export, Prüfung und doctor lädt nur die
+// Kandidaten der offenen Tage; abgeschlossene Tage liest der Export gar
+// nicht, die Prüfung tageweise. Ein verspäteter Eintrag (Zeitstempel eines
+// abgeschlossenen Tages, geschrieben nach dessen Export) kommt in den
+// nächsten offenen Tag; ein Export an einen neuen Ort schreibt alle Tage
+// aus der Datenbank neu, und verify bleibt ok.
+func TestAuditPlanLoadsOnlyOpenDays(t *testing.T) {
+	e := newAdminEnv(t)
+	ctx := t.Context()
+	day := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	clock := day
+	e.x.Now = func() time.Time { return clock }
+	auditClock = func() time.Time { return clock }
+	t.Cleanup(func() { auditClock = time.Now })
+	for d := 0; d < 3; d++ {
+		clock = day.Add(time.Duration(d) * 24 * time.Hour)
+		for i := 0; i < 50; i++ {
+			e.run(t, adminKey, "keys.list", map[string]any{})
+		}
+	}
+	clock = day.Add(3*24*time.Hour + time.Hour) // 4. März: Tage 1.–3. abgeschlossen
+	if _, err := e.run(t, adminKey, "audit.export", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	// Verspäteter Eintrag mit dem Zeitstempel des 2. März.
+	if err := e.st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, operation, result) VALUES (?, 'system', 'sync.run', 'ok')`,
+		day.Add(24*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	cr := &countingRepo{AuditRepo: e.st}
+	exp, ver := AuditExport(cr, e.dir), AuditVerify(cr)
+	call := func(op Operation) any {
+		t.Helper()
+		out, err := op.Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	ex := call(exp).(AuditExportOutput)
+	if cr.rows > 10 {
+		t.Fatalf("export read %d audit rows; only the open days should be read", cr.rows)
+	}
+	states := map[string]string{}
+	for _, f := range ex.Files {
+		states[f.Day] = f.State
+	}
+	if states["2026-03-01"] != "unchanged" || states["2026-03-02"] != "unchanged" || states["2026-03-03"] != "unchanged" ||
+		states["2026-03-04"] != "updated" {
+		t.Fatalf("states = %v", states)
+	}
+	b, _ := os.ReadFile(filepath.Join(e.dir, auditFileName("2026-03-04")))
+	if !bytes.Contains(b, []byte(`"sync.run"`)) {
+		t.Fatal("late entry not in the next open day")
+	}
+	cr.rows = 0
+	if v := call(ver).(AuditVerifyOutput); v.Status != "ok" || v.DaysChecked != 4 {
+		t.Fatalf("verify = %+v", v)
+	}
+	if cr.rows > 320 { // vier Tage je einmal, dazu die offenen Kandidaten
+		t.Fatalf("verify read %d rows", cr.rows)
+	}
+	cr.rows = 0
+	if days, err := AuditUnexportedDays(ctx, cr); err != nil || len(days) != 0 || cr.rows > 10 {
+		t.Fatalf("unexported = %v %v (rows %d)", days, err, cr.rows)
+	}
+	// Neuer Ort: alle Tage neu aus der Datenbank, Kette wie vorher.
+	other := filepath.Join(t.TempDir(), "neu")
+	out, err := AuditExport(cr, other).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := out.(AuditExportOutput); o.ChainHead != ex.ChainHead || len(o.Files) != 4 {
+		t.Fatalf("export to a new place: head %s vs %s, %d files", o.ChainHead, ex.ChainHead, len(o.Files))
+	}
+	for _, d := range []string{"2026-03-01", "2026-03-02", "2026-03-03"} {
+		a, _ := os.ReadFile(filepath.Join(e.dir, auditFileName(d)))
+		b, _ := os.ReadFile(filepath.Join(other, auditFileName(d)))
+		if !bytes.Equal(a, b) {
+			t.Fatalf("day %s differs at the new place", d)
+		}
+	}
+	if v := call(ver).(AuditVerifyOutput); v.Status != "ok" {
+		t.Fatalf("verify after moving = %+v", v)
+	}
+}
