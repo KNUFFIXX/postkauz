@@ -17,7 +17,35 @@ func TestMeasureMigration0017(t *testing.T) {
 	if os.Getenv("POSTKAUZ_MEASURE_MIGRATION") == "" {
 		t.Skip("set POSTKAUZ_MEASURE_MIGRATION=1 to measure migration 0017")
 	}
+	s, path := measureDB(t, 16)
+	defer s.Close()
+	took, links := measureFillAndMigrate(t, s, 17)
+	fi, _ := os.Stat(path)
+	t.Logf("migration 0017 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; snapshot %s", took, links, fi.Size(), filepath.Base(s.LastSnapshot))
+}
+
+// Laufzeit der Migrationen aus T1b (0018 Neubau audit_events, 0019 jobs)
+// an derselben synthetischen Datenbank, ausgehend von Schema 17 (Rahmen 4;
+// Protokoll docs/protokolle/T1b_stand.md).
+func TestMeasureMigrationsT1b(t *testing.T) {
+	if os.Getenv("POSTKAUZ_MEASURE_MIGRATION") == "" {
+		t.Skip("set POSTKAUZ_MEASURE_MIGRATION=1 to measure migrations 0018 and 0019")
+	}
 	ctx := context.Background()
+	s, path := measureDB(t, 17)
+	defer s.Close()
+	var before int
+	took, _ := measureFillAndMigrate(t, s, 0)
+	_ = s.db.QueryRow(`SELECT count(*) FROM audit_events WHERE ref_id IS NULL`).Scan(&before)
+	if v, _ := s.SchemaVersion(ctx); v != KnownSchemaVersion() || before != 20000 {
+		t.Fatalf("schema %d, audit rows %d", v, before)
+	}
+	fi, _ := os.Stat(path)
+	t.Logf("migrations 0018+0019 (incl. snapshot): %s; messages 50000, audit 20000; db %d bytes; snapshot %s", took, fi.Size(), filepath.Base(s.LastSnapshot))
+}
+
+func measureDB(t *testing.T, version int) (*SQLite, string) {
+	t.Helper()
 	dir := t.TempDir()
 	if d := os.Getenv("POSTKAUZ_MEASURE_DIR"); d != "" {
 		dir = d
@@ -27,10 +55,16 @@ func TestMeasureMigration0017(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if err := s.migrateTo(ctx, 16); err != nil {
+	if err := s.migrateTo(context.Background(), version); err != nil {
 		t.Fatal(err)
 	}
+	return s, path
+}
+
+// measureFillAndMigrate füllt die Datenbank und migriert bis to (0 = alle).
+func measureFillAndMigrate(t *testing.T, s *SQLite, to int) (time.Duration, int) {
+	t.Helper()
+	ctx := context.Background()
 	fill := []string{
 		`INSERT INTO accounts(id,name,email,host,port,username,credential_ref,created_at) VALUES (1,'demo','demo@example.org','127.0.0.1',143,'u','account/demo',1)`,
 		`INSERT INTO mailboxes(id,account_id,path,name,role,uidvalidity,uidnext) VALUES (1,1,'INBOX','INBOX','inbox',7,30001), (2,1,'[Gmail]/All Mail','All Mail','all',8,50001)`,
@@ -50,9 +84,8 @@ func TestMeasureMigration0017(t *testing.T) {
 	}
 	var links int
 	_ = s.db.QueryRow(`SELECT count(*) FROM message_mailboxes`).Scan(&links)
-	fi, _ := os.Stat(path)
 	start := time.Now()
-	if err := s.Migrate(ctx); err != nil {
+	if err := s.migrateTo(ctx, to); err != nil {
 		t.Fatal(err)
 	}
 	took := time.Since(start)
@@ -61,5 +94,5 @@ func TestMeasureMigration0017(t *testing.T) {
 	if after != links {
 		t.Fatalf("links %d -> %d", links, after)
 	}
-	t.Logf("migration 0017 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db before %d bytes; snapshot %s", took, links, fi.Size(), filepath.Base(s.LastSnapshot))
+	return took, links
 }
