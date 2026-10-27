@@ -106,6 +106,15 @@ guard:
 	  --include='*.yml' --include='*.yaml' --include=pre-commit 'go[[:space:]]+list([[:space:]]+[^[:space:]]+)*[[:space:]]+(\./)?\.\.\.' \
 	  $$(ls -d Makefile scripts deploy docs .github .githooks 2>/dev/null); then \
 	  echo "guard: go list must not use the three-dot pattern in scripts (Go 1.28)"; exit 1; fi
+	@# T1c (Gegenprüfung K3): keine rohen Bidi-Steuerzeichen (Trojan Source)
+	@# in Quelltext, Doku, Skripten und Konfiguration, nur als Escape. Bytes
+	@# von U+200E/F, U+202A-E, U+2066-9 und U+061C; testdata/ (Korpus) bleibt
+	@# außen vor.
+	@if LC_ALL=C grep -rlE --exclude-dir=vendor --exclude-dir=.git --exclude-dir=testdata --exclude-dir=dist \
+	  --include='*.go' --include='*.md' --include='*.ps1' --include='*.sh' --include='*.py' --include='*.yml' \
+	  --include='*.yaml' --include='*.toml' --include=Makefile --include=pre-commit \
+	  "$$(printf '\342\200[\216\217\252-\256]|\342\201[\246-\251]|\330\234')" . ; then \
+	  echo "guard: raw bidi control characters found; write them as escapes (e.g. \\u202e)"; exit 1; fi
 	@echo "guard: ok"
 
 pii-check:
