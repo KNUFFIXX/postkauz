@@ -59,9 +59,21 @@ fmt:
 fmt-check:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
-# Platzhalter: golangci-lint ist noch nicht festgelegt. Bis dahin vet + gofmt.
-lint: fmt-check vet
-	@echo "lint: placeholder (go vet + gofmt only); a linter is chosen in slice 1"
+# golangci-lint (A12.1) mit der Auswahl aus .golangci.yml (gosec,
+# staticcheck, errcheck, bodyclose, gocritic und Standardsatz).
+# Version gepinnt: v2.15.0 ist die neueste stabile Version am 27.10.2026
+# (Release vom 16.10.2026; ermittelt per `git ls-remote --tags
+# https://github.com/golangci/golangci-lint` und `go list -m
+# github.com/golangci/golangci-lint/v2@latest`, nicht geraten). Go 1.27
+# wird seit v2.13.0 unterstützt (CHANGELOG des Moduls). `go run` baut das
+# Werkzeug mit der lokalen Toolchain (go1.27.3), wie bei govulncheck; ein
+# Binär-Release, das mit älterem Go gebaut ist, verweigert Code mit
+# `go 1.27` in go.mod. Braucht Netz (Modul-Proxy), deshalb eigenes Ziel und
+# eigener CI-Job im Berichtsmodus, nicht Teil von `make check`. Befunde des
+# Erstlaufs: docs/protokolle/lint_erstlauf.md.
+GOLANGCI_LINT_VERSION ?= v2.15.0
+lint:
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 # Leitplanken des MVP (ADR-002): kein SMTP-Code im Repository.
 # Alle Suchen lassen vendor/ aus (A03 Nachtrag 26.10.2026): fremder Code

@@ -1,7 +1,8 @@
 # CI für PostKauz (Arbeitstitel). Bewusst ohne Docker: Integrationstests gegen
 # die Testserver laufen vorerst lokal und nachts (make integration), nicht in
 # dieser Pipeline. Der Race-Detector läuft als eigener Job mit CGO,
-# govulncheck als eigener Job (braucht Netz).
+# govulncheck und golangci-lint als eigene Jobs (brauchen Netz; lint vorerst
+# im Berichtsmodus).
 name: ci
 
 on:
@@ -79,6 +80,21 @@ jobs:
           go-version: "1.27.x"
       - name: govulncheck
         run: make vuln
+
+  # golangci-lint (A12.1) in der Version aus dem Makefile, Auswahl in
+  # .golangci.yml. Vorerst Berichtsmodus: Befunde färben den Lauf nicht rot,
+  # bis der Erstlauf (docs/protokolle/lint_erstlauf.md) abgearbeitet ist;
+  # danach wird der Job Pflicht (eigener Commit, Roadmap).
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+      - name: golangci-lint
+        run: make lint
 
   cross:
     needs: test
