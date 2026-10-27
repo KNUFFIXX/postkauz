@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -88,19 +89,38 @@ func TestIntegrationImportOverlapDovecot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	overlap := 0
+	// Dovecot ersetzt NUL-Bytes beim Speichern durch 0x80 (gleiche Größe,
+	// anderer Inhalt). Der Thunderbird-Export entsteht hier aus dem
+	// Korpus, nicht vom Server, und enthält die NUL-Bytes noch: Diese
+	// Nachrichten sind für den Import seit rc6 eine zweite Fassung mit
+	// derselben Message-ID (Gmail-Regel, knownVersion) und kommen als neu
+	// hinzu. Bei einem echten Thunderbird-Profil stammen die Bytes vom
+	// Server, dann sind beide gleich.
+	overlap, altered := 0, 0
 	for _, i := range exp.Included {
 		if onServer(i) {
 			overlap++
+			if bytes.IndexByte(c.Raw[i], 0) >= 0 {
+				altered++
+			}
 		}
+	}
+	if altered == 0 {
+		t.Fatal("corpus without NUL bytes in the overlap: adjust the test")
 	}
 	start = time.Now()
 	rep := e.run(t, dir, FormatMbox, "", Options{})
 	t.Logf("import: new %d, existing %d, skipped %d, errors %d (%.0f %% of the import already synced) in %s",
 		rep.New, rep.Existing, rep.Skipped, rep.Errors, 100*float64(overlap)/float64(exp.New), time.Since(start).Round(time.Millisecond))
-	checkCounts(t, rep, exp, overlap)
-	if n := e.count(t, `SELECT count(*) FROM messages`); n != synced+exp.New-overlap {
-		t.Fatalf("messages = %d, want %d (no duplicates)", n, synced+exp.New-overlap)
+	checkCounts(t, rep, exp, overlap-altered)
+	if n := e.count(t, `SELECT count(*) FROM messages`); n != synced+exp.New-overlap+altered {
+		t.Fatalf("messages = %d, want %d (no duplicates)", n, synced+exp.New-overlap+altered)
+	}
+	// Genau die umkodierten Nachrichten gibt es zweimal: Serverfassung und
+	// importierte Fassung.
+	if n := e.count(t, `SELECT count(*) FROM (SELECT message_id_header FROM messages WHERE message_id_header IS NOT NULL
+		GROUP BY message_id_header HAVING count(*) = 2 AND sum(deleted_remote_at IS NULL) = 1)`); n != altered {
+		t.Fatalf("message IDs with a server and an import version = %d, want %d", n, altered)
 	}
 	if n := e.count(t, `SELECT count(*) FROM messages WHERE deleted_remote_at IS NULL`); n != synced {
 		t.Fatalf("present on the server = %d, want %d", n, synced)
