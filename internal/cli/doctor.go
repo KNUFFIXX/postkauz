@@ -73,8 +73,9 @@ type DoctorReport struct {
 	PolicyError   string `json:"policy_error,omitempty"`
 	// AttachDir: Ordner für Dateianhänge von Entwürfen ([paths] attach_dir).
 	AttachDir string `json:"attach_dir"`
-	// Secrets nur mit --secrets.
+	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
+	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
 	Warnings []string       `json:"warnings"`
 }
 
@@ -92,9 +93,17 @@ func doctorCmd(a *app) *cobra.Command {
 		Short: "Check the installation: paths, keyring, database, schema version, audit export",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			flag, _ := cmd.Flags().GetString("blobs")
+			blobMode, err := parseBlobsFlag(flag)
+			if err != nil {
+				return err
+			}
 			rep := doctor(cmd.Context(), a)
 			if withSecrets, _ := cmd.Flags().GetBool("secrets"); withSecrets {
 				rep.Secrets = doctorSecrets(cmd.Context(), a, rep)
+			}
+			if blobMode != "" {
+				rep.Blobs = doctorBlobs(cmd.Context(), a, rep, blobMode)
 			}
 			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 				if err := json.NewEncoder(a.stdout).Encode(rep); err != nil {
@@ -104,6 +113,9 @@ func doctorCmd(a *app) *cobra.Command {
 				printDoctor(a.stdout, rep)
 				if rep.Secrets != nil {
 					printDoctorSecrets(a.stdout, rep.Secrets)
+				}
+				if rep.Blobs != nil {
+					printDoctorBlobs(a.stdout, rep.Blobs)
 				}
 			}
 			if rep.ConfigError != "" {
@@ -115,10 +127,15 @@ func doctorCmd(a *app) *cobra.Command {
 			if rep.Secrets != nil && rep.Secrets.Problems > 0 {
 				return fmt.Errorf("%w: %d problems (see the lines marked fail)", errSecretCheck, rep.Secrets.Problems)
 			}
+			if rep.Blobs != nil && rep.Blobs.Problems > 0 {
+				return fmt.Errorf("%w: %d problems (see the section blobs)", errBlobCheck, rep.Blobs.Problems)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().Bool("secrets", false, "also check file permissions and search log, audit, audit exports and configuration for stored passwords and API keys")
+	cmd.Flags().String("blobs", "", "also verify the blob store against the database: a 1% sample of the files (hash and size), or every file with --blobs=all; counts rows without file and files without row, never shows content")
+	cmd.Flags().Lookup("blobs").NoOptDefVal = "sample"
 	return cmd
 }
 

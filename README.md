@@ -135,7 +135,7 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 | `account test` fails with `connection` (exit code 5) | Host, port or TLS mode wrong, or a firewall blocks port 993. |
 | `pdftotext: not found` | Optional. Without it PDF attachments get no searchable text (file names still are). Install Poppler (below); the next `sync` extracts the skipped PDFs. |
 | `sync_running` | Another `sync` or `import` of the same account is running (for example `sync --watch` in another window). |
-| Anything else | `postkauz doctor` and `postkauz doctor --secrets`; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
+| Anything else | `postkauz doctor` and `postkauz doctor --secrets`; `postkauz doctor --blobs=all` checks every stored mail and attachment file against its checksum (`--blobs` alone checks a 1% sample) and never shows their content; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
 
 ## Command overview
 
