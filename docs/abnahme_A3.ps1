@@ -31,10 +31,18 @@
     Letzte Zeile: "A3 <Fenster>: <n> OK, <m> FAIL (console), term: <k> OK,
     <l> FAIL". Exit 0 nur ohne FAIL beim Leser console.
 
-    Mit -Launch oeffnet das Skript die weiteren Fenster der Matrix (Windows
-    Terminal, Legacy-Konsole conhost.exe, PowerShell 7 falls vorhanden,
-    cmd.exe), jedes mit demselben Skript und eigenem -HostLabel; alle
-    schreiben in dasselbe Protokoll.
+    Vor jedem Schritt wartet das Skript auf Enter (Startsignal); erst dann
+    erscheint die Abfrage und laufen die 60 s Zeitgrenze.
+
+    Mit -Launch misst das Skript zuerst das eigene Fenster und oeffnet
+    danach die weiteren Fenster der Matrix (Windows Terminal, Legacy-Konsole
+    conhost.exe, PowerShell 7 falls vorhanden, cmd.exe) NACHEINANDER, jedes
+    mit demselben Skript und eigenem -HostLabel: Das naechste Fenster
+    startet erst, wenn das vorige fertig ist (Start-Process -Wait, bei
+    Windows Terminal ueber eine Fertig-Datei im Temp-Ordner, weil wt.exe
+    sofort zurueckkehrt). So teilen sich nie zwei Fenster Zwischenablage
+    oder Protokoll; das Protokoll schreibt jede Zeile zusaetzlich mit
+    Wiederholung, falls die Datei kurz gesperrt ist (IOException).
 
 .PARAMETER Exe
     Pfad zu postkauz.exe (Build 0.3.0-alpha.c1 aus dist\).
@@ -66,7 +74,12 @@
     Dauerbetriebs, dessen Konfiguration).
 
 .PARAMETER Launch
-    Weitere Fenster der Matrix oeffnen, dann selbst messen.
+    Erst selbst messen, dann die weiteren Fenster der Matrix nacheinander
+    oeffnen und auf jedes warten.
+
+.PARAMETER DoneFile
+    Nur intern (von -Launch gesetzt): Datei, in die das Fenster am Ende
+    seinen Exit-Code schreibt.
 
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File abnahme_A3.ps1 -Exe D:\pk\a3\postkauz.exe -DataDir D:\pk\a3\data -Config D:\pk\a3\config.toml -Protocol D:\pk\a3\A3_prompt_windows.txt -HostLabel WT+PS51 -LivePath D:\pk\live -Launch
@@ -80,7 +93,8 @@ param(
     [ValidateSet('direct', 'cmd')] [string] $Via = 'direct',
     [string[]] $Readers = @('console', 'term'),
     [string[]] $LivePath = @(),
-    [switch] $Launch
+    [switch] $Launch,
+    [string] $DoneFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,10 +105,36 @@ try { [Console]::OutputEncoding = $script:Utf8 } catch { }
 
 # ---------------------------------------------------------------- Hilfen
 
+# Protokollzeile anhaengen; ist die Datei kurz gesperrt (Virenscanner,
+# Editor, IOException), bis zu 20-mal im Abstand von 250 ms wiederholen.
 function Write-Log {
     param([string] $Line)
     Write-Host $Line
-    [System.IO.File]::AppendAllText($Protocol, $Line + "`r`n", $script:Utf8)
+    for ($i = 1; ; $i++) {
+        try {
+            [System.IO.File]::AppendAllText($Protocol, $Line + "`r`n", $script:Utf8)
+            return
+        } catch {
+            $ex = $_.Exception
+            while ($ex -and -not ($ex -is [System.IO.IOException])) { $ex = $ex.InnerException }
+            if (-not $ex -or $i -ge 20) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+
+# Wartet, bis ein Fenster seine Fertig-Datei geschrieben hat; Q bricht das
+# Warten ab (Rueckgabe $false).
+function Wait-DoneFile {
+    param([string] $File, [string] $Label)
+    Write-Host ("Warte auf das Fenster {0} (Q = nicht mehr warten) ..." -f $Label)
+    while (-not (Test-Path -LiteralPath $File)) {
+        try {
+            if ([Console]::KeyAvailable -and [Console]::ReadKey($true).Key -eq 'Q') { return $false }
+        } catch { }
+        Start-Sleep -Milliseconds 500
+    }
+    return $true
 }
 
 function Get-Sha256Hex {
@@ -142,6 +182,12 @@ $Steps = @(
 
 # ---------------------------------------------------------------- Vorpruefung
 
+# try umfasst Vorpruefung und Messung: Ein Fenster der Matrix (-DoneFile)
+# meldet sein Ende auch nach einem Abbruch, und der Fehler bleibt lesbar,
+# bis Enter das Fenster schliesst.
+$ownCode = 1
+try {
+
 if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { throw "postkauz.exe not found: $Exe" }
 $Exe = (Resolve-Path -LiteralPath $Exe).Path
 Assert-NotLive $DataDir '-DataDir'
@@ -156,26 +202,6 @@ $DataDir = (Resolve-Path -LiteralPath $DataDir).Path
 $Config = (Resolve-Path -LiteralPath $Config).Path
 $protoDir = Split-Path -Parent $Protocol
 if ($protoDir -and -not (Test-Path -LiteralPath $protoDir)) { New-Item -ItemType Directory -Path $protoDir | Out-Null }
-
-if ($Launch) {
-    $self = $PSCommandPath
-    $common = "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Exe `"$Exe`" -DataDir `"$DataDir`" -Config `"$Config`" -Protocol `"$Protocol`""
-    foreach ($lp in $LivePath) { $common += " -LivePath `"$lp`"" }
-    $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue)
-    $wt = (Get-Command wt.exe -ErrorAction SilentlyContinue)
-    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
-    if (Test-Path $conhost) {
-        Start-Process -FilePath $conhost -ArgumentList "`"$ps51`" -NoExit $common -HostLabel conhost+PS51"
-        Start-Process -FilePath $conhost -ArgumentList "`"$ps51`" -NoExit $common -HostLabel conhost+cmd -Via cmd"
-        if ($pwsh) { Start-Process -FilePath $conhost -ArgumentList "`"$($pwsh.Source)`" -NoExit $common -HostLabel conhost+PS7" }
-    }
-    if ($wt) {
-        Start-Process -FilePath $wt.Source -ArgumentList "-w new `"$ps51`" -NoExit $common -HostLabel WT+cmd -Via cmd"
-        if ($pwsh) { Start-Process -FilePath $wt.Source -ArgumentList "-w new `"$($pwsh.Source)`" -NoExit $common -HostLabel WT+PS7" }
-    }
-    Write-Host 'Weitere Fenster geoeffnet. Jedes Fenster misst fuer sich; bitte nacheinander abarbeiten.'
-}
 
 # ---------------------------------------------------------------- Messung
 
@@ -195,7 +221,8 @@ foreach ($reader in $Readers) {
             Set-Clipboard -Value $s.Value
             Write-Host 'Der Testwert liegt in der Zwischenablage.'
         }
-        Write-Host ("Gleich erscheint 'Type or paste the test value'. {0} (Es erscheint nichts beim Tippen. Geht nichts: 60 s warten.)" -f $s.How) -ForegroundColor Yellow
+        Write-Host ("Erst Enter druecken. Erscheint dann 'Type or paste the test value': {0} (Es erscheint nichts beim Tippen. Geht nichts: 60 s warten.)" -f $s.How) -ForegroundColor Yellow
+        [void](Read-Host 'Bereit? Enter startet die Abfrage')
         $probeArgs = @('internal', 'prompt-probe', '--json', '--reader', $reader, '--timeout', '60s', '--expect-sha256', $expected, '--data-dir', $DataDir, '--config', $Config)
         if ($Via -eq 'cmd') {
             # Ueber cmd.exe: im Ordner des Programms, damit der erste Teil
@@ -244,5 +271,68 @@ if ($left.Count -gt 0) {
     $script:Ok['console']++
 }
 Write-Log ("A3 {0}: {1} OK, {2} FAIL (console), term: {3} OK, {4} FAIL" -f $HostLabel, $script:Ok['console'], $script:Fail['console'], $script:Ok['term'], $script:Fail['term'])
-if ($script:Fail['console'] -gt 0) { exit 1 }
+$ownCode = if ($script:Fail['console'] -gt 0) { 1 } else { 0 }
+} catch {
+    Write-Host ("Abbruch: {0}" -f $_) -ForegroundColor Red
+    try { Write-Log ("FAIL {0} aborted: {1}" -f $HostLabel, $_) } catch { }
+    throw
+} finally {
+    if ($DoneFile) {
+        try { [System.IO.File]::WriteAllText($DoneFile, "$ownCode", $script:Utf8) } catch { }
+        [void](Read-Host 'Fertig. Enter schliesst dieses Fenster')
+    }
+}
+if ($DoneFile) { exit $ownCode }
+
+# ---------------------------------------------------------------- Matrix
+
+# Die weiteren Fenster nacheinander: das naechste erst, wenn das vorige
+# fertig ist (gemeinsame Zwischenablage, gemeinsames Protokoll).
+$matrixFail = 0
+if ($Launch) {
+    $self = $PSCommandPath
+    $common = "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Exe `"$Exe`" -DataDir `"$DataDir`" -Config `"$Config`" -Protocol `"$Protocol`""
+    foreach ($lp in $LivePath) { $common += " -LivePath `"$lp`"" }
+    $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue)
+    $wt = (Get-Command wt.exe -ErrorAction SilentlyContinue)
+    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    $windows = @()
+    if ($wt) {
+        $windows += @{ Label = 'WT+cmd'; Term = $wt.Source; Shell = $ps51; Via = 'cmd' }
+        if ($pwsh) { $windows += @{ Label = 'WT+PS7'; Term = $wt.Source; Shell = $pwsh.Source; Via = 'direct' } }
+    }
+    if (Test-Path $conhost) {
+        $windows += @{ Label = 'conhost+PS51'; Term = $conhost; Shell = $ps51; Via = 'direct' }
+        $windows += @{ Label = 'conhost+cmd'; Term = $conhost; Shell = $ps51; Via = 'cmd' }
+        if ($pwsh) { $windows += @{ Label = 'conhost+PS7'; Term = $conhost; Shell = $pwsh.Source; Via = 'direct' } }
+    }
+    foreach ($w in $windows) {
+        Write-Host ''
+        Write-Host ("=== Naechstes Fenster: {0}. Es oeffnet sich nach Enter; dort genauso abarbeiten, danach geht es hier weiter." -f $w.Label) -ForegroundColor Cyan
+        [void](Read-Host 'Enter oeffnet das Fenster')
+        $done = Join-Path ([System.IO.Path]::GetTempPath()) ("postkauz-a3-{0}.done" -f [guid]::NewGuid())
+        $args1 = "$common -HostLabel $($w.Label) -Via $($w.Via) -DoneFile `"$done`""
+        if ($w.Term -eq $conhost) {
+            # conhost.exe endet mit der Shell im Fenster: -Wait reicht.
+            Start-Process -FilePath $conhost -ArgumentList "`"$($w.Shell)`" $args1" -Wait
+        } else {
+            # wt.exe kehrt sofort zurueck; das Ende meldet die Fertig-Datei.
+            Start-Process -FilePath $w.Term -ArgumentList "-w new `"$($w.Shell)`" $args1"
+        }
+        $finished = Wait-DoneFile -File $done -Label $w.Label
+        $code = $null
+        if ($finished) {
+            try { $code = [int]([System.IO.File]::ReadAllText($done).Trim()) } catch { }
+            Remove-Item -LiteralPath $done -ErrorAction SilentlyContinue
+        }
+        if ($code -ne 0) {
+            $matrixFail++
+            $how = if ($null -eq $code) { 'no result (window closed or waiting stopped)' } else { "exit $code" }
+            Write-Log ("FAIL {0} window  ({1})" -f $w.Label, $how)
+        }
+    }
+    Write-Log ("A3 matrix: {0} windows, {1} with FAIL (console), started from {2}" -f ($windows.Count + 1), ($matrixFail + $ownCode), $HostLabel)
+}
+if ($ownCode -ne 0 -or $matrixFail -gt 0) { exit 1 }
 exit 0

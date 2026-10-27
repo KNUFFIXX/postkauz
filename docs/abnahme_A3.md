@@ -25,7 +25,7 @@ Im Windows Terminal ein Fenster mit Windows PowerShell 5.1 öffnen (Standardprof
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File <Repo>\docs\abnahme_A3.ps1 -Exe D:\pk\a3\postkauz.exe -DataDir D:\pk\a3\data -Config D:\pk\a3\config.toml -Protocol D:\pk\a3\A3_prompt_windows.txt -HostLabel WT+PS51 -LivePath <Live-Datenverzeichnis>,<Live-Konfiguration> -Launch
 ```
 
-`-Launch` öffnet zusätzlich die übrigen Fenster der Matrix, jedes mit eigenem Namen:
+Das Skript misst zuerst das Startfenster. Mit `-Launch` öffnet es danach die übrigen Fenster der Matrix **nacheinander**, jedes mit eigenem Namen: Vor jedem Fenster fragt das Startfenster „Enter öffnet das Fenster“, dann wartet es, bis das Fenster fertig ist (bei `conhost.exe` über `Start-Process -Wait`, bei Windows Terminal über eine Fertig-Datei im Temp-Ordner, weil `wt.exe` sofort zurückkehrt; `Q` im Startfenster bricht das Warten ab und zählt das Fenster als `FAIL … no result`). Es läuft also immer nur ein Fenster; Zwischenablage und Protokoll teilt sich keines mit einem anderen. Jede Protokollzeile wird bei einer kurz gesperrten Datei (IOException) bis zu 20-mal wiederholt.
 
 | Fenster | Konsole | Shell | Name |
 |---|---|---|---|
@@ -36,7 +36,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File <Repo>\docs\abnahme_A3.p
 | neu | Legacy-Konsole `conhost.exe` | PowerShell 5.1, Aufruf über `cmd.exe /c` | `conhost+cmd` |
 | neu (nur wenn `pwsh.exe` da ist) | Legacy-Konsole `conhost.exe` | PowerShell 7 | `conhost+PS7` |
 
-Die Fenster **nacheinander** abarbeiten (die Zwischenablage ist gemeinsam). In jedem Fenster fragt das Skript je Leser fünf Schritte ab; die gelbe Zeile sagt, was zu tun ist:
+In jedem Fenster fragt das Skript je Leser die Schritte unten ab. Die gelbe Zeile sagt, was zu tun ist; **erst Enter drücken** (Startsignal, „Bereit? Enter startet die Abfrage“), dann erscheint `Type or paste the test value (never a real password)`, und erst dann tippen oder einfügen. Die 60 s Zeitgrenze läuft ab diesem Enter. Am Ende eines weiteren Fensters schließt Enter es; danach geht es im Startfenster weiter.
 
 1. `type-ascii`: `PostKauz-Test-123` tippen, Enter.
 2. `paste-ctrlv-ascii`: mit Strg+V einfügen, Enter (der Wert liegt schon in der Zwischenablage).
@@ -61,9 +61,11 @@ OK WT+PS51 console type-ascii  (Erwartet: OK)
 …
 OK WT+PS51 data-dir untouched
 A3 WT+PS51: 6 OK, 0 FAIL (console), term: … OK, … FAIL
+…
+A3 matrix: 6 windows, 0 with FAIL (console), started from WT+PS51
 ```
 
-- **Abnahme bestanden**, wenn in jedem Fenster alle Zeilen des Lesers `console` `OK` sind (Hash gleich, Modus nachher wie vorher, Exit 0) und `data-dir untouched` `OK` ist. Das Skript endet dann mit Exit 0.
+- **Abnahme bestanden**, wenn in jedem Fenster alle Zeilen des Lesers `console` `OK` sind (Hash gleich, Modus nachher wie vorher, Exit 0) und `data-dir untouched` `OK` ist, und die letzte Zeile `A3 matrix: … 0 with FAIL (console)` lautet. Das Skript endet dann mit Exit 0.
 - Die Zeilen des Lesers `term` sind Messung: Sie zeigen, welche Hypothese aus A3 zutrifft (stdin kein Konsolen-Handle → a; Zeilenende `cr` oder 0 Zeichen ohne Zeilen-Eingabe → b; falscher Hash nur bei Umlauten, `invalid` > 0 → c; Einfügen leer → d; `escape` > 0 → e).
 
 ## Danach
