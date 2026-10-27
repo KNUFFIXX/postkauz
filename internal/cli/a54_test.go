@@ -157,7 +157,8 @@ func TestDoctorBlobs(t *testing.T) {
 		t.Fatalf("problems: %d %+v\n%s", code, b, all)
 	}
 	code, out, errs = run(t, "doctor", "--blobs=all")
-	t.Logf("doctor --blobs=all:\n%s", out[strings.Index(out, "blobs:"):])
+	_, section, _ := strings.Cut(out, "blobs:")
+	t.Logf("doctor --blobs=all:\nblobs:%s", section)
 	if code != ExitError || !strings.Contains(out, "  corrupt: "+mailSum+"\n") || !strings.Contains(out, "  rows without file: "+gone+"\n") ||
 		!strings.Contains(out, "  drafts:  1 draft attachment without file\n") || !strings.Contains(out, "  result:  3 problems\n") ||
 		!strings.Contains(errs, "blob check failed: 3 problems") {
