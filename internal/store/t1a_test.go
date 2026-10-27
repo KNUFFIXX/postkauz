@@ -59,11 +59,33 @@ func TestMigration0017UIDPositive(t *testing.T) {
 		AND flag_seen=1 AND flag_flagged=1 AND flag_answered=0 AND keywords='["$x"]'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("row changed by 0017: n=%d err=%v", n, err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (6,7,0)`); err == nil {
-		t.Fatal("UID 0 must be rejected after 0017")
+	// K6: Je Prüfung ein frisches Paar (Nachricht, Ordner). Das Paar (6,7)
+	// gibt es schon; ein INSERT damit scheiterte am Primärschlüssel, auch
+	// ohne CHECK bzw. UNIQUE.
+	for _, q := range []string{
+		`INSERT INTO messages(id,account_id,subject,created_at) VALUES (8,1,'Drei',1)`,
+		`INSERT INTO messages(id,account_id,subject,created_at) VALUES (9,1,'Vier',1)`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := s.db.Exec(`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (6,7,2)`); err == nil {
-		t.Fatal("UNIQUE (mailbox_id, uid) lost")
+	if _, err := s.db.Exec(`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (8,7,0)`); err == nil ||
+		!strings.Contains(err.Error(), "CHECK") {
+		t.Fatalf("UID 0 must be rejected by CHECK after 0017: %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (9,7,2)`); err == nil ||
+		!strings.Contains(err.Error(), "UNIQUE") || !strings.Contains(err.Error(), "uid") {
+		t.Fatalf("UNIQUE (mailbox_id, uid) lost: %v", err)
+	}
+	// Gegenprobe: Dieselben frischen Paare mit gültiger, freier UID gehen.
+	for _, q := range []string{
+		`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (8,7,4)`,
+		`INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (9,7,5)`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
 	}
 	if _, err := s.db.Exec(`DELETE FROM messages WHERE id=5`); err != nil {
 		t.Fatal(err)
