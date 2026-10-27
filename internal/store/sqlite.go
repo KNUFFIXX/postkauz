@@ -12,10 +12,24 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // reiner Go-Treiber, registriert "sqlite"; FTS5 ist enthalten
+
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 )
 
 // ErrSchemaTooNew: Die Datenbank wurde von einer neueren Programmversion migriert.
 var ErrSchemaTooNew = errors.New("store: database schema is newer than this program")
+
+// ErrMigrationBlocked: Eine Migration steht an, aber ein Sync oder Import
+// hält eine Kontosperre im Datenverzeichnis (T1a Punkt 7). Zwei
+// Programmversionen dürfen nie zugleich auf derselben Datenbank arbeiten;
+// erst den laufenden Prozess beenden (z. B. die Aufgabe `sync --watch`).
+var ErrMigrationBlocked = errors.New("store: a sync or import of this data directory is running; stop it (e.g. the sync --watch task) before this version migrates the database")
+
+// ErrMigrationMismatch: Eine angewendete Migration trägt einen anderen
+// Namen als die eingebettete mit derselben Nummer (T1a Punkt 7). Die
+// Datenbank stammt dann von einem anderen Programmstand (z. B. einem
+// Entwicklungszweig); dieses Programm fasst sie nicht an.
+var ErrMigrationMismatch = errors.New("store: the database was migrated by a different program build")
 
 // KnownSchemaVersion ist die höchste eingebettete Migration.
 func KnownSchemaVersion() int {
@@ -131,8 +145,24 @@ func (s *SQLite) migrateTo(ctx context.Context, max int) error {
 		return fmt.Errorf("%w: database has schema version %d, this program knows up to %d; use a newer version",
 			ErrSchemaTooNew, have, len(ms))
 	}
+	if err := s.checkMigrationNames(ctx, ms); err != nil {
+		return err
+	}
 	if max <= 0 || max > len(ms) {
 		max = len(ms)
+	}
+	if have > 0 && have < max && s.path != "" {
+		// Kein Sync und kein Import desselben Datenverzeichnisses darf
+		// laufen, solange migriert wird; die Sperren bleiben bis zum Ende
+		// gehalten, damit keiner mittendrin beginnt.
+		release, err := flock.AccountLocks(filepath.Dir(s.path))
+		if errors.Is(err, flock.ErrLocked) {
+			return ErrMigrationBlocked
+		}
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 	s.LastSnapshot = ""
 	if have > 0 && have < max && s.path != "" {
@@ -151,6 +181,27 @@ func (s *SQLite) migrateTo(ctx context.Context, max int) error {
 	return nil
 }
 
+// checkMigrationNames vergleicht die angewendeten Migrationen mit den
+// eingebetteten: gleiche Nummer, anderer Name ist ErrMigrationMismatch.
+func (s *SQLite) checkMigrationNames(ctx context.Context, ms []Migration) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT version, name FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v int
+		var name string
+		if err := rows.Scan(&v, &name); err != nil {
+			return err
+		}
+		if v >= 1 && v <= len(ms) && ms[v-1].Name != name {
+			return fmt.Errorf("%w: migration %04d is %q in the database, %q in this program", ErrMigrationMismatch, v, name, ms[v-1].Name)
+		}
+	}
+	return rows.Err()
+}
+
 // snapshot schreibt eine konsistente Kopie der Datenbank (VACUUM INTO).
 func (s *SQLite) snapshot(ctx context.Context, next int) (string, error) {
 	name := fmt.Sprintf("%s.pre-%04d-%s.bak", s.path, next, time.Now().UTC().Format("20060102T150405.000Z"))
@@ -159,6 +210,22 @@ func (s *SQLite) snapshot(ctx context.Context, next int) (string, error) {
 	}
 	_ = os.Chmod(name, 0o600)
 	return filepath.Clean(name), nil
+}
+
+// migrationChecks prüft vor einer Migration, ob die Daten passen; ein
+// Fehler bricht sie ab, bevor etwas geändert ist (keine stille
+// Bereinigung).
+var migrationChecks = map[int]func(context.Context, *sql.Tx) error{
+	17: func(ctx context.Context, tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM message_mailboxes WHERE uid <= 0`).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%d mailbox entries have UID 0 or less; nothing was changed, please report this (A6)", n)
+		}
+		return nil
+	},
 }
 
 // apply wendet eine Migration an: eigene Verbindung (PRAGMA foreign_keys
@@ -179,6 +246,12 @@ func (s *SQLite) apply(ctx context.Context, m Migration) error {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
+	}
+	if check := migrationChecks[m.Version]; check != nil {
+		if err := check(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		_ = tx.Rollback()

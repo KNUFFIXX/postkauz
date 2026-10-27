@@ -79,6 +79,11 @@ guard:
 	  echo "guard: internal/imapx/mailbox.go may call AddNum/AddRange only once, in uidSet (A6)"; exit 1; }
 	@if grep -rnE --include='*.go' --exclude='*_test.go' '\.Nums\(\)' internal cmd ; then \
 	  echo "guard: never expand a received UID set with Nums(); use imapx.boundedUIDs (T1a)"; exit 1; fi
+	@# A13.4 (T1a): Message.Locations nennt auch importierte Ordner mit UID 0;
+	@# nur Store und die Anzeige in messages.get lesen es. Ziele für Aktionen
+	@# kommen aus store.ServerCopies (message_mailboxes).
+	@if grep -rn --include='*.go' --exclude='*_test.go' '\.Locations\b' internal cmd | grep -vE '^internal/(store/messages\.go|ops/messages\.go):' ; then \
+	  echo "guard: use store.ServerCopies, not Message.Locations, for server targets (A13.4)"; exit 1; fi
 	@# ADR-007: go-imap bleibt auf v2.0.0-beta.8 gepinnt; ein Wechsel nur über einen ADR.
 	@grep -Eq '^[[:space:]]*github.com/emersion/go-imap/v2 v2\.0\.0-beta\.8$$' go.mod || { \
 	  echo "guard: github.com/emersion/go-imap/v2 must stay pinned to v2.0.0-beta.8 (ADR-007)"; exit 1; }

@@ -272,7 +272,7 @@ type MailProvider interface {
 	//     ungültig. Weicht der Server ab, kommt ErrUIDValidityChanged und es
 	//     passiert nichts.
 	//   - UIDs stammen aus dem Spiegel (message_mailboxes), nie aus
-	//     importierten Ordnern (store.Message.Locations mit Rolle import)
+	//     importierten Ordnern (Feld Locations von store.Message, Rolle import)
 	//     und nie aus einer Nutzereingabe (Policy-Regel „Ziele aus
 	//     Leseergebnissen“). UID 0 und 4294967295 sind ungültig und werden
 	//     abgewiesen, bevor ein Kommando den Server erreicht; eine leere

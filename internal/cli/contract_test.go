@@ -418,6 +418,8 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{ops.ErrUnknownOperation, ExitError, "unknown_operation"},
 		{&ops.PanicError{Operation: "x"}, ExitError, "internal"},
 		{store.ErrAccountExists, ExitError, "exists"},
+		{store.ErrMigrationBlocked, ExitError, "migration_blocked"},
+		{fmt.Errorf("%w: x", store.ErrMigrationMismatch), ExitError, "schema_mismatch"},
 		{store.ErrKeyExists, ExitError, "exists"},
 		{store.ErrMessageNotFound, ExitError, "not_found"},
 		{store.ErrKeyNotFound, ExitError, "not_found"},

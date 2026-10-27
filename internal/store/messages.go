@@ -13,7 +13,9 @@ import (
 var ErrMessageNotFound = errors.New("store: message not found")
 
 // MessageLocation ist eine Ordnerkopie einer Nachricht (Server) oder ein
-// importierter Ordner (Role "import", UID 0).
+// importierter Ordner (Role "import", UID 0). Nur zur Anzeige
+// (messages.get): Ziele für Aktionen auf dem Server kommen nie von hier,
+// sondern aus ServerCopies (A13.4; `make guard`).
 type MessageLocation struct {
 	Mailbox string
 	Role    string
@@ -106,6 +108,44 @@ func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 		m.Locations = append(m.Locations, l)
 	}
 	return m, rows.Err()
+}
+
+// ServerCopy ist eine Kopie einer Nachricht in einem Ordner des Servers,
+// wie der Spiegel sie zuletzt gesehen hat: Ordner, UID und UIDVALIDITY,
+// unter der die UID gilt. UID und UIDVALIDITY sind immer größer 0.
+type ServerCopy struct {
+	MessageID   int64
+	MailboxID   int64
+	Mailbox     string
+	Role        string
+	UID         uint32
+	UIDValidity uint32
+}
+
+// ServerCopies liefert die Serverkopien einer Nachricht, nur aus
+// message_mailboxes (A6/A13.4): nie importierte Ordner, nie UID 0, nie
+// ein Ordner ohne bekannte UIDVALIDITY. Einzige Quelle für Ziele von
+// Aktionen auf dem Server (S3); store.Message.Locations dient nur der
+// Anzeige.
+func (s *SQLite) ServerCopies(ctx context.Context, messageID int64) ([]ServerCopy, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, b.uidvalidity
+		FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
+		WHERE mm.message_id = ? AND mm.uid > 0 AND b.uidvalidity > 0 ORDER BY b.path`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ServerCopy
+	for rows.Next() {
+		var c ServerCopy
+		var uid, uv int64
+		if err := rows.Scan(&c.MessageID, &c.MailboxID, &c.Mailbox, &c.Role, &uid, &uv); err != nil {
+			return nil, err
+		}
+		c.UID, c.UIDValidity = uint32(uid), uint32(uv)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // MessageIDsByHeader liefert die lokalen IDs der Nachrichten eines Kontos

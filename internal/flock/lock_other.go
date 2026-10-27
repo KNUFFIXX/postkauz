@@ -1,6 +1,6 @@
 //go:build !unix && !windows
 
-package mailsync
+package flock
 
 import "os"
 
