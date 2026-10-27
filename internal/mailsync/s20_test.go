@@ -245,7 +245,7 @@ func TestSyncDoesNotFetchMessageOverLimit(t *testing.T) {
 	const bigUID = 2
 
 	rep, err := eng.SyncAll(context.Background(), Options{})
-	if err != nil || rep.Mirrored != 2 || rep.Errors != 1 {
+	if err != nil || rep.Mirrored != 2 || rep.Errors != 1 || rep.SkippedTooLarge != 1 || rep.MaxMessageBytes != 4096 {
 		t.Fatalf("first sync = %+v %v", rep, err)
 	}
 	if pr := rep.Mailboxes[0].Problems; len(pr) != 1 || !strings.Contains(pr[0], "uid 2:") || !strings.Contains(pr[0], "max_message_bytes") {
@@ -262,7 +262,7 @@ func TestSyncDoesNotFetchMessageOverLimit(t *testing.T) {
 	// wird erneut angefordert, kein Fehler.
 	for _, o := range []Options{{}, {CheckDeleted: true}} {
 		rep, err = eng.SyncAll(context.Background(), o)
-		if err != nil || rep.Errors != 0 || rep.Mirrored != 2 {
+		if err != nil || rep.Errors != 0 || rep.Mirrored != 2 || rep.SkippedTooLarge != 0 {
 			t.Fatalf("next sync %+v = %+v %v", o, rep, err)
 		}
 		if headers, raw := rr.reset(); len(headers) != 0 || len(raw) != 0 {

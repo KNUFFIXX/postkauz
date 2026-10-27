@@ -32,6 +32,14 @@ func termText(s string) string {
 	return termFilter(s, true)
 }
 
+// termBlock macht den Text hinter „error:“ und „hint:“ terminalsicher wie
+// termText und rückt Folgezeilen ein: Eine Serverantwort oder ein
+// Ordnername mit Zeilenumbruch kann so keine eigene Zeile wie „hint: …“
+// vortäuschen (Gegenprüfung K5). Zeilenenden am Schluss entfallen.
+func termBlock(s string) string {
+	return strings.ReplaceAll(termText(strings.TrimRight(s, "\r\n")), "\n", "\n    ")
+}
+
 func termFilter(s string, multiline bool) string {
 	clean := true
 	for _, r := range s {

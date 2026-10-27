@@ -1,0 +1,53 @@
+# CodeQL für Go (A12.2): statische Sicherheitsanalyse, Befunde unter
+# Security → Code scanning. Läuft bei Push auf main, bei Pull Requests und
+# wöchentlich (neue Abfragen finden auch in unverändertem Code etwas).
+#
+# github/codeql-action ist per vollem Commit-SHA gepinnt (ein Tag lässt
+# sich verschieben). Ermittelt am 27.10.2026 mit
+#   git ls-remote https://github.com/github/codeql-action refs/tags/v4.39.1
+# (neuester v-Tag; der Tag ist annotiert, gepinnt ist der Commit hinter
+# `v4.39.1^{}`). Die Version bündelt CodeQL CLI 2.27.3 (src/defaults.json);
+# deren Go-Extraktor unterstützt Go bis 1.27 (maxGoVersion).
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"   # montags 03:17 UTC
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "0"
+  GOTOOLCHAIN: local   # ADR-008: Toolchain ausdrücklich installieren, nie still nachladen
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # Ergebnisse (SARIF) hochladen
+      actions: read            # Workflow-Lauf lesen (für private Repositories nötig)
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.x"
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: go
+          # manual statt autobuild: Der Autobuilder wählt die Go-Version
+          # selbst und lädt bei Bedarf eine andere Toolchain nach; das
+          # widerspricht GOTOOLCHAIN=local (ADR-008). So baut genau die
+          # Toolchain aus setup-go (1.27.x), mit demselben Befehl wie die
+          # übrigen Jobs. Analysiert wird der Produktcode (go build
+          # übersetzt keine _test.go-Dateien).
+          build-mode: manual
+      - name: go build
+        run: go build ./...
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: "/language:go"

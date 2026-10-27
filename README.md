@@ -93,6 +93,15 @@ postkauz account test mail
 
 `account add` asks for the password and stores it in the operating system's keyring (never in a file of PostKauz). Port 993 means TLS. Many providers require an **app password** for IMAP (for example Gmail, iCloud, Outlook.com with two-factor authentication); OAuth sign-in is not available yet. `account test` logs in read-only and lists capabilities and folders with their roles (`inbox`, `sent`, `drafts`, …).
 
+A big mailbox (for example a Sent folder with years of attachments) makes the first sync long. To skip very large messages, set a limit in the configuration file (its path: `postkauz doctor`):
+
+```toml
+[imap]
+max_message_bytes = 10485760   # 10 MiB; default 256 MiB, at least 1 MiB
+```
+
+`sync` then reports `N skipped (larger than … bytes, [imap] max_message_bytes)` on a line of its own and counts them as errors; after raising the limit, `sync --full` fetches them.
+
 ### 4. Mirror and search
 
 ```sh
@@ -121,13 +130,14 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 | Windows: "Windows protected your PC" (SmartScreen) | The program is not signed yet. Run `Unblock-File .\postkauz.exe` once, or click "More info", then "Run anyway". Check the checksum first (step 1). |
 | macOS: "cannot be opened because the developer cannot be verified" | Unsigned program: `xattr -d com.apple.quarantine ~/bin/postkauz`, or right-click the file in Finder, "Open". The first access to the Keychain asks for permission: choose "Always Allow". |
 | `keyring: unavailable` (Linux servers, containers, SSH sessions without a desktop) | No Secret Service is running. Install and unlock one (GNOME Keyring, KWallet) or keep the password in the environment: `export POSTKAUZ_PASSWORD_MAIL='…'` and `account add … --password-from-env`. There is deliberately no silent fallback to a file. |
+| The hidden password prompt (`account add`, `account set`) takes no input, or ends with `prompt_timeout` | Seen with 0.2.0 on Windows in Windows Terminal with Windows PowerShell 5.1. Since 0.3.0 the prompt reads the Windows console itself (`ReadConsoleW`: typing and pasting with Ctrl+V or right-click, umlauts); on every system it gives up after 120 s without input (`prompt_timeout`, exit 1). Then pass the password on standard input with `--password-stdin`, for example in PowerShell: copy it, then `Get-Clipboard \| Select-Object -First 1 \| .\postkauz.exe account add <name> --imap <host>:993 --user <address> --password-stdin`, then clear the clipboard. `POSTKAUZ_PASSWORD_READER=term` switches back to the old reader; `postkauz internal prompt-probe` shows how the input arrived, never the value; it is for known test values only, never type a real password there. |
 | `account test` fails with `auth` | Wrong user name or password, or the provider wants an app password / has IMAP switched off in its settings. PostKauz never retries a rejected login. |
 | `account test` fails with `connection` (exit code 5) | Host, port or TLS mode wrong, or a firewall blocks port 993. |
 | `pdftotext: not found` | Optional. Without it PDF attachments get no searchable text (file names still are). Install Poppler (below); the next `sync` extracts the skipped PDFs. |
 | `sync_running` | Another `sync` or `import` of the same account is running (for example `sync --watch` in another window). |
 | `migration_blocked` | A new version wants to update the database while another process uses it. Stop the other processes first, see [Updating](#updating). |
 | `database_busy` | Another process is updating the database right now; run the command again when it has finished. |
-| Anything else | `postkauz doctor` and `postkauz doctor --secrets`; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
+| Anything else | `postkauz doctor` and `postkauz doctor --secrets`; `postkauz doctor --blobs=all` checks every stored mail and attachment file against its checksum (`--blobs` alone checks a 1% sample) and never shows their content; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
 
 ### Updating
 

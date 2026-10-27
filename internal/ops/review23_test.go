@@ -90,17 +90,17 @@ func TestSchemaErrorWithoutValue(t *testing.T) {
 	}
 	const v = "WERTKANARIE"
 	for in, want := range map[string]string{
-		`{"s":"` + v + `"}`:                 "s: too long (at most 3 characters)",
-		`{"s":"b"}`:                         "s: does not have the expected form",
-		`{"s":"a","l":["` + v + `","bb"]}`:  "l: too many entries (at most 1)",
-		`{"s":"a","l":["b"]}`:               "l[]: too short (at least 2 characters)",
-		`{"s":"a","o":[{"f":"` + v + `"}]}`: "o[].f: not an allowed value (one of: x, y)",
-		`{"s":"a","o":[{"` + v + `":1}]}`:   "o[]: unknown field",
-		`{"s":"a","` + v + `":1}`:           "invalid input: unknown field",
-		`{"s":"a","n":"` + v + `"}`:         "n: wrong type (want integer)",
-		`{"s":"a","n":0}`:                   "n: too small (minimum 1)",
-		`{"l":[]}`:                          "required field missing (required: s)",
-		`{"s":"` + v + `‮` + v + `xxxx"}`:   "s: too long",
+		`{"s":"` + v + `"}`:                    "s: too long (at most 3 characters)",
+		`{"s":"b"}`:                            "s: does not have the expected form",
+		`{"s":"a","l":["` + v + `","bb"]}`:     "l: too many entries (at most 1)",
+		`{"s":"a","l":["b"]}`:                  "l[]: too short (at least 2 characters)",
+		`{"s":"a","o":[{"f":"` + v + `"}]}`:    "o[].f: not an allowed value (one of: x, y)",
+		`{"s":"a","o":[{"` + v + `":1}]}`:      "o[]: unknown field",
+		`{"s":"a","` + v + `":1}`:              "invalid input: unknown field",
+		`{"s":"a","n":"` + v + `"}`:            "n: wrong type (want integer)",
+		`{"s":"a","n":0}`:                      "n: too small (minimum 1)",
+		`{"l":[]}`:                             "required field missing (required: s)",
+		`{"s":"` + v + "\u202e" + v + `xxxx"}`: "s: too long",
 	} {
 		err := validateAgainst(rs, json.RawMessage(in))
 		if err == nil {

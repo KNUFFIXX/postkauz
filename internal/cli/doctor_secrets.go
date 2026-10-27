@@ -116,7 +116,8 @@ func doctorSecrets(ctx context.Context, a *app, rep DoctorReport) *DoctorSecrets
 	if v := os.Getenv(EnvKey); v != "" {
 		addNeedle("API key in "+EnvKey, []byte(v))
 	}
-	patterns := map[string]*regexp.Regexp{"an API key (" + ops.KeyPrefix + "…)": keyPattern}
+	patterns := map[string]*regexp.Regexp{"an API key (" + ops.KeyPrefix + "…)": keyPattern,
+		"a JSON Web Token (eyJ….eyJ….…)": secretscan.JWTPattern}
 
 	report := func(where string, hits []secretscan.Hit, err error) {
 		check := "secrets in " + where

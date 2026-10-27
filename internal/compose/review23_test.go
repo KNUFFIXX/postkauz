@@ -71,7 +71,7 @@ func TestEncodedWordLookalikes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pm.Subject != subject || strings.ContainsRune(pm.Subject, '‮') {
+		if pm.Subject != subject || strings.ContainsRune(pm.Subject, '\u202e') {
 			t.Errorf("subject read back as %q, want %q", pm.Subject, subject)
 		}
 		if len(pm.To) != 1 || pm.To[0].Name != "=?utf-8?q?=E2=80=AE?=Chef" || pm.To[0].Address != "chef@example.org" {

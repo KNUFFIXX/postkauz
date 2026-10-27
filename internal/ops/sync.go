@@ -75,6 +75,11 @@ type SyncOutput struct {
 	// (T1a Punkt 3: LIST ohne Ordner bzw. INBOX, UID SEARCH ALL ungleich
 	// EXISTS); dabei wurde nichts gelöst oder entfernt. Fehlt bei 0.
 	IncompleteAnswers int `json:"incomplete_answers,omitempty"`
+	// SkippedTooLarge zählt die Nachrichten, die dieser Lauf nicht geladen
+	// hat, weil sie größer als [imap] max_message_bytes sind (MaxMessageBytes,
+	// nur mit SkippedTooLarge > 0); sie zählen auch unter Errors (A5.3).
+	SkippedTooLarge int   `json:"skipped_too_large,omitempty"`
+	MaxMessageBytes int64 `json:"max_message_bytes,omitempty"`
 	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
 	// extrahiert hat (S1.6).
 	AttachmentsExtracted int `json:"attachments_extracted,omitempty"`

@@ -5,9 +5,11 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/prompt"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -50,6 +52,12 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitUsage, ErrorInfo{Code: "usage", Message: err.Error(), Hint: "see --help"}
 	case errors.As(err, &ie):
 		return ExitUsage, ErrorInfo{Code: "invalid_input", Message: err.Error(), Hint: "see --help"}
+	case errors.Is(err, prompt.ErrTimeout):
+		// A3: Die verdeckte Abfrage nahm in 120 s nichts an (Befund D5).
+		// Der Hinweis gilt für jede Abfrage (account add, account set) und
+		// jedes System; die Einzelheiten stehen im README (K7).
+		return ExitError, ErrorInfo{Code: "prompt_timeout", Message: fmt.Sprintf("no input at the hidden prompt within %s", prompt.DefaultTimeout),
+			Hint: "if the prompt takes no input, pass the password on standard input with --password-stdin; see README, Troubleshooting (prompt_timeout)"}
 	case errors.Is(err, store.ErrAccountExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "choose another name or remove the account first"}
 	case errors.Is(err, store.ErrAccountNotFound):

@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -68,14 +69,22 @@ const auditEventSchema = `{"type": "object", "properties": {
 
 // ParseSince liest eine Zeitangabe: Dauer rückwärts ab now ("10m", "24h",
 // "7d"), Datum ("2026-10-16", Mitternacht Ortszeit) oder RFC 3339.
+// Tage über maxSinceDays sind ein Eingabefehler: n * 24 h liefe sonst über
+// (time.Duration ist int64), und aus „vor sehr langer Zeit" würde still
+// ein Zeitpunkt in der Zukunft (A03 Nachtrag 26.10.2026).
 func ParseSince(s string, now time.Time) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Time{}, nil
 	}
 	if strings.HasSuffix(s, "d") {
-		if n, err := strconv.Atoi(strings.TrimSuffix(s, "d")); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(strings.TrimSuffix(s, "d"), 10, 64); err == nil && n >= 0 {
+			if n > maxSinceDays {
+				return time.Time{}, inputErr("invalid time: at most %dd", maxSinceDays)
+			}
 			return now.Add(-time.Duration(n) * 24 * time.Hour), nil
+		} else if errors.Is(err, strconv.ErrRange) {
+			return time.Time{}, inputErr("invalid time: at most %dd", maxSinceDays)
 		}
 	}
 	if d, err := time.ParseDuration(s); err == nil && d >= 0 {
@@ -89,6 +98,11 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	}
 	return time.Time{}, inputErr("invalid time: use a duration like 10m, 24h or 7d, a date like 2026-10-16, or RFC 3339")
 }
+
+// maxSinceDays ist die größte Tagesangabe für ParseSince: 100.000 Tage
+// (rund 270 Jahre) liegen unter der Grenze von time.Duration (rund 106.751
+// Tage) und weit über jedem Postfach.
+const maxSinceDays = 100000
 
 // AuditListOutput ist die Ausgabe von audit.list.
 type AuditListOutput struct {

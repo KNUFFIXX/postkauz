@@ -153,6 +153,9 @@ type MailboxReport struct {
 	// per Message-ID ohne Inhaltsabruf gehängt wurde, obwohl die lokale
 	// Kopie bis zu MaxLinkSizeExtra Bytes größer ist (Thunderbird-Import).
 	LinkedSizeDiff []int64 `json:"-"`
+	// SkippedTooLarge zählt die Nachrichten, die dieser Lauf übersprungen
+	// hat, weil sie laut Server größer als MaxMessageBytes sind (A5.3).
+	SkippedTooLarge int `json:"-"`
 	// Failed: Der Ordner wurde wegen eines Fehlers übersprungen (nicht
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
@@ -178,6 +181,10 @@ type Report struct {
 	// Gmail führt eine Mail in INBOX und „Alle Nachrichten").
 	LinkedSizeDiff int `json:"linked_despite_size_difference,omitempty"`
 	linkedSizeIDs  map[int64]bool
+	// SkippedTooLarge: Summe der Ordner (MailboxReport), MaxMessageBytes
+	// die Grenze dieses Laufs (A5.3: eigene Zeile im Bericht).
+	SkippedTooLarge int   `json:"skipped_too_large,omitempty"`
+	MaxMessageBytes int64 `json:"-"`
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
@@ -227,6 +234,7 @@ func (r *Report) add(m MailboxReport) {
 	r.Errors += m.Errors
 	r.KnownDownloaded += m.KnownDownloaded
 	r.KnownDownloadedBytes += m.KnownDownloadedBytes
+	r.SkippedTooLarge += m.SkippedTooLarge
 	for _, id := range m.LinkedSizeDiff {
 		if r.linkedSizeIDs == nil {
 			r.linkedSizeIDs = map[int64]bool{}
@@ -307,7 +315,7 @@ var ErrAborted = errors.New("mailsync: aborted")
 // geht weiter; Verbindungs- und Anmeldefehler sowie ctx-Ende brechen ab.
 func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	start := time.Now()
-	var rep Report
+	rep := Report{MaxMessageBytes: e.maxMessageBytes()}
 	defer func() {
 		// Auch bei Abbruch (Jobs, Verbindung, ctx): nur Zahlen, keine
 		// Inhalte. Wie viel wurde geladen, obwohl es lokal schon da war
@@ -821,6 +829,7 @@ func (e *Engine) skipTooLarge(ctx context.Context, mb store.Mailbox, uv uint32, 
 			return nil, err
 		}
 		rep.Errors++
+		rep.SkippedTooLarge++
 		rep.problem(fmt.Sprintf("uid %d: message of %d bytes is larger than imap.max_message_bytes (%d); not fetched, sync --full checks it again", h.UID, h.Size, limit))
 		e.log().Warn("message larger than max_message_bytes; not fetched", "mailbox", mb.Path, "uid", h.UID, "size", h.Size, "limit", limit)
 	}
