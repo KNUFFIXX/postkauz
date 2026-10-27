@@ -16,7 +16,7 @@ export CGO_ENABLED ?= 0
 # GOTOOLCHAIN=local: fehlt die Toolchain, bricht der Build ab, statt still nachzuladen (ADR-008).
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vuln vet fmt fmt-check lint hooks guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -49,6 +49,13 @@ race:
 GOVULNCHECK_VERSION ?= v1.9.0
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# Pre-Commit-Hook (A12.3) für diesen Klon einschalten: Git nimmt die Hooks
+# dann aus .githooks/ (dort ruft pre-commit `make check`). Abschalten mit
+# `git config --unset core.hooksPath`. Komfort, die CI bleibt die Sperre.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks: pre-commit runs make check (disable: git config --unset core.hooksPath)"
 
 vet:
 	go vet ./...

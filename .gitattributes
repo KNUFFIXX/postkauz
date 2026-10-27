@@ -2,3 +2,5 @@
 *.ps1 text eol=crlf
 # Rohmails (Golden-Dateien): byte-genau, CRLF, nie umwandeln
 *.eml -text
+# Git-Hooks laufen über sh: LF auch in einem Windows-Arbeitsbaum
+.githooks/* text eol=lf
