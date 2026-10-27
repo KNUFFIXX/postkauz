@@ -43,11 +43,28 @@ Für: die Prüfsitzung, die T1c gegenprüft und nach `main` überträgt (Rahmen 
 - Erster CodeQL-Lauf nach dem Merge ansehen (Security → Code scanning).
 - `actions/checkout` und `actions/setup-go` stehen weiter auf Tags, nicht auf SHAs (A12.2 verlangte das Pinnen nur für CodeQL).
 - `CLAUDE.md` nennt `make lint` und `make hooks` noch nicht (bewusst nicht geändert; Vorschlag: eine Zeile wie bei `make vuln`).
-- `make race` und `make integration` liefen in dieser Sitzung: siehe Abschnitt „Prüfläufe“.
+- Vorbefund `TestIntegrationImportOverlapDovecot` (auf `main` rot, siehe „Prüfläufe“).
+- `make vuln` im CI nach dem Push ansehen (im Container gesperrt).
 
-## Prüfläufe
+## Prüfläufe (27.10.2026, Cloud-Container, go1.27.3)
 
-(wird am Ende der Sitzung ergänzt)
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün auf dem Endstand; zusätzlich **jeder der 17 Code-Commits einzeln** mit `go vet ./...` und `go test -short ./...` in einem eigenen Worktree: alle ok |
+| `make race` | grün (Exit 0) |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make integration` (Dovecot, Stalwart, GreenMail per Docker) | **1 FAIL, kein T1c-Befund:** `TestIntegrationImportOverlapDovecot` erwartet 305 neu / 173 vorhanden, bekommt 307 / 171. Auf `main` `1c9847a` (ohne T1c) zweimal gleich reproduziert. Vermutung: Erwartungswerte von vor rc6 (seit rc6 fasst der Import zwei Fassungen mit gleicher Message-ID nicht mehr zusammen, wenn der Inhalt abweicht); nicht weiter untersucht, weil T1c den Import nicht berührt. Alle übrigen 32 Integrationstests grün. **Für die Prüfsitzung:** vor dem Merge klären (Testerwartung anpassen oder Import-Befund). |
+| `make vuln` | **nicht gelaufen:** Die Netzregel dieses Containers sperrt `vuln.go.dev` (Proxy 403). Läuft nach dem Push im CI-Job `vuln`; die Prüfsitzung prüft dort das Ergebnis. |
+| `make lint` | 80 Befunde, eingestuft in `lint_erstlauf.md` (Berichtsmodus, kein Abbruchkriterium) |
+| Linux-Pseudo-Terminal (`script`) | `internal prompt-probe` mit Leser `term`: Hash eines Umlaut-Werts stimmt mit `sha256sum` überein; `--timeout 1s` bricht ab, Terminal danach wieder normal |
+
+**Build `0.3.0-alpha.c1`** (`make release VERSION=0.3.0-alpha.c1`, Code-Stand `e6f8be8`; danach nur dieser Doku-Nachtrag; `dist/` ist nicht versioniert, die Prüfsitzung baut nach und vergleicht):
+
+```
+0455c194443ac262b93e81220413e7ae6c1c118ccc545e49f4dcdea8a25d2d68  postkauz-linux-amd64
+848139507b79b62420b5a5740fd77a64b15d2374e26f07929c02a0820d267b52  postkauz-windows-amd64.exe
+4cdc62f09f7f44b4b54b3933d4fa18b65516b16fabb0c511adf97e2da04fb400  postkauz-darwin-arm64
+```
 
 ## Für die Roadmap (A5.6; die Prüfsitzung überträgt nach `docs/roadmap.md`)
 
