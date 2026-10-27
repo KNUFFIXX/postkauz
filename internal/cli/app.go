@@ -174,9 +174,17 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
+	rules := a.policy.Rules()
 	a.exec = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Keys: &ops.KeyGuard{Repo: st}, PolicyVersion: a.policyVersion,
+		Rules: &rules,
 		OnPanic: func(op string, r crash.Report) {
 			a.log.Error("panic in operation", "op", op, "message", r.Message, "stack", r.Stack)
+		},
+		// A1: Das Ergebnis geht trotzdem an den Aufrufer; doctor zählt den
+		// Start ohne Abschluss. Nur Operation, ID und Fehlerart, kein Text
+		// der Datenbank mit Eingaben.
+		OnAuditError: func(op string, startID int64, err error) {
+			a.log.Error("audit end entry not written", "op", op, "start_id", startID, "error", err.Error())
 		}}
 	return a.exec, nil
 }
