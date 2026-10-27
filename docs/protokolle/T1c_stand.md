@@ -69,7 +69,7 @@ Die Gegenprüfung (unabhängiger Prüfer, am Code belegt) ergab PASS ohne Blocke
 - Erster CodeQL-Lauf nach dem Merge ansehen (Security → Code scanning).
 - `actions/checkout` und `actions/setup-go` stehen weiter auf Tags, nicht auf SHAs (A12.2 verlangte das Pinnen nur für CodeQL).
 - `CLAUDE.md` nennt `make lint` und `make hooks` noch nicht (bewusst nicht geändert; Vorschlag: eine Zeile wie bei `make vuln`).
-- Vorbefund `TestIntegrationImportOverlapDovecot` (auf `main` rot, siehe „Prüfläufe“).
+- ~~Vorbefund `TestIntegrationImportOverlapDovecot` (auf `main` rot, siehe „Prüfläufe“)~~ — mit T1a (W3) geklärt, nach dem Merge grün (siehe „Prüfläufe nach dem Merge“).
 - `make vuln` im CI nach dem Push ansehen (im Container gesperrt).
 
 ## Prüfläufe (27.10.2026, Cloud-Container, go1.27.3)
@@ -101,6 +101,30 @@ a92d3b1d02939cc115a706bf5dfe051542a2fb3c6e85a1e0e60f868e1367ec07  postkauz-windo
 848139507b79b62420b5a5740fd77a64b15d2374e26f07929c02a0820d267b52  postkauz-windows-amd64.exe
 4cdc62f09f7f44b4b54b3933d4fa18b65516b16fabb0c511adf97e2da04fb400  postkauz-darwin-arm64
 ```
+
+## Merge nach `main` (27.10.2026, Prüfsitzung)
+
+Zweig `claude/magical-knuth-uugxtf` von `main` `f536810` (enthält T1a); `origin/claude/compassionate-rubin-tsaqjd` (Stand `18c3b74`) per Merge, kein Rebase (`5fb8bb9`). Konflikte: `internal/ops/sync.go`, `internal/mailsync/runner.go`, `internal/cli/sync_bindings.go`, `README.md`, `docs/cli.md`, `docs/sicherheit.md`; beide Teile vollständig erhalten (`incomplete_answers` aus T1a läuft jetzt auch durch `addRound`). Das Makefile (Guards beider Teile) ließ sich ohne Konflikt zusammenführen. Stand und CHANGELOG-Zeilen dieser Datei stehen jetzt in `docs/roadmap.md` (Abschnitt S3, „Stand T1c“; Entschieden 51) und `CHANGELOG.md` (übersetzt); diese Datei bleibt als Protokoll.
+
+Restpunkte der Nachprüfung, je ein Commit:
+
+| Punkt | Commit | Nachweis |
+|---|---|---|
+| `console.go`: CR genau am Ende eines 256er-Lesepuffers → das LF nachlesen (nur bei Zeilen-Eingabe und vollem Puffer) | `449e453` | `TestReadConsoleLineErrors` (Zeile 255 Zeichen und zu lange Zeile 4351 Zeichen: Rest `next\r\n` bleibt, Zeilenende `crlf`, Einheiten n+2); Gegenprobe ohne Fix: rot (`rest=2`, Zeilenende `cr`) |
+| Unit-Test der Probe-Ausgabe mit gesetztem `hash_match` | `bf1dd24` | `TestPromptProbeOutputWithHashMatch` (true/false, Text und JSON: kein Hash der Eingabe, nicht der vorgegebene Hash, kein `sha256`); Ausgabe dafür in `writePromptProbe` ausgelagert |
+| `make guard`: „UTF-8 mit BOM, sonst nur ASCII“ auch für `docs/*.ps1` | `69b8ef5` | beide Skripte erfüllen es; von Hand: ohne BOM bzw. mit Umlaut schlägt der Guard an (Exit 2) |
+
+## Prüfläufe nach dem Merge (27.10.2026, Cloud-Container, go1.27.3, Go-Code `69b8ef5`)
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün vor dem Merge-Commit und vor jedem der drei Restpunkt-Commits |
+| `make race` | grün (Exit 0, 30 Pakete ok, kein Datenrennen), 824 s |
+| `make integration` | grün (Exit 0): 9 Integrationstests mit 24 Teilfällen gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14, kein FAIL, kein SKIP; `TestIntegrationImportOverlapDovecot` grün (T1a W3), 146 s. `dockerd` von Hand gestartet; Images über `mirror.gcr.io` geholt und auf die Namen aus `deploy/testmail/docker-compose.yml` getaggt |
+| `make cross` | grün: linux/amd64 26,6 MB, windows/amd64 26,4 MB, darwin/arm64 25,0 MB |
+| `make vuln` | **nicht gelaufen:** `vuln.go.dev` über den Proxy gesperrt (CONNECT 403); im CI-Job `vuln` ansehen |
+
+Kein Release-Build (Auftrag der Prüfsitzung).
 
 ## Für die Roadmap (A5.6; die Prüfsitzung überträgt nach `docs/roadmap.md`)
 

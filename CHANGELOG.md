@@ -6,6 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- Merge T1c nach `main` (nach T1a): Abnahme-Skript `docs/abnahme_A3.ps1` (`.md`) für die verdeckte Passwortabfrage unter Windows (sechs Schritte je Leser: tippen, Strg+V, Rechtsklick, je ASCII und Umlaut; Startsignal vor jedem Schritt; mit `-Launch` die übrigen Fenster der Matrix nacheinander); eingestufter Erstlauf von golangci-lint in `docs/protokolle/lint_erstlauf.md`; Stand, Festlegungen und Prüfläufe in `docs/protokolle/T1c_stand.md`; `CONTRIBUTING.md` nennt `make hooks` und die Regel zu `go list`.
 - Nachbesserung T1a (0.3.0-alpha.1b): README-Abschnitt „Updating“ und `docs/abnahme_T1.md` Schritt 0 (vor dem Update von 0.2.0-rc8 die Aufgaben `sync --watch` und Audit-Export stoppen und die Claude-App beenden); Regeln für Symlinks und Spezialdateien in `attach_dir` (`docs/sicherheit.md`, `docs/cli.md`); Dovecot ersetzt NUL-Bytes durch 0x80 (`docs/testkorpus.md`); Prüfläufe in `docs/protokolle/T1a_pruefungen.md`.
 - T1a: Schema-Plan für Schnitt 3 mit festen Migrationsnummern (`docs/datenmodell.md`), Bedrohungsmodell „Verknüpfung über Message-ID und Größe“ (`docs/sicherheit.md` Abschnitt 1), Protokoll `docs/protokolle/T1a_pruefungen.md` (Prüfläufe, Laufzeit Migration 0017).
 - `auftraege/A03_teile.md`: Schnitt 3 in fünf Teilen (T1 Teil A und Härtung des Dauerbetriebs, T2 Aktionen, T3 Sicherung, T4 Microsoft, T5 Fernzugriff) mit Ausgangsstand, Haltepunkt und Startprompt; `auftraege/A03_s3.md`: Stand nach D6, R1–R3 entschieden, Nachtrag A12 (Prüfwerkzeuge in der CI, Funde des Fremdmodell-Laufs).
@@ -19,6 +20,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- T1c: Verstecktes Diagnose-Kommando `postkauz internal prompt-probe` (`--reader auto|console|term`, `--timeout`, `--expect-sha256`, `--json`): liest eine verdeckte Zeile wie `account add` und zeigt nur, wie sie ankam (Art von stdin, Konsolenmodus vorher/während/nachher, Codepages, Zähler, Zeilenende), nie den Wert und nie einen Hash davon; mit `--expect-sha256` nur, ob die Eingabe passt (`hash_match`). Aufforderung und Ausgabe warnen, dort nie ein echtes Passwort einzugeben.
+- T1c: `doctor --blobs` prüft eine Stichprobe von 1 % des Blob-Stores (`--blobs=all`: jede Datei) gegen Prüfsumme und Größe aus der Datenbank; zählt Zeilen ohne Datei, Dateien ohne Zeile, fremde und Temporärdateien, zeigt nie Inhalt. Probleme enden mit Exit 1 (`blob check failed`). Dateianhänge von Entwürfen (Datei ohne Zeile in `blobs`) zählen eigens (`draft_attachments`), nicht als verwaist.
+- T1c: `make lint`: golangci-lint v2.15.0 (gosec, staticcheck, errcheck, bodyclose, gocritic und Standardsatz), Einstellungen in `.golangci.yml`; CI-Job `lint` im Berichtsmodus (`continue-on-error`). Erstlauf: 88 Befunde, 16 echt, 44 Fehlalarm, 28 später.
+- T1c: CodeQL für Go (`.github/workflows/codeql.yml`), per Commit-SHA gepinnt (v4.39.1), bei Push auf `main`, Pull Requests und wöchentlich.
+- T1c: `.githooks/pre-commit` ruft `make check`, eingeschaltet mit `make hooks` (siehe `CONTRIBUTING.md`).
+- T1c: `doctor --secrets` findet auch JSON Web Tokens (Bearer-/OAuth-Tokens) in Log, Konfiguration, Tabellen und Audit-Exporten.
+- T1c: `sync` meldet wegen `[imap] max_message_bytes` übersprungene Nachrichten in einer eigenen Zeile (`--json`: `skipped_too_large`, `max_message_bytes`); `account add` und README nennen die Einstellung mit Beispiel.
 - Nachbesserung T1a (0.3.0-alpha.1b): Prozesssperre `<datenbank>.lock` neben der Datenbank; jeder Prozess hält sie geteilt, eine Migration exklusiv. Neuer Fehlercode `database_busy` (ein anderer Prozess migriert gerade).
 - Nachbesserung T1a: `doctor` zeigt je Konto die unvollständigen Serverantworten (Zeile `incomplete server answers: …`, JSON `incomplete_answers`, `incomplete_answers_last`, `incomplete_answers_at`) und warnt bei einem Fall in den letzten sieben Tagen.
 - T1a: Migration 0017 (Schema 17): `message_mailboxes.uid` mit `CHECK (uid > 0)`; die Migration bricht mit Meldung ab, statt eine Zeile mit UID 0 still zu bereinigen.
@@ -47,6 +55,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- T1c: Windows: Die verdeckte Passwortabfrage von `account add` und `account set --password-stdin` liest die Konsole selbst (`ReadConsoleW`, Zeilen-Eingabe, Echo aus, UTF-16 nach UTF-8); `POSTKAUZ_PASSWORD_READER=term` schaltet zurück auf `golang.org/x/term`, jeder andere Wert ist ein Eingabefehler vor der Abfrage. Auf allen Systemen endet die Abfrage nach 120 s ohne Eingabe (`prompt_timeout`, Exit 1, Hinweis auf `--password-stdin` und README). Eine Eingabe über 4096 Zeichen wird bis zum Zeilenende gelesen und verworfen, damit kein Rest für die Shell bleibt; fällt das CR genau ans Ende eines Lesepuffers, liest der Leser das LF noch (Restpunkt beim Merge).
+- T1c: Eine Message-ID, die mehrere Nachrichten tragen (`show <message-id>`, `mail_get_message`, Antworten und Weiterleitungen per Message-ID), ist ein Eingabefehler (`ambiguous message_id`) mit bis zu 20 lokalen IDs, statt still die älteste zu nehmen.
+- T1c: `make guard` lässt `vendor/` aus und schlägt bei `go list` mit dem Muster aus drei Punkten in Skripten, Makefile und Workflows an (Go 1.28); seit dem Merge gilt die Regel „UTF-8 mit BOM, sonst nur ASCII“ auch für `docs/*.ps1`.
 - Entscheid 43: Ein geänderter Entwurf wird erst nach 30 s ohne Änderung abgelegt (neue Entwürfe sofort).
 - Schema 16 (Migrationen 0015 `drafts.content_changed_at`, 0016 `sent_check_marks` und `drafts.fallback_checked_at`).
 - Ausgaben von Entwürfen: Zitat und Weiterleitung stehen in `original` (Untrusted-Hülle), `body_text` enthält nur eigenen Text und Signatur; Hook-Ausgabe als Objekt `hook_output` (statt `hook_output_truncated`); `derived_from_email` nennt aus der Mail übernommene Kopffelder; Anhang-Warnungen nennen den Index statt des Namens. `drafts.get` kennt `max_chars` und `account`.
@@ -61,6 +72,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- T1c: Fehlermeldungen, Hinweise und Stack-Zeilen auf stderr, `account test` (Ordnernamen, Fähigkeiten) und der Fehlertext von `--explain` werden wie Mailinhalt von Terminal-Steuerzeichen bereinigt; Folgezeilen einer Meldung oder eines Hinweises sind eingerückt, damit ein Zeilenumbruch in einer Serverantwort keine Zeile `hint:` vortäuschen kann.
+- T1c: `audit --since` mit einer überlaufenden Tageszahl (etwa `9223372036854775807d`) wurde still zu einem Zeitpunkt in der Zukunft; solche Werte sind jetzt ein Eingabefehler.
+- T1c: Vier ungeprüfte Fehler in Tests; rohe unsichtbare Zeichen in Testliteralen und Doku durch Escapes ersetzt (erster Lint-Lauf); `make guard` schlägt bei rohen Bidi-Steuerzeichen in Quelltext, Doku und Skripten an.
 - Nachbesserung T1a (W1): Zwei Programmversionen können nicht mehr zugleich auf derselben Datenbank arbeiten: Jeder Prozess (Sync, Watch, Import, MCP-Server, Audit-Export, jedes Kommando) prüft das Schema erst unter der geteilten Prozesssperre und hält sie bis zum Ende; `Migrate` sperrt exklusiv und liest die Version danach neu (`migration_blocked`, solange ein anderer Prozess die Datenbank offen hat).
 - Nachbesserung T1a (W2): Ein empfangenes UID-Set ist zusätzlich zu `EXISTS` auf 10 Millionen UIDs begrenzt und wird nur ab der gesuchten UID aufgelöst (vorher forderte `EXISTS 4294967294` mit `1:4294967294` rund 16 GiB an).
 - Nachbesserung T1a (K1): Migration 0017 prüft Fremdschlüssel nur in `message_mailboxes` und nennt im Fehler die Tabelle.
