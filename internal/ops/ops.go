@@ -39,6 +39,10 @@ type Call struct {
 	// Executor). Handler dürfen ihn nur beschreiben (policy.get), nie für
 	// eigene Rechteentscheidungen nutzen: Die trifft allein die Policy.
 	Key policy.Key
+	// AuditID ist der Start-Eintrag dieses Aufrufs im Audit (0, wenn der
+	// Writer keine IDs kennt); Handler, die Jobs einreihen, tragen ihn als
+	// Herkunft ein (A8).
+	AuditID int64
 	// Actor ist der Akteur des Aufrufs (wie im Audit-Eintrag des
 	// Executors); Handler, die selbst Übergänge auditieren (Entwürfe,
 	// S2.3), tragen ihn in deren Einträge ein.

@@ -243,10 +243,10 @@ func TestComposeOptionsAndDraftPushJob(t *testing.T) {
 			CreatedAt: now, UpdatedAt: now, ComposeOptions: `{"quote":false,"signature":true}`}); err != nil {
 			return err
 		}
-		if job1, err = x.EnqueueDraftPush(acc, now); err != nil {
+		if job1, err = x.EnqueueDraftPush(acc, now, JobOrigin{KeyID: "cli"}); err != nil {
 			return err
 		}
-		job2, err = x.EnqueueDraftPush(acc, now)
+		job2, err = x.EnqueueDraftPush(acc, now, JobOrigin{KeyID: "cli"})
 		return err
 	})
 	if err != nil {

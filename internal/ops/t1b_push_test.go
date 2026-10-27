@@ -130,3 +130,73 @@ func TestA7PushStartAndEnd(t *testing.T) {
 		t.Fatalf("reasons = %v", reasons)
 	}
 }
+
+// A8: Wird der Schlüssel zwischen Freigabe und Push widerrufen, legt der
+// Push nichts ab: Freigabe abgelehnt (key_revoked), Entwurf verworfen,
+// Systemereignis im Audit. Ein Entwurf des Menschen ist nicht betroffen.
+// Der eingereihte Job trägt Schlüssel und Start-Eintrag des Aufrufs.
+func TestA8RevokedKeyStopsPush(t *testing.T) {
+	ctx := context.Background()
+	e := newPushEnv(t)
+	e.push(t)
+	// Der Job der Umgebung ist erledigt (das macht sonst der Sync).
+	if err := e.st.ExecForTest(`UPDATE jobs SET state = 'done'`); err != nil {
+		t.Fatal(err)
+	}
+	id := e.newDraftFor(t, "Widerruf")
+	jobs, err := e.st.OpenJobs(ctx)
+	if err != nil || len(jobs) == 0 {
+		t.Fatalf("jobs = %+v %v", jobs, err)
+	}
+	var push store.JobInfo
+	for _, j := range jobs {
+		if j.Type == store.JobDraftPush {
+			push = j
+		}
+	}
+	if push.Origin.KeyID != assistant.ID || push.Origin.AuditID == 0 {
+		t.Fatalf("job origin = %+v", push.Origin)
+	}
+	req := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": id}).(DraftsRequestOutput)
+	e.must(t, humanCLI, "drafts.approve", map[string]any{"approval_id": req.ApprovalID})
+	own := e.must(t, humanCLI, "drafts.create", map[string]any{"kind": "new", "account": "demo", "to": []string{"b@example.org"},
+		"subject": "Vom Menschen", "body_markdown": "Hallo"}).(DraftsWriteOutput).DraftID
+	k, err := e.st.APIKeyByName(ctx, "assistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.RevokeAPIKey(ctx, k.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	n := len(e.app.raws)
+	e.settle(t)
+	rep := e.push(t)
+	if rep.KeyRevoked != 1 || rep.Pushed != 1 || len(e.app.raws) != n+1 || e.app.mids[len(e.app.mids)-1] != e.draft(t, own).MessageIDHeader {
+		t.Fatalf("push after revoke = %+v, %d appends", rep, len(e.app.raws)-n)
+	}
+	d := e.draft(t, id)
+	if d.Status != string(drafts.StatusAbandoned) || d.RemoteState != drafts.RemotePending {
+		t.Fatalf("draft after revoke = %s/%s", d.Status, d.RemoteState)
+	}
+	a, err := e.st.Approval(ctx, req.ApprovalID)
+	if err != nil || a.Decision != drafts.DecisionRejected || a.Reason != "key_revoked" || a.DecidedBy != "system" {
+		t.Fatalf("approval = %+v %v", a, err)
+	}
+	evs, err := e.st.AuditQuery(ctx, store.AuditFilter{Operation: drafts.OpPush})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, ev := range evs {
+		if ev.Reason == "key_revoked" && ev.ActorType == audit.ActorSystem {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no system event key_revoked")
+	}
+	// Ein späterer Push versucht den Entwurf nicht noch einmal.
+	if rep := e.push(t); rep.KeyRevoked != 0 || rep.Pushed != 0 {
+		t.Fatalf("second push = %+v", rep)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
@@ -64,6 +65,16 @@ func newDraftEnv(t *testing.T, withChecker bool) *draftEnv {
 		t.Fatal(err)
 	}
 	e.x = &Executor{Registry: reg, Audit: c.st.AuditWriter()}
+	// Der Schlüssel des Agenten liegt wie im Betrieb in api_keys: Der Push
+	// prüft ihn vor jedem APPEND (A8).
+	scopes := []string{}
+	for _, sc := range assistant.Scopes {
+		scopes = append(scopes, string(sc))
+	}
+	if _, err := c.st.CreateAPIKey(context.Background(), store.APIKey{Name: "assistent", KeyHash: HashKey("pk_test_assistent"),
+		Role: assistant.Role, Scopes: scopes, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	return e
 }
 

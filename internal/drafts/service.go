@@ -53,6 +53,9 @@ type Who struct {
 	KeyID     string
 	Scope     string
 	Operation string
+	// AuditID ist der Start-Eintrag des Aufrufs im Executor (A8: Herkunft
+	// eingereihter Jobs); 0 = unbekannt.
+	AuditID int64
 }
 
 // As liefert eine Kopie des Dienstes, die jeden Übergang mit who
@@ -127,7 +130,11 @@ func (s *Service) enqueuePush(x *store.DraftTx, d store.Draft, now time.Time, re
 	if d.RemoteState != RemotePending {
 		return nil
 	}
-	id, err := x.EnqueueDraftPush(d.AccountID, now)
+	origin := store.JobOrigin{KeyID: "system"}
+	if s.who != nil {
+		origin = store.JobOrigin{KeyID: s.who.KeyID, AuditID: s.who.AuditID}
+	}
+	id, err := x.EnqueueDraftPush(d.AccountID, now, origin)
 	res.PushJobID = id
 	return err
 }

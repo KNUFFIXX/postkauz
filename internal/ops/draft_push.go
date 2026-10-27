@@ -3,10 +3,12 @@ package ops
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -92,6 +94,9 @@ type DraftPushReport struct {
 	// Adopted: Kopien abgebrochener Versuche, die der Push übernommen hat,
 	// statt neu abzulegen (W1).
 	Adopted int `json:"adopted,omitempty"`
+	// KeyRevoked: Entwürfe, deren Schlüssel nicht mehr gilt (A8); nicht
+	// abgelegt, Freigabe abgelehnt, Entwurf verworfen.
+	KeyRevoked int `json:"key_revoked,omitempty"`
 	// DraftIDs: die abgelegten Entwürfe.
 	DraftIDs []int64 `json:"draft_ids,omitempty"`
 	// Waiting: geänderte Entwürfe, die noch nicht 30 s unverändert sind
@@ -109,6 +114,7 @@ func (r *DraftPushReport) Add(o DraftPushReport) {
 	r.Failed += o.Failed
 	r.Rejected += o.Rejected
 	r.Adopted += o.Adopted
+	r.KeyRevoked += o.KeyRevoked
 	r.DraftIDs = append(r.DraftIDs, o.DraftIDs...)
 	// Wartende zählen nicht zusammen: Derselbe Entwurf wartet über mehrere
 	// Prüfungen; es gilt der letzte Stand.
@@ -261,6 +267,17 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	case !drafts.Pending(d):
 		return nil // inzwischen abgelegt, abgeschlossen oder übernommen
 	}
+	// A8: Gilt der Schlüssel, für den der Entwurf entstand bzw. vorgelegt
+	// wurde, noch (Widerruf, Ablauf, Scope)? Sonst kein APPEND.
+	if reason, err := p.originDenied(ctx, d); err != nil {
+		return err
+	} else if reason != "" {
+		if _, err := svc.CloseForKey(ctx, d.ID, reason); err != nil {
+			return err
+		}
+		rep.KeyRevoked++
+		return nil
+	}
 	fp := drafts.Fingerprint(d)
 	// E11: Date setzt jeder Push neu (sekundengenau wie die Kopfzeile).
 	date := p.now().Truncate(time.Second)
@@ -309,6 +326,51 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	rep.Pushed++
 	rep.DraftIDs = append(rep.DraftIDs, d.ID)
 	return nil
+}
+
+// originDenied prüft die Schlüssel hinter einem Entwurf (A8): den, mit dem
+// er angelegt wurde (created_by), und den, der die offene oder erteilte
+// Freigabe beantragt hat (requested_by). Für "key:<name>" frisch aus der
+// Datenbank (kein Zwischenspeicher): Widerruf und Ablauf wie im Executor
+// (KeyGuard), dann die Policy mit Scope mail:draft. Liefert den Grund
+// (key_revoked, key_expired, key_invalid, missing_scope) oder "".
+func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (string, error) {
+	ids := []string{d.CreatedBy}
+	if d.ApprovalID > 0 {
+		a, err := p.o.svc.Store.Approval(ctx, d.ApprovalID)
+		if err != nil && !drafts.IsNotFound(err) {
+			return "", err
+		}
+		if err == nil && (a.Decision == drafts.DecisionPending || a.Decision == drafts.DecisionApproved) {
+			ids = append(ids, a.RequestedBy)
+		}
+	}
+	st := p.o.svc.Store
+	for _, id := range ids {
+		name, ok := strings.CutPrefix(id, "key:")
+		if !ok {
+			continue // "cli" (Mensch) oder leer
+		}
+		k, err := st.APIKeyByName(ctx, name)
+		if errors.Is(err, store.ErrKeyNotFound) {
+			return "key_invalid", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		pk := PolicyKey(k)
+		g := &KeyGuard{Repo: st, TTL: time.Nanosecond}
+		if err := g.Check(ctx, pk, p.now()); err != nil {
+			if r := keyReason(err); r != "key_check_failed" {
+				return r, nil
+			}
+			return "", err
+		}
+		if dec := policy.Check(pk, policy.Requirement{Name: drafts.OpPush, Scope: policy.ScopeMailDraft, Risk: policy.R2}, false); !dec.Allowed() {
+			return dec.Reason, nil
+		}
+	}
+	return "", nil
 }
 
 // AfterSync prüft die Entwürfe des Kontos nach dem Spiegeln (S2.6;

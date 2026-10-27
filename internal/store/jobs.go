@@ -25,6 +25,14 @@ const (
 	JobDraftPush = "draft_push"
 )
 
+// JobOrigin ist die Herkunft eines Jobs (A8, Migration 0019): KeyID wie
+// audit_events.api_key_id ("cli" | "key:<name>" | "system"), AuditID der
+// Start-Eintrag des Aufrufs, der ihn einreihte (0 = keiner).
+type JobOrigin struct {
+	KeyID   string
+	AuditID int64
+}
+
 // Job ist ein offener Eintrag der Warteschlange.
 type Job struct {
 	ID        int64
@@ -175,12 +183,15 @@ type JobInfo struct {
 	State     string
 	Attempts  int
 	LastError string
+	// Origin: Herkunft (seit Migration 0019; leer bei älteren Jobs und
+	// Jobs der Trigger).
+	Origin JobOrigin
 }
 
 // OpenJobs liefert alle offenen und gescheiterten Jobs.
 func (s *SQLite) OpenJobs(ctx context.Context) ([]JobInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT type, COALESCE(json_extract(payload, '$.account_id'), 0), state, attempts,
-		COALESCE(last_error, '') FROM jobs WHERE state != 'done' ORDER BY id`)
+		COALESCE(last_error, ''), COALESCE(key_id, ''), COALESCE(audit_id, 0) FROM jobs WHERE state != 'done' ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +199,7 @@ func (s *SQLite) OpenJobs(ctx context.Context) ([]JobInfo, error) {
 	var out []JobInfo
 	for rows.Next() {
 		var j JobInfo
-		if err := rows.Scan(&j.Type, &j.AccountID, &j.State, &j.Attempts, &j.LastError); err != nil {
+		if err := rows.Scan(&j.Type, &j.AccountID, &j.State, &j.Attempts, &j.LastError, &j.Origin.KeyID, &j.Origin.AuditID); err != nil {
 			return nil, err
 		}
 		out = append(out, j)

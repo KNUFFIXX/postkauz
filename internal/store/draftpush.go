@@ -97,8 +97,8 @@ func (s *SQLite) DraftPushQueue(ctx context.Context, accountID int64, retry bool
 // Fehler erst später fällig ist, bleibt, wie er ist. Liefert, ob einer
 // angelegt wurde.
 func (s *SQLite) EnsureDraftPushJob(ctx context.Context, accountID int64, now time.Time) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at)
-		SELECT ?, json_object('account_id', ?), ? WHERE EXISTS (SELECT 1 FROM drafts WHERE account_id = ? AND `+draftPushPending+`)`,
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at, key_id)
+		SELECT ?, json_object('account_id', ?), ?, 'system' WHERE EXISTS (SELECT 1 FROM drafts WHERE account_id = ? AND `+draftPushPending+`)`,
 		JobDraftPush, accountID, now.UnixMilli(), accountID)
 	if err != nil {
 		return false, fmt.Errorf("store: ensure draft_push job: %w", err)

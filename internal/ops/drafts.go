@@ -187,7 +187,7 @@ func newDraftOps(d Deps) *draftOps {
 // as liefert den Dienst für einen Aufruf: Übergänge mit Akteur des
 // Aufrufs auditiert, im Trockenlauf zurückgerollt.
 func (o *draftOps) as(call Call, op string, scope policy.Scope) *drafts.Service {
-	return o.svc.As(drafts.Who{Actor: call.Actor, KeyID: call.Key.ID, Scope: string(scope), Operation: op}, call.DryRun)
+	return o.svc.As(drafts.Who{Actor: call.Actor, KeyID: call.Key.ID, Scope: string(scope), Operation: op, AuditID: call.AuditID}, call.DryRun)
 }
 
 // draftErr übersetzt Ablehnungen aus internal/drafts und internal/compose

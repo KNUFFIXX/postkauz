@@ -561,10 +561,13 @@ func (x *DraftTx) AppendAudit(e audit.Event) (int64, error) {
 // offen (queued oder running; höchstens einer je Art und Konto, Index
 // jobs_open), bleibt es bei diesem; er arbeitet alle Entwürfe des Kontos
 // mit remote_state pending ab (S2.5). Liefert die ID des offenen Jobs.
-func (x *DraftTx) EnqueueDraftPush(accountID int64, now time.Time) (int64, error) {
+//
+// origin ist die Herkunft (A8, Migration 0019): Schlüssel wie im Audit und
+// der Start-Eintrag des Aufrufs; ein schon offener Job behält seine.
+func (x *DraftTx) EnqueueDraftPush(accountID int64, now time.Time, origin JobOrigin) (int64, error) {
 	payload := fmt.Sprintf(`{"account_id":%d}`, accountID)
-	if _, err := x.tx.ExecContext(x.ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at) VALUES (?, ?, ?)`,
-		JobDraftPush, payload, now.UnixMilli()); err != nil {
+	if _, err := x.tx.ExecContext(x.ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at, key_id, audit_id) VALUES (?, ?, ?, ?, ?)`,
+		JobDraftPush, payload, now.UnixMilli(), nullStr(origin.KeyID), nullInt(origin.AuditID)); err != nil {
 		return 0, fmt.Errorf("store: enqueue draft_push: %w", err)
 	}
 	// Ein Job, der nach einem Fehler erst später fällig wäre (Backoff bis

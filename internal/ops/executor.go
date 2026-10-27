@@ -319,7 +319,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	}
 
 	out, herr := x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress,
-		Key: req.Key, Actor: req.Actor})
+		Key: req.Key, Actor: req.Actor, AuditID: auditID})
 
 	end := ev
 	end.RefID = auditID

@@ -444,3 +444,53 @@ func (s *Service) NotePush(ctx context.Context, accountID, draftID int64, note s
 		return x.UpdateDraft(d)
 	})
 }
+
+// CloseForKey schließt einen offenen Entwurf, dessen Schlüssel nicht mehr
+// gilt (A8: widerrufen, abgelaufen, unbekannt oder ohne Scope mail:draft;
+// reason ist der Grund wie im Audit des Executors, z. B. key_revoked).
+// Der Push legt ihn nicht ab. Eine offene oder erteilte Freigabe wird
+// abgelehnt (A03 A8, Standard rejected; DecidedBy system, Grund reason),
+// der Entwurf wird verworfen (abandoned), damit kein späterer Push ihn
+// doch noch als Entwurfskopie ablegt; sein Inhalt bleibt lokal lesbar.
+// Audit: Systemereignis drafts.push mit diesem Grund, in derselben
+// Transaktion. Ein schon abgeschlossener Entwurf bleibt, wie er ist.
+func (s *Service) CloseForKey(ctx context.Context, id int64, reason string) (Result, error) {
+	now := s.now()
+	var res Result
+	err := s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		res.Draft, res.From, res.To = d, from, from
+		if from.Closed() {
+			return nil
+		}
+		t, err := Next(from, EvAbandon)
+		if err != nil {
+			return err
+		}
+		if d.ApprovalID > 0 {
+			a, err := x.Approval(d.ApprovalID)
+			if err != nil {
+				return err
+			}
+			if a.Decision == DecisionPending || a.Decision == DecisionApproved {
+				a.Decision, a.DecidedBy, a.DecidedAt, a.Reason = DecisionRejected, "system", now, reason
+				if err := x.UpdateApproval(a); err != nil {
+					return err
+				}
+				res.Approval = &a
+			}
+		}
+		d.Status, d.UpdatedAt, d.ClosedAt = string(t.To), now, now
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.To = d, t.To
+		_, err = x.AppendAudit(s.systemEvent(now, OpPush, reason, d, from, t.To))
+		return err
+	})
+	return res, err
+}

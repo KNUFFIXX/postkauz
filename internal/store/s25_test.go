@@ -165,7 +165,7 @@ func TestDraftPushQueries(t *testing.T) {
 	if _, ok, _ := s.ClaimJob(ctx, JobDraftPush, acc, "w1", time.Minute, false); ok {
 		t.Fatal("job in backoff was claimed")
 	}
-	if err := s.DraftTx(ctx, func(x *DraftTx) error { _, err := x.EnqueueDraftPush(acc, time.Now()); return err }); err != nil {
+	if err := s.DraftTx(ctx, func(x *DraftTx) error { _, err := x.EnqueueDraftPush(acc, time.Now(), JobOrigin{}); return err }); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, err := s.ClaimJob(ctx, JobDraftPush, acc, "w1", time.Minute, false); err != nil || !ok {
