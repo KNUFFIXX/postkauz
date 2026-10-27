@@ -2,7 +2,7 @@
 # die Testserver laufen vorerst lokal und nachts (make integration), nicht in
 # dieser Pipeline. Der Race-Detector läuft als eigener Job mit CGO,
 # govulncheck und golangci-lint als eigene Jobs (brauchen Netz; lint vorerst
-# im Berichtsmodus).
+# im Berichtsmodus). CodeQL läuft in codeql.yml.
 name: ci
 
 on:
