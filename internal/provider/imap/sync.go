@@ -44,19 +44,25 @@ func (p *Provider) cached(mailbox string, st imapx.SelectInfo) []uint32 {
 
 // searchAll liefert alle UIDs des Ordners; fresh fragt den Server auch dann,
 // wenn der Zwischenspeicher passt (voller Abgleich). Liefert der Server
-// eine andere Zahl von UIDs als EXISTS aus demselben SELECT, ist das
+// weniger UIDs als EXISTS aus demselben SELECT, ist das
 // provider.ErrIncomplete (T1a Punkt 3): Aus einer leeren oder gekürzten
-// Liste folgten sonst Löschungen, die es nicht gab.
-func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) ([]uint32, error) {
+// Liste folgten sonst Löschungen, die es nicht gab. Mehr UIDs als EXISTS
+// (K2): Zwischen SELECT und SEARCH kam Mail an; die Liste taugt für neue
+// UIDs, aber nicht sicher für den Löschabgleich (partial true, nicht
+// zwischengespeichert).
+func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) (uids []uint32, partial bool, err error) {
 	if uids := p.cached(mailbox, st); uids != nil && !fresh {
-		return uids, nil
+		return uids, false, nil
 	}
-	uids, err := c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
+	uids, err = c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if len(uids) != int(st.Messages) {
-		return nil, fmt.Errorf("%w: UID SEARCH ALL returned %d UIDs, EXISTS is %d", provider.ErrIncomplete, len(uids), st.Messages)
+	if len(uids) < int(st.Messages) {
+		return nil, false, fmt.Errorf("%w: UID SEARCH ALL returned %d UIDs, EXISTS is %d", provider.ErrIncomplete, len(uids), st.Messages)
+	}
+	if len(uids) > int(st.Messages) {
+		return uids, true, nil
 	}
 	p.mu.Lock()
 	if p.cache == nil {
@@ -64,7 +70,7 @@ func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInf
 	}
 	p.cache[mailbox] = searchCache{uidValidity: st.UIDValidity, uidNext: st.UIDNext, exists: st.Messages, uids: uids}
 	p.mu.Unlock()
-	return uids, nil
+	return uids, false, nil
 }
 
 func (p *Provider) searchFrom(c *imapx.Client, mailbox string, st imapx.SelectInfo, from uint32) ([]uint32, error) {
@@ -166,11 +172,15 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 			needAll = true
 		}
 		if needAll {
-			all, err := p.searchAll(c, mailbox, st, fresh)
+			all, partial, err := p.searchAll(c, mailbox, st, fresh)
 			if err != nil {
 				return err
 			}
-			cs.Present = toUIDs(all)
+			if partial {
+				cs.PresentIncomplete = true
+			} else {
+				cs.Present = toUIDs(all)
+			}
 			newUIDs = fromUID(all, from)
 		}
 

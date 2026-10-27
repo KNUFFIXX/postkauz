@@ -212,6 +212,11 @@ type ChangeSet struct {
 	// (lokal bekannt, aber nicht mehr vorhanden) und holt Fehlendes nach.
 	// nil heißt: nicht ermittelt (nichts deutet auf Löschungen hin).
 	Present []UID
+	// PresentIncomplete: Die UID-Liste war nicht mit EXISTS vergleichbar
+	// (IMAP: mehr UIDs als EXISTS, weil zwischen SELECT und SEARCH Mail
+	// ankam; K2). Present ist dann nil, Created enthält die neuen UIDs
+	// trotzdem; der Löschabgleich dieses Ordners entfällt in diesem Lauf.
+	PresentIncomplete bool
 	// Exists ist die Nachrichtenzahl des Ordners laut Server.
 	Exists uint32
 	// NewState ist der Zustand, ab dem der nächste Aufruf weitermacht. Er wird

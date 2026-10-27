@@ -10,6 +10,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,9 +34,15 @@ type lossyServer struct {
 	// echoPassword: SELECT von Archiv antwortet mit dem Passwort im
 	// Response-Code und im Freitext (A12.4, Kanarientest).
 	echoPassword atomic.Bool
+	// arrive: Beim nächsten UID SEARCH ALL in INBOX kommen zwei Mails an
+	// (nach dem SELECT), und die Antwort lässt die erste UID weg: mehr UIDs
+	// als EXISTS, aber nicht als Löschliste brauchbar (K2).
+	arrive  atomic.Bool
+	arrived atomic.Int32
 }
 
 func (l *lossySession) Select(mb string, o *imap.SelectOptions) (*imap.SelectData, error) {
+	l.selected = mb
 	if l.s.echoPassword.Load() && mb == "Archiv" {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCode(testPass),
 			Text: "login was " + string(testPass)}
@@ -45,7 +52,8 @@ func (l *lossySession) Select(mb string, o *imap.SelectOptions) (*imap.SelectDat
 
 type lossySession struct {
 	*imapmemserver.UserSession
-	s *lossyServer
+	s        *lossyServer
+	selected string
 }
 
 func (l *lossySession) List(w *imapserver.ListWriter, ref string, patterns []string, opts *imap.ListOptions) error {
@@ -61,6 +69,22 @@ func (l *lossySession) List(w *imapserver.ListWriter, ref string, patterns []str
 
 func (l *lossySession) Search(kind imapserver.NumKind, c *imap.SearchCriteria, o *imap.SearchOptions) (*imap.SearchData, error) {
 	d, err := l.UserSession.Search(kind, c, o)
+	if err == nil && kind == imapserver.NumKindUID && len(c.UID) == 0 && l.selected == "INBOX" && l.s.arrive.CompareAndSwap(true, false) {
+		set, _ := d.All.(imap.UIDSet)
+		nums, _ := set.Nums()
+		uids := slices.Clone(nums[1:])
+		for i := 20; i < 22; i++ {
+			ad, err := l.s.u.Append("INBOX", lit(mail(i)), &imap.AppendOptions{})
+			if err != nil {
+				return nil, err
+			}
+			uids = append(uids, ad.UID)
+			l.s.arrived.Add(1)
+		}
+		d.All = imap.UIDSetNum(uids...)
+		d.Count = uint32(len(uids))
+		return d, nil
+	}
 	if err != nil || !l.s.shortUIDs.Load() || kind != imapserver.NumKindUID || len(c.UID) > 0 {
 		return d, err
 	}
@@ -170,6 +194,48 @@ func TestIncompleteServerAnswersRemoveNothing(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM mailboxes`); n != 1 {
 		t.Fatalf("removed mailbox still known: %d", n)
+	}
+}
+
+// K2: Liefert UID SEARCH ALL mehr UIDs als EXISTS (Mail kam zwischen
+// SELECT und SEARCH), holt der Lauf die neuen Nachrichten trotzdem, lässt
+// aber den Löschabgleich dieses Ordners aus (die Liste ist dafür nicht
+// verlässlich) und zählt die Antwort als unvollständig, auch für doctor.
+func TestLongerUIDListFetchesNewSkipsDeletions(t *testing.T) {
+	addr, ls := newLossyServer(t)
+	e := newEnv(t, addr)
+	eng := e.engine(t, connect(t, addr, 0))
+	ctx := context.Background()
+	if _, err := eng.SyncAll(ctx, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	ls.arrive.Store(true)
+	rep, err := eng.SyncAll(ctx, Options{CheckDeleted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ls.arrived.Load() != 2 || rep.New != 2 || rep.Removed != 0 || rep.Errors != 0 || rep.Incomplete != 1 || rep.failedMailboxes() != 1 {
+		t.Fatalf("arrived %d, report %+v", ls.arrived.Load(), rep)
+	}
+	// Die in der Antwort fehlende UID 1 ist weder gelöst noch gelöscht.
+	if n := e.count(t, `SELECT count(*) FROM message_mailboxes mm JOIN mailboxes m ON m.id = mm.mailbox_id
+		WHERE m.path = 'INBOX' AND mm.uid = 1`); n != 1 {
+		t.Fatalf("UID 1 unlinked: %d", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM messages WHERE deleted_remote_at IS NOT NULL`); n != 0 {
+		t.Fatalf("%d messages marked deleted", n)
+	}
+	if n := e.count(t, `SELECT count(*) FROM messages WHERE message_id_header IN ('n20@example.org','n21@example.org')`); n != 2 {
+		t.Fatalf("new messages = %d", n)
+	}
+	ia, err := e.st.IncompleteAnswersByAccount(ctx)
+	if err != nil || ia["demo"].Total != 1 || ia["demo"].Last != 1 || ia["demo"].LastAt.IsZero() {
+		t.Fatalf("recorded = %+v %v", ia, err)
+	}
+	// Nächster Lauf: vollständige Liste, alles gleicht sich ab.
+	rep, err = eng.SyncAll(ctx, Options{CheckDeleted: true})
+	if err != nil || rep.Incomplete != 0 || rep.Removed != 0 || rep.New != 0 || rep.failedMailboxes() != 0 {
+		t.Fatalf("next run: %+v %v", rep, err)
 	}
 }
 

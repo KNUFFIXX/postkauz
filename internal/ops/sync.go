@@ -218,7 +218,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
     "already_known_downloaded": {"type": "integer", "description": "messages downloaded although they turned out to be known locally (matched by content hash)"},
     "already_known_downloaded_bytes": {"type": "integer"},
     "linked_despite_size_difference": {"type": "integer", "description": "messages linked by Message-ID without download although the local copy is up to ` + strconv.Itoa(MaxLinkSizeExtra) + ` bytes larger"},
-    "incomplete_answers": {"type": "integer", "description": "empty or incomplete server answers (mailbox list without INBOX, UID list not matching EXISTS); nothing was removed"},
+    "incomplete_answers": {"type": "integer", "description": "empty or incomplete server answers (mailbox list without INBOX, UID list shorter or longer than EXISTS); nothing was removed"},
     "attachments_extracted": {"type": "integer"},
     "rounds": {"type": "integer"}, "duration_ms": {"type": "integer"}, "dry_run": {"type": "boolean"},
     "drafts": {"type": "object", "properties": {

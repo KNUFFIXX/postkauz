@@ -86,6 +86,12 @@ type DoctorAccount struct {
 	Password string `json:"password"` // stored | environment | missing | unknown
 	EnvVar   string `json:"env_var"`
 	Status   string `json:"status"`
+	// IncompleteAnswers: leere oder unvollständige Serverantworten bisher
+	// (LIST ohne INBOX, UID-Liste passt nicht zu EXISTS; K2), Last und
+	// LastAt die des letzten Laufs mit solchen Antworten.
+	IncompleteAnswers     int        `json:"incomplete_answers"`
+	IncompleteAnswersLast int        `json:"incomplete_answers_last,omitempty"`
+	IncompleteAnswersAt   *time.Time `json:"incomplete_answers_at,omitempty"`
 }
 
 func doctorCmd(a *app) *cobra.Command {
@@ -218,8 +224,20 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
 		return rep
 	}
+	incomplete, err := db.IncompleteAnswersByAccount(ctx)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "incomplete server answers: "+err.Error())
+	}
 	for _, acc := range list {
 		da := DoctorAccount{Name: acc.Name, EnvVar: secrets.EnvName(acc.CredentialRef), Status: acc.Status, Password: "unknown"}
+		if ia, ok := incomplete[acc.Name]; ok {
+			at := ia.LastAt
+			da.IncompleteAnswers, da.IncompleteAnswersLast, da.IncompleteAnswersAt = ia.Total, ia.Last, &at
+			if time.Since(at) < 7*24*time.Hour {
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: %d incomplete server answers in the sync of %s (%d in total); nothing was removed, the next sync retries; if this repeats every day, the server answers inconsistently (see the log)",
+					acc.Name, ia.Last, at.Format("2006-01-02 15:04 UTC"), ia.Total))
+			}
+		}
 		if v, ok := os.LookupEnv(da.EnvVar); ok && v != "" {
 			da.Password = "environment"
 		} else if sec != nil {
@@ -452,6 +470,10 @@ func printDoctor(w io.Writer, r DoctorReport) {
 		fmt.Fprintln(w, "accounts:")
 		for _, a := range r.Accounts {
 			fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
+			if a.IncompleteAnswersAt != nil {
+				fmt.Fprintf(w, "    incomplete server answers: %d (last: %d on %s)\n", a.IncompleteAnswers, a.IncompleteAnswersLast,
+					a.IncompleteAnswersAt.Format("2006-01-02 15:04 UTC"))
+			}
 		}
 	}
 	if len(r.Warnings) > 0 {
