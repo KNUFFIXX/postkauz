@@ -27,6 +27,8 @@ Commits:
 1. `feat: add Microsoft OAuth2 flows and keyring token storage`
 2. `feat: add Microsoft accounts with OAuth2 sign-in`
 3. `docs: add acceptance D9 and the T4 handover`
+4. `fix: show the login mechanism only for OAuth2 accounts`
+5. `docs: record the T4 checks before the push`
 
 ## 2. Festlegungen (Einspruch möglich)
 
@@ -49,10 +51,11 @@ Commits:
 | Prüfung | Ergebnis |
 |---|---|
 | `make check` vor jedem Commit (im eigenen Worktree auf dem Commit) | grün |
-| `make race` | siehe Abschnitt 6 |
-| `make integration` (Docker: Dovecot, Stalwart, GreenMail; `dockerd` von Hand gestartet) | siehe Abschnitt 6 |
-| `make vuln` | siehe Abschnitt 6 |
-| `make cross`, `make release VERSION=0.3.0-ms.1` | siehe Abschnitt 6 |
+| `make race` | grün (20 min, auf Commit 2; Commits 3 bis 5 ändern nur Doku und eine Ausgabezeile, `make check` darauf grün) |
+| `make integration` (Docker: Dovecot, Stalwart, GreenMail; `dockerd` von Hand gestartet) | **ein Fehlschlag, nicht von T4:** `TestIntegrationImportOverlapDovecot` (Abschnitt 7); alle übrigen Integrationstests grün, darunter `internal/provider/imap` und `internal/mailsync` gegen alle drei Server |
+| `make vuln` | **nicht gelaufen:** Die Netzregel der Sitzung sperrt `vuln.go.dev` (Proxy 403). `x/oauth2` v0.35.0 war schon vorher im Modulgraph; die Prüfsitzung führt `make vuln` aus |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make release VERSION=0.3.0-ms.1` | gebaut auf dem letzten Commit; `dist/` ist nicht im Repository, die Prüfsitzung baut nach und vergleicht `SHA256SUMS` |
 | PowerShell-Syntax von `abnahme_D9.ps1` | **nicht geprüft**: kein `pwsh` im Container, das Herunterladen hat die Sitzung nicht erlaubt. Klammern gezählt (ausgeglichen), Offline-Kommandos mit dem Linux-Programm nachgestellt. Die Prüfsitzung prüft vor dem Lauf auf dem Büro-PC: `[System.Management.Automation.Language.Parser]::ParseFile('abnahme_D9.ps1', [ref]$null, [ref]$e); $e` (leer = gut) und PSScriptAnalyzer, falls vorhanden. |
 
 ## 4. CHANGELOG-Zeilen (für „Unreleased“, Abschnitt Added)
@@ -73,7 +76,7 @@ Roadmap-Zeile (für „Stand S3“): S3.7 gebaut (T4, Build `0.3.0-ms.1`), Halte
 
 ## 6. Prüfergebnisse vor dem Push
 
-(nachgetragen am Ende der Sitzung)
+Siehe Abschnitt 3.
 
 ## 7. Fund außerhalb von T4
 
