@@ -129,7 +129,7 @@ Im selben Fenster, `<deine Gmail-Adresse>` durch deine Adresse ersetzen:
 
 PostKauz fragt `Password for … at imap.gmail.com:`. Jetzt die 16 Buchstaben aus dem Google-Fenster eintippen **ohne Leerzeichen** (beim Tippen erscheint nichts, das ist richtig) → Enter.
 
-**Geht das Tippen nicht** (Befund 23.10.2026 auf dem Heim-PC im Windows Terminal: die verdeckte Abfrage nahm weder Tippen noch Einfügen an; Ursache offen), mit Strg+C abbrechen und stattdessen diese eine Zeile nehmen. Sie wartet, bis du das App-Passwort im Google-Fenster markiert und mit Strg+C kopiert hast, und holt es dann aus der Zwischenablage (Leerzeichen fallen weg, danach wird die Zwischenablage geleert):
+**Geht das Tippen nicht** (Befund 23.10.2026 auf dem Heim-PC im Windows Terminal: die verdeckte Abfrage nahm weder Tippen noch Einfügen an; Ursache offen), mit Strg+C abbrechen und stattdessen diese eine Zeile nehmen. *(Nachtrag T1c, A03 A3: Ab 0.3.0 liest die Abfrage unter Windows über `ReadConsoleW` und bricht nach 120 s ohne Eingabe mit `prompt_timeout` ab; ob das den Befund behebt, misst [abnahme_A3.md](abnahme_A3.md). Der Umweg unten bleibt gültig.)* Sie wartet, bis du das App-Passwort im Google-Fenster markiert und mit Strg+C kopiert hast, und holt es dann aus der Zwischenablage (Leerzeichen fallen weg, danach wird die Zwischenablage geleert):
 
 ```powershell
 Read-Host 'App-Passwort kopieren, dann hier Enter druecken' | Out-Null; (Get-Clipboard) -replace '\s','' | .\postkauz.exe account add gmail --imap imap.gmail.com:993 --user <deine Gmail-Adresse> --auth app_password --password-stdin; Set-Clipboard -Value ' '

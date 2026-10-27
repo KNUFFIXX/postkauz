@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/prompt"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -300,7 +302,7 @@ func (a *app) explain(cmd *cobra.Command, op ops.Operation, key policy.Key, res 
 		line += fmt.Sprintf("; audit event %d", id)
 	}
 	if info.Error != "" {
-		line += "; " + info.Error
+		line += "; " + termLine(info.Error)
 	}
 	fmt.Fprintln(a.stderr, line)
 }
@@ -396,19 +398,8 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	case asJSON:
 		return nil, "", usageError{errors.New("no interactive prompt in --json mode; use --password-stdin or --password-from-env")}
 	default:
-		fd, ok := terminalFD(a.stdin)
-		if !ok {
-			return nil, "", usageError{errors.New("standard input is not a terminal; use --password-stdin or --password-from-env")}
-		}
-		fmt.Fprintf(a.stderr, "Password for %s at %s: ", user, host)
-		b, err := term.ReadPassword(fd)
-		fmt.Fprintln(a.stderr)
-		if err != nil {
+		if pw, err = readHiddenPassword(cmd.Context(), a, fmt.Sprintf("Password for %s at %s: ", user, host)); err != nil {
 			return nil, "", err
-		}
-		pw = secrets.Secret(b)
-		if pw.IsZero() {
-			return nil, "", usageError{errors.New("empty password")}
 		}
 	}
 	return raw, pw, nil
@@ -436,7 +427,7 @@ func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	var pw secrets.Secret
 	if fromStdin, _ := cmd.Flags().GetBool("password-stdin"); fromStdin {
 		var err error
-		if pw, err = readNewPassword(a, args[0]); err != nil {
+		if pw, err = readNewPassword(cmd.Context(), a, args[0]); err != nil {
 			return nil, "", err
 		}
 		in.ReplacePassword = true
@@ -451,18 +442,9 @@ func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 // readNewPassword liest ein neues Passwort von stdin (Entscheid 36): am
 // Terminal verdeckt mit Aufforderung auf stderr, sonst die erste Zeile.
 // Das Passwort ist nie ein Argument (Prozessliste, Verlauf der Shell).
-func readNewPassword(a *app, account string) (secrets.Secret, error) {
-	if fd, ok := terminalFD(a.stdin); ok {
-		fmt.Fprintf(a.stderr, "New password for account %s: ", account)
-		b, err := term.ReadPassword(fd)
-		fmt.Fprintln(a.stderr)
-		if err != nil {
-			return "", err
-		}
-		if len(b) == 0 {
-			return "", usageError{errors.New("empty password")}
-		}
-		return secrets.Secret(b), nil
+func readNewPassword(ctx context.Context, a *app, account string) (secrets.Secret, error) {
+	if f, ok := a.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		return readHiddenPassword(ctx, a, fmt.Sprintf("New password for account %s: ", account))
 	}
 	line, err := bufio.NewReader(a.stdin).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -475,13 +457,31 @@ func readNewPassword(a *app, account string) (secrets.Secret, error) {
 	return pw, nil
 }
 
-func terminalFD(r io.Reader) (int, bool) {
-	f, ok := r.(*os.File)
-	if !ok || !term.IsTerminal(int(f.Fd())) {
-		return 0, false
+// readHiddenPassword fragt am Terminal verdeckt nach einem Passwort
+// (internal/prompt, A3: unter Windows über ReadConsoleW, sonst x/term;
+// Abbruch nach prompt.DefaultTimeout ohne Eingabe).
+func readHiddenPassword(ctx context.Context, a *app, label string) (secrets.Secret, error) {
+	f, ok := a.stdin.(*os.File)
+	if !ok {
+		return "", usageError{errNotTerminal}
 	}
-	return int(f.Fd()), true
+	b, _, err := prompt.Password(ctx, f, a.stderr, label, prompt.Options{})
+	switch {
+	case errors.Is(err, prompt.ErrNotTerminal):
+		return "", usageError{errNotTerminal}
+	case errors.Is(err, prompt.ErrTooLong):
+		return "", usageError{fmt.Errorf("password longer than %d characters", prompt.MaxLen)}
+	case errors.Is(err, prompt.ErrUnknownReader):
+		return "", usageError{err}
+	case err != nil:
+		return "", err
+	case len(b) == 0:
+		return "", usageError{errors.New("empty password")}
+	}
+	return secrets.Secret(b), nil
 }
+
+var errNotTerminal = errors.New("standard input is not a terminal; use --password-stdin or --password-from-env")
 
 // --- Ausgaben ohne --json ------------------------------------------------------
 
@@ -534,9 +534,20 @@ func renderAccountAdd(w io.Writer, out any) error {
 		_, err := fmt.Fprintf(w, "dry run: would add account %s (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where)
 		return err
 	}
-	_, err := fmt.Fprintf(w, "account %s added (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where)
+	if _, err := fmt.Fprintf(w, "account %s added (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where); err != nil {
+		return err
+	}
+	// A5.3 (D5): Ein großer Gesendet-Ordner lädt beim ersten Sync jeden
+	// Anhang; die Grenze steht in der Konfiguration.
+	_, err := fmt.Fprintln(w, maxMessageBytesTip)
 	return err
 }
+
+// maxMessageBytesTip nennt nach account add die Grenze für große
+// Nachrichten mit Beispiel (A5.3).
+const maxMessageBytesTip = "tip: the first sync fetches every message; to skip very large ones (e.g. in a big Sent folder), set " +
+	"max_message_bytes = 10485760 (10 MiB) under [imap] in the configuration file (path: see doctor); " +
+	"sync --full fetches them once you raise the limit"
 
 func renderAccountSet(w io.Writer, out any) error {
 	o, ok := out.(ops.AccountsSetOutput)
@@ -582,17 +593,18 @@ func renderAccountTest(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
-	login := o.Login
+	login := termLine(o.Login)
 	// Das Verfahren nur bei SASL nennen; Passwort-Konten zeigen weiter
 	// „login: ok" wie in den Abnahmen D1 bis D5.
 	if o.AuthMechanism != "" && o.AuthMechanism != "LOGIN" {
-		login += " (" + o.AuthMechanism + ")"
+		login += " (" + termLine(o.AuthMechanism) + ")"
 	}
+	// Fähigkeiten und Ordnernamen kommen vom Server: terminalsicher.
 	fmt.Fprintf(w, "account:       %s\nlogin:         %s\nsync strategy: %s\ncapabilities:  %s\nmailboxes:\n",
-		o.Account, login, o.SyncStrategy, strings.Join(o.Capabilities, " "))
+		o.Account, login, o.SyncStrategy, strings.Join(termLines(o.Capabilities), " "))
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, m := range o.Mailboxes {
-		fmt.Fprintf(tw, "  %s\t%s\n", m.Path, m.Role)
+		fmt.Fprintf(tw, "  %s\t%s\n", termLine(m.Path), m.Role)
 	}
 	return tw.Flush()
 }

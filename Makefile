@@ -16,7 +16,7 @@ export CGO_ENABLED ?= 0
 # GOTOOLCHAIN=local: fehlt die Toolchain, bricht der Build ab, statt still nachzuladen (ADR-008).
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vuln vet fmt fmt-check lint guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vuln vet fmt fmt-check lint hooks guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
 
 all: check build
 
@@ -50,6 +50,13 @@ GOVULNCHECK_VERSION ?= v1.9.0
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
+# Pre-Commit-Hook (A12.3) für diesen Klon einschalten: Git nimmt die Hooks
+# dann aus .githooks/ (dort ruft pre-commit `make check`). Abschalten mit
+# `git config --unset core.hooksPath`. Komfort, die CI bleibt die Sperre.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks: pre-commit runs make check (disable: git config --unset core.hooksPath)"
+
 vet:
 	go vet ./...
 
@@ -59,13 +66,27 @@ fmt:
 fmt-check:
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
-# Platzhalter: golangci-lint ist noch nicht festgelegt. Bis dahin vet + gofmt.
-lint: fmt-check vet
-	@echo "lint: placeholder (go vet + gofmt only); a linter is chosen in slice 1"
+# golangci-lint (A12.1) mit der Auswahl aus .golangci.yml (gosec,
+# staticcheck, errcheck, bodyclose, gocritic und Standardsatz).
+# Version gepinnt: v2.15.0 ist die neueste stabile Version am 27.10.2026
+# (Release vom 16.10.2026; ermittelt per `git ls-remote --tags
+# https://github.com/golangci/golangci-lint` und `go list -m
+# github.com/golangci/golangci-lint/v2@latest`, nicht geraten). Go 1.27
+# wird seit v2.13.0 unterstützt (CHANGELOG des Moduls). `go run` baut das
+# Werkzeug mit der lokalen Toolchain (go1.27.3), wie bei govulncheck; ein
+# Binär-Release, das mit älterem Go gebaut ist, verweigert Code mit
+# `go 1.27` in go.mod. Braucht Netz (Modul-Proxy), deshalb eigenes Ziel und
+# eigener CI-Job im Berichtsmodus, nicht Teil von `make check`. Befunde des
+# Erstlaufs: docs/protokolle/lint_erstlauf.md.
+GOLANGCI_LINT_VERSION ?= v2.15.0
+lint:
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 # Leitplanken des MVP (ADR-002): kein SMTP-Code im Repository.
+# Alle Suchen lassen vendor/ aus (A03 Nachtrag 26.10.2026): fremder Code
+# darf dort SMTP oder go-imap enthalten; Prüfgegenstand ist nur eigener Code.
 guard:
-	@if grep -rEn --include='*.go' '"net/smtp"|emersion/go-smtp' . ; then \
+	@if grep -rEn --include='*.go' --exclude-dir=vendor '"net/smtp"|emersion/go-smtp' . ; then \
 	  echo "guard: SMTP code is not allowed before slice 4 (ADR-002)"; exit 1; fi
 	@# ADR-007: go-imap nur über internal/imapx (Tests dürfen den Fake-Server nutzen).
 	@if grep -rlnF --include='*.go' --exclude='*_test.go' '"github.com/emersion/go-imap' internal cmd | grep -v '^internal/imapx/' ; then \
@@ -87,12 +108,28 @@ guard:
 	@# ADR-007: go-imap bleibt auf v2.0.0-beta.8 gepinnt; ein Wechsel nur über einen ADR.
 	@grep -Eq '^[[:space:]]*github.com/emersion/go-imap/v2 v2\.0\.0-beta\.8$$' go.mod || { \
 	  echo "guard: github.com/emersion/go-imap/v2 must stay pinned to v2.0.0-beta.8 (ADR-007)"; exit 1; }
-	@# Windows-Skripte (Aufgabe für den Audit-Export, Beispiel-Hooks seit S2.4):
+	@# Windows-Skripte (Aufgabe für den Audit-Export, Beispiel-Hooks seit S2.4,
+	@# Abnahme-Skripte in docs/ seit dem Merge von T1c):
 	@# UTF-8 mit BOM (Windows PowerShell 5.1), Inhalt nur ASCII.
-	@for f in deploy/windows/*.ps1 deploy/hooks/*.ps1; do \
+	@for f in deploy/windows/*.ps1 deploy/hooks/*.ps1 docs/*.ps1; do \
 	  [ "$$(head -c 3 "$$f" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] || { echo "guard: $$f must be UTF-8 with BOM"; exit 1; }; \
 	  if tail -c +4 "$$f" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then echo "guard: $$f must contain ASCII only after the BOM"; exit 1; fi; \
 	done
+	@# A5.5: Go 1.28 verbietet das Muster "..." bei go list im Module-Modus;
+	@# kein Skript, kein Makefile und kein Workflow darf es nutzen.
+	@if grep -rEn --exclude-dir=vendor --exclude-dir=.git --include=Makefile --include='*.mk' --include='*.sh' --include='*.ps1' \
+	  --include='*.yml' --include='*.yaml' --include=pre-commit 'go[[:space:]]+list([[:space:]]+[^[:space:]]+)*[[:space:]]+(\./)?\.\.\.' \
+	  $$(ls -d Makefile scripts deploy docs .github .githooks 2>/dev/null); then \
+	  echo "guard: go list must not use the three-dot pattern in scripts (Go 1.28)"; exit 1; fi
+	@# T1c (Gegenprüfung K3): keine rohen Bidi-Steuerzeichen (Trojan Source)
+	@# in Quelltext, Doku, Skripten und Konfiguration, nur als Escape. Bytes
+	@# von U+200E/F, U+202A-E, U+2066-9 und U+061C; testdata/ (Korpus) bleibt
+	@# außen vor.
+	@if LC_ALL=C grep -rlE --exclude-dir=vendor --exclude-dir=.git --exclude-dir=testdata --exclude-dir=dist \
+	  --include='*.go' --include='*.md' --include='*.ps1' --include='*.sh' --include='*.py' --include='*.yml' \
+	  --include='*.yaml' --include='*.toml' --include=Makefile --include=pre-commit \
+	  "$$(printf '\342\200[\216\217\252-\256]|\342\201[\246-\251]|\330\234')" . ; then \
+	  echo "guard: raw bidi control characters found; write them as escapes (e.g. \\u202e)"; exit 1; fi
 	@echo "guard: ok"
 
 pii-check:

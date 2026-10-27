@@ -230,7 +230,7 @@ func TestInProcessKinds(t *testing.T) {
 	}{
 		{KindText, "Z\xe4hlerstand 4711", "Zählerstand 4711", false},
 		{KindText, "\xff\xfeA\x00\xe4\x00", "Aä", false},
-		{KindText, "a‮b", "ab", false},
+		{KindText, "a\u202eb", "ab", false},
 		{KindHTML, `<p>Aushang</p><p style="display:none">geheim</p>`, "Aushang", true},
 		{KindMail, "From: Anna <a@example.org>\r\nSubject: Weitergeleitet\r\nDate: Mon, 2 Mar 2026 09:00:00 +0100\r\n\r\nInhalt der Mail\r\n",
 			"Subject: Weitergeleitet\nFrom: Anna <a@example.org>\nDate: 2026-03-02T08:00:00Z\n\nInhalt der Mail", false},

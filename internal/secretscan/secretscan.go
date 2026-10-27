@@ -42,6 +42,13 @@ type Needle struct {
 	Value []byte
 }
 
+// JWTPattern erkennt ein JSON Web Token (Bearer- oder OAuth-Token, ab S3
+// für Microsoft und HTTP-MCP): Kopf und Nutzlast sind Base64url-kodiertes
+// JSON und beginnen deshalb mit „eyJ" (`{"`), getrennt durch Punkte; die
+// Signatur darf fehlen (alg none). PostKauz schreibt Tokens nie in Log,
+// Audit oder Export; jeder Fund ist ein Leck (A03 Nachtrag 26.10.2026).
+var JWTPattern = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*`)
+
 // MinNeedle ist die kürzeste Länge, nach der gesucht wird: Kürzere Werte
 // („pass") stünden zufällig überall.
 const MinNeedle = 8

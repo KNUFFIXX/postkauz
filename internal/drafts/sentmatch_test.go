@@ -22,7 +22,7 @@ func TestNormalizeSubject(t *testing.T) {
 		"wg : Termin am Montag":            "Termin am Montag",
 		"Rechnung: Re: bleibt":             "Rechnung: Re: bleibt", // nur Präfixe am Anfang
 		"Reise: Hotel":                     "Reise: Hotel",         // kein Präfix, nur ähnlich
-		"Re: Termin​ am Montag":            "Termin am Montag",     // unsichtbare Zeichen fallen weg
+		"Re: Termin\u200b am Montag":       "Termin am Montag",     // unsichtbare Zeichen fallen weg
 		"Termin am Montag (Re: Rückfrage)": "Termin am Montag (Re: Rückfrage)",
 	} {
 		if got := NormalizeSubject(in); got != want {

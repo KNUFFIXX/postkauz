@@ -56,3 +56,22 @@ func TestPerm(t *testing.T) {
 		t.Fatalf("missing: %+v", f)
 	}
 }
+
+// T1c: Bearer- und OAuth-Tokens (JWT) gelten als Leck, auch ohne Signatur;
+// Base64-Text ohne den JSON-Anfang „eyJ" in beiden Teilen nicht.
+func TestJWTPattern(t *testing.T) {
+	// Synthetisch: {"alg":"HS256","typ":"JWT"} . {"sub":"demo"} . Signatur
+	tok := "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vIn0.c2lnbmF0dXJlLW51ci1mdWVyLXRlc3Rz"
+	for _, line := range []string{"Authorization: Bearer " + tok, `{"access_token":"` + tok + `"}`,
+		"eyJhbGciOiJub25lIn0.eyJzdWIiOiJkZW1vIn0."} {
+		hits, err := Scan(strings.NewReader("x\n"+line+"\n"), nil, map[string]*regexp.Regexp{"jwt": JWTPattern})
+		if err != nil || len(hits) != 1 || hits[0].Line != 2 {
+			t.Errorf("%q: hits = %+v, %v", line, hits, err)
+		}
+	}
+	for _, line := range []string{"eyJ.eyJ.x", "aGVsbG8gd29ybGQ.aGVsbG8gd29ybGQ.x", "version 1.2.3"} {
+		if JWTPattern.MatchString(line) {
+			t.Errorf("%q matches", line)
+		}
+	}
+}

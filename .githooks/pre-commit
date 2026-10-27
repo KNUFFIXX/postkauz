@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-Commit-Hook (A12.3): führt vor jedem Commit `make check` aus (gofmt,
+# go vet, go test, Guards, PII-Gate). Einschalten mit `make hooks`.
+# Der Hook ist Komfort, die CI bleibt die Sperre. Geprüft wird der
+# Arbeitsbaum, nicht nur der vorgemerkte Stand.
+set -e
+top=$(git rev-parse --show-toplevel)
+cd "$top"
+echo "pre-commit: make check (skip once with: git commit --no-verify)"
+exec make check

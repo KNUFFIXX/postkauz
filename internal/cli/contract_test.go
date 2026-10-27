@@ -157,7 +157,7 @@ var cliSamples = []cliSample{
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},
 	{"mailboxes.overview", []string{"mailbox", "overview", "{mailbox}", "-a", "demo", "--since", "3650d", "--limit", "5"}, false},
 	{"messages.get", []string{"show", "{html}", "--strip-quotes", "--max-chars", "10"}, false},
-	{"messages.get", []string{"show", "html@example.org", "-a", "demo", "--headers"}, false},
+	{"messages.get", []string{"show", "antwort@example.org", "-a", "demo", "--headers"}, false},
 	{"messages.search", []string{"search", "Rechnung", "-a", "demo", "--mailbox", "INBOX", "--limit", "5", "--explain"}, false},
 	{"messages.search", []string{"search", "Heizung", "--cursor", "{cursor}"}, false},
 	{"threads.get", []string{"thread", "{thread}", "--strip-quotes", "--max-messages", "1", "--max-chars", "5"}, false},
@@ -235,7 +235,10 @@ func seedS16(t *testing.T) map[string]string {
 	if len(html.Attachments) != 1 || answer.ThreadID == 0 || hit.Cursor == "" {
 		t.Fatalf("seed: html=%+v answer=%+v hit=%+v", html.Attachments, answer.ThreadID, hit)
 	}
-	// mbox mit einer neuen und einer vorhandenen Nachricht; Label-Ordner.
+	// mbox mit einer neuen Nachricht und einer zweiten Fassung von
+	// html@example.org (gleiche Message-ID, anderer Inhalt; seit rc6 eine
+	// eigene Nachricht, seit T1c ist die Message-ID damit mehrdeutig, und
+	// show nimmt dafür antwort@example.org); Label-Ordner.
 	dir := t.TempDir()
 	mbox := filepath.Join(dir, "Archiv")
 	labels := filepath.Join(dir, "labels")

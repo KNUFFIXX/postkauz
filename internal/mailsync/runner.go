@@ -149,20 +149,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 			round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
 			fill(&round, rep)
 			round.DurationMS = rep.Duration.Milliseconds()
-			out.New += round.New
-			out.Updated += round.Updated
-			out.Removed += round.Removed
-			out.Errors += round.Errors
-			out.MessagesMirrored = round.MessagesMirrored
-			out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
-			out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
-			out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
-			out.IncompleteAnswers += round.IncompleteAnswers
-			out.AttachmentsExtracted += round.AttachmentsExtracted
-			out.MessagesIndexed += round.MessagesIndexed
-			out.IndexPending = round.IndexPending
-			addDrafts(&out, round.Drafts)
-			addDraftCheck(&out, round.DraftCheck)
+			addRound(&out, &round)
 			if err != nil {
 				out.Errors++
 			}
@@ -203,6 +190,9 @@ func fill(out *ops.SyncOutput, rep Report) {
 	out.AlreadyKnownDownloaded, out.AlreadyKnownDownloadedBytes = rep.KnownDownloaded, rep.KnownDownloadedBytes
 	out.LinkedDespiteSizeDifference = rep.LinkedSizeDiff
 	out.IncompleteAnswers = rep.Incomplete
+	if rep.SkippedTooLarge > 0 {
+		out.SkippedTooLarge, out.MaxMessageBytes = rep.SkippedTooLarge, rep.MaxMessageBytes
+	}
 	out.AttachmentsExtracted = rep.Extracted
 	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
 	if rep.Drafts != nil {
@@ -213,6 +203,30 @@ func fill(out *ops.SyncOutput, rep Report) {
 		c := *rep.DraftCheck
 		out.DraftCheck = &c
 	}
+}
+
+// addRound zählt eine Runde von sync --watch in die Gesamtausgabe.
+func addRound(out, round *ops.SyncOutput) {
+	out.New += round.New
+	out.Updated += round.Updated
+	out.Removed += round.Removed
+	out.Errors += round.Errors
+	out.MessagesMirrored = round.MessagesMirrored
+	out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
+	out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
+	out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
+	out.IncompleteAnswers += round.IncompleteAnswers
+	// Die Grenze steht nur neben übersprungenen Nachrichten (wie fill;
+	// Gegenprüfung K9), nicht nach einer Runde ohne solche.
+	if round.SkippedTooLarge > 0 {
+		out.SkippedTooLarge += round.SkippedTooLarge
+		out.MaxMessageBytes = round.MaxMessageBytes
+	}
+	out.AttachmentsExtracted += round.AttachmentsExtracted
+	out.MessagesIndexed += round.MessagesIndexed
+	out.IndexPending = round.IndexPending
+	addDrafts(out, round.Drafts)
+	addDraftCheck(out, round.DraftCheck)
 }
 
 // addDraftCheck zählt die Prüfung einer Runde zum Gesamtergebnis des
