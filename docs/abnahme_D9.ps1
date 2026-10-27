@@ -66,8 +66,9 @@
     nur Teil 1.
 
 .PARAMETER Entfernen
-    Am Ende Schluesselbund-Eintraege des Kontos und das Datenverzeichnis
-    loeschen (sonst bleibt beides fuer weitere Pruefungen).
+    Am Ende das Konto mit account remove entfernen (loescht im
+    Schluesselbund Haupteintrag und alle Teile des Tokens) und das
+    Datenverzeichnis loeschen (sonst bleibt beides fuer weitere Pruefungen).
 
 .PARAMETER LogFile
     Protokolldatei. Standard: D9_windows.txt neben dem Datenverzeichnis.
@@ -422,17 +423,21 @@ try {
         if ($Entfernen) {
             Write-Log ''
             Write-Log '===== D9.3 Abbau'
-            $gone = 0
-            foreach ($t in @($script:Ref) + (1..4 | ForEach-Object { $script:Ref -replace '^account/', ('oauthpart' + $_ + '/') })) {
-                if (-not $t) { continue }
-                try {
-                    $o = & cmdkey.exe ('/delete:postkauz:' + $t)
-                    if ($LASTEXITCODE -eq 0) { $gone++ }
-                } catch { }
+            # Ueber das Programm, nicht cmdkey: account remove loescht den
+            # Haupteintrag und alle Teile (jede Generation, bis 32 Teile).
+            $r = Invoke-Pk @('account', 'remove', $acc, '--json')
+            $j = Get-Json $r.Out
+            Add-Check '3.1' 'account remove -> Konto entfernt, Token samt Teilen geloescht (secret_deleted true)' ($r.Exit -eq 0 -and $j -and $j.secret_deleted -eq $true) $r.Text
+            if ($script:Ref) {
+                # Ganze Liste (der Filter /list:<ziel> wiederholt das Ziel in
+                # der Kopfzeile); gesucht wird "/<kennung>/<konto>" am
+                # Zeilenende, das trifft Haupteintrag und Teile jeder Generation.
+                $tail = $script:Ref -replace '^account', ''
+                $o = (& cmdkey.exe '/list') -join "`n"
+                Add-Check '3.2' 'Schluesselbund: kein Eintrag des Kontos mehr (Haupteintrag und Teile; cmdkey /list, nur lesend)' (-not ($o -match ('(?m)' + [regex]::Escape($tail) + '\s*$'))) ''
             }
-            Add-Check '3.1' 'Schluesselbund-Eintraege des Kontos geloescht (cmdkey)' ($gone -ge 1) ('geloescht: ' + $gone)
             Remove-Item -LiteralPath $script:Data -Recurse -Force
-            Add-Check '3.2' 'Datenverzeichnis geloescht' (-not (Test-Path -LiteralPath $script:Data)) ''
+            Add-Check '3.3' 'Datenverzeichnis geloescht' (-not (Test-Path -LiteralPath $script:Data)) ''
             Write-Log 'INFO Zustimmung fuer die App im Microsoft-Konto entziehen: https://account.live.com/consent/Manage (siehe docs/betrieb_microsoft.md)'
         } else {
             Write-Log 'INFO Konto und Token bleiben (ohne -Entfernen); Abbau siehe docs/abnahme_D9.md, Abschnitt 5'
