@@ -1,11 +1,17 @@
 package store
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/flock"
 )
@@ -199,5 +205,151 @@ func TestDeleteAccountAtomicAndLocked(t *testing.T) {
 	}
 	if err := s.DeleteAccount(ctx, 1); !errors.Is(err, ErrAccountNotFound) {
 		t.Fatalf("second delete: %v", err)
+	}
+}
+
+// W1: Ein Prozess, der die Datenbank offen hat und das Schema geprüft hat
+// (hier ein „alter“ mit Stand 16), verhindert jede Migration, solange er
+// läuft; ein Prozess, der migriert, hält jeden anderen fern, bis er fertig
+// ist. Danach liest der neue Prozess die Version unter der Sperre neu.
+func TestMigrateWaitsForProcessLock(t *testing.T) {
+	ctx := context.Background()
+	s, path := schema16(t, 3)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	old, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	// Der alte Prozess besteht die Prüfung (sein Stand ist 16).
+	if err := old.migrateTo(ctx, 16); err != nil {
+		t.Fatal(err)
+	}
+	next, err := Open(path)
+	if err != nil {
+		t.Fatalf("a second process may open the database: %v", err)
+	}
+	defer next.Close()
+	if err := next.Migrate(ctx); !errors.Is(err, ErrMigrationBlocked) {
+		t.Fatalf("migrate while another process has the database open = %v", err)
+	}
+	if v, _ := next.SchemaVersion(ctx); v != 16 || next.LastSnapshot != "" {
+		t.Fatalf("schema = %d, snapshot %q", v, next.LastSnapshot)
+	}
+	// Der neue Prozess hält danach wieder seine geteilte Sperre.
+	if _, err := flock.TryLock(ProcessLockPath(path)); !errors.Is(err, flock.ErrLocked) {
+		t.Fatalf("process lock not held after a refused migration: %v", err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Migrate(ctx); err != nil {
+		t.Fatalf("migrate after the old process ended: %v", err)
+	}
+	if v, _ := next.SchemaVersion(ctx); v != KnownSchemaVersion() || next.LastSnapshot == "" {
+		t.Fatalf("schema = %d, snapshot %q", v, next.LastSnapshot)
+	}
+
+	// Während einer Migration (exklusive Sperre) kommt niemand herein.
+	defer func(w time.Duration) { openLockWait = w }(openLockWait)
+	openLockWait = 100 * time.Millisecond
+	if err := next.Close(); err != nil {
+		t.Fatal(err)
+	}
+	x, err := flock.TryLock(ProcessLockPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); !errors.Is(err, ErrDatabaseBusy) {
+		t.Fatalf("open during a migration = %v", err)
+	}
+	x.Release()
+	again, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer again.Close()
+	if err := again.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// processHelperEnv startet den Kindprozess für TestMigrateRefusedByOtherProcess.
+const processHelperEnv = "POSTKAUZ_STORE_PROCESS_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(processHelperEnv) == "1" {
+		os.Exit(runProcessHelper())
+	}
+	os.Exit(m.Run())
+}
+
+// runProcessHelper spielt eine ältere Version (Stand 16): öffnen, Schema
+// prüfen, „ready“ melden und offen bleiben, bis stdin endet.
+func runProcessHelper() int {
+	st, err := Open(os.Getenv("PK_DB"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 3
+	}
+	defer st.Close()
+	if err := st.migrateTo(context.Background(), 16); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 4
+	}
+	fmt.Println("ready")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	return 0
+}
+
+// W1 mit echtem Kindprozess: Solange der alte Prozess läuft, migriert der
+// neue nicht; nach seinem Ende schon.
+func TestMigrateRefusedByOtherProcess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("child process")
+	}
+	ctx := context.Background()
+	s, path := schema16(t, 3)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), processHelperEnv+"=1", "PK_DB="+path)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "ready" {
+		t.Fatalf("helper: %q %v", line, err)
+	}
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); !errors.Is(err, ErrMigrationBlocked) {
+		t.Fatalf("migrate while the old process runs = %v", err)
+	}
+	_ = stdin.Close()
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("helper: %v", err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatalf("migrate after the old process ended: %v", err)
+	}
+	if v, _ := st.SchemaVersion(ctx); v != KnownSchemaVersion() {
+		t.Fatalf("schema = %d", v)
 	}
 }

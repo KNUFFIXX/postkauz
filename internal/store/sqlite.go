@@ -19,11 +19,27 @@ import (
 // ErrSchemaTooNew: Die Datenbank wurde von einer neueren Programmversion migriert.
 var ErrSchemaTooNew = errors.New("store: database schema is newer than this program")
 
-// ErrMigrationBlocked: Eine Migration steht an, aber ein Sync oder Import
-// hält eine Kontosperre im Datenverzeichnis (T1a Punkt 7). Zwei
-// Programmversionen dürfen nie zugleich auf derselben Datenbank arbeiten;
-// erst den laufenden Prozess beenden (z. B. die Aufgabe `sync --watch`).
-var ErrMigrationBlocked = errors.New("store: a sync or import of this data directory is running; stop it (e.g. the sync --watch task) before this version migrates the database")
+// ErrMigrationBlocked: Eine Migration steht an, aber ein anderer Prozess
+// hat die Datenbank offen (geteilte Prozesssperre, W1) oder ein Sync bzw.
+// Import einer älteren Version hält eine Kontosperre im Datenverzeichnis
+// (T1a Punkt 7). Zwei Programmversionen dürfen nie zugleich auf derselben
+// Datenbank arbeiten; erst die anderen Prozesse beenden (die Aufgaben
+// `sync --watch` und Audit-Export, den MCP-Server der Claude-App).
+var ErrMigrationBlocked = errors.New("store: another process uses this database (sync, import, MCP server, audit export or another command); stop it before this version migrates the database")
+
+// ErrDatabaseBusy: Ein anderer Prozess migriert die Datenbank gerade (hält
+// die Prozesssperre exklusiv); Open hat openLockWait lang gewartet.
+var ErrDatabaseBusy = errors.New("store: another process is migrating this database; try again when it has finished")
+
+// ProcessLockPath ist die Prozesssperre neben der Datenbank (W1): Jeder
+// Prozess, der die Datenbank öffnet, hält sie geteilt, solange er läuft;
+// Migrate hält sie exklusiv. Erst unter der Sperre wird das Schema
+// geprüft, sodass keine andere Version es danach noch ändern kann.
+func ProcessLockPath(dbPath string) string { return dbPath + ".lock" }
+
+// openLockWait: So lange wartet Open auf eine laufende Migration eines
+// anderen Prozesses (Tests setzen es herab).
+var openLockWait = 5 * time.Second
 
 // ErrMigrationMismatch: Eine angewendete Migration trägt einen anderen
 // Namen als die eingebettete mit derselben Nummer (T1a Punkt 7). Die
@@ -46,6 +62,9 @@ func unixMilliUTC(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 type SQLite struct {
 	db   *sql.DB
 	path string // "" bei :memory:
+	// plock ist die gehaltene Prozesssperre (geteilt; exklusiv nur während
+	// Migrate); nil bei :memory:.
+	plock *flock.Lock
 	// LastSnapshot ist der Pfad des Snapshots, den das letzte Migrate vor
 	// einer Migration angelegt hat ("" = keiner nötig).
 	LastSnapshot string
@@ -56,7 +75,22 @@ var _ Store = (*SQLite)(nil)
 // Open öffnet (und erzeugt) die Datenbank unter path. ":memory:" ergibt eine
 // private In-Memory-Datenbank (Tests). Die Datenbank darf nie in einem
 // Cloud-synchronisierten Ordner liegen (docs/datenmodell.md).
-func Open(path string) (*SQLite, error) {
+//
+// Open hält ab hier bis Close die Prozesssperre neben der Datenbank geteilt
+// (ProcessLockPath); migriert ein anderer Prozess gerade, wartet es bis
+// openLockWait und meldet sonst ErrDatabaseBusy.
+func Open(path string) (st *SQLite, err error) {
+	var plock *flock.Lock
+	if path != ":memory:" {
+		if plock, err = lockShared(path); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				plock.Release()
+			}
+		}()
+	}
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "busy_timeout(5000)")
@@ -99,18 +133,78 @@ func Open(path string) (*SQLite, error) {
 			_ = os.Chmod(f, 0o600)
 		}
 	}
-	st := &SQLite{db: db}
+	st = &SQLite{db: db, plock: plock}
 	if path != ":memory:" {
 		st.path = path
 	}
 	return st, nil
 }
 
+// lockShared holt die Prozesssperre geteilt; hält ein anderer Prozess sie
+// exklusiv (Migration), wartet es bis openLockWait.
+func lockShared(dbPath string) (*flock.Lock, error) {
+	deadline := time.Now().Add(openLockWait)
+	for {
+		l, err := flock.TryLockShared(ProcessLockPath(dbPath))
+		if err == nil {
+			return l, nil
+		}
+		if !errors.Is(err, flock.ErrLocked) {
+			return nil, fmt.Errorf("store: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return nil, ErrDatabaseBusy
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// lockExclusive steigt für eine Migration auf die exklusive Prozesssperre
+// um: Die geteilte wird freigegeben (Umwandeln ist nicht portabel, siehe
+// flock.TryLockShared), dann exklusiv gesperrt, ohne zu warten. Hat ein
+// anderer Prozess die Datenbank offen, kommt ErrMigrationBlocked und die
+// geteilte Sperre wird wieder geholt.
+func (s *SQLite) lockExclusive() error {
+	s.plock.Release()
+	s.plock = nil
+	x, err := flock.TryLock(ProcessLockPath(s.path))
+	if err == nil {
+		s.plock = x
+		return nil
+	}
+	if l, e := lockShared(s.path); e == nil {
+		s.plock = l
+	}
+	if errors.Is(err, flock.ErrLocked) {
+		return ErrMigrationBlocked
+	}
+	return fmt.Errorf("store: %w", err)
+}
+
+// lockSharedAgain kehrt nach einer Migration zur geteilten Sperre zurück.
+// Zwischen Freigabe und neuer Sperre kann ein anderer Prozess
+// dazwischenkommen; deshalb liest der Aufrufer das Schema danach neu.
+func (s *SQLite) lockSharedAgain() error {
+	s.plock.Release()
+	s.plock = nil
+	l, err := lockShared(s.path)
+	if err != nil {
+		return err
+	}
+	s.plock = l
+	return nil
+}
+
 // Path ist der Pfad der Datenbankdatei ("" bei :memory:).
 func (s *SQLite) Path() string { return s.path }
 
-// Close schließt die Datenbank.
-func (s *SQLite) Close() error { return s.db.Close() }
+// Close schließt die Datenbank und gibt danach die Prozesssperre frei.
+func (s *SQLite) Close() error {
+	err := s.db.Close()
+	s.plock.Release()
+	s.plock = nil
+	return err
+}
 
 // Migrate wendet ausstehende Migrationen je in einer eigenen Transaktion an.
 // Hat die Datenbank schon ein Schema (Bestand), legt es vorher einen
@@ -126,48 +220,65 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 const fkOffDirective = "-- postkauz:foreign_keys=off"
 
 // migrateTo migriert bis einschließlich Version max (0 = alle).
-func (s *SQLite) migrateTo(ctx context.Context, max int) error {
+//
+// Ablauf (W1): Schema unter der geteilten Prozesssperre aus Open prüfen;
+// steht nichts an, bleibt es dabei. Sonst exklusiv sperren (scheitert,
+// solange ein anderer Prozess die Datenbank offen hat), das Schema unter
+// der Sperre neu lesen und prüfen, migrieren, zur geteilten Sperre
+// zurückkehren und das Schema noch einmal prüfen.
+func (s *SQLite) migrateTo(ctx context.Context, max int) (err error) {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL) STRICT`); err != nil {
-		return err
-	}
-	have, err := s.SchemaVersion(ctx)
-	if err != nil {
 		return err
 	}
 	ms, err := Migrations()
 	if err != nil {
 		return err
 	}
-	// Schutz vor stiller Beschädigung: Eine ältere Binärdatei fasst eine
-	// Datenbank mit neuerem Schema nicht an (docs/datenmodell.md, Migrationen).
-	if have > len(ms) {
-		return fmt.Errorf("%w: database has schema version %d, this program knows up to %d; use a newer version",
-			ErrSchemaTooNew, have, len(ms))
-	}
-	if err := s.checkMigrationNames(ctx, ms); err != nil {
-		return err
-	}
 	if max <= 0 || max > len(ms) {
 		max = len(ms)
 	}
-	if have > 0 && have < max && s.path != "" {
-		// Kein Sync und kein Import desselben Datenverzeichnisses darf
-		// laufen, solange migriert wird; die Sperren bleiben bis zum Ende
-		// gehalten, damit keiner mittendrin beginnt.
-		release, err := flock.AccountLocks(filepath.Dir(s.path))
-		if errors.Is(err, flock.ErrLocked) {
-			return ErrMigrationBlocked
-		}
-		if err != nil {
-			return err
-		}
-		defer release()
+	have, err := s.checkSchema(ctx, ms)
+	if err != nil || have >= max {
+		return err
 	}
 	s.LastSnapshot = ""
-	if have > 0 && have < max && s.path != "" {
-		if s.LastSnapshot, err = s.snapshot(ctx, have+1); err != nil {
+	if s.path != "" {
+		if err := s.lockExclusive(); err != nil {
 			return err
+		}
+		defer func() {
+			if e := s.lockSharedAgain(); e != nil && err == nil {
+				err = e
+				return
+			}
+			if err == nil {
+				// Ein anderer Prozess kann zwischen Freigabe und neuer
+				// Sperre migriert haben.
+				_, err = s.checkSchema(ctx, ms)
+			}
+		}()
+		// Unter der exklusiven Sperre neu lesen: Ein anderer Prozess kann
+		// seit der ersten Prüfung migriert haben.
+		if have, err = s.checkSchema(ctx, ms); err != nil || have >= max {
+			return err
+		}
+		if have > 0 {
+			// Ältere Versionen (bis 0.2.0-rc8) kennen die Prozesssperre
+			// nicht; ihr Sync oder Import hält nur die Kontosperre. Die
+			// Sperren bleiben bis zum Ende gehalten, damit keiner
+			// mittendrin beginnt.
+			release, err := flock.AccountLocks(filepath.Dir(s.path))
+			if errors.Is(err, flock.ErrLocked) {
+				return ErrMigrationBlocked
+			}
+			if err != nil {
+				return err
+			}
+			defer release()
+			if s.LastSnapshot, err = s.snapshot(ctx, have+1); err != nil {
+				return err
+			}
 		}
 	}
 	for _, m := range ms {
@@ -179,6 +290,25 @@ func (s *SQLite) migrateTo(ctx context.Context, max int) error {
 		}
 	}
 	return nil
+}
+
+// checkSchema liest die Schemaversion und prüft sie gegen die
+// eingebetteten Migrationen (zu neu, fremder Name).
+func (s *SQLite) checkSchema(ctx context.Context, ms []Migration) (int, error) {
+	have, err := s.SchemaVersion(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// Schutz vor stiller Beschädigung: Eine ältere Binärdatei fasst eine
+	// Datenbank mit neuerem Schema nicht an (docs/datenmodell.md, Migrationen).
+	if have > len(ms) {
+		return have, fmt.Errorf("%w: database has schema version %d, this program knows up to %d; use a newer version",
+			ErrSchemaTooNew, have, len(ms))
+	}
+	if err := s.checkMigrationNames(ctx, ms); err != nil {
+		return have, err
+	}
+	return have, nil
 }
 
 // checkMigrationNames vergleicht die angewendeten Migrationen mit den

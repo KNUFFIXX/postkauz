@@ -5,5 +5,5 @@ package flock
 import "os"
 
 // Ohne Dateisperren des Betriebssystems (z. B. wasm): keine Sperre.
-func lockFile(*os.File) error   { return nil }
-func unlockFile(*os.File) error { return nil }
+func lockFile(*os.File, bool) error { return nil }
+func unlockFile(*os.File) error     { return nil }

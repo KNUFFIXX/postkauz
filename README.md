@@ -125,7 +125,20 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 | `account test` fails with `connection` (exit code 5) | Host, port or TLS mode wrong, or a firewall blocks port 993. |
 | `pdftotext: not found` | Optional. Without it PDF attachments get no searchable text (file names still are). Install Poppler (below); the next `sync` extracts the skipped PDFs. |
 | `sync_running` | Another `sync` or `import` of the same account is running (for example `sync --watch` in another window). |
+| `migration_blocked` | A new version wants to update the database while another process uses it. Stop the other processes first, see [Updating](#updating). |
+| `database_busy` | Another process is updating the database right now; run the command again when it has finished. |
 | Anything else | `postkauz doctor` and `postkauz doctor --secrets`; error messages and the log (`postkauz.log` in the data directory) never contain passwords or mail text, so they are safe to share. |
+
+### Updating
+
+A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
+
+1. the `sync --watch` task (Windows: Task Scheduler, task of the watcher, "End" and "Disable"; Linux: `systemctl --user stop` of its unit),
+2. the audit export task ("PostKauz audit export": "Disable" until the update is done; Linux: `systemctl --user stop postkauz-audit-export.timer`),
+3. the Claude app (it starts the MCP server `postkauz mcp`; quit it completely, also from the tray area),
+4. any other `postkauz` window.
+
+Then replace the program file, run `postkauz doctor` once (it shows `needs_migration`), then `postkauz accounts list` (migrates), and start the tasks and the Claude app again. From 0.3.0-alpha.1b on, every process holds a shared lock (`postkauz.db.lock`) and a migration refuses with `migration_blocked` while another process has the database open; versions up to 0.2.0-rc8 do not know this lock, so stopping them by hand stays necessary for that update.
 
 ## Command overview
 

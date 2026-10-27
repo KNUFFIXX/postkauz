@@ -3,9 +3,11 @@
 // kill -9 oder Absturz; es bleibt nie eine verwaiste Sperre zurück. Die
 // Datei selbst bleibt liegen (leer) und wird wiederverwendet.
 //
-// Genutzt für die Sperre je Konto (Sync, Import; internal/mailsync) und
-// seit T1a von store (Migration und Kontolöschung warten nicht auf einen
-// laufenden Sync, sie verweigern).
+// Genutzt für die Sperre je Konto (Sync, Import; internal/mailsync), seit
+// T1a von store (Migration und Kontolöschung warten nicht auf einen
+// laufenden Sync, sie verweigern) und seit T1a-Nachbesserung W1 für die
+// Prozesssperre neben der Datenbank (geteilt für jeden Prozess, der sie
+// öffnet; exklusiv nur zum Migrieren).
 package flock
 
 import (
@@ -22,13 +24,23 @@ var ErrLocked = errors.New("flock: locked")
 type Lock struct{ f *os.File }
 
 // TryLock legt path an (0600) und sperrt die Datei exklusiv, ohne zu
-// warten. Ist sie gesperrt, kommt ErrLocked.
-func TryLock(path string) (*Lock, error) {
+// warten. Ist sie gesperrt (exklusiv oder geteilt), kommt ErrLocked.
+func TryLock(path string) (*Lock, error) { return tryLock(path, true) }
+
+// TryLockShared legt path an (0600) und sperrt die Datei geteilt, ohne zu
+// warten: Beliebig viele geteilte Sperren bestehen nebeneinander, eine
+// exklusive schließt sie aus. Hält jemand die exklusive, kommt ErrLocked.
+// Eine geteilte Sperre wird nie in eine exklusive umgewandelt (unter Unix
+// nicht atomar, unter Windows nicht möglich); wer umsteigen will, gibt sie
+// frei und sperrt neu.
+func TryLockShared(path string) (*Lock, error) { return tryLock(path, false) }
+
+func tryLock(path string, exclusive bool) (*Lock, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("lock %s: %w", path, err)
 	}
-	if err := lockFile(f); err != nil {
+	if err := lockFile(f, exclusive); err != nil {
 		_ = f.Close()
 		if errors.Is(err, ErrLocked) {
 			return nil, ErrLocked
