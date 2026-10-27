@@ -5,10 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 )
+
+// MaildirInfo trennt in Maildir-Namen die Flags ab („<name>:2,S“). Unter
+// Windows ist „:“ in Dateinamen ein NTFS-Datenstrom; dort gilt „!“, wie
+// es Maildir-Programme unter Windows nutzen und der Importer liest
+// (A12.4).
+var MaildirInfo = func() string {
+	if runtime.GOOS == "windows" {
+		return "!"
+	}
+	return ":"
+}()
 
 // Ablagen für den Import (S1.10): der Korpus als Thunderbird-Profil (mbox,
 // berkeleystore) und als Maildir. Was Thunderbird bzw. ein Maildir-Client
@@ -342,7 +354,7 @@ func (c *Corpus) WriteMaildir(dir string, o ImportOptions) (ImportExpect, error)
 		if m.maildir == "" && !m.deleted {
 			p = filepath.Join(d, "new", base)
 		} else {
-			p = filepath.Join(d, "cur", base+":2,"+m.maildir)
+			p = filepath.Join(d, "cur", base+MaildirInfo+"2,"+m.maildir)
 		}
 		if err := os.WriteFile(p, raw, 0o644); err != nil {
 			return exp, err

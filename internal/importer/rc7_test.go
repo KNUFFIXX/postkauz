@@ -191,8 +191,8 @@ func TestImportMaildirFileMovedBeforeSecondRead(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	a := filepath.Join(dir, "cur", "1700000000.M1P1.rc7:2,S")
-	b := filepath.Join(dir, "cur", "1700000001.M1P1.rc7:2,S")
+	a := filepath.Join(dir, "cur", mdName("1700000000.M1P1.rc7:2,S"))
+	b := filepath.Join(dir, "cur", mdName("1700000001.M1P1.rc7:2,S"))
 	_ = os.WriteFile(a, sent, 0o644)
 	_ = os.WriteFile(b, received, 0o644)
 	e := newEnv(t)
@@ -258,7 +258,7 @@ func TestImportNearMatchNotForDrafts(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.WriteFile(filepath.Join(dir, "cur", "1700000000.M1P1.rc8:2,"+tc.flags), full, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "cur", mdName("1700000000.M1P1.rc8:2,"+tc.flags)), full, 0o644); err != nil {
 				t.Fatal(err)
 			}
 			e.run(t, dir, FormatMaildir, "", Options{})

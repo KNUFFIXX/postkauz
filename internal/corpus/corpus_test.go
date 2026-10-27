@@ -137,7 +137,7 @@ func TestWriteThunderbirdAndMaildir(t *testing.T) {
 			t.Errorf("maildir %s missing", p)
 		}
 	}
-	trashed, _ := filepath.Glob(filepath.Join(md, "cur", "*:2,ST"))
+	trashed, _ := filepath.Glob(filepath.Join(md, "cur", "*"+MaildirInfo+"2,ST"))
 	if len(trashed) != 3 {
 		t.Errorf("trashed files = %d, want 3", len(trashed))
 	}

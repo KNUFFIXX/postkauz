@@ -102,7 +102,7 @@ func TestImportByteExactMboxAndMaildir(t *testing.T) {
 					}
 				}
 				for i, raw := range all {
-					if err := os.WriteFile(filepath.Join(dir, "cur", fmt.Sprintf("17000000%02d.M1P1.c2:2,S", i)), raw, 0o644); err != nil {
+					if err := os.WriteFile(filepath.Join(dir, "cur", mdName(fmt.Sprintf("17000000%02d.M1P1.c2:2,S", i))), raw, 0o644); err != nil {
 						t.Fatal(err)
 					}
 				}
