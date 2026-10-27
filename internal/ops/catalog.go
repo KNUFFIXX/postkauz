@@ -48,6 +48,9 @@ type Deps struct {
 	// SystemAudit nimmt Systemereignisse außerhalb des Executors auf
 	// (oauth.refresh); nil = keine.
 	SystemAudit audit.Writer
+	// TokenLockDir ist der Ordner der Sperrdateien beim Speichern eines
+	// OAuth2-Tokens (neben der Datenbank; leer = ohne Sperre).
+	TokenLockDir string
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen

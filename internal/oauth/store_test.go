@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -424,8 +426,16 @@ func TestConcurrentSavesNeverCorrupt(t *testing.T) {
 }
 
 // Zwei Prozesse (Goroutinen) speichern wiederholt, ein dritter liest:
-// nie ErrTokenCorrupt (auch unter make race).
+// nie ErrTokenCorrupt (auch unter make race), und am Ende liegen nur die
+// Teile des gültigen Haupteintrags (K2, zweite Nachbesserung T4). Die
+// Goroutinen speichern wie die Prozesse unter der Sperrdatei
+// (SaveLocked); ohne Sperre blieben in rund jedem dritten Lauf Teile
+// verwaist liegen. Grenze des Modells: Goroutinen auf einem Speicher im
+// RAM, kein echter Schlüsselbund und keine getrennten Prozesse; flock
+// sperrt je geöffneter Datei, daher schließen sich auch zwei Goroutinen
+// mit je eigenem TryLock aus.
 func TestConcurrentSavesStress(t *testing.T) {
+	lockDir := t.TempDir()
 	st := newMemStore()
 	if err := Save(st, testRef, Token{RefreshToken: bigToken("start")}, time.Now()); err != nil {
 		t.Fatal(err)
@@ -441,7 +451,7 @@ func TestConcurrentSavesStress(t *testing.T) {
 				if i%3 == 2 {
 					tok = secrets.Secret(fmt.Sprintf("CANARY-small-p%d-%d", p, i))
 				}
-				if err := Save(st, testRef, Token{RefreshToken: tok}, time.Now()); err != nil {
+				if err := SaveLocked(lockDir, st, testRef, Token{RefreshToken: tok}, time.Now()); err != nil {
 					t.Errorf("save: %v", err)
 					return
 				}
@@ -467,6 +477,47 @@ func TestConcurrentSavesStress(t *testing.T) {
 	close(stop)
 	<-done
 	if _, err := Load(st, testRef); err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	_, rec, _ := readMain(st, testRef)
+	for _, r := range st.keys() {
+		if r != testRef && (rec.Parts == 0 || !strings.Contains(r, "g"+rec.Gen+"/")) {
+			left = append(left, r)
+		}
+	}
+	if len(left) > 0 {
+		t.Fatalf("parts left after the saves: %d %v", len(left), left)
+	}
+}
+
+// K2: Die Sperre schließt ein zweites Speichern aus, bis sie frei ist;
+// hält ein anderer Prozess sie zu lange, scheitert das Speichern laut.
+func TestSaveLockedWaitsForTheLock(t *testing.T) {
+	dir := t.TempDir()
+	held, err := flock.TryLock(filepath.Join(dir, LockName(testRef)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockRef(dir, testRef, 100*time.Millisecond); !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("lock while held = %v", err)
+	}
+	st := newMemStore()
+	done := make(chan error, 1)
+	go func() { done <- SaveLocked(dir, st, testRef, Token{RefreshToken: bigToken("w")}, time.Now()) }()
+	time.Sleep(100 * time.Millisecond)
+	if len(st.keys()) != 0 {
+		t.Fatal("saved while another process holds the lock")
+	}
+	held.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Load(st, testRef); err != nil || got.RefreshToken != bigToken("w") {
+		t.Fatalf("load: %v", err)
+	}
+	// Ohne Ordner: keine Sperre.
+	if err := SaveLocked("", st, testRef, Token{RefreshToken: "CANARY-small"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }

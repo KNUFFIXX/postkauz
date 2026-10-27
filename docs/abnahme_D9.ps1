@@ -427,8 +427,9 @@ try {
             # Haupteintrag, die Teile der Generation, die er nennt, die der
             # davor abgeloesten Generation und Teile ohne Generation (je bis
             # 32). Teile aelterer Generationen, die kein Haupteintrag mehr
-            # nennt (seltener Rest nach gleichzeitigem Speichern oder einer
-            # Zeitueberschreitung des Schluesselbunds), findet es nicht: Der
+            # nennt (seltener Rest nach einer Zeitueberschreitung des
+            # Schluesselbunds oder gleichzeitigem Speichern eines Builds ohne
+            # Token-Sperre), findet es nicht: Der
             # Schluesselbund kann nicht auflisten. Die Kontrolle 3.2 zeigt
             # sie; Abhilfe in docs/abnahme_D9.md, Abschnitt 5.
             $r = Invoke-Pk @('account', 'remove', $acc, '--json')

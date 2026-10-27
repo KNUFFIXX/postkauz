@@ -34,11 +34,14 @@ type Credentials struct {
 	OAuth oauth.Microsoft
 	// Audit nimmt die Systemereignisse oauth.refresh auf (nil = keins).
 	Audit audit.Writer
+	// LockDir ist der Ordner der Sperrdateien beim Speichern eines Tokens
+	// (oauth.SaveLocked; leer = ohne Sperre, nur Tests und :memory:).
+	LockDir string
 }
 
 // credentials liefert die Auflösung aus den Abhängigkeiten des Katalogs.
 func (d Deps) credentials() Credentials {
-	return Credentials{Secrets: d.Secrets, OAuth: d.OAuth, Audit: d.SystemAudit}
+	return Credentials{Secrets: d.Secrets, OAuth: d.OAuth, Audit: d.SystemAudit, LockDir: d.TokenLockDir}
 }
 
 // ErrNoToken: Ein OAuth2-Konto hat (noch) kein Refresh-Token im
@@ -93,7 +96,9 @@ func (c Credentials) For(a store.Account, dryRun bool) (provider.Credential, err
 	}
 	src := oauth.NewSource(oauth.Token{RefreshToken: saved.RefreshToken}, c.OAuth.Refresher(client))
 	if !dryRun {
-		src.OnRefresh = func(t oauth.Token) error { return oauth.Save(c.Secrets, a.CredentialRef, t, time.Now()) }
+		src.OnRefresh = func(t oauth.Token) error {
+			return oauth.SaveLocked(c.LockDir, c.Secrets, a.CredentialRef, t, time.Now())
+		}
 	}
 	src.Report = func(ok bool, reason string) { c.auditRefresh(a, ok, reason, dryRun) }
 	// K7: Ein zweiter Prozess (sync --watch neben account test) kann
@@ -238,7 +243,7 @@ func AccountsLogin(repo AccountRepo, creds Credentials) Operation {
 			if err != nil {
 				return nil, err
 			}
-			if err := oauth.Save(creds.Secrets, a.CredentialRef, tok, time.Now()); err != nil {
+			if err := oauth.SaveLocked(creds.LockDir, creds.Secrets, a.CredentialRef, tok, time.Now()); err != nil {
 				return nil, fmt.Errorf("%w: %s", oauth.ErrTokenNotStored, secrets.RedactTokens(err.Error()))
 			}
 			out.RefreshToken = "stored"

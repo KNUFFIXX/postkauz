@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
@@ -169,6 +170,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
 		DraftCheck: newDraftChecker(a), OAuth: newOAuth(), SystemAudit: st.AuditWriter()}
+	// Sperrdateien beim Speichern eines OAuth2-Tokens neben der Datenbank,
+	// wie die Sperren je Konto (K2, zweite Nachbesserung T4).
+	if p := st.Path(); p != "" {
+		deps.TokenLockDir = filepath.Dir(p)
+	}
 	// draft_push (A02 E1, S2.5): Der Sync legt wartende Entwürfe im
 	// Entwürfe-Ordner ab; nur er hat die Zugangsdaten (der MCP-Server ruft
 	// sync.run nie auf).

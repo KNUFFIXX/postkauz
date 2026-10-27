@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 )
 
@@ -61,6 +62,18 @@ func TestOAuth2AccountCLI(t *testing.T) {
 	var lo map[string]any
 	if err := json.Unmarshal([]byte(out), &lo); err != nil || lo["refresh_token"] != "stored" || lo["method"] != "loopback" {
 		t.Fatalf("login --json: %s", out)
+	}
+	// K2: gespeichert wird unter der Sperrdatei neben der Datenbank.
+	ref, _ := lo["credential_ref"].(string)
+	var lockFound bool
+	_ = filepath.WalkDir(dataDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.Name() == oauth.LockName(ref) {
+			lockFound = true
+		}
+		return nil
+	})
+	if ref == "" || !lockFound {
+		t.Fatalf("no token lock file %s in the data directory", oauth.LockName(ref))
 	}
 
 	out, _ = do(ExitOK, "doctor", "--json")

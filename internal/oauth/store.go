@@ -148,7 +148,8 @@ func newGen(not ...string) (string, error) {
 // Rest: Liegt das Umstellen des anderen Prozesses genau zwischen dessen
 // letztem Lesen und Schreiben und nach dem ganzen eigenen Speichern, bleiben
 // die eigenen Teile liegen (ein abgelöstes Refresh-Token, das account remove
-// nicht findet).
+// nicht findet). Deshalb speichern alle Prozesse über SaveLocked (lock.go);
+// Save allein schützt nur vor einem beschädigten Token.
 //
 // Der Speicher ist secrets.Stored: Werte aus der Umgebung gelten für
 // OAuth2-Konten nicht.
