@@ -208,10 +208,11 @@ type Prompt struct {
 }
 
 // LoginLoopback führt den Loopback-Flow aus: freier Port auf 127.0.0.1 (und
-// derselbe auf ::1, falls vorhanden; loopbackListeners), Umleitung http://localhost:<port>, zufälliger
-// state, PKCE S256, Frist LoginTimeout. Den Browser öffnet OpenBrowser;
-// show bekommt die Adresse in jedem Fall (falls kein Browser aufgeht).
-// PostKauz zeigt keine eigene Anmeldeseite.
+// derselbe auf ::1, falls vorhanden; loopbackListeners), Umleitung
+// http://localhost:<port>, zufälliger state, PKCE S256, Frist LoginTimeout,
+// danach der Tausch mit eigener Frist ExchangeTimeout. Den Browser öffnet
+// OpenBrowser; show bekommt die Adresse in jedem Fall (falls kein Browser
+// aufgeht). PostKauz zeigt keine eigene Anmeldeseite.
 func (m Microsoft) LoginLoopback(ctx context.Context, c Client, show func(Prompt)) (Token, error) {
 	timeout := m.LoginTimeout
 	if timeout <= 0 {

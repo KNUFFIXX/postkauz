@@ -1,6 +1,6 @@
 # T4 — Microsoft-Postfächer per OAuth2: Stand und Übergabe
 
-Teil T4 aus [auftraege/A03_teile.md](../../auftraege/A03_teile.md) (S3.7, E11, R2), parallel gebaut von `main` `1c9847a` auf dem Zweig `claude/great-johnson-fcqyuh` (27.10.2026). **Keine Migration.** Nach Rahmen 10 stehen Stand und CHANGELOG-Zeilen nur hier; die Prüfsitzung überträgt sie beim Merge nach `docs/roadmap.md` und `CHANGELOG.md` und führt `docs/betrieb_microsoft.md` als Abschnitt „Microsoft“ in `docs/betrieb.md` (aus T2) ein.
+Teil T4 aus [auftraege/A03_teile.md](../../auftraege/A03_teile.md) (S3.7, E11, R2), parallel gebaut von `main` `1c9847a` auf dem Zweig `claude/great-johnson-fcqyuh` (27.10.2026; Nachbesserung nach der Gegenprüfung am selben Tag, Build `0.3.0-ms.2`, Abschnitt 1a). **Keine Migration.** Nach Rahmen 10 stehen Stand und CHANGELOG-Zeilen nur hier; die Prüfsitzung überträgt sie beim Merge nach `docs/roadmap.md` und `CHANGELOG.md` und führt `docs/betrieb_microsoft.md` als Abschnitt „Microsoft“ in `docs/betrieb.md` (aus T2) ein.
 
 ## 1. Stand
 
@@ -30,6 +30,33 @@ Commits:
 4. `fix: show the login mechanism only for OAuth2 accounts`
 5. `docs: record the T4 checks before the push`
 
+## 1a. Nachbesserung nach der Gegenprüfung (Build `0.3.0-ms.2`)
+
+Die Gegenprüfung (unabhängiger Prüfer, am Code belegt) ergab PASS ohne Blocker. Behoben je Punkt mit eigenem Commit und Test:
+
+| Punkt | Befund | Behebung | Test |
+|---|---|---|---|
+| W1 | R2 fragte nur `Status().Available`; `insecure-file` meldet `true`, ein echtes Refresh-Token landete in `insecure-secrets/secrets.json` | `oauthStoreAllowed`: `insecure-file` nur für Konten mit `insecure_test_server`; geprüft in `accounts.add`, `accounts.login` und `Credentials.For` (`account test`, `sync`), Fehler `secret_store_unavailable` | `TestOAuth2RejectsInsecureFileStore` |
+| W2 | `Save` überschrieb Teile an Ort und Stelle; Fehler vor dem Haupteintrag zerstörte auch das alte Token | Teile unter neuer, zufälliger Generation → Haupteintrag → alte Generation löschen; Fehler löscht die neuen Teile; `Load` liest neu, wenn ein Teil während des Lesens verschwindet; Format ohne Generation (ms.1) lesbar und abgeräumt | `TestSaveFailureKeepsOldToken` (Fehler an jeder Schreibstelle), `TestConcurrentSavesNeverCorrupt` (zweiter Prozess an jeder Stelle des ersten), `TestConcurrentSavesStress` (zwei schreibende, ein lesender, auch unter `-race`), `TestSaveReplacesLegacyParts` |
+| K3 | `account test --dry-run`, `sync --dry-run` speicherten das erneuerte Token | `Credentials.For(a, dryRun)`: im Trockenlauf kein `OnRefresh`; Festlegung 4 aufgehoben | `TestDryRunRefreshStoresNothing` |
+| K4 | `::1` belegt → Flow lief nur auf 127.0.0.1 weiter | `loopbackListeners`: neuer Port (bis 20 Versuche), bis beide gebunden sind; ohne IPv6-Loopback genügt 127.0.0.1 | `TestLoginLoopbackPortFreeOnBothAddresses` (nachgestelltes ::1, läuft auch ohne IPv6) |
+| K5 | Tausch unter der Restfrist des Logins (rohes `DeadlineExceeded`); Device-Code ohne `expires_in` unbegrenzt | Tausch mit eigener Frist 60 s, Zeitüberschreitung → `ErrLoginTimeout` (`login_failed`); Device-Code höchstens 15 min | `TestLoginLoopbackExchangeHasOwnDeadline`, `TestLoginDeviceCodeLimitWithoutExpiresIn` (synctest: genau 15 min) |
+| K6 | `abnahme_D9.ps1` baute mit `cmdkey` nur Haupteintrag und Teile 1–4 ab | Abbau über `account remove --json` (3.1), Kontrolle nur lesend mit `cmdkey /list` (3.2: keine Zeile `/<kennung>/<konto>`), Datenverzeichnis (3.3); `.md` Abschnitt 5 ebenso | Klammern gezählt (unverändert ausgeglichen), `pwsh` fehlt weiter |
+| K7 | Quelle las das Token nur beim Start; zweiter Prozess erneuerte mit einem schon ersetzten Token | `Source.Reload` vor jedem Refresh: weicht das gespeicherte vom zuletzt gelesenen/selbst gespeicherten ab, wird es übernommen | `TestSourceReloadsNewerStoredToken`, `TestTwoProcessesShareRotatedToken` (Fake-AS mit Einmal-Token) |
+| K8 | `oauth.refresh` hat `ok`/`error`, A03 S3.7 nennt `ok`/`failed` | als Abweichung festgehalten (Festlegung 18), Code unverändert | — |
+
+Commits der Nachbesserung:
+
+6. `fix: allow OAuth2 with the insecure file store only for test servers` (W1)
+7. `fix: store split OAuth2 tokens under a new generation` (W2)
+8. `fix: store no renewed OAuth2 token in a dry run` (K3)
+9. `fix: pick a new sign-in port when ::1 is taken` (K4)
+10. `fix: give the code exchange and device flow their own deadlines` (K5)
+11. `fix: reread the stored OAuth2 token before a refresh` (K7)
+12. `docs: tear down acceptance D9 with account remove` (K6)
+13. `fix: delete old token parts when a shorter token replaces them` (eigener Fund beim Gegenlesen von W2: Ersetzte ein kurzes Token ein langes im Format von ms.1, blieben dessen Teile liegen; Test `TestSaveReplacesLegacyParts`, scheitert auf dem Stand davor)
+14. `docs: record the T4 follow-up after the cross-check` (dieser Stand)
+
 ## 2. Festlegungen (Einspruch möglich)
 
 1. **`x/oauth2` v0.35.0** statt der neuesten v0.37.0: Die Version ist schon im Modulgraph (MCP-SDK) und von `make vuln` abgedeckt; ein Sprung hebt andere Abhängigkeiten mit an. Anheben, wenn `govulncheck` etwas meldet.
@@ -46,6 +73,14 @@ Commits:
 12. **`account remove`** löscht bei OAuth2-Konten Haupteintrag und alle Teile; die Ausgabe heißt weiter `stored password deleted` (Text unverändert, ein bestehender Test hängt daran).
 13. **Abnahme-Skript:** die zwei Anmeldungen brauchen ein sichtbares Fenster (Enter, Code); ohne `-Zustimmung "ja …"` läuft nur der Offline-Teil.
 
+Neu mit der Nachbesserung (`0.3.0-ms.2`):
+
+14. **Trockenlauf und Audit (K3):** `oauth.refresh` entsteht auch im Trockenlauf, mit `"dry_run":true` in den Parametern (der Token-Endpunkt wurde wirklich angesprochen); gespeichert wird nichts. Microsoft widerruft ein eingelöstes Refresh-Token nicht (Microsoft Learn, „Refresh tokens in the Microsoft identity platform“, abgerufen 27.10.2026); der Fake-AS bleibt standardmäßig strenger (Einmal-Token) und hat dafür `KeepUsedRefresh`.
+15. **Port-Suche (K4):** höchstens 20 Versuche, dann Abbruch mit Fehler; „kein IPv6-Loopback“ heißt: `[::1]:0` lässt sich gar nicht binden. Neues Feld `oauth.Microsoft.Listen` nur für Tests.
+16. **Fristen (K5):** Tausch des Codes 60 s ab Eingang der Anmeldung (`ExchangeTimeout`), unabhängig von den 5 min des Browser-Flows; Device-Code 15 min (`DeviceTimeout`), bei kürzerem `expires_in` gilt dieses. Netzfehler beim Tausch bleiben `error` (nicht `login_failed`), nur Zeitüberschreitungen werden `login_failed`.
+17. **„Neuer“ (K7) heißt „anders als zuletzt gelesen oder selbst gespeichert“:** Der gespeicherte Wert ändert sich nur durch Schreiben; weicht er ab, hat danach jemand gespeichert. `UpdatedAt` (Sekundenauflösung) wird nicht verglichen. Ein Lesefehler vor dem Refresh zählt nicht (dann mit dem eigenen Token). Gegenseitiges Ausschließen zweier Prozesse (Sperre) ist nicht gebaut; siehe Rest bei Festlegung 5.
+18. **Abweichung von A03 S3.7 (K8):** Das Ergebnis von `oauth.refresh` heißt `ok` oder **`error`** (mit Code im Grund), nicht `ok`/`failed`. Grund: `audit.Result` kennt nur `ok`, `denied`, `needs_approval`, `error`; ein eigener Wert `failed` nur für dieses Ereignis würde Auswertungen (`audit --json`, D9-Schritt 2.10, Export) uneinheitlich machen. Wer `failed` sucht, sucht `result = error AND operation = oauth.refresh`.
+
 ## 3. Prüfungen in dieser Sitzung
 
 | Prüfung | Ergebnis |
@@ -58,15 +93,28 @@ Commits:
 | `make release VERSION=0.3.0-ms.1` | gebaut auf dem letzten Commit; `dist/` ist nicht im Repository, die Prüfsitzung baut nach und vergleicht `SHA256SUMS` |
 | PowerShell-Syntax von `abnahme_D9.ps1` | **nicht geprüft**: kein `pwsh` im Container, das Herunterladen hat die Sitzung nicht erlaubt. Klammern gezählt (ausgeglichen), Offline-Kommandos mit dem Linux-Programm nachgestellt. Die Prüfsitzung prüft vor dem Lauf auf dem Büro-PC: `[System.Management.Automation.Language.Parser]::ParseFile('abnahme_D9.ps1', [ref]$null, [ref]$e); $e` (leer = gut) und PSScriptAnalyzer, falls vorhanden. |
 
+**Nachbesserung `0.3.0-ms.2`** (gleiche Sitzungsart, Toolchain go1.27.3 nach der Ausnahme in `CLAUDE.md`):
+
+| Prüfung | Ergebnis |
+|---|---|
+| `make check` je Commit 6 bis 14 (eigener Worktree auf dem Commit) | grün |
+| `go test -race` für `internal/oauth` (dreimal, mit den Nebenläufigkeitstests aus W2) | grün; ein voller `make race` lief in der Nachbesserung **nicht** (Auftrag: `make check` und `make cross`); die Prüfsitzung führt ihn beim Merge aus |
+| `make integration`, `make vuln` | nicht erneut gelaufen (Auftrag; `make vuln` ohnehin gesperrt, siehe oben); die Nachbesserung berührt IMAP und Abhängigkeiten nicht |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make release VERSION=0.3.0-ms.2` | gebaut auf dem letzten Commit (`dist/` nicht im Repository) |
+| `abnahme_D9.ps1` | weiterhin nur Klammern gezählt (Verhältnis wie vorher), kein `pwsh`; Prüfung vor dem Lauf wie oben |
+
 ## 4. CHANGELOG-Zeilen (für „Unreleased“, Abschnitt Added)
 
-- S3.7 (T4): Microsoft-Postfächer per OAuth2 („bring your own client“): `account add <name> --auth oauth2 --client-id <id> [--tenant common|consumers|organizations|<id>]`, `account login <name> [--device-code]` (nur für Menschen, kein MCP-Tool); Anmeldung an IMAP per SASL `XOAUTH2`/`OAUTHBEARER`, `account test` nennt das Verfahren. Im Schlüsselbund liegt nur das Refresh-Token (bei Bedarf in Teilen unter `oauthpart<n>/…`), das Access-Token bleibt im Speicher und wird 2 min vor Ablauf erneuert; jeder Refresh ist das Systemereignis `oauth.refresh`. Ohne Schlüsselbund abgelehnt (R2). Neue Fehlercodes `no_token`, `token_not_stored`, `oauth_refresh`, `login_failed`. `doctor` zeigt Token-Stand und -Ablauf, `doctor --secrets` sucht das Refresh-Token. Anleitung `docs/betrieb_microsoft.md`, Abnahme `docs/abnahme_D9.md`/`.ps1`.
+- S3.7 (T4): Microsoft-Postfächer per OAuth2 („bring your own client“): `account add <name> --auth oauth2 --client-id <id> [--tenant common|consumers|organizations|<id>]`, `account login <name> [--device-code]` (nur für Menschen, kein MCP-Tool); Anmeldung an IMAP per SASL `XOAUTH2`/`OAUTHBEARER`, `account test` nennt das Verfahren. Im Schlüsselbund liegt nur das Refresh-Token (bei Bedarf in Teilen unter `oauthpart<n>g<generation>/…`, je Speichern eine neue Generation, damit ein abgebrochenes Schreiben oder ein zweiter Prozess das gespeicherte Token nie zerstört), das Access-Token bleibt im Speicher und wird 2 min vor Ablauf erneuert (vorher liest der Prozess ein inzwischen von einem anderen Prozess gespeichertes Token neu); jeder Refresh ist das Systemereignis `oauth.refresh`; ein Trockenlauf speichert kein erneuertes Token. Ohne Schlüsselbund abgelehnt (R2), der unsichere Testspeicher `insecure-file` ebenso (außer für lokale Testserver). Anmeldung: Port auf 127.0.0.1 und ::1, Tausch des Codes mit eigener Frist 60 s, Device-Code höchstens 15 min. Neue Fehlercodes `no_token`, `token_not_stored`, `oauth_refresh`, `login_failed`. `doctor` zeigt Token-Stand und -Ablauf, `doctor --secrets` sucht das Refresh-Token. Anleitung `docs/betrieb_microsoft.md`, Abnahme `docs/abnahme_D9.md`/`.ps1`.
 - `secrets.RedactTokens` schwärzt Token-Felder und JWTs in freiem Text; Fehler des Token-Endpunkts tragen nur Code und AADSTS-Nummer.
 - `golang.org/x/oauth2` v0.35.0 ist direkte Abhängigkeit.
 
-Roadmap-Zeile (für „Stand S3“): S3.7 gebaut (T4, Build `0.3.0-ms.1`), Haltepunkt Abnahme D9 (Prüfsitzung, Büro-PC, nur lesend); App-Registrierung ungeprüft.
+Roadmap-Zeile (für „Stand S3“): S3.7 gebaut (T4, Build `0.3.0-ms.2` nach der Gegenprüfung), Haltepunkt Abnahme D9 (Prüfsitzung, Büro-PC, nur lesend); App-Registrierung ungeprüft.
 
 ## 5. Hinweise für den Merge
+
+- **Neu mit `0.3.0-ms.2`:** `ops.Credentials.For` nimmt jetzt `(a store.Account, dryRun bool)`; `oauth.PartRef` nimmt `(ref, gen string, i int)`; `oauth.Microsoft` hat die Felder `Listen`, `ExchangeTimeout`, `DeviceTimeout`, `oauth.Source` das Feld `Reload`. Teile, die `For` aufrufen (T1b: `sync.run`/Jobs), reichen `call.DryRun` durch.
 
 - Reihenfolge laut Plan: T1a → T1c → **T4** → T1b → T2 → T3 → T5. Erwartete Konflikte: `internal/store/accounts.go` (`accountCols`, `scanAccount`; T2 ergänzt `drafts_mailbox` mit A5.1), `internal/ops/accounts.go`, `internal/ops/catalog.go` (`Deps`), `internal/cli/exit.go`, `internal/cli/bindings.go`, `docs/cli.md`, `docs/sicherheit.md`. Fachlich unabhängig.
 - Die Schnittstellen `ops.SyncRunner.Sync`, `ops.AccountProber.Probe` und `mailsync.Runner.Connect` nehmen jetzt `provider.Credential` statt `secrets.Secret`; Teile, die neue Testfakes dafür schreiben (T1a, T1b), passen die Signatur an (`provider.PasswordCredential(pw)`).
