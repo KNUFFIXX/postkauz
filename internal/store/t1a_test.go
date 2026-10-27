@@ -172,3 +172,32 @@ func TestServerCopiesNeverImportFolders(t *testing.T) {
 		t.Fatalf("server copies of 6 = %+v %v", cs, err)
 	}
 }
+
+// A12.4: Kontolöschung atomar und unter der Kontosperre.
+func TestDeleteAccountAtomicAndLocked(t *testing.T) {
+	ctx := context.Background()
+	s, path := schema16(t, 3)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAccount(ctx, 1); !errors.Is(err, ErrAccountHasMessages) {
+		t.Fatalf("account with messages: %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM messages`); err != nil {
+		t.Fatal(err)
+	}
+	l, err := flock.TryLock(filepath.Join(filepath.Dir(path), flock.AccountLockName(1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAccount(ctx, 1); !errors.Is(err, ErrAccountBusy) {
+		t.Fatalf("locked account: %v", err)
+	}
+	l.Release()
+	if err := s.DeleteAccount(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteAccount(ctx, 1); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("second delete: %v", err)
+	}
+}

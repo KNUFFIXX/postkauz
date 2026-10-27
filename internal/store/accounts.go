@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 )
 
 // Fehler der Kontenablage.
@@ -171,18 +174,55 @@ func (s *SQLite) CountMessages(ctx context.Context, accountID int64) (int, error
 	return n, err
 }
 
+// ErrAccountHasMessages: Das Konto hat archivierte Nachrichten; es wird
+// nicht entfernt (ADR-003, Löschkonzept S3).
+var ErrAccountHasMessages = errors.New("store: account has archived messages")
+
+// ErrAccountBusy: Ein Sync oder Import des Kontos läuft (Kontosperre).
+var ErrAccountBusy = errors.New("store: a sync or import of this account is running")
+
 // DeleteAccount entfernt ein Konto. Ordner, Nachrichten und Entwürfe hängen
-// per ON DELETE CASCADE daran; der Aufrufer (accounts.remove) verweigert
-// deshalb das Entfernen, solange Nachrichten archiviert sind (ADR-003).
-func (s *SQLite) DeleteAccount(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id)
+// per ON DELETE CASCADE daran; deshalb nur, wenn das Konto keine
+// Nachrichten hat (ADR-003). Seit T1a (A12.4) atomar: Prüfen und Löschen
+// in einer Transaktion, unter der Kontosperre (internal/flock), damit kein
+// Sync oder Import dazwischen Nachrichten einträgt. Hält ein anderer
+// Prozess die Sperre, kommt ErrAccountBusy; hat das Konto Nachrichten,
+// ErrAccountHasMessages (mit Anzahl).
+func (s *SQLite) DeleteAccount(ctx context.Context, id int64) (err error) {
+	if s.path != "" {
+		l, err := flock.TryLock(filepath.Join(filepath.Dir(s.path), flock.AccountLockName(id)))
+		if errors.Is(err, flock.ErrLocked) {
+			return ErrAccountBusy
+		}
+		if err != nil {
+			return err
+		}
+		defer l.Release()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE account_id = ?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: %d", ErrAccountHasMessages, n)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("store: delete account: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: id %d", ErrAccountNotFound, id)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // UpdateAccountProbe speichert das Ergebnis einer Verbindungsprüfung:
