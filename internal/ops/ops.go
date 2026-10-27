@@ -132,6 +132,13 @@ type Operation struct {
 	// Abbruch (import.run). Ohne diese Erklärung ist Output bei Fehler nil,
 	// auch wenn der Handler etwas liefert.
 	OutputOnError bool
+	// PolicyInput leitet aus der geprüften Eingabe ab, was die Policy über
+	// sie wissen muss (A9: Zahl der Ziele, Rolle des Zielordners, Konto,
+	// confirm_count). Der Executor ruft es nach der Schemaprüfung und vor
+	// dem Start-Eintrag; policy.CheckInput entscheidet. nil = die Eingabe
+	// spielt für die Policy keine Rolle. Jede Operation damit braucht einen
+	// Policy-Testfall (TestContractPolicyInputCases).
+	PolicyInput func(ctx context.Context, input json.RawMessage) (policy.Facts, error)
 
 	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
 	input *jsonschema.Resolved

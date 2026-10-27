@@ -54,7 +54,7 @@ flowchart LR
   JMAP --> SRV
 ```
 
-In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Executor schlägt die Operation im Register nach, prüft Scope und Policy, schreibt den Audit-Eintrag und ruft erst dann den Handler. Handler arbeiten gegen den lokalen Speicher; alles, was den Server berührt, läuft über Jobs und das Provider-Interface.
+In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Executor schlägt die Operation im Register nach, prüft Scope, Policy, Schlüssel und Eingabe, schreibt den Start-Eintrag des Audits, ruft erst dann den Handler und schreibt danach den Abschluss-Eintrag (Abschnitt 6); eine Ablehnung ist ein einzelner Eintrag, der Handler läuft dann nicht. R3-Operationen erreichen den Handler nur über eine Freigabe durch einen Menschen. Handler arbeiten gegen den lokalen Speicher; alles, was den Server berührt, läuft über Jobs und das Provider-Interface.
 
 ### Paketübersicht
 
@@ -222,21 +222,21 @@ sequenceDiagram
   X->>P: Check(Key, Requirement{Scope, Risk, HumanOnly}, DryRun)
   P-->>X: Decision (allow, deny, needs_approval; DryRun; Grund)
   X->>X: Schlüssel noch gültig? (KeyGuard, nur mit API-Schlüssel)
-  X->>A: Append(Event: Ergebnis der Prüfung, policy_version)
+  X->>X: Eingabe gegen InputSchema (und engeres Schema der Oberfläche)
+  X->>P: CheckInput(Key, Facts aus der Eingabe, Regeln der Policy-Datei)
   alt allow
-    X->>X: Eingabe gegen InputSchema prüfen
+    X->>A: Append(Event: started, policy_version)
     X->>H: Handler(Input, DryRun, Key, Actor)
     H-->>X: Output, fachliche Ablehnung oder Fehler
-    opt Ablehnung oder Fehler
-      X->>A: Append(Event: denied bzw. error mit Grund)
-    end
-    X-->>O: Result (mit Audit-ID)
-  else deny oder needs_approval
-    X-->>O: PolicyError (Exit 3 bzw. 4, MCP-Status)
+    X->>A: Append(Event: ok, denied oder error; eigene Zeit, Dauer, ref_id)
+    X-->>O: Result (mit Audit-ID des Starts)
+  else deny, needs_approval oder ungültige Eingabe
+    X->>A: Append(Event: denied, needs_approval bzw. error/invalid_input)
+    X-->>O: PolicyError bzw. Eingabefehler (Exit 3, 4 bzw. 2; MCP-Status)
   end
 ```
 
-- **Reihenfolge:** Policy-Entscheid → Prüfung des Schlüssels (widerrufen, abgelaufen; seit S1.9, Zwischenspeicher höchstens 2 s) → Audit-Eintrag → Prüfung der Eingabe gegen das `InputSchema` (seit S1.8) → Handler. Der Audit-Eintrag steht **vor** der Wirkung. Fehler im Handler, eine ungültige Eingabe oder eine fachliche Ablehnung (z. B. `draft_closed`, `approval_stale`) erzeugen einen zweiten Eintrag (`error` mit `handler_error` bzw. `invalid_input`, `denied` mit dem Grund). Das Ergebnis trägt die ID des Audit-Eintrags (CLI `--explain`, MCP `_meta.audit_id`).
+- **Reihenfolge (seit T1b, A1 Variante A und A9):** Policy-Entscheid → Prüfung des Schlüssels (widerrufen, abgelaufen; seit S1.9, Zwischenspeicher höchstens 2 s) → Prüfung der Eingabe gegen das `InputSchema` (seit S1.8) und das engere Schema der Oberfläche → Prüfung der Eingabe durch die Policy (`Operation.PolicyInput` → `policy.CheckInput`: Zahl der Ziele, Rolle des Zielordners, Konto, `confirm_count`) → Start-Eintrag `started` → Handler → Abschluss-Eintrag. **Genau ein Eintrag**, wenn der Handler nicht erreicht wird: `denied`/`needs_approval` mit dem Grund der Policy, `denied` mit dem Grund des Schlüssels, `error` mit `invalid_input` (die Eingabe sieht dann auch `Redact` nicht: Parameter `{}`). **Genau zwei** bei Erlaubnis: `started` vor der Wirkung (fail closed: ohne ihn kein Handler), danach immer der Abschluss `ok`, `denied` (fachliche Ablehnung, z. B. `draft_closed`) oder `error` (`handler_error`, `panic`) mit **eigenem Zeitstempel** (Ende), Dauer und `ref_id` = ID des Starts, auch nach Strg+C (Frist 5 s). Scheitert nur der Abschluss, kommt das Ergebnis trotzdem zurück, das Log meldet es (`OnAuditError`), und `doctor` zählt Starts ohne Abschluss, die älter als 10 Minuten sind. Das Ergebnis trägt die ID des Start-Eintrags (CLI `--explain`, MCP `_meta.audit_id`). Bis Schema 17 stand vor dem Handler ein Eintrag `ok` und nur bei Fehler oder Ablehnung ein zweiter (Zeitstempel des Beginns); solche Einträge bleiben unverändert.
 - **`policy.Check`** (`internal/policy/policy.go`, Stand S2.9), in dieser Reihenfolge: (1) `HumanOnly` und ein API-Schlüssel (jede Rolle, auch `admin`, auch die CLI-Probe `--key`, auch im Trockenlauf) → `deny`, Grund `human_only` (ADR-009); (2) fehlender Scope → `deny`, `missing_scope` (der Pseudo-Scope `any` gilt für jeden Schlüssel); (3) R0 → `allow`; (4) Trockenlauf → `allow` mit `DryRun`; (5) R1/R2 → `allow`; (6) R3 → `needs_approval`, Grund `risk_r3`. In S2 hat keine Operation R3; `needs_approval` und Exit 4 kommen deshalb nicht vor (Entscheid 44). Die Freigabe eines Entwurfs ist kein Zustand des Aufrufs, sondern eine eigene Operation (`drafts.request_ready` legt die Freigabe an, `drafts.approve` erteilt sie, beide über diese Kette; [sicherheit.md](sicherheit.md), Abschnitt 5).
 - **Trockenlauf:** `dry_run` gilt für jede schreibende Operation. Standard je Schlüssel (`dry_run_default`), ausdrücklich überschreibbar; der Mensch ohne Schlüssel hat keinen Standard-Trockenlauf. Der Handler bekommt `Call.DryRun` und darf dann nichts verändern (Entwürfe: dieselbe Transaktion mit allen Prüfungen, danach zurückgerollt).
 - **Policy-Datei** (seit S2.1): Jeder Prozess, der die Datenbank öffnet, lädt `policy.toml` beim Start und prüft sie streng; ihre Version steht in der Tabelle `policies` und in jedem Audit-Eintrag (`policy_version`). Wirksam sind `[agent_defaults] max_chars` und `[draft] check_hook`, `check_hook_timeout`, `require_approval_for_ready`; `[delete]`, `[move]` und `dry_run_default` werden geprüft und erst in S3 ausgewertet, ebenso die Verengung je Schlüssel.

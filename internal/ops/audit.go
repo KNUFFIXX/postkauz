@@ -18,6 +18,7 @@ import (
 // AuditRepo ist der Teil des Stores, den die Audit-Operationen brauchen.
 type AuditRepo interface {
 	AuditQuery(ctx context.Context, f store.AuditFilter) ([]store.AuditRecord, error)
+	AuditCalls(ctx context.Context, f store.AuditFilter) ([]store.AuditRecord, error)
 	AuditDays(ctx context.Context) ([]string, error)
 	SaveAuditExport(ctx context.Context, e store.AuditExport) error
 	AuditExports(ctx context.Context) ([]store.AuditExport, error)
@@ -41,13 +42,20 @@ type AuditEventOutput struct {
 	// S2.1; fehlt bei älteren Einträgen, damit frühere Exporte Byte für
 	// Byte gleich bleiben).
 	PolicyVersion int64 `json:"policy_version,omitempty"`
+	// RefID: Im Abschluss-Eintrag die ID des Start-Eintrags (seit
+	// Migration 0018); fehlt sonst, damit frühere Exporte gleich bleiben.
+	RefID int64 `json:"ref_id,omitempty"`
+	// EndID: nur in der zusammengefassten Ansicht von audit.list (ohne
+	// raw): die ID des Abschluss-Eintrags; Result, Reason und DurationMS
+	// stammen dann von ihm. Nie im Export.
+	EndID int64 `json:"end_id,omitempty"`
 }
 
 func auditEventOut(r store.AuditRecord) AuditEventOutput {
 	o := AuditEventOutput{ID: r.ID, TS: r.TS.UTC().Format("2006-01-02T15:04:05.000Z07:00"), Actor: string(r.ActorType), Key: r.KeyID,
 		Scope: r.Scope, Operation: r.Operation, Params: json.RawMessage(r.ParamsRedacted), Targets: r.Targets,
 		Result: string(r.Result), Reason: r.Reason, DryRun: r.DryRun, DurationMS: r.Duration.Milliseconds(),
-		PolicyVersion: r.PolicyVersion}
+		PolicyVersion: r.PolicyVersion, RefID: r.RefID}
 	if len(o.Params) == 0 || !json.Valid(o.Params) {
 		o.Params = json.RawMessage(`{}`)
 	}
@@ -62,8 +70,9 @@ const auditEventSchema = `{"type": "object", "properties": {
       "actor": {"type": "string", "enum": ["human", "agent", "system"]}, "key": {"type": "string"},
       "scope": {"type": "string"}, "operation": {"type": "string"}, "params": {"type": "object"},
       "targets": {"type": "array", "items": {"type": "string"}},
-      "result": {"type": "string", "enum": ["ok", "denied", "needs_approval", "error"]}, "reason": {"type": "string"},
-      "dry_run": {"type": "boolean"}, "duration_ms": {"type": "integer"}, "policy_version": {"type": "integer"}},
+      "result": {"type": "string", "enum": ["started", "ok", "denied", "needs_approval", "error"]}, "reason": {"type": "string"},
+      "dry_run": {"type": "boolean"}, "duration_ms": {"type": "integer"}, "policy_version": {"type": "integer"},
+      "ref_id": {"type": "integer"}, "end_id": {"type": "integer"}},
       "required": ["id", "ts", "actor", "operation", "params", "targets", "result", "dry_run"]}`
 
 // ParseSince liest eine Zeitangabe: Dauer rückwärts ab now ("10m", "24h",
@@ -104,6 +113,9 @@ const (
 )
 
 // AuditList zeigt Audit-Einträge (ohne Inhalte). Lesend (R0, audit:read).
+// Seit Migration 0018 (A1) fasst sie Start und Abschluss eines Aufrufs zu
+// einer Zeile zusammen (ID und Zeit des Starts, Endergebnis, Dauer, end_id);
+// raw zeigt alle Zeilen einzeln.
 func AuditList(repo AuditRepo) Operation {
 	return Operation{
 		Name:       "audit.list",
@@ -119,7 +131,8 @@ func AuditList(repo AuditRepo) Operation {
     "actor": {"type": "string", "enum": ["human", "agent", "system"]},
     "key": {"type": "string", "description": "key id as shown in the log, e.g. key:assistant-1"},
     "operation": {"type": "string", "description": "operation name, e.g. messages.search"},
-    "result": {"type": "string", "enum": ["ok", "denied", "needs_approval", "error"]},
+    "result": {"type": "string", "enum": ["started", "ok", "denied", "needs_approval", "error"], "description": "final result of the call (started = no end entry yet)"},
+    "raw": {"type": "boolean", "description": "show every stored entry (start and end of a call separately) instead of one line per call"},
     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "description": "default 100"},
     "after_id": {"type": "integer", "minimum": 0, "description": "continue after this entry (next_after_id)"}
   },
@@ -145,6 +158,7 @@ func AuditList(repo AuditRepo) Operation {
 				Key       string `json:"key,omitempty"`
 				Operation string `json:"operation,omitempty"`
 				Result    string `json:"result,omitempty"`
+				Raw       bool   `json:"raw,omitempty"`
 				Limit     int    `json:"limit,omitempty"`
 				AfterID   int64  `json:"after_id,omitempty"`
 			}
@@ -166,14 +180,22 @@ func AuditList(repo AuditRepo) Operation {
 			if in.Limit == 0 {
 				in.Limit = DefaultAuditLimit
 			}
-			list, err := repo.AuditQuery(ctx, store.AuditFilter{Since: since, Until: until, Actor: in.Actor, Key: in.Key,
+			// Standard: eine Zeile je Aufruf (Start mit Endergebnis, A1);
+			// raw: jede gespeicherte Zeile.
+			query := repo.AuditCalls
+			if in.Raw {
+				query = repo.AuditQuery
+			}
+			list, err := query(ctx, store.AuditFilter{Since: since, Until: until, Actor: in.Actor, Key: in.Key,
 				Operation: in.Operation, Result: in.Result, AfterID: in.AfterID, Limit: in.Limit})
 			if err != nil {
 				return nil, err
 			}
 			out := AuditListOutput{Events: []AuditEventOutput{}}
 			for _, r := range list {
-				out.Events = append(out.Events, auditEventOut(r))
+				o := auditEventOut(r)
+				o.EndID = r.EndID
+				out.Events = append(out.Events, o)
 			}
 			if len(list) == in.Limit {
 				out.NextAfterID = list[len(list)-1].ID

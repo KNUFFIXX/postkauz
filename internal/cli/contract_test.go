@@ -164,7 +164,7 @@ var cliSamples = []cliSample{
 	{"keys.list", []string{"key", "list"}, false},
 	{"keys.revoke", []string{"key", "revoke", "k1"}, false},
 	{"audit.list", []string{"audit", "--since", "1h", "--until", "2099-01-01", "--actor", "human", "--key-id", "cli",
-		"--operation", "keys.list", "--result", "ok", "--limit", "5", "--after-id", "1"}, false},
+		"--operation", "keys.list", "--result", "ok", "--raw", "--limit", "5", "--after-id", "1"}, false},
 	{"audit.export", []string{"audit", "export", "--to", "{exportdir}"}, false},
 	{"audit.verify", []string{"audit", "verify"}, false},
 	{"policy.get", []string{"policy", "show"}, false},

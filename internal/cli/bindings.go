@@ -100,7 +100,7 @@ var bindings = []binding{
 		input: nameInput, human: renderKeyRevoke, covers: []string{"name"}},
 	{op: "audit.list", path: []string{"audit"}, args: cobra.NoArgs, flags: auditFlags, input: auditInput,
 		human: renderAudit, jsonOut: auditJSON,
-		covers: []string{"since", "until", "actor", "key", "operation", "result", "limit", "after_id"}},
+		covers: []string{"since", "until", "actor", "key", "operation", "result", "raw", "limit", "after_id"}},
 	{op: "audit.export", path: []string{"audit", "export"}, args: cobra.NoArgs, flags: auditExportFlags,
 		input: auditExportInput, human: renderAuditExport, covers: []string{"to"}},
 	{op: "audit.verify", path: []string{"audit", "verify"}, args: cobra.NoArgs, human: renderAuditVerify,

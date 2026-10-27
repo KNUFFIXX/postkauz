@@ -97,12 +97,14 @@ func TestExecutorChain(t *testing.T) {
 	reader := policy.Key{ID: "rd", Scopes: policy.Roles["reader"]}
 	ctx := context.Background()
 
-	// 1. erlaubt: Handler läuft, Audit hat genau einen Eintrag "ok"
+	// 1. erlaubt: Handler läuft, Audit hat genau zwei Einträge: "started"
+	// und den Abschluss "ok" mit Verweis auf den Start (A1 Variante A)
 	if _, err := x.Execute(ctx, Request{Key: reader, Actor: audit.ActorAgent, Operation: "m.read"}); err != nil {
 		t.Fatal(err)
 	}
-	if called != 1 || len(au.Events()) != 1 || au.Events()[0].Result != audit.ResultOK {
-		t.Fatalf("allowed path: called=%d events=%+v", called, au.Events())
+	if evs := au.Events(); called != 1 || len(evs) != 2 || evs[0].Result != audit.ResultStarted || evs[0].RefID != 0 ||
+		evs[1].Result != audit.ResultOK || evs[1].RefID != 1 {
+		t.Fatalf("allowed path: called=%d events=%+v", called, evs)
 	}
 
 	// 2. verweigert: Handler läuft nicht, Audit "denied"
@@ -603,28 +605,43 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 						t.Fatalf("handler ran %d times, want ran=%v", got, wantRan)
 					}
 
-					// Audit: genau ein Eintrag mit passendem Ergebnis, ohne Geheimnis
+					// Audit (A1 Variante A): genau ein Eintrag bei einer
+					// Policy-Ablehnung, genau zwei bei Erlaubnis (started,
+					// dann der Abschluss mit Verweis), ohne Geheimnis.
 					evs := au.Events()
-					if len(evs) != 1 {
-						t.Fatalf("audit events = %d, want 1: %+v", len(evs), evs)
+					wantEvents := 1
+					if want == policy.Allow {
+						wantEvents = 2
+					}
+					if len(evs) != wantEvents {
+						t.Fatalf("audit events = %d, want %d: %+v", len(evs), wantEvents, evs)
 					}
 					ev := evs[0]
-					wantResult := map[policy.Outcome]audit.Result{policy.Allow: audit.ResultOK,
+					wantResult := map[policy.Outcome]audit.Result{policy.Allow: audit.ResultStarted,
 						policy.Deny: audit.ResultDenied, policy.NeedsApproval: audit.ResultNeedsApproval}[want]
 					if ev.Operation != op.Name || ev.Scope != string(op.Scope) || ev.KeyID != key.ID ||
-						ev.ActorType != audit.ActorAgent || ev.Result != wantResult {
+						ev.ActorType != audit.ActorAgent || ev.Result != wantResult || ev.RefID != 0 {
 						t.Fatalf("audit event = %+v, want result %s", ev, wantResult)
 					}
 					if wantReason != "" && ev.Reason != wantReason {
 						t.Fatalf("audit reason = %q, want %q", ev.Reason, wantReason)
 					}
-					if want == policy.Allow && ev.DryRun != effDry {
-						t.Fatalf("audit dry_run=%v, want %v", ev.DryRun, effDry)
+					if want == policy.Allow {
+						end := evs[1]
+						if end.Operation != op.Name || end.KeyID != key.ID || end.RefID != res.AuditID || end.RefID == 0 ||
+							end.Result != audit.ResultOK || end.DryRun != effDry || end.TS.Before(ev.TS) {
+							t.Fatalf("closing audit event = %+v (start id %d)", end, res.AuditID)
+						}
+						if ev.DryRun != effDry {
+							t.Fatalf("audit dry_run=%v, want %v", ev.DryRun, effDry)
+						}
 					}
 					// ParamsRedacted ([]byte) zusätzlich als Text prüfen:
 					// json.Marshal schreibt es als Base64.
-					if b, _ := json.Marshal(ev); strings.Contains(string(b), canary) || strings.Contains(string(ev.ParamsRedacted), canary) {
-						t.Fatalf("secret in audit event: %s", b)
+					for _, ev := range evs {
+						if b, _ := json.Marshal(ev); strings.Contains(string(b), canary) || strings.Contains(string(ev.ParamsRedacted), canary) {
+							t.Fatalf("secret in audit event: %s", b)
+						}
 					}
 
 					// Wirkung: Trockenlauf, R0 und Ablehnung verändern nichts;

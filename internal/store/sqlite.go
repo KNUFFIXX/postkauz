@@ -167,6 +167,9 @@ func lockShared(dbPath string) (*flock.Lock, error) {
 func (s *SQLite) lockExclusive() error {
 	s.plock.Release()
 	s.plock = nil
+	if testHookUnlocked != nil {
+		testHookUnlocked()
+	}
 	x, err := flock.TryLock(ProcessLockPath(s.path))
 	if err == nil {
 		s.plock = x
@@ -180,6 +183,11 @@ func (s *SQLite) lockExclusive() error {
 	}
 	return fmt.Errorf("store: %w", err)
 }
+
+// testHookUnlocked läuft in lockExclusive zwischen Freigabe der geteilten
+// und Versuch der exklusiven Sperre (nur Tests: ein anderer Prozess
+// migriert genau in diesem Fenster).
+var testHookUnlocked func()
 
 // lockSharedAgain kehrt nach einer Migration zur geteilten Sperre zurück.
 // Zwischen Freigabe und neuer Sperre kann ein anderer Prozess

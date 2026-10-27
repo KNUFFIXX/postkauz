@@ -187,7 +187,7 @@ func TestAuditVerifyLegacyFormat(t *testing.T) {
 		t.Fatalf("verify legacy = %+v", v)
 	}
 	// Eine veränderte Zeile im alten Format fällt ebenfalls auf.
-	_ = os.WriteFile(file, bytes.Replace(d.content, []byte(`"result":"ok"`), []byte(`"result":"error"`), 1), 0o600)
+	_ = os.WriteFile(file, bytes.Replace(d.content, []byte(`"result":"started"`), []byte(`"result":"error"`), 1), 0o600)
 	res, _ = e.run(t, adminKey, "audit.verify", map[string]any{})
 	if v := res.Output.(AuditVerifyOutput); v.Status != "mismatch" || len(v.Problems) != 1 || v.Problems[0].Problem != AuditFileChanged ||
 		v.Problems[0].Line != 1 {

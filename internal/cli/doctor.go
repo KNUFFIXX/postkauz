@@ -59,11 +59,15 @@ type DoctorReport struct {
 	// Audit-Export (S1.11): Ziel aus der Konfiguration, letzter Export,
 	// Tage mit Einträgen ohne Export. Der tägliche Export läuft als
 	// Windows-Aufgabe bzw. systemd-Timer (README, "Daily audit export").
-	AuditExportDir       string          `json:"audit_export_dir"`
-	AuditLastExport      string          `json:"audit_last_export,omitempty"`
-	AuditExportLocation  string          `json:"audit_export_location,omitempty"`
-	AuditDaysNotExported int             `json:"audit_days_not_exported"`
-	Accounts             []DoctorAccount `json:"accounts"`
+	AuditExportDir       string `json:"audit_export_dir"`
+	AuditLastExport      string `json:"audit_last_export,omitempty"`
+	AuditExportLocation  string `json:"audit_export_location,omitempty"`
+	AuditDaysNotExported int    `json:"audit_days_not_exported"`
+	// AuditUnfinished: Aufrufe, deren Start-Eintrag älter als
+	// auditUnfinishedAge ist und keinen Abschluss hat (A1: Absturz im
+	// Handler oder gescheiterter Abschluss-Eintrag).
+	AuditUnfinished int             `json:"audit_unfinished_calls"`
+	Accounts        []DoctorAccount `json:"accounts"`
 	// Policy-Datei (S2.1, A02 E8): Pfad, Zustand (ok | default = keine
 	// Datei, eingebaute Standards | invalid), SHA-256, Version in der
 	// Tabelle policies (0 = noch nicht eingetragen; das nächste Kommando
@@ -362,8 +366,19 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 // nicht exportiert ist, ergibt eine Warnung (der tägliche Export fehlt).
 const auditExportStale = 48 * time.Hour
 
-// doctorAudit meldet den Stand des Audit-Exports.
+// auditUnfinishedAge: Ein Start-Eintrag ohne Abschluss, der älter ist,
+// zählt als abgebrochener Aufruf (A1). Lange Läufe (sync --watch) schreiben
+// je Runde eigene Einträge; ein einzelner Aufruf dauert selten länger.
+const auditUnfinishedAge = 10 * time.Minute
+
+// doctorAudit meldet den Stand des Audit-Exports und abgebrochene Aufrufe.
 func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
+	// Vor Migration 0018 gibt es keine Start-Einträge (Fehler = alte Tabelle).
+	if n, err := db.AuditOpenStarts(ctx, now.Add(-auditUnfinishedAge)); err == nil && n > 0 {
+		rep.AuditUnfinished = n
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("audit: %s started more than 10 minutes ago without an end entry (crash or a failed audit write); see: audit --result started",
+			plural(n, "call", "calls")))
+	}
 	done, err := db.AuditExports(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
@@ -464,6 +479,9 @@ func printDoctor(w io.Writer, r DoctorReport) {
 			fmt.Fprintf(w, "audit:     last export %s to %s; %s not exported yet [audit.export_dir = %s]\n", r.AuditLastExport, r.AuditExportLocation, plural(r.AuditDaysNotExported, "day", "days"), dir)
 		} else {
 			fmt.Fprintf(w, "audit:     never exported; %s not exported yet [audit.export_dir = %s]\n", plural(r.AuditDaysNotExported, "day", "days"), dir)
+		}
+		if r.AuditUnfinished > 0 {
+			fmt.Fprintf(w, "audit:     %s without an end entry\n", plural(r.AuditUnfinished, "call", "calls"))
 		}
 	}
 	if len(r.Accounts) > 0 {

@@ -28,6 +28,9 @@ const (
 type Result string
 
 const (
+	// ResultStarted steht am Eintrag vor dem Handler (seit Migration 0018,
+	// A1 Variante A); das Endergebnis trägt der Abschluss-Eintrag mit RefID.
+	ResultStarted       Result = "started"
 	ResultOK            Result = "ok"
 	ResultDenied        Result = "denied"
 	ResultNeedsApproval Result = "needs_approval"
@@ -54,6 +57,10 @@ type Event struct {
 	// die Entscheidung fiel (A02, E8; Tabelle policies). 0 = unbekannt
 	// (Einträge vor S2.1, Werkzeuge ohne Richtlinie).
 	PolicyVersion int64
+	// RefID verweist im Abschluss-Eintrag auf den Start-Eintrag desselben
+	// Aufrufs (seit Migration 0018); 0 an Start-, Policy- und
+	// Systemeinträgen.
+	RefID int64
 }
 
 // Writer schreibt Ereignisse. Implementierungen dürfen nur anhängen.

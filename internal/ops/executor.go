@@ -19,7 +19,7 @@ import (
 
 // Executor führt Operationen durch die feste Kette aus:
 //
-//	Scope + Policy  →  (Freigabe, ab Schnitt 2)  →  Audit  →  Handler
+//	Scope + Policy (+ Eingabe)  →  Freigabe (R3: needs_approval)  →  Audit (started)  →  Handler  →  Audit (Abschluss)
 //
 // Keine Oberfläche darf einen Handler direkt aufrufen; Operation.Handler
 // anzufassen ist ein Review-Fehler (Regel in CLAUDE.md). Der Vertragstest
@@ -41,6 +41,13 @@ type Executor struct {
 	// ohne Panic-Wert, ohne Argumente im Stack); die CLI schreibt ihn ins
 	// Log. nil = nur der Fehler an den Aufrufer.
 	OnPanic func(op string, r crash.Report)
+	// OnAuditError erfährt, dass der Abschluss-Eintrag eines Aufrufs nicht
+	// geschrieben werden konnte (startID = sein Start-Eintrag); das
+	// Ergebnis geht trotzdem an den Aufrufer. nil = nur doctor zählt es.
+	OnAuditError func(op string, startID int64, err error)
+	// Rules sind die Regeln der Policy-Datei für policy.CheckInput (A9);
+	// nil = policy.DefaultRules.
+	Rules *policy.Rules
 }
 
 // ErrInternal: Der Handler oder einer seiner Arbeitsschritte ist
@@ -172,12 +179,27 @@ func (x *Executor) appendAudit(ctx context.Context, ev audit.Event) (int64, erro
 	return 0, x.Audit.Append(ctx, ev)
 }
 
-// auditGrace begrenzt das Nachtragen des Fehler-Ereignisses nach einem
-// abgebrochenen Aufruf.
+// auditGrace begrenzt das Schreiben des Abschluss-Eintrags nach einem
+// abgebrochenen Aufruf (Strg+C).
 const auditGrace = 5 * time.Second
 
-// Execute führt die Operation aus. Schlägt das Schreiben des Audit-Eintrags
-// fehl, läuft der Handler nicht (fail closed).
+// Execute führt die Operation aus (A1 Variante A, E12; A9):
+//
+//  1. Widerruf/Ablauf des Schlüssels, Policy (Scope, Mensch, Risiko),
+//     Eingabe gegen das Schema, dann die Eingabe selbst gegen die Policy
+//     (Operation.PolicyInput → policy.CheckInput). Scheitert einer dieser
+//     Schritte, entsteht genau ein Audit-Eintrag (denied, needs_approval
+//     bzw. error mit Grund invalid_input) und der Handler läuft nicht.
+//  2. Sonst der Start-Eintrag (result started). Scheitert er, läuft der
+//     Handler nicht (fail closed).
+//  3. Handler, danach immer der Abschluss-Eintrag (ok | denied | error) mit
+//     eigenem Zeitstempel, Dauer und ref_id auf den Start-Eintrag, auch
+//     nach Strg+C (Frist auditGrace). Scheitert nur der Abschluss, kommt
+//     das Ergebnis trotzdem zurück; OnAuditError erfährt davon, und doctor
+//     zählt Start-Einträge ohne Abschluss.
+//
+// Redact sieht nur Eingaben, die das Schema bestanden haben; eine
+// ungültige Eingabe steht mit leeren Parametern im Audit.
 func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	op, err := x.Registry.Get(req.Operation)
 	if err != nil {
@@ -192,8 +214,16 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	dryRun := policy.EffectiveDryRun(req.Key, req.DryRun)
 	dec := policy.Check(req.Key, op.Requirement(), dryRun)
 
+	// Die Eingabe muss dem InputSchema entsprechen, egal über welche
+	// Oberfläche sie kam (CLI, MCP, später REST), und dem engeren Schema
+	// der Oberfläche. Geprüft wird vor Redact: Redact-Funktionen dürfen von
+	// einer gültigen Eingabe ausgehen.
+	verr := op.validateInput(req.Input)
+	if verr == nil && req.Narrow != nil {
+		verr = validateAgainst(req.Narrow, req.Input)
+	}
 	params, targets := json.RawMessage(`{}`), []string(nil)
-	if op.Redact != nil {
+	if op.Redact != nil && verr == nil {
 		params, targets = op.Redact(req.Input)
 	}
 	ev := audit.Event{
@@ -208,74 +238,115 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		DryRun:         dec.DryRun,
 		PolicyVersion:  x.PolicyVersion,
 	}
+	// single schreibt den einzigen Eintrag eines Aufrufs, der den Handler
+	// nicht erreicht.
+	single := func(res audit.Result, reason string) (int64, error) {
+		e := ev
+		e.Result, e.Reason = res, reason
+		id, err := x.appendAudit(ctx, e)
+		if err != nil {
+			return 0, fmt.Errorf("ops: audit: %w", err)
+		}
+		return id, nil
+	}
 
 	// Ein Schlüssel kann während einer langen Sitzung widerrufen werden
 	// oder ablaufen: vor jedem Aufruf prüfen (mit kurzem Zwischenspeicher).
 	if x.Keys != nil {
 		if kerr := x.Keys.Check(ctx, req.Key, start); kerr != nil {
-			ev.Result, ev.Reason = audit.ResultDenied, keyReason(kerr)
-			if ev.Reason == "key_check_failed" {
-				ev.Result = audit.ResultError
+			res, reason := audit.ResultDenied, keyReason(kerr)
+			if reason == "key_check_failed" {
+				res = audit.ResultError
 			}
-			if _, err := x.appendAudit(ctx, ev); err != nil {
-				return Result{}, fmt.Errorf("ops: audit: %w", err)
+			if _, err := single(res, reason); err != nil {
+				return Result{}, err
 			}
 			return Result{}, kerr
 		}
 	}
 
 	if !dec.Allowed() {
-		ev.Result = audit.ResultDenied
+		res := audit.ResultDenied
 		if dec.Outcome == policy.NeedsApproval {
-			ev.Result = audit.ResultNeedsApproval
+			res = audit.ResultNeedsApproval
 		}
-		id, err := x.appendAudit(ctx, ev)
+		id, err := single(res, dec.Reason)
 		if err != nil {
-			return Result{}, fmt.Errorf("ops: audit: %w", err)
+			return Result{}, err
 		}
 		return Result{Decision: dec, AuditID: id}, &PolicyError{Operation: op.Name, Scope: op.Scope, Decision: dec, AuditID: id}
 	}
 
-	ev.Result = audit.ResultOK
+	if verr != nil {
+		ev.Duration = now().Sub(start)
+		id, err := single(audit.ResultError, "invalid_input")
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Decision: dec, AuditID: id}, verr
+	}
+
+	// A9: Was die Eingabe anrichten würde (Zahl der Ziele, Zielordner),
+	// prüft die Policy, nicht der Handler.
+	if op.PolicyInput != nil {
+		facts, ferr := op.PolicyInput(ctx, req.Input)
+		if ferr != nil {
+			ev.Duration = now().Sub(start)
+			id, err := single(audit.ResultError, "policy_input")
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Decision: dec, AuditID: id}, ferr
+		}
+		rules := policy.DefaultRules()
+		if x.Rules != nil {
+			rules = *x.Rules
+		}
+		if in := policy.CheckInput(req.Key, facts, rules); !in.Allowed() {
+			d := policy.Decision{Outcome: in.Outcome, Reason: in.Reason, DryRun: dec.DryRun}
+			id, err := single(audit.ResultDenied, in.Reason)
+			if err != nil {
+				return Result{}, err
+			}
+			return Result{Decision: d, AuditID: id}, &PolicyError{Operation: op.Name, Scope: op.Scope, Decision: d, AuditID: id}
+		}
+	}
+
+	ev.Result = audit.ResultStarted
 	auditID, err := x.appendAudit(ctx, ev)
 	if err != nil {
 		return Result{}, fmt.Errorf("ops: audit: %w", err)
 	}
 
-	// Die Eingabe muss dem InputSchema entsprechen, egal über welche
-	// Oberfläche sie kam (CLI, MCP, später REST). Geprüft wird nach dem
-	// Audit-Eintrag: Auch ein ungültiger Aufruf ist nachvollziehbar.
-	reason := "handler_error"
-	var out any
-	herr := op.validateInput(req.Input)
-	if herr == nil && req.Narrow != nil {
-		herr = validateAgainst(req.Narrow, req.Input)
-	}
+	out, herr := x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress,
+		Key: req.Key, Actor: req.Actor})
+
+	end := ev
+	end.RefID = auditID
+	end.Result = audit.ResultOK
 	if herr != nil {
-		reason = "invalid_input"
-	} else {
-		out, herr = x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress,
-			Key: req.Key, Actor: req.Actor})
-	}
-	if herr != nil {
-		ev.Result = audit.ResultError
-		ev.Reason = reason
+		end.Result, end.Reason = audit.ResultError, "handler_error"
 		var de *DeniedError
 		switch {
 		case errors.Is(herr, ErrInternal):
-			ev.Reason = "panic"
+			end.Reason = "panic"
 		case errors.As(herr, &de):
 			// Fachliche Ablehnung (S2.3): Ergebnis denied mit ihrem Grund.
-			ev.Result, ev.Reason = audit.ResultDenied, de.Reason
+			end.Result, end.Reason = audit.ResultDenied, de.Reason
 		}
-		ev.Duration = now().Sub(start)
-		// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann
-		// schon beendet. Das Nachtragen läuft deshalb ohne dessen Abbruch,
-		// aber mit eigener Frist. Fehler beim Nachtragen dürfen den
-		// Handler-Fehler nicht verdecken.
-		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
-		_, _ = x.appendAudit(actx, ev)
-		cancel()
+	}
+	endAt := now()
+	end.TS = endAt.UTC()
+	end.Duration = endAt.Sub(start)
+	// Der häufigste Handler-Fehler ist ein Abbruch (Strg+C): ctx ist dann
+	// schon beendet. Der Abschluss läuft deshalb ohne dessen Abbruch, aber
+	// mit eigener Frist. Ein Fehler hier verdeckt nie das Ergebnis.
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
+	if _, err := x.appendAudit(actx, end); err != nil && x.OnAuditError != nil {
+		x.OnAuditError(op.Name, auditID, err)
+	}
+	cancel()
+	if herr != nil {
 		// Output trotz Fehler nur mit Opt-in der Operation (OutputOnError,
 		// import.run: Bericht bis zum Abbruch); sonst nil, auch wenn der
 		// Handler etwas liefert.

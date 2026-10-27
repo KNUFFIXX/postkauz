@@ -150,7 +150,8 @@ func auditFlags(cmd *cobra.Command) {
 	f.String("actor", "", "only human | agent | system")
 	f.String("key-id", "", "only this key as shown in the log, e.g. key:assistant-1 or cli")
 	f.String("operation", "", "only this operation, e.g. messages.search")
-	f.String("result", "", "only ok | denied | needs_approval | error")
+	f.String("result", "", "only calls ending in ok | denied | needs_approval | error, or started (no end entry yet)")
+	f.Bool("raw", false, "show every stored entry: start and end of a call as separate lines")
 	f.Int("limit", ops.DefaultAuditLimit, fmt.Sprintf("entries per page (1-%d)", ops.MaxAuditLimit))
 	f.Int64("after-id", 0, "continue after this entry id")
 }
@@ -170,6 +171,9 @@ func auditInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secret
 	}
 	if n, _ := f.GetInt64("after-id"); n > 0 {
 		in["after_id"] = n
+	}
+	if raw, _ := f.GetBool("raw"); raw {
+		in["raw"] = true
 	}
 	b, err := json.Marshal(in)
 	return b, "", err
@@ -212,6 +216,12 @@ func renderAudit(w io.Writer, out any) error {
 		}
 		if e.DryRun {
 			res += " dry-run"
+		}
+		if e.DurationMS > 0 {
+			res += fmt.Sprintf(" %dms", e.DurationMS)
+		}
+		if e.RefID > 0 {
+			res += fmt.Sprintf(" (end of #%d)", e.RefID)
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", e.ID, ts, e.Actor, orDash(termLine(e.Key)), e.Operation, res,
 			orDash(termLine(strings.Join(e.Targets, ","))), termLine(string(e.Params)))

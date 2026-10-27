@@ -385,7 +385,7 @@ func TestAccountsSetAliases(t *testing.T) {
 	if l := out.(AccountsListOutput).Accounts; len(l) != 1 || len(l[0].Aliases) != 2 || l[0].Aliases[0] != "post@example.net" {
 		t.Fatalf("list = %+v", l)
 	}
-	last := e.au.Events()[len(e.au.Events())-2] // accounts.set vor accounts.list
+	last := e.au.Events()[len(e.au.Events())-3] // Abschluss von accounts.set vor Start und Abschluss von accounts.list
 	if p := string(last.ParamsRedacted); last.Operation != "accounts.set" || strings.Contains(p+strings.Join(last.Targets, ","), "example") ||
 		!strings.Contains(p, `"aliases_count":4`) {
 		t.Fatalf("audit = %+v (params %s)", last, p)

@@ -14,6 +14,9 @@ import (
 type AuditRecord struct {
 	ID int64
 	audit.Event
+	// EndID ist in AuditCalls die ID des Abschluss-Eintrags (0 = keiner,
+	// der Aufruf läuft noch oder brach ab); sonst immer 0.
+	EndID int64
 }
 
 // AuditFilter wählt Audit-Einträge (alle Felder optional).
@@ -28,14 +31,15 @@ type AuditFilter struct {
 }
 
 const auditCols = `id, ts, actor_type, COALESCE(api_key_id,''), COALESCE(scope,''), operation, params_redacted, targets,
-	result, COALESCE(reason,''), dry_run, COALESCE(duration_ms, 0), COALESCE(policy_version, 0)`
+	result, COALESCE(reason,''), dry_run, COALESCE(duration_ms, 0), COALESCE(policy_version, 0),
+	COALESCE(ref_id, 0)`
 
 func scanAudit(sc interface{ Scan(...any) error }) (AuditRecord, error) {
 	var r AuditRecord
 	var ts, dur int64
 	var actor, params, targets, result string
 	var dry int
-	if err := sc.Scan(&r.ID, &ts, &actor, &r.KeyID, &r.Scope, &r.Operation, &params, &targets, &result, &r.Reason, &dry, &dur, &r.PolicyVersion); err != nil {
+	if err := sc.Scan(&r.ID, &ts, &actor, &r.KeyID, &r.Scope, &r.Operation, &params, &targets, &result, &r.Reason, &dry, &dur, &r.PolicyVersion, &r.RefID); err != nil {
 		return r, err
 	}
 	r.TS = unixMilliUTC(ts)
@@ -96,6 +100,81 @@ func (s *SQLite) AuditQuery(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// AuditCalls liefert je Aufruf eine Zeile (A1 Variante A, seit Migration
+// 0018): den Start-Eintrag mit Ergebnis, Grund und Dauer seines Abschlusses
+// (EndID). Einträge ohne Verweis, die kein Start sind (Policy-Ablehnungen,
+// Systemereignisse, Einträge vor der Migration), erscheinen unverändert;
+// Abschluss-Einträge nur über ihren Start. Ein Start ohne Abschluss bleibt
+// started. Since, Until, Actor, Key, Operation und AfterID gelten für den
+// Start, Result für das Endergebnis; aufsteigend nach der ID des Starts.
+func (s *SQLite) AuditCalls(ctx context.Context, f AuditFilter) ([]AuditRecord, error) {
+	where := []string{"a.ref_id IS NULL"}
+	var args []any
+	add := func(cond string, v any) { where = append(where, cond); args = append(args, v) }
+	if !f.Since.IsZero() {
+		add("a.ts >= ?", f.Since.UnixMilli())
+	}
+	if !f.Until.IsZero() {
+		add("a.ts < ?", f.Until.UnixMilli())
+	}
+	if f.Actor != "" {
+		add("a.actor_type = ?", f.Actor)
+	}
+	if f.Key != "" {
+		add("a.api_key_id = ?", f.Key)
+	}
+	if f.Operation != "" {
+		add("a.operation = ?", f.Operation)
+	}
+	if f.Result != "" {
+		add("COALESCE(c.result, a.result) = ?", f.Result)
+	}
+	if f.AfterID > 0 {
+		add("a.id > ?", f.AfterID)
+	}
+	q := `SELECT a.id, a.ts, a.actor_type, COALESCE(a.api_key_id,''), COALESCE(a.scope,''), a.operation, a.params_redacted,
+		a.targets, COALESCE(c.result, a.result), COALESCE(c.reason, a.reason, ''), a.dry_run,
+		COALESCE(c.duration_ms, a.duration_ms, 0), COALESCE(a.policy_version, 0), 0, COALESCE(c.id, 0)
+		FROM audit_events a LEFT JOIN audit_events c ON c.ref_id = a.id
+		WHERE ` + strings.Join(where, " AND ") + ` ORDER BY a.id`
+	if f.Limit > 0 {
+		q += fmt.Sprintf(` LIMIT %d`, f.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditRecord
+	for rows.Next() {
+		var end int64
+		r, err := scanAudit(scanExtra{rows, &end})
+		if err != nil {
+			return nil, err
+		}
+		r.EndID = end
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// scanExtra hängt an die Spalten von scanAudit weitere Ziele an.
+type scanExtra struct {
+	sc    interface{ Scan(...any) error }
+	extra *int64
+}
+
+func (x scanExtra) Scan(dest ...any) error { return x.sc.Scan(append(dest, x.extra)...) }
+
+// AuditOpenStarts zählt Start-Einträge ohne Abschluss, die vor before
+// begannen (doctor, A1: abgestürzte oder abgebrochene Aufrufe).
+func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events a WHERE a.result = 'started' AND a.ts < ?
+		AND NOT EXISTS (SELECT 1 FROM audit_events c WHERE c.ref_id = a.id)`, before.UnixMilli()).Scan(&n)
+	return n, err
 }
 
 // AuditDays liefert die Tage (UTC, YYYY-MM-DD) mit Audit-Einträgen, aufsteigend.
@@ -183,9 +262,10 @@ func (w sqliteAudit) AppendID(ctx context.Context, e audit.Event) (int64, error)
 func appendAudit(ctx context.Context, q querier, e audit.Event, params []byte, targets []byte) (int64, error) {
 	var id int64
 	err := q.QueryRowContext(ctx, `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation,
-		params_redacted, targets, result, reason, dry_run, duration_ms, policy_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		params_redacted, targets, result, reason, dry_run, duration_ms, policy_version, ref_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 		e.TS.UnixMilli(), string(e.ActorType), nullStr(e.KeyID), nullStr(e.Scope), e.Operation, string(params), string(targets),
-		string(e.Result), nullStr(e.Reason), boolInt(e.DryRun), durationMilli(e.Duration), nullInt(e.PolicyVersion)).Scan(&id)
+		string(e.Result), nullStr(e.Reason), boolInt(e.DryRun), durationMilli(e.Duration), nullInt(e.PolicyVersion),
+		nullInt(e.RefID)).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("store: audit append: %w", err)
 	}

@@ -17,10 +17,11 @@ import (
 )
 
 // T1a Punkt 4 (A14): Ein Lauf, der vor Mitternacht UTC beginnt und danach
-// endet (wie `sync --watch`), schreibt seinen Abschluss-Eintrag mit dem
-// Zeitstempel des Beginns. Ist der alte Tag schon abgeschlossen exportiert,
-// darf dieser verspätete Eintrag dessen Datei nicht verändern; er kommt in
-// den nächsten offenen Tag, und audit verify bleibt ok.
+// endet (wie `sync --watch`), darf einen schon abgeschlossen exportierten
+// Tag nicht verändern. Bis T1a trug sein Abschluss den Zeitstempel des
+// Beginns und wanderte deshalb in den nächsten offenen Tag; seit A1
+// (Migration 0018) trägt der Abschluss seinen eigenen Zeitstempel und
+// landet ohnehin dort. audit verify bleibt ok.
 func TestAuditLateEntryKeepsExportedDay(t *testing.T) {
 	e := newAdminEnv(t)
 	var mu sync.Mutex
@@ -61,14 +62,15 @@ func TestAuditLateEntryKeepsExportedDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Der Lauf endet: Abschluss-Eintrag mit Zeitstempel 23:50 des Vortags.
+	// Der Lauf endet: Abschluss-Eintrag mit eigenem Zeitstempel (06:00).
 	setClock(time.Date(2026, 3, 10, 6, 0, 0, 0, time.UTC))
 	close(release)
 	if err := <-done; err == nil {
 		t.Fatal("test.watch should end with an error")
 	}
 	recs, _ := e.st.AuditQuery(t.Context(), auditFilterOp("test.watch"))
-	if len(recs) != 2 || recs[1].Result != audit.ResultError || recs[1].TS.Day() != 9 {
+	if len(recs) != 2 || recs[0].Result != audit.ResultStarted || recs[0].TS.Day() != 9 || recs[1].Result != audit.ResultError ||
+		recs[1].TS.Day() != 10 || recs[1].RefID != recs[0].ID || recs[1].Duration != 6*time.Hour+10*time.Minute {
 		t.Fatalf("late entry not as expected: %+v", recs)
 	}
 	res, err := e.run(t, adminKey, "audit.export", map[string]any{})

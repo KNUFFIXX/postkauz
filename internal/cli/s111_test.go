@@ -55,7 +55,9 @@ func TestDoctorReportsAuditExport(t *testing.T) {
 		t.Fatalf("export: %d %s %s", code, out, errs)
 	}
 	rep = doctorJSON(t)
-	if rep.AuditLastExport == "" || rep.AuditExportLocation != dir || rep.AuditDaysNotExported != 0 {
+	// Der Abschluss-Eintrag des Exports selbst entsteht nach dem Schreiben
+	// der Dateien (A1, Migration 0018): Der heutige Tag bleibt offen.
+	if rep.AuditLastExport == "" || rep.AuditExportLocation != dir || rep.AuditDaysNotExported != 1 {
 		t.Fatalf("after export: %+v", rep)
 	}
 	if _, out, _ := run(t, "doctor"); !strings.Contains(out, "audit:     last export ") {
