@@ -33,6 +33,7 @@ type SearchHitOutput struct {
 	Flags          []string `json:"flags"`
 	HasAttachments bool     `json:"has_attachments"`
 	DeletedRemote  bool     `json:"deleted_remote"`
+	RemoteStatus   string   `json:"remote_status"` // A4: present | imported_only | deleted_remote
 	Score          float64  `json:"score"`
 	// Cursor ist die Position nach diesem Treffer: Mit ihm setzt eine
 	// Folgeanfrage genau dahinter fort (auch mitten in einer NDJSON-Liste).
@@ -76,9 +77,9 @@ const searchOutputSchema = `{
       "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"}, "subject": {"type": "string"},
       "snippet": {"type": "string"},
       "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
-      "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "score": {"type": "number"},
+      "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]}, "score": {"type": "number"},
       "cursor": {"type": "string"}},
-      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "score", "cursor"]}},
+      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "remote_status", "score", "cursor"]}},
     "total": {"type": "integer"}, "next_cursor": {"type": "string"},
     "order": {"type": "string", "enum": ["relevance", "date"]}, "index_pending": {"type": "integer"},
     "explain": {"type": "object", "properties": {
@@ -219,7 +220,7 @@ func runSearch(ctx context.Context, accounts AccountRepo, repo SearchRepo, in se
 		c := search.Cursor{Fingerprint: fp, Now: params.Now.UnixMilli(), Score: h.Score, ID: h.ID}
 		o := SearchHitOutput{ID: h.ID, Account: h.Account, ThreadID: h.ThreadID, Date: rfc3339(h.Date), From: h.From,
 			Subject: h.Subject, Snippet: h.Snippet, Flags: []string{}, HasAttachments: h.HasAttachments,
-			DeletedRemote: h.DeletedRemote, Score: h.Score, Cursor: c.Encode()}
+			DeletedRemote: h.DeletedRemote, RemoteStatus: h.RemoteStatus, Score: h.Score, Cursor: c.Encode()}
 		for _, f := range []struct {
 			on   bool
 			name string

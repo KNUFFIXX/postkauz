@@ -110,3 +110,66 @@ func TestMigrateRereadsSchemaUnderExclusiveLock(t *testing.T) {
 		t.Fatalf("snapshots = %v, want exactly one", snaps)
 	}
 }
+
+// A4: remote_status sagt, wo eine Nachricht liegt. Nur importiert →
+// imported_only; gespiegelt → present; auf dem Server gelöscht (ohne
+// Import) → deleted_remote. Gleich in MessageByID, Suche und Thread.
+func TestRemoteStatus(t *testing.T) {
+	s := openMem(t)
+	ctx := context.Background()
+	acct := newAccount(t, s)
+	if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+		t.Fatal(err)
+	}
+	boxes, _ := s.Mailboxes(ctx, acct)
+	if _, err := s.ApplyImport(ctx, ImportBatch{AccountID: acct,
+		New: []ImportNew{{Msg: newMsg(0, "imp@example.org", true), Folders: []ImportFolderFlags{{Folder: "Archiv"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: boxes[0].ID, New: []NewMessage{newMsg(7, "srv@example.org", false)}}); err != nil {
+		t.Fatal(err)
+	}
+	status := func(mid string) (string, string, string) {
+		t.Helper()
+		id, ok, err := s.MessageByHeaderID(ctx, acct, mid)
+		if err != nil || !ok {
+			t.Fatalf("%s: %v %v", mid, ok, err)
+		}
+		m, err := s.MessageByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var hit string
+		res, err := s.Search(ctx, SearchParams{AccountID: acct, Limit: 50, Now: time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range res.Hits {
+			if h.ID == id {
+				hit = h.RemoteStatus
+			}
+		}
+		var thr string
+		if _, msgs, err := s.ThreadByID(ctx, m.ThreadID); err == nil {
+			for _, tm := range msgs {
+				if tm.ID == id {
+					thr = tm.RemoteStatus
+				}
+			}
+		} else {
+			t.Fatal(err)
+		}
+		return m.RemoteStatus, hit, thr
+	}
+	for mid, want := range map[string]string{"imp@example.org": RemoteImportedOnly, "srv@example.org": RemotePresent} {
+		if a, b, c := status(mid); a != want || b != want || c != want {
+			t.Fatalf("%s: %s/%s/%s, want %s", mid, a, b, c, want)
+		}
+	}
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: boxes[0].ID, Removed: []uint32{7}}); err != nil {
+		t.Fatal(err)
+	}
+	if a, b, c := status("srv@example.org"); a != RemoteDeleted || b != RemoteDeleted || c != RemoteDeleted {
+		t.Fatalf("after deletion on the server: %s/%s/%s", a, b, c)
+	}
+}

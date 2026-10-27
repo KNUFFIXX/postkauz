@@ -358,6 +358,7 @@ type ThreadMessage struct {
 	HasAttachments bool
 	Snippet        string
 	DeletedRemote  bool
+	RemoteStatus   string // present | imported_only | deleted_remote (A4)
 }
 
 // ThreadByID liefert einen Thread und seine Nachrichten nach Datum.
@@ -382,7 +383,7 @@ func (s *SQLite) ThreadByID(ctx context.Context, id int64) (Thread, []ThreadMess
 	}
 	_ = json.Unmarshal([]byte(parts), &t.Participants)
 	rows, err := s.db.QueryContext(ctx, `SELECT id, `+msgDate+`, from_addr, subject, flag_seen, flag_flagged, has_attachments,
-		snippet, deleted_remote_at FROM messages WHERE thread_id = ? ORDER BY `+msgDate+`, id`, id)
+		snippet, deleted_remote_at, `+remoteStatusExpr+` FROM messages m WHERE thread_id = ? ORDER BY `+msgDate+`, id`, id)
 	if err != nil {
 		return t, nil, err
 	}
@@ -392,7 +393,7 @@ func (s *SQLite) ThreadByID(ctx context.Context, id int64) (Thread, []ThreadMess
 		var m ThreadMessage
 		var d, del sql.NullInt64
 		var seen, flagged, att int
-		if err := rows.Scan(&m.ID, &d, &m.From, &m.Subject, &seen, &flagged, &att, &m.Snippet, &del); err != nil {
+		if err := rows.Scan(&m.ID, &d, &m.From, &m.Subject, &seen, &flagged, &att, &m.Snippet, &del, &m.RemoteStatus); err != nil {
 			return t, nil, err
 		}
 		if d.Valid {

@@ -23,6 +23,7 @@ type ThreadMessageOutput struct {
 	Flags          []string `json:"flags"`
 	HasAttachments bool     `json:"has_attachments"`
 	DeletedRemote  bool     `json:"deleted_remote"`
+	RemoteStatus   string   `json:"remote_status"` // A4: present | imported_only | deleted_remote
 	Snippet        string   `json:"snippet"`
 	// Text ist der neue Text ohne Zitate (nur mit text=true).
 	Text              *string `json:"text,omitempty"`
@@ -87,10 +88,10 @@ func ThreadsGet(msgs MessageRepo) Operation {
     "messages": {"type": "array", "items": {"type": "object", "properties": {
       "id": {"type": "integer"}, "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"},
       "subject": {"type": "string"}, "flags": {"type": "array", "items": {"type": "string"}},
-      "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "snippet": {"type": "string"},
+      "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]}, "snippet": {"type": "string"},
       "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}, "alternative_mismatch": {"type": "boolean"},
       "truncated": {"type": "boolean"}},
-      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "snippet"]}},
+      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "remote_status", "snippet"]}},
     "messages_omitted": {"type": "integer"}
   },
   "required": ["untrusted", "source", "notice", "id", "account", "subject", "message_count", "participants", "messages", "messages_omitted"]
@@ -158,7 +159,7 @@ func ThreadsGet(msgs MessageRepo) Operation {
 			}
 			for _, m := range list {
 				tm := ThreadMessageOutput{ID: m.ID, Date: rfc3339(m.Date), From: m.From, Subject: m.Subject, Flags: []string{},
-					HasAttachments: m.HasAttachments, DeletedRemote: m.DeletedRemote, Snippet: m.Snippet}
+					HasAttachments: m.HasAttachments, DeletedRemote: m.DeletedRemote, RemoteStatus: m.RemoteStatus, Snippet: m.Snippet}
 				if m.Seen {
 					tm.Flags = append(tm.Flags, "seen")
 				}

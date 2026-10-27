@@ -49,8 +49,30 @@ type Message struct {
 	ListID          string
 	AuthResults     string // Authentication-Results, oberste zuerst, je Zeile
 	DeletedRemoteAt time.Time
-	Locations       []MessageLocation
+	// RemoteStatus: present | imported_only | deleted_remote (A4, T1b;
+	// remoteStatusExpr).
+	RemoteStatus string
+	Locations    []MessageLocation
 }
+
+// Werte von RemoteStatus (A4, T1b): Wo liegt die Nachricht? present:
+// mindestens eine Serverkopie (oder nie als gelöscht vermerkt);
+// imported_only: keine Serverkopie, aber ein Import-Ordner; deleted_remote:
+// sonst (auf dem Server gelöscht). Grenze: Eine auf dem Server gelöschte
+// und zusätzlich importierte Nachricht gilt als imported_only, sobald keine
+// Serverkopie mehr bekannt ist.
+const (
+	RemotePresent      = "present"
+	RemoteImportedOnly = "imported_only"
+	RemoteDeleted      = "deleted_remote"
+)
+
+// remoteStatusExpr berechnet RemoteStatus für die Zeile m der Tabelle
+// messages (zwei Indexzugriffe, nur für vermerkte Löschungen).
+const remoteStatusExpr = `CASE WHEN m.deleted_remote_at IS NULL
+	OR EXISTS (SELECT 1 FROM message_mailboxes rs WHERE rs.message_id = m.id) THEN 'present'
+	WHEN EXISTS (SELECT 1 FROM message_import_folders ri WHERE ri.message_id = m.id) THEN 'imported_only'
+	ELSE 'deleted_remote' END`
 
 // MessageByID liefert eine Nachricht samt Ordnerkopien.
 func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
@@ -62,10 +84,10 @@ func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.account_id, a.name, m.message_id_header, m.subject, m.from_addr,
 		m.to_addrs, m.cc_addrs, m.reply_to, m.date_header, m.internal_date, m.size, m.flag_seen, m.flag_flagged,
 		m.flag_answered, m.flag_draft, m.keywords, m.has_attachments, m.snippet, m.blob_sha256, m.in_reply_to, m.refs,
-		m.list_id, m.deleted_remote_at, m.thread_id, m.auth_results
+		m.list_id, m.deleted_remote_at, m.thread_id, m.auth_results, `+remoteStatusExpr+`
 		FROM messages m JOIN accounts a ON a.id = m.account_id WHERE m.id = ?`, id).Scan(
 		&m.ID, &m.AccountID, &m.Account, &mid, &m.Subject, &m.From, &to, &cc, &reply, &dh, &idate, &m.Size,
-		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid, &auth)
+		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid, &auth, &m.RemoteStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, fmt.Errorf("%w: id %d", ErrMessageNotFound, id)
 	}

@@ -41,24 +41,28 @@ type MessageLocation struct {
 // Untrusted-Hülle (seit S1.8).
 type MessageOutput struct {
 	Envelope
-	ID             int64             `json:"id"`
-	Account        string            `json:"account"`
-	MessageID      string            `json:"message_id,omitempty"`
-	ThreadID       int64             `json:"thread_id,omitempty"`
-	Subject        string            `json:"subject"`
-	From           string            `json:"from"`
-	To             json.RawMessage   `json:"to"`
-	Cc             json.RawMessage   `json:"cc"`
-	Date           string            `json:"date,omitempty"` // Date-Kopfzeile, sonst INTERNALDATE (RFC 3339)
-	InternalDate   string            `json:"internal_date,omitempty"`
-	Size           int64             `json:"size"`
-	Flags          []string          `json:"flags"` // seen, flagged, answered, draft
-	Keywords       []string          `json:"keywords"`
-	HasAttachments bool              `json:"has_attachments"`
-	DeletedRemote  bool              `json:"deleted_remote"`
-	Mailboxes      []MessageLocation `json:"mailboxes"`
-	Headers        string            `json:"headers,omitempty"` // nur mit headers=true
-	Text           *string           `json:"text,omitempty"`    // nur ohne headers
+	ID             int64           `json:"id"`
+	Account        string          `json:"account"`
+	MessageID      string          `json:"message_id,omitempty"`
+	ThreadID       int64           `json:"thread_id,omitempty"`
+	Subject        string          `json:"subject"`
+	From           string          `json:"from"`
+	To             json.RawMessage `json:"to"`
+	Cc             json.RawMessage `json:"cc"`
+	Date           string          `json:"date,omitempty"` // Date-Kopfzeile, sonst INTERNALDATE (RFC 3339)
+	InternalDate   string          `json:"internal_date,omitempty"`
+	Size           int64           `json:"size"`
+	Flags          []string        `json:"flags"` // seen, flagged, answered, draft
+	Keywords       []string        `json:"keywords"`
+	HasAttachments bool            `json:"has_attachments"`
+	DeletedRemote  bool            `json:"deleted_remote"`
+	// RemoteStatus (A4, T1b): present (mindestens eine Serverkopie),
+	// imported_only (nur importiert) oder deleted_remote (auf dem Server
+	// gelöscht); deleted_remote allein liest sich bei Importen falsch.
+	RemoteStatus string            `json:"remote_status"`
+	Mailboxes    []MessageLocation `json:"mailboxes"`
+	Headers      string            `json:"headers,omitempty"` // nur mit headers=true
+	Text         *string           `json:"text,omitempty"`    // nur ohne headers
 	// TextSource: plain (Klartextteil) oder html (Text aus dem HTML-Teil,
 	// wenn es keinen Klartext gibt); mit strip_quotes ohne Zitate.
 	TextSource string `json:"text_source,omitempty"`
@@ -112,7 +116,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "size": {"type": "integer"},
     "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
     "keywords": {"type": "array", "items": {"type": "string"}},
-    "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"},
+    "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]},
     "mailboxes": {"type": "array", "items": {"type": "object", "properties": {
       "mailbox": {"type": "string"}, "role": {"type": "string"}, "uid": {"type": "integer"}},
       "required": ["mailbox", "role", "uid"]}},
@@ -130,7 +134,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "attachments": {"type": "array", "items": ` + attachmentSchema + `}
   },
   "required": ["untrusted", "source", "notice", "id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords",
-    "has_attachments", "deleted_remote", "mailboxes", "hidden_text_removed", "alternative_mismatch", "truncated", "auth",
+    "has_attachments", "deleted_remote", "remote_status", "mailboxes", "hidden_text_removed", "alternative_mismatch", "truncated", "auth",
     "attachments"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
@@ -183,7 +187,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			out := MessageOutput{Envelope: emailEnvelope(), Auth: parseAuthResults(m.AuthResults), Attachments: []AttachmentOutput{},
 				ID: m.ID, Account: m.Account, MessageID: m.MessageID, ThreadID: m.ThreadID, Subject: m.Subject, From: m.From,
 				To: arr(m.To), Cc: arr(m.Cc), Size: m.Size, Keywords: m.Keywords, HasAttachments: m.HasAttachments,
-				DeletedRemote: !m.DeletedRemoteAt.IsZero(), Flags: []string{}, Mailboxes: []MessageLocation{}}
+				DeletedRemote: !m.DeletedRemoteAt.IsZero(), RemoteStatus: m.RemoteStatus, Flags: []string{}, Mailboxes: []MessageLocation{}}
 			if out.Keywords == nil {
 				out.Keywords = []string{}
 			}

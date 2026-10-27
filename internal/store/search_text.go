@@ -339,7 +339,7 @@ func (s *SQLite) searchText(ctx context.Context, p SearchParams) (SearchResult, 
 func (s *SQLite) hitRows(ctx context.Context, ids []any) (map[int64]SearchHit, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.account_id, a.name, COALESCE(m.thread_id, 0), `+dateExpr+`,
 		m.from_addr, m.subject, m.snippet, m.flag_seen, m.flag_flagged, m.flag_answered, m.flag_draft, m.has_attachments,
-		m.deleted_remote_at IS NOT NULL
+		m.deleted_remote_at IS NOT NULL, `+remoteStatusExpr+`
 		FROM messages m JOIN accounts a ON a.id = m.account_id WHERE m.id IN (`+placeholders(len(ids))+`)`, ids...)
 	if err != nil {
 		return nil, err
@@ -351,7 +351,7 @@ func (s *SQLite) hitRows(ctx context.Context, ids []any) (map[int64]SearchHit, e
 		var date int64
 		var seen, flagged, answered, draft, att, deleted int
 		if err := rows.Scan(&h.ID, &h.AccountID, &h.Account, &h.ThreadID, &date, &h.From, &h.Subject, &h.Snippet,
-			&seen, &flagged, &answered, &draft, &att, &deleted); err != nil {
+			&seen, &flagged, &answered, &draft, &att, &deleted, &h.RemoteStatus); err != nil {
 			return nil, err
 		}
 		if date > 0 {
