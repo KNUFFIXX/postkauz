@@ -333,3 +333,35 @@ func summary(ms []MessageMeta) []string {
 	}
 	return out
 }
+
+// A12.4, Kanarientest: Der Server spiegelt nach erfolgreicher Anmeldung
+// das Passwort in Fehlerantworten (Response-Code, Freitext, unlesbare
+// Antwort). Kein Fehler dieser Schicht enthält es.
+func TestServerTextNeverInErrors(t *testing.T) {
+	s := newStrictServer(t, 3, "")
+	c := dialStrict(t, s)
+	answers := []func(io.Writer, string){
+		func(w io.Writer, tag string) { fmt.Fprintf(w, "%s NO [%s] wrong %s\r\n", tag, testPass, testPass) },
+		func(w io.Writer, tag string) { fmt.Fprintf(w, "%s BAD [ALERT] your password is %s\r\n", tag, testPass) },
+		func(w io.Writer, tag string) { fmt.Fprintf(w, "* 1 FETCH (UID %s)\r\n%s OK done\r\n", testPass, tag) },
+	}
+	for i, a := range answers {
+		s.fetch = a
+		_, err := c.FetchMeta([]uint32{1}, MetaOptions{})
+		if err == nil {
+			t.Fatalf("answer %d: no error", i)
+		}
+		if strings.Contains(err.Error(), testPass) {
+			t.Fatalf("answer %d: password in error: %v", i, err)
+		}
+		if i == 1 && !strings.Contains(err.Error(), "code ALERT") {
+			t.Fatalf("known code lost: %v", err)
+		}
+		if i == 0 && !strings.Contains(err.Error(), "code other") {
+			t.Fatalf("unknown code not replaced: %v", err)
+		}
+		if errors.Is(err, provider.ErrProtocol) || errors.Is(err, provider.ErrConnection) {
+			c = dialStrict(t, s) // Verbindung nach unlesbarer Antwort neu
+		}
+	}
+}

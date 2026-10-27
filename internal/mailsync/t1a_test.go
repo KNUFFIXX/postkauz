@@ -1,11 +1,16 @@
 package mailsync
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -25,6 +30,17 @@ type lossyServer struct {
 	noInbox    atomic.Bool
 	shortUIDs  atomic.Bool
 	searchSeen atomic.Int32
+	// echoPassword: SELECT von Archiv antwortet mit dem Passwort im
+	// Response-Code und im Freitext (A12.4, Kanarientest).
+	echoPassword atomic.Bool
+}
+
+func (l *lossySession) Select(mb string, o *imap.SelectOptions) (*imap.SelectData, error) {
+	if l.s.echoPassword.Load() && mb == "Archiv" {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCode(testPass),
+			Text: "login was " + string(testPass)}
+	}
+	return l.UserSession.Select(mb, o)
 }
 
 type lossySession struct {
@@ -195,5 +211,43 @@ func TestHeaderTooLargeSkipsMessage(t *testing.T) {
 	rep, err = eng.SyncAll(context.Background(), Options{CheckDeleted: true})
 	if err != nil || rep.Errors != 0 {
 		t.Fatalf("second run: %v %+v", err, rep)
+	}
+}
+
+// A12.4, Kanarientest im Sync: Der Server spiegelt das Passwort in einer
+// Fehlerantwort; es erscheint weder im Bericht noch im Fortschritt, im
+// Log oder in der Datenbank.
+func TestServerEchoedPasswordNowhere(t *testing.T) {
+	addr, ls := newLossyServer(t)
+	e := newEnv(t, addr)
+	var logBuf bytes.Buffer
+	eng := e.engine(t, connect(t, addr, 0))
+	eng.Log = slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var events []string
+	eng.Progress = func(ev Event) { events = append(events, ev.Kind+" "+ev.Mailbox+" "+ev.Message) }
+	ls.echoPassword.Store(true)
+	rep, err := eng.SyncAll(context.Background(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Errors != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	j, _ := json.Marshal(rep)
+	all := string(j) + "\n" + logBuf.String() + "\n" + fmt.Sprint(events, rep.Mailboxes)
+	if strings.Contains(all, string(testPass)) {
+		t.Fatalf("password echoed by the server leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "code other") {
+		t.Fatalf("error not reported at all:\n%s", all)
+	}
+	for _, q := range []string{`SELECT count(*) FROM jobs WHERE last_error LIKE ?`, `SELECT count(*) FROM audit_events WHERE params_redacted LIKE ? OR reason LIKE ?`} {
+		args := []any{"%" + string(testPass) + "%"}
+		if strings.Count(q, "?") == 2 {
+			args = append(args, args[0])
+		}
+		if n := e.count(t, q, args...); n != 0 {
+			t.Fatalf("%s: %d rows", q, n)
+		}
 	}
 }

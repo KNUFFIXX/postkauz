@@ -210,34 +210,93 @@ func isLoopback(host string) bool {
 // Verbindung ist in Ordnung; ein Wiederholen ändert nichts.
 var ErrRejected = errors.New("imapx: command rejected by server")
 
+// Serverfehler auf feste Texte (A12.4): Was der Server in eine Antwort
+// schreibt (Freitext, Response-Code, Bytes einer unlesbaren Antwort),
+// gelangt nie in einen Fehler dieser Schicht. Ein Server kann dort alles
+// spiegeln, auch das Passwort der Anmeldung; Fehler gehen weiter in
+// Fortschritt, Problems, Log und Job-Tabelle. Weiter gereicht werden nur
+// der Statustyp (OK, NO, BAD, BYE), ein bekannter Response-Code und
+// Fehler des eigenen Rechners (Netz, TLS, Zeitüberschreitung).
+var knownCodes = map[imap.ResponseCode]bool{
+	imap.ResponseCodeAlert: true, imap.ResponseCodeAlreadyExists: true, imap.ResponseCodeAuthenticationFailed: true,
+	imap.ResponseCodeAuthorizationFailed: true, imap.ResponseCodeBadCharset: true, imap.ResponseCodeCannot: true,
+	imap.ResponseCodeClientBug: true, imap.ResponseCodeContactAdmin: true, imap.ResponseCodeCorruption: true,
+	imap.ResponseCodeExpired: true, imap.ResponseCodeHasChildren: true, imap.ResponseCodeInUse: true,
+	imap.ResponseCodeLimit: true, imap.ResponseCodeNonExistent: true, imap.ResponseCodeNoPerm: true,
+	imap.ResponseCodeOverQuota: true, imap.ResponseCodeParse: true, imap.ResponseCodePrivacyRequired: true,
+	imap.ResponseCodeServerBug: true, imap.ResponseCodeTryCreate: true, imap.ResponseCodeUnavailable: true,
+	imap.ResponseCodeUnknownCTE: true, imap.ResponseCodeTooMany: true, imap.ResponseCodeNoPrivate: true,
+	imap.ResponseCodeTooBig: true, "READ-ONLY": true, "READ-WRITE": true,
+}
+
+// serverCode ist der Response-Code für Meldungen: ein bekannter Code, "-"
+// ohne Code, sonst "other".
+func serverCode(c imap.ResponseCode) string {
+	switch {
+	case c == "":
+		return "-"
+	case knownCodes[imap.ResponseCode(strings.ToUpper(string(c)))]:
+		return strings.ToUpper(string(c))
+	}
+	return "other"
+}
+
+// statusType ist der Statustyp für Meldungen (feste Werte).
+func statusType(t imap.StatusResponseType) string {
+	switch t {
+	case imap.StatusResponseTypeOK, imap.StatusResponseTypeNo, imap.StatusResponseTypeBad,
+		imap.StatusResponseTypeBye, imap.StatusResponseTypePreAuth:
+		return string(t)
+	}
+	return "other"
+}
+
+// localErrText: Fehler des eigenen Rechners (Netz, TLS, Abbruch) dürfen
+// mit ihrem Text weiter; alles andere aus der Bibliothek kann Bytes des
+// Servers enthalten und wird durch einen festen Text ersetzt.
+func localErrText(err error) string {
+	var netErr net.Error
+	var tlsAlert tls.AlertError
+	var certErr *tls.CertificateVerificationError
+	var recErr tls.RecordHeaderError
+	switch {
+	case errors.As(err, &netErr), errors.As(err, &tlsAlert), errors.As(err, &certErr), errors.As(err, &recErr),
+		errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, net.ErrClosed),
+		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err.Error()
+	}
+	return "connection lost or unexpected server response"
+}
+
 func connErr(err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth) || errors.Is(err, ErrRejected) ||
-		errors.Is(err, provider.ErrProtocol) {
+		errors.Is(err, provider.ErrProtocol) || errors.Is(err, ErrInvalidUID) {
 		return err
+	}
+	var ie *imap.Error
+	if errors.As(err, &ie) {
+		return fmt.Errorf("%w: server answered %s (code %s)", provider.ErrConnection, statusType(ie.Type), serverCode(ie.Code))
 	}
 	// go-imap meldet unlesbare Antworten als Fehler des Decoders
 	// („imapwire: …"); sie sind kein Netzproblem und kommen beim Wiederholen
 	// genauso (z. B. GreenMail mit falscher Literal-Länge bei 8-Bit-Köpfen).
+	// Der Text kann Bytes der Antwort enthalten: nur die feste Meldung.
 	if strings.Contains(err.Error(), "imapwire:") {
-		return fmt.Errorf("%w: %v", provider.ErrProtocol, err)
+		return fmt.Errorf("%w: unreadable server response", provider.ErrProtocol)
 	}
-	return fmt.Errorf("%w: %v", provider.ErrConnection, err)
+	return fmt.Errorf("%w: %s", provider.ErrConnection, localErrText(err))
 }
 
 // cmdErr unterscheidet Ablehnungen (NO/BAD, ErrRejected) von
-// Verbindungsfehlern. Nur Typ und Code des Servers werden weitergegeben,
-// nicht sein Freitext.
+// Verbindungsfehlern. Nur Typ und bekannter Code des Servers werden
+// weitergegeben, nie sein Freitext (A12.4).
 func cmdErr(err error) error {
 	var ie *imap.Error
 	if errors.As(err, &ie) {
-		code := string(ie.Code)
-		if code == "" {
-			code = "-"
-		}
-		return fmt.Errorf("%w (%s, code %s)", ErrRejected, ie.Type, code)
+		return fmt.Errorf("%w (%s, code %s)", ErrRejected, statusType(ie.Type), serverCode(ie.Code))
 	}
 	return connErr(err)
 }
@@ -441,11 +500,11 @@ func authErr(err error) error {
 	}
 	var ie *imap.Error
 	if errors.As(err, &ie) && (ie.Type == imap.StatusResponseTypeNo || ie.Type == imap.StatusResponseTypeBad) {
-		// Der Servertext kann den Nutzernamen enthalten, nie das Passwort;
-		// trotzdem nur den Code und eine feste Meldung weitergeben.
-		code := string(ie.Code)
-		if code == "" {
-			code = string(ie.Type)
+		// Der Servertext kann den Nutzernamen oder mehr enthalten: nur ein
+		// bekannter Code und eine feste Meldung (A12.4).
+		code := serverCode(ie.Code)
+		if code == "-" {
+			code = statusType(ie.Type)
 		}
 		return fmt.Errorf("%w (server: %s)", provider.ErrAuth, code)
 	}
