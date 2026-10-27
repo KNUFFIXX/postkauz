@@ -187,11 +187,13 @@ func Save(st secrets.Store, ref string, tok Token, now time.Time) error {
 	got, loadErr := Load(st, ref)
 	nowRaw, _, _ := readMain(st, ref)
 	superseded := nowRaw != string(main) && nowRaw != oldRaw && nowRaw != curRaw && loadErr == nil
-	// Abgelöste Generationen löschen (eine Generation kehrt nie zurück).
-	if oldOK && old.Parts > 0 && old.Gen != rec.Gen {
+	// Abgelöste Generationen löschen (eine Generation kehrt nie zurück; die
+	// eigene ist neu, also nie die alte). Auch die Teile ohne Generation
+	// (0.3.0-ms.1), wenn das neue Token in den Haupteintrag passt.
+	if oldOK && old.Parts > 0 {
 		deleteParts(st, ref, old.Gen, old.Parts)
 	}
-	if curOK && cur.Parts > 0 && cur.Gen != rec.Gen && cur.Gen != old.Gen {
+	if curOK && cur.Parts > 0 && curRaw != oldRaw {
 		deleteParts(st, ref, cur.Gen, cur.Parts)
 	}
 	if superseded {

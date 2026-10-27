@@ -255,17 +255,30 @@ func TestSaveFailureKeepsOldToken(t *testing.T) {
 // Teile ohne Generation (Format von 0.3.0-ms.1) werden gelesen und beim
 // nächsten Speichern abgeräumt; Delete räumt sie ebenfalls ab.
 func TestSaveReplacesLegacyParts(t *testing.T) {
-	st := newMemStore()
-	rt := string(bigToken("legacy"))
-	sum := sha256.Sum256([]byte(rt))
-	main, _ := json.Marshal(stored{V: storedVersion, Parts: 3, PartsSHA256: hex.EncodeToString(sum[:])})
-	st.m[testRef] = string(main)
-	for i := 0; i < 3; i++ {
-		st.m[PartRef(testRef, "", i+1)] = rt[i*MaxEntryBytes : min((i+1)*MaxEntryBytes, len(rt))]
+	legacy := func() *memStore {
+		st := newMemStore()
+		rt := string(bigToken("legacy"))
+		sum := sha256.Sum256([]byte(rt))
+		main, _ := json.Marshal(stored{V: storedVersion, Parts: 3, PartsSHA256: hex.EncodeToString(sum[:])})
+		st.m[testRef] = string(main)
+		for i := 0; i < 3; i++ {
+			st.m[PartRef(testRef, "", i+1)] = rt[i*MaxEntryBytes : min((i+1)*MaxEntryBytes, len(rt))]
+		}
+		if got, err := Load(st, testRef); err != nil || got.RefreshToken.Reveal() != rt {
+			t.Fatalf("legacy load: %v", err)
+		}
+		return st
 	}
-	if got, err := Load(st, testRef); err != nil || got.RefreshToken.Reveal() != rt {
-		t.Fatalf("legacy load: %v", err)
+	// Kürzeres Token: Die Teile ohne Generation verschwinden.
+	st := legacy()
+	if err := Save(st, testRef, Token{RefreshToken: "CANARY-short"}, time.Now()); err != nil {
+		t.Fatal(err)
 	}
+	if k := st.keys(); len(k) != 1 || k[0] != testRef {
+		t.Fatalf("legacy parts left after a short token: %v", k)
+	}
+
+	st = legacy()
 	if err := Save(st, testRef, Token{RefreshToken: bigToken("new")}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
