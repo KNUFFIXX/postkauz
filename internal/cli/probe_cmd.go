@@ -84,12 +84,8 @@ func promptProbeCmd(a *app) *cobra.Command {
 			if err != nil {
 				p.Error = err.Error()
 			}
-			if asJSON {
-				if err := json.NewEncoder(a.stdout).Encode(p); err != nil {
-					return err
-				}
-			} else {
-				printPromptProbe(a, p)
+			if err := writePromptProbe(a, p, asJSON); err != nil {
+				return err
 			}
 			switch {
 			case errors.Is(err, prompt.ErrTimeout):
@@ -117,6 +113,15 @@ func isSHA256Hex(s string) bool {
 		}
 	}
 	return true
+}
+
+// writePromptProbe gibt das Ergebnis als JSON oder Text aus.
+func writePromptProbe(a *app, p PromptProbe, asJSON bool) error {
+	if asJSON {
+		return json.NewEncoder(a.stdout).Encode(p)
+	}
+	printPromptProbe(a, p)
+	return nil
 }
 
 func printPromptProbe(a *app, p PromptProbe) {

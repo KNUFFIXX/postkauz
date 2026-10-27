@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,6 +63,45 @@ func TestPromptProbeWithoutTerminal(t *testing.T) {
 		{"internal", "prompt-probe", "--expect-sha256", "abc"}, {"internal", "prompt-probe", "--expect-sha256", strings.Repeat("g", 64)}} {
 		if code, _, _ := run(t, args...); code != ExitUsage {
 			t.Errorf("%v: %d", args, code)
+		}
+	}
+}
+
+// Restpunkt der Nachprüfung (W2): Mit gesetztem hash_match (true und
+// false) steht in Text und JSON nur das Ergebnis des Vergleichs, weder
+// ein Hash der Eingabe noch der vorgegebene Hash noch das Wort sha256.
+func TestPromptProbeOutputWithHashMatch(t *testing.T) {
+	const value = "Testwert-Prüfung-4711"
+	sum := sha256.Sum256([]byte(value))
+	expect := hex.EncodeToString(sum[:])
+	for _, match := range []bool{true, false} {
+		want := expect
+		if !match {
+			want = strings.Repeat("ab", 32)
+		}
+		m := prompt.MatchesSHA256([]byte(value), want)
+		if m != match {
+			t.Fatalf("MatchesSHA256 = %v, want %v", m, match)
+		}
+		p := PromptProbe{Note: probeNote, HashMatch: &m,
+			Report: prompt.Report{Reader: prompt.ReaderConsole, Reads: 1, Units: 23, Bytes: 23, Runes: 21, NonASCII: 1, Terminator: "crlf"}}
+		for _, asJSON := range []bool{false, true} {
+			var out bytes.Buffer
+			if err := writePromptProbe(&app{stdout: &out}, p, asJSON); err != nil {
+				t.Fatal(err)
+			}
+			s := out.String()
+			if strings.Contains(strings.ToLower(s), "sha256") || strings.Contains(strings.ToLower(s), "sha-256") ||
+				strings.Contains(s, expect) || strings.Contains(s, want) || strings.Contains(s, value) || strings.Contains(s, "4711") {
+				t.Fatalf("match=%v json=%v: output carries a hash or the value:\n%s", match, asJSON, s)
+			}
+			text := map[bool]string{true: "hash match:    yes\n", false: "hash match:    no\n"}[match]
+			if asJSON {
+				text = fmt.Sprintf(`"hash_match":%v`, match)
+			}
+			if !strings.Contains(s, text) || !strings.Contains(s, probeNote) {
+				t.Fatalf("match=%v json=%v: want %q:\n%s", match, asJSON, text, s)
+			}
 		}
 	}
 }
