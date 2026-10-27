@@ -235,12 +235,60 @@ func TestTokenNotStoredStopsLoudly(t *testing.T) {
 	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); err != nil {
 		t.Fatal(err)
 	}
-	e.sec.down = true
+	e.sec.failSet = true
 	_, err := e.run("accounts.test", map[string]any{"name": "outlook"}, "", false)
 	if !errors.Is(err, oauth.ErrTokenNotStored) {
 		t.Fatalf("err = %v", err)
 	}
 	if evs := e.sys.Events(); len(evs) != 1 || evs[0].Reason != oauth.ReasonNotStored {
 		t.Fatalf("events = %+v", evs)
+	}
+}
+
+// W1 (Gegenprüfung T4): Der unsichere Testspeicher insecure-file meldet sich
+// als verfügbar; ein echtes Refresh-Token darf dort trotzdem nie landen.
+// add, login und die Tokenquelle (account test, sync) lehnen ihn ab, außer
+// für Konten mit insecure_test_server (lokaler Testserver).
+func TestOAuth2RejectsInsecureFileStore(t *testing.T) {
+	e := newOAuthEnv(t)
+	if _, err := e.run("accounts.add", outlookInput(), "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	e.sec.insecure = true
+	before := len(e.sec.m)
+	refreshes := e.as.Count("refresh_token")
+
+	in := outlookInput()
+	in["name"] = "outlook2"
+	if _, err := e.run("accounts.add", in, "", false); !errors.Is(err, secrets.ErrUnavailable) || !strings.Contains(err.Error(), "insecure-test-server") {
+		t.Fatalf("add with insecure-file: %v", err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Fatalf("login with insecure-file: %v", err)
+	}
+	if e.as.Count("/authorize") != 1 {
+		t.Fatal("no second flow may start")
+	}
+	if _, err := e.run("accounts.test", map[string]any{"name": "outlook"}, "", false); !errors.Is(err, secrets.ErrUnavailable) {
+		t.Fatalf("test with insecure-file: %v", err)
+	}
+	if len(e.sec.m) != before || e.as.Count("refresh_token") != refreshes {
+		t.Fatal("nothing may be refreshed or stored in the insecure store")
+	}
+
+	// Lokaler Testserver: erlaubt.
+	in = outlookInput()
+	in["name"], in["host"], in["tls"], in["insecure_test_server"] = "lokal", "127.0.0.1", "none", true
+	if _, err := e.run("accounts.add", in, "", false); err != nil {
+		t.Fatalf("add for a test server: %v", err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "lokal"}, "", false); err != nil {
+		t.Fatalf("login for a test server: %v", err)
+	}
+	if _, err := e.run("accounts.test", map[string]any{"name": "lokal"}, "", false); err != nil {
+		t.Fatalf("test for a test server: %v", err)
 	}
 }

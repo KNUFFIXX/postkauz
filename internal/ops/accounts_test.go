@@ -23,6 +23,10 @@ type memSecrets struct {
 	mu   sync.Mutex
 	m    map[string]secrets.Secret
 	down bool
+	// insecure: meldet sich wie der Testspeicher insecure-file.
+	insecure bool
+	// failSet: Schreiben scheitert, obwohl der Speicher erreichbar ist.
+	failSet bool
 }
 
 func newMemSecrets() *memSecrets { return &memSecrets{m: map[string]secrets.Secret{}} }
@@ -39,7 +43,7 @@ func (s *memSecrets) Get(ref string) (secrets.Secret, error) {
 func (s *memSecrets) Set(ref string, v secrets.Secret) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.down {
+	if s.down || s.failSet {
 		return fmt.Errorf("%w: test", secrets.ErrUnavailable)
 	}
 	s.m[ref] = v
@@ -55,6 +59,9 @@ func (s *memSecrets) Delete(ref string) error {
 	return nil
 }
 func (s *memSecrets) Status() secrets.Status {
+	if s.insecure {
+		return secrets.Status{Backend: "insecure-file", Available: !s.down, Insecure: true}
+	}
 	return secrets.Status{Backend: "keyring", Available: !s.down}
 }
 

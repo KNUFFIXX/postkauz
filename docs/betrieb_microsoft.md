@@ -77,5 +77,5 @@ Erwartet: `login:         ok (XOAUTH2)` und die Ordnerliste; `doctor` zeigt `out
 ## 5. Grenzen
 
 - Nur lesen und Entwürfe ablegen wie bei jedem Konto; in der Abnahme D9 ausdrücklich **nur lesen** (kein Entwurf, keine Aktion).
-- Kein Server-Betrieb ohne Schlüsselbund (R2); `POSTKAUZ_PASSWORD_<NAME>` gilt für OAuth2-Konten nicht.
+- Kein Server-Betrieb ohne Schlüsselbund (R2); `POSTKAUZ_PASSWORD_<NAME>` gilt für OAuth2-Konten nicht, der unsichere Testspeicher `insecure-file` auch nicht.
 - Google-Konten bleiben bei App-Passwörtern (keine eigene Google-OAuth-App, Nicht-Ziel).

@@ -74,6 +74,11 @@ func (c Credentials) For(a store.Account) (provider.Credential, error) {
 	if err != nil {
 		return provider.Credential{}, err
 	}
+	// Auch hier, nicht nur bei add und login: Die Quelle speichert jedes
+	// erneuerte Refresh-Token (etwa nach einem Wechsel von secrets.backend).
+	if _, err := oauthStoreAllowed(c.Secrets, a.InsecureTestServer); err != nil {
+		return provider.Credential{}, fmt.Errorf("account %s: %w", a.Name, err)
+	}
 	saved, err := oauth.Load(c.Secrets, a.CredentialRef)
 	if errors.Is(err, secrets.ErrNotFound) {
 		return provider.Credential{}, fmt.Errorf("%w: %s (keyring entry %s); sign in with: account login %s", ErrNoToken, a.Name, a.CredentialRef, a.Name)
@@ -193,9 +198,9 @@ func AccountsLogin(repo AccountRepo, creds Credentials) Operation {
 			if err != nil {
 				return nil, err
 			}
-			st := secrets.Stored(creds.Secrets).Status()
-			if !st.Available {
-				return nil, oauthNeedsKeyring(st)
+			st, err := oauthStoreAllowed(creds.Secrets, a.InsecureTestServer)
+			if err != nil {
+				return nil, err
 			}
 			out := AccountsLoginOutput{Account: a.Name, Method: "loopback", RefreshToken: "would_store",
 				CredentialRef: a.CredentialRef, SecretStore: st.Backend, DryRun: call.DryRun}
@@ -227,11 +232,28 @@ func AccountsLogin(repo AccountRepo, creds Credentials) Operation {
 	}
 }
 
+// oauthStoreAllowed prüft, ob der Speicher ein Refresh-Token aufnehmen darf
+// (Rückfrage R2): nur ein erreichbarer Schlüsselbund. Der unsichere
+// Testspeicher insecure-file meldet sich zwar als verfügbar, gilt aber nur
+// für Konten mit insecure_test_server (lokaler Testserver, Fake-AS);
+// sonst läge ein echtes Refresh-Token in insecure-secrets/secrets.json.
+func oauthStoreAllowed(sec secrets.Store, insecureTestServer bool) (secrets.Status, error) {
+	st := secrets.Stored(sec).Status()
+	if !st.Available || (st.Insecure && !insecureTestServer) {
+		return st, oauthNeedsKeyring(st)
+	}
+	return st, nil
+}
+
 // oauthNeedsKeyring ist die Ablehnung ohne Schlüsselbund (Rückfrage R2:
 // OAuth2-Konten nur auf Rechnern mit Schlüsselbund; das Refresh-Token
 // ändert sich bei jedem Refresh und lässt sich nicht über die Umgebung
 // setzen).
 func oauthNeedsKeyring(st secrets.Status) error {
+	if st.Available && st.Insecure {
+		return fmt.Errorf("%w (%s is the insecure test store): OAuth2 accounts need the OS keyring; "+
+			"secrets.backend = \"insecure-file\" is only allowed for accounts with --insecure-test-server", secrets.ErrUnavailable, st.Backend)
+	}
 	return fmt.Errorf("%w (%s): OAuth2 accounts need the OS keyring, because the refresh token changes with every renewal; "+
 		"on servers without a keyring use an account with an app password instead", secrets.ErrUnavailable, st.Detail)
 }

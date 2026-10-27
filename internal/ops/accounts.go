@@ -437,13 +437,14 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 			source := sec.Status().Backend
 			oauth2 := in.AuthType == AuthOAuth2
 			if oauth2 {
-				// Rückfrage R2: nur mit Schlüsselbund; das Token kommt erst mit
-				// account login, hier wird nichts gespeichert.
+				// Rückfrage R2: nur mit Schlüsselbund (insecure-file nur für
+				// lokale Testserver); das Token kommt erst mit account login,
+				// hier wird nichts gespeichert.
 				if !call.Secret.IsZero() {
 					return nil, inputErr("auth_type oauth2 uses no password; sign in with account login after adding the account")
 				}
-				if st := secrets.Stored(sec).Status(); !st.Available {
-					return nil, oauthNeedsKeyring(st)
+				if _, err := oauthStoreAllowed(sec, in.InsecureTestServer); err != nil {
+					return nil, err
 				}
 			} else if in.PasswordFromEnv {
 				source = "environment"
