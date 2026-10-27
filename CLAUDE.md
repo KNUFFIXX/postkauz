@@ -18,7 +18,7 @@ PostKauz ist ein Arbeitstitel (Namen stehen in `internal/brand`, `Makefile`, `go
 
 ## Sprache und Werkzeuge
 
-- **Go 1.27** (ADR-008, umgesetzt 15.10.2026), `CGO_ENABLED=0`, immer `GOTOOLCHAIN=local` (sonst hebt `go get` die `go`-Zeile still an; das Makefile setzt es selbst). Fehlt die Toolchain 1.27.x, dem Betreiber melden, nicht still nachladen. `modernc.org/sqlite` steht auf der per `go get` geprüften Version in `go.mod` (ADR-005). IMAP nur über `internal/imapx` (ADR-007).
+- **Go 1.27** (ADR-008, umgesetzt 15.10.2026), `CGO_ENABLED=0`, immer `GOTOOLCHAIN=local` (sonst hebt `go get` die `go`-Zeile still an; das Makefile setzt es selbst). Fehlt die Toolchain 1.27.x, dem Betreiber melden, nicht still nachladen. Ausnahme (Betreiber 27.10.2026): Genau die Version aus `go.mod` (go1.27.3) darf eine Sitzung einmal über den offiziellen Weg holen (`GOTOOLCHAIN=go1.27.3 go version`, prüfsummengesichert über den Go-Proxy), das `bin`-Verzeichnis aus dem Modulcache vor `PATH` legen und dann mit `GOTOOLCHAIN=local` weiterarbeiten. `modernc.org/sqlite` steht auf der per `go get` geprüften Version in `go.mod` (ADR-005). IMAP nur über `internal/imapx` (ADR-007).
 - Abhängigkeiten nur mit Begründung, Lizenz MIT/BSD/Apache. Versionen **nie raten oder erfinden**: `go get <modul>` auflösen lassen, geprüfte Version in `go.mod`, Begründung in der Commit-Nachricht.
 - Pakete: siehe `docs/architektur.md`, Paketübersicht. Fachlogik nur in Diensten und Handlern, **nie** in CLI-/MCP-Adaptern.
 
