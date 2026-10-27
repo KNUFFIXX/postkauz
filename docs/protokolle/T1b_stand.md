@@ -80,4 +80,19 @@ Teil **T1b** von Schnitt 3 nach [auftraege/A03_teile.md](../../auftraege/A03_tei
 
 ## Prüfläufe
 
-(folgt nach den Läufen)
+Umgebung: Cloud-Container Linux, 4 Kerne, `go version go1.27.3 linux/amd64` (nach der Ausnahme in `CLAUDE.md` geholt, danach `GOTOOLCHAIN=local`). Go-Code für alle Läufe: Stand `8d32ac5` (danach nur Doku).
+
+| Befehl | Ergebnis | Laufzeit |
+|---|---|---|
+| `make check` | vor jedem Commit exit 0 (gofmt, vet, alle Pakete, guard, pii-check); Basis `f536810` vor Beginn ebenfalls exit 0 | je rund 3–4 min |
+| `make race` | exit 0: 29 Pakete ok, kein Datenrennen (längste: importer 885 s, ops 848 s, mailsync 707 s, cli 681 s) | 18 min 24 s |
+| `make integration` | exit 0: 9 Integrationstests PASS gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14 (ImportOverlapDovecot, DraftPush, DraftPushRefusals, DraftPushWatchAndOffline, Sync, Idle, SentDetection, CapabilitiesAndRoles, WrongPassword); kein FAIL, kein SKIP. Erster Lauf: 4 Push-Tests FAIL mit `key_revoked 1` — die Tests legten Entwürfe mit einem Schlüssel an, der nie in `api_keys` stand; A8 lehnt das zu Recht ab; Testumgebung legt ihn jetzt an (`8d32ac5`) | 2 min 32 s |
+| `make vuln` | **nicht gelaufen:** Die Netzwerk-Richtlinie dieser Cloud-Umgebung weist `vuln.go.dev` ab (`Forbidden`), wie in T1a; nachholen im CI-Job `vuln` bzw. in der Prüfsitzung | – |
+| `make cross` | exit 0: linux/amd64 26,6 MB, windows/amd64 26,4 MB, darwin/arm64 25,0 MB | < 1 min |
+| `make release VERSION=0.3.0-alpha.2` | `dist/` mit Programmen für linux/amd64, windows/amd64, darwin/arm64, `SHA256SUMS` und `VERSION` (Commit `be3fbd1`, ohne lokale Änderungen); Windows-Programm `2e382371fc8bdd00fc6b7e1854ba430576523fd8529c8c114dc502a27587f432` | < 1 min |
+| Rauchtest Linux-Programm aus `dist/` | frisches Datenverzeichnis: `doctor` Datenbank ok, Schema 19 = bekannt, 0 Aufrufe ohne Abschluss; `audit --raw --json` zeigt je Aufruf `started` und Abschluss mit `ref_id` | – |
+| Messung Migrationen | siehe oben (Schema 17 → 19 rund 0,3 s an 50.000 Nachrichten / 20.000 Audit-Zeilen) | – |
+
+**Docker:** Daemon von Hand gestartet (`dockerd`); Docker Hub lieferte `429 Too Many Requests`, die drei Images kamen unverändert (gleiche Tags) über `mirror.gcr.io` und wurden lokal auf die Namen aus `deploy/testmail/docker-compose.yml` getaggt (wie T1a).
+
+**Abnahme-Skript:** nicht ausgeführt (kein PowerShell; Herunterladen von PowerShell durch die Sitzungsrichtlinie abgelehnt). Ein Subagent hat es nur lesend gegen die Go-Ausgaben von rc8 (`99a7cc0`) und dieses Stands geprüft: Feldnamen und Flags passen; behoben wurden eine Suchanfrage mit führendem `-` (jetzt hinter `--`), eine fehlende Suchdatei, der Exit-Code in 3.3 und die Prüfung von `-WorkDir` vor dem ersten Schreiben.
