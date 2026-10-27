@@ -65,6 +65,16 @@ func newITDraftEnv(t *testing.T, srv itServer, user string) *itDraftEnv {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Der Schlüssel des Agenten liegt wie im Betrieb in api_keys: Der Push
+	// prüft ihn vor jedem APPEND (A8, T1b).
+	scopes := []string{}
+	for _, sc := range itAssistant.Scopes {
+		scopes = append(scopes, string(sc))
+	}
+	if _, err := st.CreateAPIKey(ctx, store.APIKey{Name: strings.TrimPrefix(itAssistant.ID, "key:"), KeyHash: ops.HashKey("pk_it_assistant"),
+		Role: itAssistant.Role, Scopes: scopes, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	b, err := blob.Open(filepath.Join(dir, "blobs"), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
