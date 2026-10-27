@@ -353,7 +353,7 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   [audit]
   export_dir = ""           # Standardziel von `audit export`: ein zweiter Ort, nicht das Datenverzeichnis
   [paths]                   # seit S2.1
-  attach_dir = ""           # Dateianhänge von Entwürfen nur von hier (A02 E10); leer = <Datenverzeichnis>/attach, relativ = zum Datenverzeichnis
+  attach_dir = ""           # Dateianhänge von Entwürfen nur von hier (A02 E10); leer = <Datenverzeichnis>/attach, relativ = zum Datenverzeichnis; Symlinks werden aufgelöst (Ziel muss in attach_dir liegen, sonst attach_outside_dir), nur reguläre Dateien (FIFO, Gerät, Ordner: attach_not_found; docs/sicherheit.md)
   [operator]                # seit S2.1
   name = ""                 # wer freigibt (approvals.decided_by); leer = Benutzername des Betriebssystems
   [draft]                   # seit S2.1 (gewirkt ab S2.2–S2.6); nicht zu verwechseln mit [draft] der Policy-Datei
