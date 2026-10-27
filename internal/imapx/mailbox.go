@@ -224,7 +224,7 @@ type MessageMeta struct {
 	// HeaderFields sind der Kopf bzw. die angeforderten Kopfzeilen, roh.
 	HeaderFields []byte
 	// HeaderSkipped nennt, warum HeaderFields fehlt ("" = gelesen):
-	// HeaderTooLarge oder HeaderOverBudget.
+	// HeaderTooLarge.
 	HeaderSkipped string
 }
 
@@ -291,16 +291,26 @@ const (
 	// HeaderTooLarge: Der Kopf ist größer als MaxHeaderBytes; er wird nicht
 	// gelesen, die übrigen Angaben (Größe, Flags) schon.
 	HeaderTooLarge = "too_large"
-	// HeaderOverBudget: Das Budget dieses FETCH ist erschöpft; der Aufrufer
-	// holt den Kopf mit einem neuen FETCH (internal/provider/imap).
-	HeaderOverBudget = "budget"
 )
+
+// ErrHeaderBudget: FetchMeta hat beim ersten Kopf, der nicht mehr ins
+// Budget passte, abgebrochen (K3). Ein IMAP-FETCH lässt sich nicht
+// anhalten; ohne Abbruch überträgt der Server alle übrigen Köpfe, die
+// verworfen und erneut angefordert würden (bei vielen großen Köpfen ein
+// Vielfaches der Daten). Deshalb ist die Verbindung danach geschlossen.
+// Die gelieferten Nachrichten sind vollständig; die übrigen UIDs holt der
+// Aufrufer mit einem neuen FETCH auf einer neuen Verbindung
+// (internal/provider/imap, FetchHeaders). Als ErrProtocol verwirft
+// Session die Verbindung, ohne f zu wiederholen.
+var ErrHeaderBudget = fmt.Errorf("%w: header budget of one fetch exhausted; connection closed, fetch the rest again", provider.ErrProtocol)
 
 // FetchMeta holt UID, FLAGS, INTERNALDATE, RFC822.SIZE (und MODSEQ sowie
 // gewählte Kopfzeilen per BODY.PEEK) der angegebenen UIDs im gewählten
 // Ordner. Nicht mehr vorhandene UIDs fehlen im Ergebnis. Köpfe werden
 // gestreamt und begrenzt gelesen (A12.4): höchstens MaxHeaderBytes je Kopf
-// und HeaderBudget je Aufruf; was nicht passt, trägt HeaderSkipped.
+// (größere tragen HeaderSkipped) und HeaderBudget je Aufruf; passt ein Kopf
+// nicht mehr ins Budget, kommen die bis dahin gelesenen Nachrichten mit
+// ErrHeaderBudget zurück, und die Verbindung ist geschlossen.
 func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) {
 	if len(uids) == 0 {
 		return nil, nil
@@ -326,10 +336,12 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 		opts.BodySection = []*imap.FetchItemBodySection{sec}
 	}
 	var out []MessageMeta
+	aborted := false
 	err = c.run(func() error {
 		out = nil
 		left := budget
 		cmd := c.c.Fetch(set, opts)
+	messages:
 		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
 			var m MessageMeta
 			for item := msg.Next(); item != nil; item = msg.Next() {
@@ -349,10 +361,20 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 						continue
 					}
 					var err error
-					m.HeaderFields, m.HeaderSkipped, err = readHeader(it.Literal, maxHeader, &left)
+					var over bool
+					m.HeaderFields, m.HeaderSkipped, over, err = readHeader(it.Literal, maxHeader, &left)
 					if err != nil {
 						_ = cmd.Close()
 						return err
+					}
+					if over {
+						// Erst die Leitung schließen (der Server sendet
+						// nicht weiter, go-imap liest nichts mehr), dann
+						// das Kommando freigeben.
+						aborted = true
+						_ = c.act.Conn.Close()
+						_ = cmd.Close()
+						break messages
 					}
 				}
 			}
@@ -360,39 +382,47 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 				out = append(out, m)
 			}
 		}
+		if aborted {
+			return nil
+		}
 		return cmd.Close()
 	})
+	slices.SortFunc(out, func(a, b MessageMeta) int { return int(a.UID) - int(b.UID) })
+	if aborted {
+		c.closeNow()
+		return out, ErrHeaderBudget
+	}
 	if err != nil {
 		return nil, cmdErr(err)
 	}
-	slices.SortFunc(out, func(a, b MessageMeta) int { return int(a.UID) - int(b.UID) })
 	return out, nil
 }
 
 // readHeader liest einen Kopf, höchstens maxHeader Bytes und höchstens den
-// Rest *left des Budgets. Was größer ist (angekündigt oder tatsächlich),
-// wird nicht weiter gelesen; go-imap verwirft den Rest des Literals.
-func readHeader(lit imap.LiteralReader, maxHeader int64, left *int64) ([]byte, string, error) {
+// Rest *left des Budgets. Ein größerer Kopf (angekündigt oder tatsächlich)
+// wird nicht weiter gelesen (HeaderTooLarge; go-imap verwirft den Rest des
+// Literals); passt er nicht mehr ins Budget, ist over true.
+func readHeader(lit imap.LiteralReader, maxHeader int64, left *int64) (b []byte, skipped string, over bool, err error) {
 	size := lit.Size()
 	switch {
 	case size > maxHeader:
-		return nil, HeaderTooLarge, nil
+		return nil, HeaderTooLarge, false, nil
 	case size > *left:
-		return nil, HeaderOverBudget, nil
+		return nil, "", true, nil
 	}
 	limit := min(maxHeader, *left)
-	b, err := io.ReadAll(io.LimitReader(lit, limit+1))
+	b, err = io.ReadAll(io.LimitReader(lit, limit+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	*left -= int64(len(b))
 	switch {
 	case int64(len(b)) > maxHeader:
-		return nil, HeaderTooLarge, nil
+		return nil, HeaderTooLarge, false, nil
 	case int64(len(b)) > limit:
-		return nil, HeaderOverBudget, nil
+		return nil, "", true, nil
 	}
-	return b, "", nil
+	return b, "", false, nil
 }
 
 func flagStrings(fs []imap.Flag) []string {

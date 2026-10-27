@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -215,45 +216,49 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 }
 
 // FetchHeaders liefert Flags, Datum, Größe, MODSEQ, Kopf und Message-ID der UIDs.
+//
+// Ganzer Kopf statt HEADER.FIELDS (MESSAGE-ID): GreenMail liefert für die
+// von go-imap gequoteten Feldnamen nichts; der Kopf kostet wenige KB je
+// Nachricht und wird mit demselben Parser gelesen wie später die ganze
+// Nachricht. Köpfe begrenzt (A12.4): Ein zu großer Kopf wird nicht gelesen
+// und gekennzeichnet. Passt ein Kopf nicht mehr ins Budget eines FETCH,
+// bricht imapx den FETCH samt Verbindung ab (K3, imapx.ErrHeaderBudget);
+// die übrigen UIDs kommen mit dem nächsten FETCH auf neuer Verbindung.
 func (p *Provider) FetchHeaders(ctx context.Context, mailbox string, uidValidity uint32, uids []provider.UID) ([]provider.Header, error) {
 	var out []provider.Header
-	err := p.s.Do(ctx, func(c *imapx.Client) error {
-		out = nil
-		if _, err := c.Ensure(mailbox, uidValidity, p.selectOpts()); err != nil {
-			return err
-		}
-		// Ganzer Kopf statt HEADER.FIELDS (MESSAGE-ID): GreenMail liefert für
-		// die von go-imap gequoteten Feldnamen nichts; der Kopf kostet wenige
-		// KB je Nachricht und wird mit demselben Parser gelesen wie später
-		// die ganze Nachricht.
-		// Köpfe begrenzt (A12.4): Was nicht mehr ins Budget eines FETCH
-		// passt, kommt mit dem nächsten; ein zu großer Kopf wird nicht
-		// gelesen und gekennzeichnet.
-		todo := fromUIDs(uids)
-		for len(todo) > 0 {
-			meta, err := c.FetchMeta(todo, imapx.MetaOptions{Header: true, ModSeq: p.caps.CondStore})
-			if err != nil {
+	todo := fromUIDs(uids)
+	for len(todo) > 0 {
+		var meta []imapx.MessageMeta
+		err := p.s.Do(ctx, func(c *imapx.Client) error {
+			meta = nil
+			if _, err := c.Ensure(mailbox, uidValidity, p.selectOpts()); err != nil {
 				return err
 			}
-			var again []uint32
-			for _, m := range meta {
-				if m.HeaderSkipped == imapx.HeaderOverBudget {
-					again = append(again, m.UID)
-					continue
-				}
-				out = append(out, provider.Header{UID: provider.UID(m.UID), ModSeq: m.ModSeq, Flags: Flags(m.Flags),
-					InternalDate: m.InternalDate, Size: m.Size, MessageID: mimeparse.HeaderMessageID(m.HeaderFields),
-					RawHeader: m.HeaderFields, HeaderTooLarge: m.HeaderSkipped == imapx.HeaderTooLarge})
-			}
-			if len(again) == len(todo) {
-				return fmt.Errorf("%w: no header fits the fetch budget", provider.ErrProtocol)
-			}
-			todo = again
+			var err error
+			meta, err = c.FetchMeta(todo, imapx.MetaOptions{Header: true, ModSeq: p.caps.CondStore})
+			return err
+		})
+		aborted := errors.Is(err, imapx.ErrHeaderBudget)
+		if err != nil && !aborted {
+			return nil, err
 		}
-		slices.SortFunc(out, func(a, b provider.Header) int { return int(a.UID) - int(b.UID) })
-		return nil
-	})
-	return out, err
+		if aborted && len(meta) == 0 {
+			return nil, fmt.Errorf("%w: no header fits the fetch budget", provider.ErrProtocol)
+		}
+		got := make(map[uint32]bool, len(meta))
+		for _, m := range meta {
+			got[m.UID] = true
+			out = append(out, provider.Header{UID: provider.UID(m.UID), ModSeq: m.ModSeq, Flags: Flags(m.Flags),
+				InternalDate: m.InternalDate, Size: m.Size, MessageID: mimeparse.HeaderMessageID(m.HeaderFields),
+				RawHeader: m.HeaderFields, HeaderTooLarge: m.HeaderSkipped == imapx.HeaderTooLarge})
+		}
+		if !aborted {
+			break
+		}
+		todo = slices.DeleteFunc(todo, func(u uint32) bool { return got[u] })
+	}
+	slices.SortFunc(out, func(a, b provider.Header) int { return int(a.UID) - int(b.UID) })
+	return out, nil
 }
 
 // FetchRaw streamt die Rohmails der UIDs (BODY.PEEK[]).

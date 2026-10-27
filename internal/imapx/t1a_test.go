@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -344,19 +345,80 @@ func TestFetchMetaLimitsHeaders(t *testing.T) {
 		meta[2].HeaderSkipped != "" || len(meta[2].HeaderFields) != 200 {
 		t.Fatalf("meta = %+v", summary(meta))
 	}
+	if err := c.Noop(); err != nil {
+		t.Fatalf("connection unusable after a skipped literal: %v", err)
+	}
 	// Budget: 100 Bytes je Kopf, 150 je Aufruf (auf die Kopfgrenze
-	// angehoben, wenn kleiner).
+	// angehoben, wenn kleiner). Der zweite Kopf passt nicht mehr: Abbruch
+	// mit dem ersten (K3), die Verbindung ist zu.
 	s.fetch = fetchHeaders(80, 80, 80)
 	meta, err = c.FetchMeta([]uint32{1, 2, 3}, MetaOptions{Header: true, MaxHeaderBytes: 100, HeaderBudget: 150})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrHeaderBudget) || !errors.Is(err, provider.ErrProtocol) {
+		t.Fatalf("err = %v", err)
 	}
-	if len(meta) != 3 || meta[0].HeaderSkipped != "" || meta[1].HeaderSkipped != HeaderOverBudget || meta[2].HeaderSkipped != HeaderOverBudget {
+	if len(meta) != 1 || meta[0].UID != 1 || len(meta[0].HeaderFields) != 80 {
 		t.Fatalf("budget = %+v", summary(meta))
 	}
-	if err := c.Noop(); err != nil {
-		t.Fatalf("connection unusable after skipped literals: %v", err)
+}
+
+// K3: Beim ersten Kopf über dem Budget endet der FETCH sofort; der Server
+// kann den Rest nicht mehr loswerden (statt dass alles übertragen,
+// verworfen und erneut angefordert wird). 200 Köpfe zu 900 KB wären 180
+// MB; übertragen werden höchstens Budget plus Puffer des Netzes.
+func TestFetchMetaAbortsAtBudget(t *testing.T) {
+	s := newStrictServer(t, 200, "")
+	var written atomic.Int64
+	sizes := make([]int64, 200)
+	for i := range sizes {
+		sizes[i] = 900 << 10
 	}
+	s.fetch = func(w io.Writer, tag string) {
+		fetchHeaders(sizes...)(countingWriter{w, &written}, tag)
+	}
+	c := dialStrict(t, s)
+	c.timeout = 30 * time.Second
+	uids := make([]uint32, 200)
+	for i := range uids {
+		uids[i] = uint32(i + 1)
+	}
+	start := time.Now()
+	meta, err := c.FetchMeta(uids, MetaOptions{Header: true})
+	if !errors.Is(err, ErrHeaderBudget) {
+		t.Fatalf("err = %v", err)
+	}
+	// 16 MiB Budget, 900 KB je Kopf: 18 Köpfe.
+	if len(meta) != 18 || meta[0].UID != 1 || meta[17].UID != 18 {
+		t.Fatalf("meta = %d", len(meta))
+	}
+	// Der Server schreibt, bis die geschlossene Leitung ihn stoppt.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		before := written.Load()
+		time.Sleep(100 * time.Millisecond)
+		if written.Load() == before || time.Now().After(deadline) {
+			break
+		}
+	}
+	if n := written.Load(); n > 64<<20 {
+		t.Fatalf("server wrote %d bytes after the abort (no abort)", n)
+	}
+	t.Logf("server wrote %d MB, %s", written.Load()>>20, time.Since(start).Round(time.Millisecond))
+	if err := c.Noop(); err == nil {
+		t.Fatal("connection still open after the abort")
+	}
+}
+
+// countingWriter zählt geschriebene Bytes; nach einem Fehler schreibt der
+// Server nichts mehr.
+type countingWriter struct {
+	w io.Writer
+	n *atomic.Int64
+}
+
+func (c countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n.Add(int64(n))
+	return n, err
 }
 
 func summary(ms []MessageMeta) []string {
