@@ -139,6 +139,25 @@ func TestLoginLoopbackPortFreeOnBothAddresses(t *testing.T) {
 	}
 }
 
+// K5 (Gegenprüfung T4): Der Tausch des Codes hat eine eigene Frist. Er
+// gelingt auch, wenn die Anmeldung kurz vor Ende von LoginTimeout kommt,
+// und ein hängender Token-Endpunkt endet als ErrLoginTimeout (login_failed)
+// statt als rohes DeadlineExceeded.
+func TestLoginLoopbackExchangeHasOwnDeadline(t *testing.T) {
+	as := oauthtest.New(t)
+	as.TokenDelay = 500 * time.Millisecond
+	m := oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 300 * time.Millisecond, ExchangeTimeout: 5 * time.Second}
+	if _, err := m.LoginLoopback(context.Background(), client, nil); err != nil {
+		t.Fatalf("exchange after the sign-in deadline: %v", err)
+	}
+	as.TokenDelay = 5 * time.Second
+	m.LoginTimeout, m.ExchangeTimeout = 10*time.Second, 200*time.Millisecond
+	_, err := m.LoginLoopback(context.Background(), client, nil)
+	if !errors.Is(err, oauth.ErrLoginTimeout) || !strings.Contains(err.Error(), "token endpoint did not answer") {
+		t.Fatalf("hanging token endpoint: %v", err)
+	}
+}
+
 func TestLoginLoopbackDeniedAndTimeout(t *testing.T) {
 	as := oauthtest.New(t)
 	as.Deny = true
@@ -228,6 +247,28 @@ func TestLoginDeviceCodePendingAndSlowDown(t *testing.T) {
 	if n := as.Count("urn:ietf:params:oauth:grant-type:device_code"); n != 4 {
 		t.Fatalf("polls = %d", n)
 	}
+}
+
+// K5 (Gegenprüfung T4): ohne expires_in endet der Device-Code-Flow nach
+// 15 Minuten mit ErrLoginTimeout (login_failed), nicht erst nie.
+func TestLoginDeviceCodeLimitWithoutExpiresIn(t *testing.T) {
+	as := oauthtest.New(t)
+	as.DeviceExpiresIn, as.DeviceInterval = -1, 5
+	for range 400 {
+		as.DevicePolls = append(as.DevicePolls, "authorization_pending")
+	}
+	synctest.Test(t, func(t *testing.T) {
+		m := oauth.Microsoft{Endpoint: as.Endpoint, HTTPClient: &http.Client{Transport: handlerTransport{as.Config.Handler}}}
+		var prompt oauth.Prompt
+		start := time.Now()
+		_, err := m.LoginDeviceCode(context.Background(), client, func(p oauth.Prompt) { prompt = p })
+		if !errors.Is(err, oauth.ErrLoginTimeout) {
+			t.Fatalf("err = %v", err)
+		}
+		if d := time.Since(start); d != 15*time.Minute || !prompt.Expires.Equal(start.Add(15*time.Minute)) {
+			t.Fatalf("took %s, prompt expires %s after start", d, prompt.Expires.Sub(start))
+		}
+	})
 }
 
 func TestLoginDeviceCodeDenied(t *testing.T) {

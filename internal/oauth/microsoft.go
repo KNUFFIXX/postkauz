@@ -70,6 +70,12 @@ type Microsoft struct {
 	OpenBrowser func(url string) error
 	// LoginTimeout begrenzt den Loopback-Flow (0 = 5 Minuten).
 	LoginTimeout time.Duration
+	// ExchangeTimeout begrenzt den Tausch des Codes gegen das Token nach dem
+	// Loopback-Flow (0 = 60 Sekunden), unabhängig von LoginTimeout.
+	ExchangeTimeout time.Duration
+	// DeviceTimeout begrenzt den Device-Code-Flow (0 = 15 Minuten), auch
+	// wenn der Anbieter kein expires_in nennt.
+	DeviceTimeout time.Duration
 	// Listen öffnet die lokalen Ports des Loopback-Flows (nil = net.Listen;
 	// Tests: belegte Ports nachstellen).
 	Listen func(network, addr string) (net.Listener, error)
@@ -211,6 +217,7 @@ func (m Microsoft) LoginLoopback(ctx context.Context, c Client, show func(Prompt
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -289,8 +296,23 @@ func (m Microsoft) LoginLoopback(ctx context.Context, c Client, show func(Prompt
 	if res.err != nil {
 		return Token{}, res.err
 	}
-	t, err := cfg.Exchange(m.ctx(ctx), res.code, oauth2.VerifierOption(verifier))
+	// Eigene Frist für den Tausch (Gegenprüfung T4, K5): Kommt die Anmeldung
+	// kurz vor Ende von LoginTimeout, bliebe sonst kaum Zeit, und der Fehler
+	// wäre ein rohes DeadlineExceeded statt login_failed.
+	xt := m.ExchangeTimeout
+	if xt <= 0 {
+		xt = 60 * time.Second
+	}
+	xctx, xcancel := context.WithTimeout(parent, xt)
+	defer xcancel()
+	t, err := cfg.Exchange(m.ctx(xctx), res.code, oauth2.VerifierOption(verifier))
 	if err != nil {
+		if parent.Err() != nil {
+			return Token{}, parent.Err()
+		}
+		if isTimeout(err) {
+			return Token{}, fmt.Errorf("%w: the token endpoint did not answer within %s", ErrLoginTimeout, xt)
+		}
 		return Token{}, endpointErr(err)
 	}
 	return tokenFromFlow(t)
@@ -338,6 +360,15 @@ func (m Microsoft) loopbackListeners() ([]net.Listener, int, error) {
 // show zeigt Adresse und Code, dann fragt die Bibliothek im Abstand
 // interval nach (authorization_pending: weiter; slow_down: 5 s länger).
 func (m Microsoft) LoginDeviceCode(ctx context.Context, c Client, show func(Prompt)) (Token, error) {
+	// Obergrenze auch ohne expires_in (Gegenprüfung T4, K5); x/oauth2
+	// begrenzt nur mit expires_in.
+	limit := m.DeviceTimeout
+	if limit <= 0 {
+		limit = 15 * time.Minute
+	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
 	cfg := m.Config(c)
 	hctx := m.ctx(ctx)
 	da, err := cfg.DeviceAuth(hctx)
@@ -349,11 +380,18 @@ func (m Microsoft) LoginDeviceCode(ctx context.Context, c Client, show func(Prom
 		if uri == "" {
 			uri = da.VerificationURI
 		}
-		show(Prompt{URL: uri, UserCode: da.UserCode, Expires: da.Expiry})
+		exp := m.now().Add(limit)
+		if !da.Expiry.IsZero() && da.Expiry.Before(exp) {
+			exp = da.Expiry
+		}
+		show(Prompt{URL: uri, UserCode: da.UserCode, Expires: exp})
 	}
 	t, err := cfg.DeviceAccessToken(hctx, da)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		if parent.Err() != nil {
+			return Token{}, parent.Err()
+		}
+		if isTimeout(err) {
 			return Token{}, ErrLoginTimeout
 		}
 		var re *oauth2.RetrieveError
@@ -363,6 +401,12 @@ func (m Microsoft) LoginDeviceCode(ctx context.Context, c Client, show func(Prom
 		return Token{}, endpointErr(err)
 	}
 	return tokenFromFlow(t)
+}
+
+// isTimeout meldet eine abgelaufene Frist (Kontext oder HTTP-Client).
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
 }
 
 func randomHex(n int) (string, error) {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -35,6 +36,12 @@ type AS struct {
 	DevicePolls []string
 	// DeviceInterval: interval in der Device-Code-Antwort (Sekunden).
 	DeviceInterval int
+	// DeviceExpiresIn: expires_in der Device-Code-Antwort (0 = 900,
+	// negativ = weglassen).
+	DeviceExpiresIn int
+	// TokenDelay: /token antwortet erst nach dieser Zeit (oder bricht mit
+	// der Anfrage ab).
+	TokenDelay time.Duration
 	// FailRefresh: Fehlercode für jeden Refresh ("" = Erfolg).
 	FailRefresh string
 	// Deny: /authorize leitet mit error=access_denied zurück.
@@ -174,6 +181,16 @@ func oauthErr(w http.ResponseWriter, code string, status int) {
 }
 
 func (as *AS) token(w http.ResponseWriter, r *http.Request) {
+	if as.TokenDelay > 0 {
+		// Erst den Körper lesen: Erst dann merkt der Server, dass der Client
+		// aufgibt (r.Context endet).
+		_ = r.ParseForm()
+		select {
+		case <-time.After(as.TokenDelay):
+		case <-r.Context().Done():
+			return
+		}
+	}
 	as.mu.Lock()
 	defer as.mu.Unlock()
 	if err := r.ParseForm(); err != nil {
@@ -242,8 +259,14 @@ func (as *AS) devicecode(w http.ResponseWriter, r *http.Request) {
 	if iv == 0 {
 		iv = 1
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "CANARY-device-code", "user_code": "ABCD-EFGH",
+	resp := map[string]any{"device_code": "CANARY-device-code", "user_code": "ABCD-EFGH",
 		"verification_uri": "https://microsoft.com/devicelogin", "expires_in": 900, "interval": iv,
-		"message": "To sign in, use a web browser to open the page and enter the code."})
+		"message": "To sign in, use a web browser to open the page and enter the code."}
+	if as.DeviceExpiresIn > 0 {
+		resp["expires_in"] = as.DeviceExpiresIn
+	} else if as.DeviceExpiresIn < 0 {
+		delete(resp, "expires_in")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
 }
