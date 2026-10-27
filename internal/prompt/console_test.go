@@ -241,3 +241,23 @@ func TestPasswordNotTerminal(t *testing.T) {
 		t.Fatalf("env = %+v", e)
 	}
 }
+
+// Gegenprüfung K8: Ein unbekannter Wert von POSTKAUZ_PASSWORD_READER fällt
+// vor der Aufforderung auf (out bleibt leer), auch am Terminal.
+func TestPasswordUnknownReaderBeforePrompt(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	t.Setenv(EnvReader, "conosle")
+	var out bytes.Buffer
+	_, rep, err := Password(context.Background(), f, &out, "Password: ", Options{})
+	if !errors.Is(err, ErrUnknownReader) || !strings.Contains(err.Error(), `"conosle"`) || rep.Reader != "conosle" || out.Len() != 0 {
+		t.Fatalf("err=%v rep=%+v out=%q", err, rep, out.String())
+	}
+	// Ausdrücklich gewählter Leser geht vor der Umgebung.
+	if _, _, err := Password(context.Background(), f, &out, "Password: ", Options{Reader: ReaderTerm}); !errors.Is(err, ErrNotTerminal) {
+		t.Fatalf("explicit reader: %v", err)
+	}
+}

@@ -41,6 +41,9 @@ var (
 	ErrNotTerminal = errors.New("standard input is not a terminal")
 	ErrTimeout     = errors.New("no input")
 	ErrTooLong     = errors.New("input too long")
+	// ErrUnknownReader: Options.Reader bzw. POSTKAUZ_PASSWORD_READER ist
+	// weder console noch term.
+	ErrUnknownReader = errors.New("unknown password reader")
 )
 
 // Leser (Options.Reader).
@@ -112,6 +115,11 @@ func Password(ctx context.Context, in *os.File, out interface{ Write([]byte) (in
 	if o.Reader == ReaderAuto {
 		o.Reader = defaultReader
 	}
+	// Ein Tippfehler in POSTKAUZ_PASSWORD_READER fällt vor der Aufforderung
+	// auf, nicht erst nachdem der Nutzer getippt hat (Gegenprüfung K8).
+	if o.Reader != ReaderConsole && o.Reader != ReaderTerm {
+		return nil, Report{Reader: o.Reader}, fmt.Errorf("%w %q (%s must be console or term)", ErrUnknownReader, o.Reader, EnvReader)
+	}
 	rep := Report{Reader: o.Reader, IsTerminal: isTerminal(in)}
 	if !rep.IsTerminal {
 		return nil, rep, ErrNotTerminal
@@ -125,10 +133,8 @@ func Password(ctx context.Context, in *os.File, out interface{ Write([]byte) (in
 	switch o.Reader {
 	case ReaderConsole:
 		b, err = readConsole(ctx, in, o.Timeout, &rep)
-	case ReaderTerm:
+	default: // ReaderTerm
 		b, err = readTerm(ctx, in, o.Timeout, &rep)
-	default:
-		return nil, rep, fmt.Errorf("unknown password reader %q (use console or term)", o.Reader)
 	}
 	_, _ = out.Write([]byte("\n"))
 	rep.Duration = time.Since(start).Round(time.Millisecond).String()

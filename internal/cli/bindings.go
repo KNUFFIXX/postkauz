@@ -457,6 +457,8 @@ func readHiddenPassword(ctx context.Context, a *app, label string) (secrets.Secr
 		return "", usageError{errNotTerminal}
 	case errors.Is(err, prompt.ErrTooLong):
 		return "", usageError{fmt.Errorf("password longer than %d characters", prompt.MaxLen)}
+	case errors.Is(err, prompt.ErrUnknownReader):
+		return "", usageError{err}
 	case err != nil:
 		return "", err
 	case len(b) == 0:

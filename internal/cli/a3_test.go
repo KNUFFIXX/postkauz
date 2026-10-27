@@ -70,6 +70,14 @@ func TestPasswordPromptErrors(t *testing.T) {
 	if code != ExitUsage || !strings.Contains(errb.String(), "standard input is not a terminal; use --password-stdin or --password-from-env") {
 		t.Fatalf("account add: %d\n%s\n%s", code, out.String(), errb.String())
 	}
+	// K8: Tippfehler im Rückweg-Schalter ist ein Eingabefehler vor der Aufforderung.
+	t.Setenv(prompt.EnvReader, "trem")
+	out.Reset()
+	errb.Reset()
+	code = RunWithInput([]string{"account", "add", "demo", "--imap", "127.0.0.1:1993", "--user", "demo@example.org"}, f, &out, &errb, "test")
+	if code != ExitUsage || strings.Contains(errb.String(), "Password") || !strings.Contains(errb.String(), `unknown password reader "trem" (POSTKAUZ_PASSWORD_READER must be console or term)`) {
+		t.Fatalf("account add with unknown reader: %d\n%s\n%s", code, out.String(), errb.String())
+	}
 	code, info := classify(fmt.Errorf("read: %w", prompt.ErrTimeout))
 	if code != ExitError || info.Code != "prompt_timeout" || !strings.Contains(info.Message, "within 2m0s") || !strings.Contains(info.Hint, "--password-stdin") {
 		t.Fatalf("timeout: %d %+v", code, info)
