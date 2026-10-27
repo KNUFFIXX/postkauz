@@ -77,6 +77,16 @@ func (as *AS) Count(kind string) int {
 	return as.Requests[kind]
 }
 
+// LastAccess liefert das zuletzt ausgegebene Access-Token ("" = keins).
+func (as *AS) LastAccess() string {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+	if len(as.Access) == 0 {
+		return ""
+	}
+	return as.Access[len(as.Access)-1]
+}
+
 // Forms liefert eine Kopie der Formulare an /token.
 func (as *AS) Forms() []url.Values {
 	as.mu.Lock()

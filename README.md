@@ -91,7 +91,7 @@ postkauz account add mail --imap imap.example.org:993 --user me@example.org
 postkauz account test mail
 ```
 
-`account add` asks for the password and stores it in the operating system's keyring (never in a file of PostKauz). Port 993 means TLS. Many providers require an **app password** for IMAP (for example Gmail, iCloud, Outlook.com with two-factor authentication); OAuth sign-in is not available yet. `account test` logs in read-only and lists capabilities and folders with their roles (`inbox`, `sent`, `drafts`, …).
+`account add` asks for the password and stores it in the operating system's keyring (never in a file of PostKauz). Port 993 means TLS. Many providers require an **app password** for IMAP (for example Gmail, iCloud). **Microsoft mailboxes** (Outlook.com, Microsoft 365) only allow OAuth2: register your own app once (steps in German in [docs/betrieb_microsoft.md](docs/betrieb_microsoft.md); PostKauz ships no app of its own), then `postkauz account add outlook --imap outlook.office365.com:993 --user you@example.org --auth oauth2 --client-id <your client id> --tenant consumers` and `postkauz account login outlook` (opens the browser; `--device-code` signs in on another device). Only the refresh token is stored, in the OS keyring; OAuth2 accounts need a keyring (not on servers without one). `account test` logs in read-only and lists capabilities and folders with their roles (`inbox`, `sent`, `drafts`, …).
 
 ### 4. Mirror and search
 
@@ -122,6 +122,7 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 | macOS: "cannot be opened because the developer cannot be verified" | Unsigned program: `xattr -d com.apple.quarantine ~/bin/postkauz`, or right-click the file in Finder, "Open". The first access to the Keychain asks for permission: choose "Always Allow". |
 | `keyring: unavailable` (Linux servers, containers, SSH sessions without a desktop) | No Secret Service is running. Install and unlock one (GNOME Keyring, KWallet) or keep the password in the environment: `export POSTKAUZ_PASSWORD_MAIL='…'` and `account add … --password-from-env`. There is deliberately no silent fallback to a file. |
 | `account test` fails with `auth` | Wrong user name or password, or the provider wants an app password / has IMAP switched off in its settings. PostKauz never retries a rejected login. |
+| `oauth_refresh`, `no_token` or `login_failed` (Microsoft account) | Sign in again with `account login <name>`; without a browser on the computer use `--device-code`. `token_not_stored` means the keyring refused the renewed token: check `doctor`, then run the command again. |
 | `account test` fails with `connection` (exit code 5) | Host, port or TLS mode wrong, or a firewall blocks port 993. |
 | `pdftotext: not found` | Optional. Without it PDF attachments get no searchable text (file names still are). Install Poppler (below); the next `sync` extracts the skipped PDFs. |
 | `sync_running` | Another `sync` or `import` of the same account is running (for example `sync --watch` in another window). |

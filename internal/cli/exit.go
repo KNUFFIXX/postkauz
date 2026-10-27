@@ -6,6 +6,7 @@ package cli
 import (
 	"errors"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -84,6 +85,14 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, secrets.ErrUnavailable):
 		return ExitError, ErrorInfo{Code: "secret_store_unavailable", Message: err.Error(), Hint: "run doctor"}
+	case errors.Is(err, ops.ErrNoToken):
+		return ExitError, ErrorInfo{Code: "no_token", Message: err.Error(), Hint: "sign in with: account login <name>"}
+	case errors.Is(err, oauth.ErrTokenNotStored):
+		return ExitError, ErrorInfo{Code: "token_not_stored", Message: err.Error(), Hint: "the renewed OAuth2 token could not be written to the keyring; check it with doctor, then run the command again (sign in again with account login if that fails)"}
+	case errors.Is(err, oauth.ErrRefresh), errors.Is(err, oauth.ErrTokenCorrupt):
+		return ExitError, ErrorInfo{Code: "oauth_refresh", Message: err.Error(), Hint: "the OAuth2 token could not be renewed; sign in again with: account login <name> (no automatic retry)"}
+	case errors.Is(err, oauth.ErrLoginTimeout), errors.Is(err, oauth.ErrLoginDenied):
+		return ExitError, ErrorInfo{Code: "login_failed", Message: err.Error(), Hint: "run account login again; without a browser on this computer use --device-code"}
 	case errors.Is(err, ops.ErrNoSecret):
 		return ExitError, ErrorInfo{Code: "no_secret", Message: err.Error(), Hint: "add the account again or set the environment variable"}
 	case errors.Is(err, provider.ErrAuth):

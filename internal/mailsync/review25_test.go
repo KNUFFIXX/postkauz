@@ -20,7 +20,6 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -99,7 +98,7 @@ func (e *pushEnv) viaProxy(t *testing.T) *appendDropProxy {
 	go px.serve(ln)
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	pn, _ := strconv.Atoi(port)
-	e.runner.Connect = func(ctx context.Context, a store.Account, pw secrets.Secret, idle time.Duration) (RemoteCloser, error) {
+	e.runner.Connect = func(ctx context.Context, a store.Account, cred provider.Credential, idle time.Duration) (RemoteCloser, error) {
 		prov, err := imapprov.Connect(ctx, imapprov.Config{Host: "127.0.0.1", Port: pn, TLS: "none", Username: testUser,
 			InsecureTestServer: true, CommandTimeout: 5 * time.Second,
 			Session: imapx.SessionOptions{MaxAttempts: 1, Backoff: imapx.Backoff{Initial: 10 * time.Millisecond}}}, testPass)
@@ -178,7 +177,7 @@ func TestReviewW3RejectedDraftSyncGoesOn(t *testing.T) {
 	}
 	// Eine Runde ohne RetryDrafts (Dauerbetrieb zwischen den vollen
 	// Abgleichen): kein neuer Versuch.
-	remote, err := e.runner.Connect(context.Background(), e.account(t), testPass, 0)
+	remote, err := e.runner.Connect(context.Background(), e.account(t), provider.PasswordCredential(testPass), 0)
 	if err != nil {
 		t.Fatal(err)
 	}

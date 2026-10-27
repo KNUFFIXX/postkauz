@@ -1,8 +1,10 @@
 package ops
 
 import (
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -40,6 +42,12 @@ type Deps struct {
 	Draft DraftConfig
 	// DraftCheck ist der Prüf-Hook vor der Vorlage (S2.4); nil = „pass".
 	DraftCheck DraftChecker
+	// OAuth: Microsoft-Anmeldung für OAuth2-Konten (S3.7; Nullwert = echte
+	// Endpunkte und Browser des Systems, Tests setzen einen Fake-AS).
+	OAuth oauth.Microsoft
+	// SystemAudit nimmt Systemereignisse außerhalb des Executors auf
+	// (oauth.refresh); nil = keine.
+	SystemAudit audit.Writer
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -52,8 +60,9 @@ func Catalog(d Deps) []Operation {
 		AccountsAdd(d.Accounts, d.Secrets),
 		AccountsSet(d.Accounts, d.Secrets),
 		AccountsRemove(d.Accounts, d.Secrets),
-		AccountsTest(d.Accounts, d.Secrets, d.Prober),
-		SyncRun(d.Accounts, d.Secrets, d.Runner),
+		AccountsTest(d.Accounts, d.credentials(), d.Prober),
+		AccountsLogin(d.Accounts, d.credentials()),
+		SyncRun(d.Accounts, d.credentials(), d.Runner),
 		ImportRun(d.Accounts, d.Importer),
 		MailboxesList(d.Accounts, d.Mailboxes),
 		MailboxesOverview(d.Accounts, d.Mailboxes, d.Search),

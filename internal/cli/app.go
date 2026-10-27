@@ -16,6 +16,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/importer"
 	"github.com/KNUFFIXX/postkauz/internal/mailsync"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
@@ -30,6 +31,10 @@ var openSecrets = secrets.Open
 var newProber = func(c config.IMAP) ops.AccountProber {
 	return imapprov.Prober{CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration}
 }
+
+// newOAuth liefert die Microsoft-Anmeldung (echte Endpunkte, Browser des
+// Systems); in Tests ersetzbar (Fake-AS).
+var newOAuth = func() oauth.Microsoft { return oauth.Microsoft{} }
 
 // newImporter ist in Tests ersetzbar.
 var newImporter = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.ImportRunner {
@@ -163,7 +168,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		DraftBlobs: blobs,
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
-		DraftCheck: newDraftChecker(a)}
+		DraftCheck: newDraftChecker(a), OAuth: newOAuth(), SystemAudit: st.AuditWriter()}
 	// draft_push (A02 E1, S2.5): Der Sync legt wartende Entwürfe im
 	// Entwürfe-Ordner ab; nur er hat die Zugangsdaten (der MCP-Server ruft
 	// sync.run nie auf).

@@ -19,7 +19,10 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
+	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -219,6 +222,7 @@ var contractInputs = map[string]struct {
 	"accounts.remove":    {input: `{"name":"leer"}`},
 	"accounts.set":       {input: `{"name":"demo","aliases":["Alias@Example.org","zweit@example.net"],"replace_password":true}`, secret: canary},
 	"accounts.test":      {input: `{"name":"demo"}`},
+	"accounts.login":     {input: `{"name":"ms"}`},
 	"sync.run":           {input: `{"account":"demo"}`},
 	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true,"no_extract":true}`},
 	"mailboxes.list":     {input: `{"account":"demo"}`},
@@ -362,8 +366,8 @@ type contractImporter struct{ fakeImporter }
 // contractRunner zählt Syncs, die schreiben dürften (DryRun=false).
 type contractRunner struct{ fakeRunner }
 
-func (c *contractRunner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o SyncOptions, p func(Progress)) (SyncOutput, error) {
-	return c.fakeRunner.Sync(ctx, a, pw, o, p)
+func (c *contractRunner) Sync(ctx context.Context, a store.Account, cred provider.Credential, o SyncOptions, p func(Progress)) (SyncOutput, error) {
+	return c.fakeRunner.Sync(ctx, a, cred, o, p)
 }
 
 type contractEnv struct {
@@ -397,13 +401,21 @@ func newContractEnv(t *testing.T) *contractEnv {
 		t.Fatal(err)
 	}
 	seedDrafts(t, m.st, m.acct)
+	// OAuth2-Konto ms (für accounts.login) mit dem Fake-AS (S3.7).
+	if _, err := m.st.CreateAccount(context.Background(), store.Account{Name: "ms", Email: "ms@example.org", Host: "127.0.0.1", Port: 11143,
+		TLS: "tls", Username: "ms@example.org", AuthType: AuthOAuth2, CredentialRef: "account/1a2b3c4d/ms",
+		OAuth: &store.OAuthClient{ClientID: oauthtest.ClientID, Tenant: "consumers"}}); err != nil {
+		t.Fatal(err)
+	}
+	as := oauthtest.New(t)
 	r := &contractRunner{}
 	imp := &contractImporter{}
 	blobs := newMemBlobs()
 	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
-		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}}}
+		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"},
+		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
 	return e
 }

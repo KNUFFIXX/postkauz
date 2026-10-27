@@ -11,6 +11,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -63,8 +64,8 @@ type fakeProber struct {
 	seen secrets.Secret
 }
 
-func (f *fakeProber) Probe(_ context.Context, _ store.Account, pw secrets.Secret) (ProbeResult, error) {
-	f.seen = pw
+func (f *fakeProber) Probe(_ context.Context, _ store.Account, cred provider.Credential) (ProbeResult, error) {
+	f.seen = cred.Password
 	return f.res, f.err
 }
 
@@ -88,7 +89,7 @@ func newAccountsEnv(t *testing.T) *accountsEnv {
 	}
 	e := &accountsEnv{st: st, sec: newMemSecrets(), prober: &fakeProber{}, au: &audit.Memory{}}
 	reg := NewRegistry()
-	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec), AccountsRemove(st, e.sec), AccountsTest(st, e.sec, e.prober)} {
+	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec), AccountsRemove(st, e.sec), AccountsTest(st, Credentials{Secrets: e.sec}, e.prober)} {
 		if err := reg.Register(op); err != nil {
 			t.Fatal(err)
 		}

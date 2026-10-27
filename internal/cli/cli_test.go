@@ -12,11 +12,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
+	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -44,8 +47,19 @@ func setupEnv(t *testing.T) (dataDir string, kr *memKeyring) {
 		return secrets.WithEnv(kr), nil
 	}
 	t.Cleanup(func() { openSecrets = orig })
+	// Microsoft-Anmeldung nur gegen den Fake-AS (S3.7), nie gegen echte
+	// Endpunkte und nie mit dem Browser des Systems.
+	fakeAS = oauthtest.New(t)
+	as, origOAuth := fakeAS, newOAuth
+	newOAuth = func() oauth.Microsoft {
+		return oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}
+	}
+	t.Cleanup(func() { newOAuth = origOAuth })
 	return dataDir, kr
 }
+
+// fakeAS ist der Fake-Autorisierungsserver des zuletzt aufgesetzten Tests.
+var fakeAS *oauthtest.AS
 
 type memKeyring struct {
 	mu sync.Mutex

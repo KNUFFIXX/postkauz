@@ -16,7 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -51,6 +53,10 @@ type AccountDetail struct {
 	SecretSource       string `json:"secret_source"`
 	InsecureTestServer bool   `json:"insecure_test_server"`
 	Status             string `json:"status"`
+	// ClientID und Tenant: öffentlicher OAuth2-Client (nur auth_type
+	// oauth2, S3.7); kein Geheimnis.
+	ClientID string `json:"client_id,omitempty"`
+	Tenant   string `json:"tenant,omitempty"`
 }
 
 // AccountRepo ist der Teil des Stores, den die Kontenoperationen brauchen.
@@ -84,12 +90,14 @@ type ProbeResult struct {
 	Mailboxes    []ProbeMailbox `json:"mailboxes"`
 	// CapabilitiesJSON ist provider.Capabilities als JSON für accounts.capabilities.
 	CapabilitiesJSON string `json:"-"`
+	// AuthMechanism: LOGIN, OAUTHBEARER oder XOAUTH2 (S3.7).
+	AuthMechanism string `json:"auth_mechanism,omitempty"`
 }
 
 // AccountProber meldet sich an einem Konto an und liest Fähigkeiten und
 // Ordner, ohne etwas zu verändern. Implementierung: internal/provider/imap.
 type AccountProber interface {
-	Probe(ctx context.Context, a store.Account, password secrets.Secret) (ProbeResult, error)
+	Probe(ctx context.Context, a store.Account, cred provider.Credential) (ProbeResult, error)
 }
 
 // InputError ist eine ungültige Eingabe (CLI: Exit-Code 2).
@@ -283,6 +291,11 @@ type AccountsAddInput struct {
 	// PasswordFromEnv: Das Passwort steht in der Umgebungsvariable
 	// POSTKAUZ_PASSWORD_<NAME> und wird nicht gespeichert (Server, Docker).
 	PasswordFromEnv bool `json:"password_from_env,omitempty"`
+	// ClientID und Tenant: öffentlicher OAuth2-Client des Nutzers (nur mit
+	// auth_type oauth2, S3.7, E11). Tenant: common (Standard), consumers,
+	// organizations oder eine Mandanten-ID.
+	ClientID string `json:"client_id,omitempty"`
+	Tenant   string `json:"tenant,omitempty"`
 }
 
 // AccountsAddOutput ist die Ausgabe von accounts.add.
@@ -331,10 +344,24 @@ func (in *AccountsAddInput) normalize() error {
 	}
 	switch in.AuthType {
 	case "password", "app_password":
-	case "oauth2":
-		return inputErr("auth_type oauth2 is not supported yet (planned: bring your own OAuth client)")
+		if in.ClientID != "" || in.Tenant != "" {
+			return inputErr("client_id and tenant only apply with auth_type oauth2")
+		}
+	case AuthOAuth2:
+		if in.PasswordFromEnv {
+			return inputErr("auth_type oauth2 uses no password; password_from_env does not apply")
+		}
+		if in.Tenant == "" {
+			in.Tenant = oauth.DefaultTenant
+		}
+		if in.ClientID == "" {
+			return inputErr("auth_type oauth2 needs client_id: the Application (client) ID of your own app registration (see docs/betrieb_microsoft.md)")
+		}
+		if err := (oauth.Client{ClientID: in.ClientID, Tenant: in.Tenant}).Validate(); err != nil {
+			return inputErr("%s", err.Error())
+		}
 	default:
-		return inputErr("invalid auth_type (expected password or app_password)")
+		return inputErr("invalid auth_type (expected password, app_password or oauth2)")
 	}
 	if in.Email == "" && strings.Contains(in.Username, "@") {
 		in.Email = in.Username
@@ -359,9 +386,11 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
     "port": {"type": "integer", "minimum": 1, "maximum": 65535},
     "tls": {"type": "string", "enum": ["tls", "starttls", "none"]},
     "username": {"type": "string"},
-    "auth_type": {"type": "string", "enum": ["password", "app_password"]},
+    "auth_type": {"type": "string", "enum": ["password", "app_password", "oauth2"]},
     "insecure_test_server": {"type": "boolean"},
-    "password_from_env": {"type": "boolean"}
+    "password_from_env": {"type": "boolean"},
+    "client_id": {"type": "string", "description": "oauth2 only: Application (client) ID of your own app registration"},
+    "tenant": {"type": "string", "description": "oauth2 only: common (default), consumers, organizations or a tenant id"}
   },
   "required": ["name", "host", "port", "tls", "username"],
   "additionalProperties": false
@@ -377,7 +406,8 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
         "tls": {"type": "string"}, "username": {"type": "string"}, "auth_type": {"type": "string"},
         "credential_ref": {"type": "string"},
         "secret_source": {"type": "string", "enum": ["keyring", "insecure-file", "environment"]},
-        "insecure_test_server": {"type": "boolean"}, "status": {"type": "string"}
+        "insecure_test_server": {"type": "boolean"}, "status": {"type": "string"},
+        "client_id": {"type": "string"}, "tenant": {"type": "string"}
       },
       "required": ["name", "host", "port", "tls", "username", "credential_ref", "secret_source"]
     },
@@ -405,7 +435,17 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 				return nil, err
 			}
 			source := sec.Status().Backend
-			if in.PasswordFromEnv {
+			oauth2 := in.AuthType == AuthOAuth2
+			if oauth2 {
+				// Rückfrage R2: nur mit Schlüsselbund; das Token kommt erst mit
+				// account login, hier wird nichts gespeichert.
+				if !call.Secret.IsZero() {
+					return nil, inputErr("auth_type oauth2 uses no password; sign in with account login after adding the account")
+				}
+				if st := secrets.Stored(sec).Status(); !st.Available {
+					return nil, oauthNeedsKeyring(st)
+				}
+			} else if in.PasswordFromEnv {
 				source = "environment"
 				if !call.Secret.IsZero() {
 					return nil, inputErr("password_from_env and a password must not be combined")
@@ -419,12 +459,15 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 			acct := store.Account{Name: in.Name, Email: in.Email, Provider: "imap", Host: in.Host, Port: in.Port,
 				TLS: in.TLS, Username: in.Username, AuthType: in.AuthType, CredentialRef: ref,
 				InsecureTestServer: in.InsecureTestServer, Status: "new"}
+			if oauth2 {
+				acct.OAuth = &store.OAuthClient{ClientID: in.ClientID, Tenant: in.Tenant}
+			}
 			out := AccountsAddOutput{DryRun: call.DryRun, Account: detail(acct, source)}
 			if call.DryRun {
 				return out, nil
 			}
 			stored := false
-			if !in.PasswordFromEnv {
+			if !in.PasswordFromEnv && !oauth2 {
 				if err := sec.Set(ref, call.Secret); err != nil {
 					return nil, err
 				}
@@ -444,9 +487,13 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store) Operation {
 }
 
 func detail(a store.Account, source string) AccountDetail {
-	return AccountDetail{ID: a.ID, Name: a.Name, Email: a.Email, Provider: a.Provider, Host: a.Host, Port: a.Port,
+	d := AccountDetail{ID: a.ID, Name: a.Name, Email: a.Email, Provider: a.Provider, Host: a.Host, Port: a.Port,
 		TLS: a.TLS, Username: a.Username, AuthType: a.AuthType, CredentialRef: a.CredentialRef,
 		SecretSource: source, InsecureTestServer: a.InsecureTestServer, Status: a.Status}
+	if a.OAuth != nil {
+		d.ClientID, d.Tenant = a.OAuth.ClientID, a.OAuth.Tenant
+	}
+	return d
 }
 
 // --- accounts.set ----------------------------------------------------------
@@ -609,6 +656,9 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 				}
 				out.AliasesChanged = true
 			}
+			if in.ReplacePassword && a.AuthType == AuthOAuth2 {
+				return nil, inputErr("account %s signs in with OAuth2 and has no password; sign in again with: account login %s", a.Name, a.Name)
+			}
 			if in.ReplacePassword {
 				dirID, err := repo.DataDirID(ctx)
 				if err != nil {
@@ -721,7 +771,12 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			}
 			// Erst die Zeile, dann das Geheimnis: Ein verwaister Eintrag im
 			// Schlüsselbund ist harmloser als ein Konto ohne Passwort.
-			switch err := sec.Delete(a.CredentialRef); {
+			del := sec.Delete
+			if a.AuthType == AuthOAuth2 {
+				// Haupteintrag und Teile des Tokens (S3.7).
+				del = func(ref string) error { return oauth.Delete(sec, ref) }
+			}
+			switch err := del(a.CredentialRef); {
 			case err == nil:
 				out.SecretDeleted = true
 			case errors.Is(err, secrets.ErrNotFound):
@@ -749,7 +804,7 @@ var ErrNoSecret = errors.New("no password stored for this account")
 // AccountsTest meldet sich am Server an und liest Fähigkeiten und Ordner.
 // Sie verändert am Server nichts; lokal speichert sie Fähigkeiten und Status
 // am Konto (deshalb R1; im Trockenlauf nicht).
-func AccountsTest(repo AccountRepo, sec secrets.Store, prober AccountProber) Operation {
+func AccountsTest(repo AccountRepo, creds Credentials, prober AccountProber) Operation {
 	return Operation{
 		Name:        "accounts.test",
 		Scope:       policy.ScopeAdmin,
@@ -766,6 +821,7 @@ func AccountsTest(repo AccountRepo, sec secrets.Store, prober AccountProber) Ope
     "sync_strategy": {"type": "string"},
     "mailboxes": {"type": "array", "items": {"type": "object",
       "properties": {"path": {"type": "string"}, "role": {"type": "string"}}, "required": ["path", "role"]}},
+    "auth_mechanism": {"type": "string", "description": "how the login went: LOGIN, OAUTHBEARER or XOAUTH2"},
     "dry_run": {"type": "boolean"}
   },
   "required": ["account", "login", "capabilities", "sync_strategy", "mailboxes", "dry_run"]
@@ -785,16 +841,14 @@ func AccountsTest(repo AccountRepo, sec secrets.Store, prober AccountProber) Ope
 			if err != nil {
 				return nil, err
 			}
-			pw, err := sec.Get(a.CredentialRef)
-			if errors.Is(err, secrets.ErrNotFound) {
-				return nil, fmt.Errorf("%w: %s (keyring entry %s or environment variable %s)", ErrNoSecret, a.Name, a.CredentialRef, secrets.EnvName(a.CredentialRef))
-			} else if err != nil {
+			cred, err := creds.For(a)
+			if err != nil {
 				return nil, err
 			}
-			res, perr := prober.Probe(ctx, a, pw)
+			res, perr := prober.Probe(ctx, a, cred)
 			if perr != nil {
 				// Defensiv: Ein Serverfehler darf das Passwort nie weitertragen.
-				perr = scrub(perr, pw)
+				perr = scrub(perr, cred.Password)
 				if !call.DryRun {
 					_ = repo.UpdateAccountProbe(ctx, a.ID, a.Capabilities, "error", perr.Error())
 				}

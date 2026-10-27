@@ -12,6 +12,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -23,8 +24,8 @@ type fakeRunner struct {
 	err  error
 }
 
-func (f *fakeRunner) Sync(_ context.Context, a store.Account, pw secrets.Secret, o SyncOptions, progress func(Progress)) (SyncOutput, error) {
-	f.got, f.acct, f.pw = o, a.Name, pw
+func (f *fakeRunner) Sync(_ context.Context, a store.Account, cred provider.Credential, o SyncOptions, progress func(Progress)) (SyncOutput, error) {
+	f.got, f.acct, f.pw = o, a.Name, cred.Password
 	if progress != nil {
 		progress(Progress{Event: "window", Mailbox: "INBOX", Done: 1, Total: 1})
 	}
@@ -59,7 +60,7 @@ func newMirrorEnv(t *testing.T) *mirrorEnv {
 	t.Helper()
 	e := newAccountsEnv(t)
 	m := &mirrorEnv{accountsEnv: e, runner: &fakeRunner{}}
-	for _, op := range []Operation{SyncRun(e.st, e.sec, m.runner), MailboxesList(e.st, e.st),
+	for _, op := range []Operation{SyncRun(e.st, Credentials{Secrets: e.sec}, m.runner), MailboxesList(e.st, e.st),
 		MessagesGet(e.st, e.st, testBlobs), ThreadsGet(e.st), AttachmentsList(e.st),
 		AttachmentsText(e.st, e.st, testBlobs, extract.New(extract.Options{})), MessagesSearch(e.st, e.st),
 		MailboxesOverview(e.st, e.st, e.st)} {

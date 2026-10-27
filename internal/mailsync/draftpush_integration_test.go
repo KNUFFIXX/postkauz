@@ -22,7 +22,6 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -168,7 +167,7 @@ func (e *itDraftEnv) create(subject string) ops.DraftsWriteOutput {
 
 func (e *itDraftEnv) sync(o ops.SyncOptions) (ops.SyncOutput, error) {
 	o.Mailboxes = []string{e.path} // nur der Entwürfe-Ordner (gemeinsame Testkonten)
-	return e.runner.Sync(context.Background(), e.acc, itPass, o, nil)
+	return e.runner.Sync(context.Background(), e.acc, provider.PasswordCredential(itPass), o, nil)
 }
 
 func (e *itDraftEnv) draft(id int64) store.Draft {
@@ -400,13 +399,13 @@ func TestIntegrationDraftPushWatchAndOffline(t *testing.T) {
 		// Offline: Verbindungsaufbau gegen einen geschlossenen Port.
 		var offline atomic.Bool
 		offline.Store(true)
-		e.runner.Connect = func(ctx context.Context, a store.Account, pw secrets.Secret, idle time.Duration) (RemoteCloser, error) {
+		e.runner.Connect = func(ctx context.Context, a store.Account, cred provider.Credential, idle time.Duration) (RemoteCloser, error) {
 			port := a.Port
 			if offline.Load() {
 				port = 1
 			}
-			p, err := imapprov.Connect(ctx, imapprov.Config{Host: a.Host, Port: port, TLS: a.TLS, Username: a.Username,
-				InsecureTestServer: true, CommandTimeout: 15 * time.Second, IdleRestart: idle}, pw)
+			p, err := imapprov.ConnectWith(ctx, imapprov.Config{Host: a.Host, Port: port, TLS: a.TLS, Username: a.Username,
+				InsecureTestServer: true, CommandTimeout: 15 * time.Second, IdleRestart: idle}, cred)
 			if err != nil {
 				return nil, err
 			}
@@ -430,7 +429,7 @@ func TestIntegrationDraftPushWatchAndOffline(t *testing.T) {
 		var rounds atomic.Int32
 		done := make(chan error, 1)
 		go func() {
-			_, err := e.runner.Sync(ctx, e.acc, itPass, ops.SyncOptions{Watch: true, Interval: time.Hour, Mailboxes: []string{e.path}},
+			_, err := e.runner.Sync(ctx, e.acc, provider.PasswordCredential(itPass), ops.SyncOptions{Watch: true, Interval: time.Hour, Mailboxes: []string{e.path}},
 				func(p ops.Progress) {
 					if p.Event == "round" {
 						rounds.Add(1)

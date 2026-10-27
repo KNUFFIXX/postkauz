@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -145,6 +146,10 @@ var cliSamples = []cliSample{
 	{"accounts.set", []string{"account", "set", "demo", "--aliases", "Alias@example.org, zweit@example.net"}, false},
 	{"accounts.set", []string{"account", "set", "demo", "--password-stdin"}, false},
 	{"accounts.test", []string{"account", "test", "demo"}, false},
+	// S3.7: OAuth2-Konto anlegen und anmelden (Fake-AS, setupEnv).
+	{"accounts.add", []string{"account", "add", "ms", "--imap", "outlook.office365.com:993", "--user", "ms@example.org",
+		"--auth", "oauth2", "--client-id", oauthtest.ClientID, "--tenant", "consumers"}, false},
+	{"accounts.login", []string{"account", "login", "ms", "--device-code"}, false},
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m", "--full-check-interval", "30m", "--jobs-interval", "5s"}, true},

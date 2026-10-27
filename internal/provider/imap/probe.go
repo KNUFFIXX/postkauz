@@ -15,7 +15,6 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -32,10 +31,10 @@ var _ ops.AccountProber = Prober{}
 // Probe meldet sich an, liest Fähigkeiten und Ordner und meldet sich ab.
 // Am Server wird nichts verändert (kein SELECT, kein FETCH). Für eine
 // Prüfung genügt ein Versuch; Reconnect ist Sache des Sync.
-func (p Prober) Probe(ctx context.Context, a store.Account, pw secrets.Secret) (ops.ProbeResult, error) {
-	prov, err := Connect(ctx, Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
+func (p Prober) Probe(ctx context.Context, a store.Account, cred provider.Credential) (ops.ProbeResult, error) {
+	prov, err := ConnectWith(ctx, Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
 		InsecureTestServer: a.InsecureTestServer, CommandTimeout: p.CommandTimeout,
-		CommandMaxDuration: p.CommandMaxDuration, Session: imapx.SessionOptions{MaxAttempts: 1}}, pw)
+		CommandMaxDuration: p.CommandMaxDuration, Session: imapx.SessionOptions{MaxAttempts: 1}}, cred)
 	if err != nil {
 		return ops.ProbeResult{}, err
 	}
@@ -46,7 +45,8 @@ func (p Prober) Probe(ctx context.Context, a store.Account, pw secrets.Secret) (
 	}
 	caps := prov.Capabilities()
 	cj, _ := json.Marshal(caps)
-	res := ops.ProbeResult{Capabilities: prov.RawCapabilities(), SyncStrategy: string(EffectiveStrategy(caps)), CapabilitiesJSON: string(cj)}
+	res := ops.ProbeResult{Capabilities: prov.RawCapabilities(), SyncStrategy: string(EffectiveStrategy(caps)), CapabilitiesJSON: string(cj),
+		AuthMechanism: prov.AuthMechanism()}
 	for _, b := range boxes {
 		res.Mailboxes = append(res.Mailboxes, ops.ProbeMailbox{Path: b.Path, Role: string(b.Role)})
 	}

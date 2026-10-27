@@ -62,7 +62,10 @@ var bindings = []binding{
 	{op: "accounts.list", path: []string{"accounts", "list"}, args: cobra.NoArgs, human: renderAccounts},
 	{op: "accounts.add", path: []string{"account", "add"}, use: "<name>", args: cobra.ExactArgs(1),
 		flags: accountAddFlags, input: accountAddInput, human: renderAccountAdd,
-		covers: []string{"name", "email", "host", "port", "tls", "username", "auth_type", "insecure_test_server", "password_from_env"}},
+		covers: []string{"name", "email", "host", "port", "tls", "username", "auth_type", "insecure_test_server", "password_from_env", "client_id", "tenant"}},
+	{op: "accounts.login", path: []string{"account", "login"}, use: "<name> [--device-code]", args: cobra.ExactArgs(1),
+		flags: accountLoginFlags, input: accountLoginInput, human: renderAccountLogin, progress: loginProgress,
+		covers: []string{"name", "device_code"}},
 	{op: "accounts.set", path: []string{"account", "set"}, use: "<name> [--aliases a@example.org,b@example.org] [--password-stdin]", args: cobra.ExactArgs(1),
 		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases", "replace_password"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
@@ -315,7 +318,9 @@ func accountAddFlags(cmd *cobra.Command) {
 	f.String("user", "", "login name")
 	f.String("email", "", "e-mail address (defaults to the login name if it contains @)")
 	f.String("tls", "", "tls | starttls | none (default: tls for port 993; starttls otherwise; none with --insecure-test-server)")
-	f.String("auth", "password", "password | app_password")
+	f.String("auth", "password", "password | app_password | oauth2 (Microsoft; then --client-id, no password, sign in with account login)")
+	f.String("client-id", "", "oauth2: Application (client) ID of your own app registration (see docs/betrieb_microsoft.md)")
+	f.String("tenant", "", "oauth2: common (default), consumers (personal Microsoft accounts), organizations or a tenant id")
 	f.Bool("insecure-test-server", false, "allow plain text and self-signed certificates; only for localhost test servers")
 	f.Bool("password-stdin", false, "read the password from standard input instead of prompting")
 	f.Bool("password-from-env", false, "do not store a password; read it from POSTKAUZ_PASSWORD_<NAME> at runtime")
@@ -346,6 +351,8 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	fromStdin, _ := f.GetBool("password-stdin")
 	fromEnv, _ := f.GetBool("password-from-env")
 	asJSON, _ := f.GetBool("json")
+	clientID, _ := f.GetString("client-id")
+	tenant, _ := f.GetString("tenant")
 
 	host, portStr, err := net.SplitHostPort(imapAddr)
 	if err != nil {
@@ -359,10 +366,17 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 		tlsMode = defaultTLS(port, insecure)
 	}
 	in := ops.AccountsAddInput{Name: args[0], Email: email, Host: host, Port: port, TLS: tlsMode, Username: user,
-		AuthType: authType, InsecureTestServer: insecure, PasswordFromEnv: fromEnv}
+		AuthType: authType, InsecureTestServer: insecure, PasswordFromEnv: fromEnv, ClientID: clientID, Tenant: tenant}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		return nil, "", err
+	}
+	if authType == ops.AuthOAuth2 {
+		// Kein Passwort: Das Token kommt mit account login (S3.7).
+		if fromStdin || fromEnv {
+			return nil, "", usageError{errors.New("--auth oauth2 uses no password; leave out --password-stdin and --password-from-env and sign in with: account login " + args[0])}
+		}
+		return raw, "", nil
 	}
 
 	var pw secrets.Secret
@@ -502,6 +516,15 @@ func renderAccountAdd(w io.Writer, out any) error {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
 	a := o.Account
+	if a.AuthType == ops.AuthOAuth2 {
+		verb := "added"
+		if o.DryRun {
+			verb = "would be added (dry run)"
+		}
+		_, err := fmt.Fprintf(w, "account %s %s (%s:%d, tls %s, user %s); OAuth2 client %s, tenant %s; no token yet, sign in with: account login %s\n",
+			a.Name, verb, a.Host, a.Port, a.TLS, a.Username, a.ClientID, a.Tenant, a.Name)
+		return err
+	}
 	where := map[string]string{
 		"keyring":       "password stored in the OS keyring as " + a.CredentialRef,
 		"insecure-file": "password stored in the INSECURE test file store as " + a.CredentialRef,
@@ -559,8 +582,12 @@ func renderAccountTest(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	login := o.Login
+	if o.AuthMechanism != "" {
+		login += " (" + o.AuthMechanism + ")"
+	}
 	fmt.Fprintf(w, "account:       %s\nlogin:         %s\nsync strategy: %s\ncapabilities:  %s\nmailboxes:\n",
-		o.Account, o.Login, o.SyncStrategy, strings.Join(o.Capabilities, " "))
+		o.Account, login, o.SyncStrategy, strings.Join(o.Capabilities, " "))
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, m := range o.Mailboxes {
 		fmt.Fprintf(tw, "  %s\t%s\n", m.Path, m.Role)
@@ -582,5 +609,52 @@ func renderAccountRemove(w io.Writer, out any) error {
 		msg = "no stored password found"
 	}
 	_, err := fmt.Fprintf(w, "account %s removed; %s\n", o.Removed, msg)
+	return err
+}
+
+// --- account login ------------------------------------------------------------
+
+func accountLoginFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("device-code", false, "sign in on another device with a code instead of the browser on this computer")
+}
+
+func accountLoginInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	dc, _ := cmd.Flags().GetBool("device-code")
+	b, err := json.Marshal(ops.AccountsLoginInput{Name: args[0], DeviceCode: dc})
+	return b, "", err
+}
+
+// loginProgress zeigt die Hinweise der Anmeldung (Adresse, Code) auf
+// stderr, auch mit --json: Der Mensch braucht sie, stdout gehört der Ausgabe.
+func loginProgress(_ *cobra.Command, a *app) func(ops.Progress) {
+	return func(p ops.Progress) {
+		if p.Event == "oauth_prompt" {
+			for _, line := range strings.Split(p.Message, "\n") {
+				fmt.Fprintln(a.stderr, termLine(line))
+			}
+		}
+	}
+}
+
+func renderAccountLogin(w io.Writer, out any) error {
+	o, ok := out.(ops.AccountsLoginOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	where := map[string]string{"keyring": "in the OS keyring", "insecure-file": "in the INSECURE test file store"}[o.SecretStore]
+	if where == "" {
+		where = "in the secret store"
+	}
+	if o.DryRun {
+		_, err := fmt.Fprintf(w, "dry run: would sign in to account %s (%s) and store the refresh token %s as %s\n",
+			o.Account, strings.ReplaceAll(o.Method, "_", " "), where, o.CredentialRef)
+		return err
+	}
+	exp := ""
+	if o.TokenExpiry != "" {
+		exp = "; access token valid until " + o.TokenExpiry + " (kept in memory only, renewed automatically)"
+	}
+	_, err := fmt.Fprintf(w, "account %s: signed in; refresh token stored %s as %s%s\nnext: account test %s\n",
+		o.Account, where, o.CredentialRef, exp, o.Account)
 	return err
 }

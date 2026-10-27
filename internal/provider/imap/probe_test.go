@@ -44,7 +44,7 @@ func TestProbeAgainstInProcessServer(t *testing.T) {
 	p, _ := strconv.Atoi(port)
 	acct := store.Account{Name: "demo", Host: host, Port: p, TLS: "none", Username: "tester@example.invalid", InsecureTestServer: true}
 
-	res, err := Prober{CommandTimeout: 2 * time.Second}.Probe(context.Background(), acct, "pw-test")
+	res, err := Prober{CommandTimeout: 2 * time.Second}.Probe(context.Background(), acct, provider.PasswordCredential("pw-test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestProbeAgainstInProcessServer(t *testing.T) {
 		t.Errorf("result = %+v", res)
 	}
 
-	if _, err := (Prober{CommandTimeout: 2 * time.Second}).Probe(context.Background(), acct, "wrong"); !errors.Is(err, provider.ErrAuth) {
+	if _, err := (Prober{CommandTimeout: 2 * time.Second}).Probe(context.Background(), acct, provider.PasswordCredential("wrong")); !errors.Is(err, provider.ErrAuth) {
 		t.Fatalf("wrong password: %v", err)
 	}
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -81,9 +83,17 @@ type DoctorReport struct {
 // DoctorAccount meldet je Konto, woher das Passwort käme.
 type DoctorAccount struct {
 	Name     string `json:"name"`
-	Password string `json:"password"` // stored | environment | missing | unknown
+	Password string `json:"password"` // stored | environment | missing | unknown | oauth2 (kein Passwort)
 	EnvVar   string `json:"env_var"`
 	Status   string `json:"status"`
+	// OAuth2-Konten (S3.7): Token stored | missing | unreadable | unknown;
+	// Ablauf des zuletzt ausgegebenen Access-Tokens (es bleibt im Speicher
+	// und wird erneuert) und Zeitpunkt der letzten Anmeldung bzw. des
+	// letzten Refresh (RFC 3339, UTC). Nie ein Token.
+	Auth           string `json:"auth,omitempty"`
+	Token          string `json:"token,omitempty"`
+	TokenExpiry    string `json:"token_expiry,omitempty"`
+	TokenUpdatedAt string `json:"token_updated_at,omitempty"`
 }
 
 func doctorCmd(a *app) *cobra.Command {
@@ -218,6 +228,11 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	for _, acc := range list {
 		da := DoctorAccount{Name: acc.Name, EnvVar: secrets.EnvName(acc.CredentialRef), Status: acc.Status, Password: "unknown"}
+		if acc.AuthType == ops.AuthOAuth2 {
+			doctorOAuthAccount(sec, acc, &da, &rep)
+			rep.Accounts = append(rep.Accounts, da)
+			continue
+		}
 		if v, ok := os.LookupEnv(da.EnvVar); ok && v != "" {
 			da.Password = "environment"
 		} else if sec != nil {
@@ -233,6 +248,33 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	doctorCredentialRefs(ctx, db, sec, list, &rep)
 	return rep
+}
+
+// doctorOAuthAccount meldet den Token-Stand eines OAuth2-Kontos (S3.7):
+// gespeichert oder nicht, Ablauf des letzten Access-Tokens, letzte
+// Erneuerung. Liest nur; nie ein Token in der Ausgabe.
+func doctorOAuthAccount(sec secrets.Store, acc store.AccountRef, da *DoctorAccount, rep *DoctorReport) {
+	da.Auth, da.Password, da.EnvVar, da.Token = ops.AuthOAuth2, ops.AuthOAuth2, "", "unknown"
+	if sec == nil {
+		return
+	}
+	saved, err := oauth.Load(sec, acc.CredentialRef)
+	switch {
+	case err == nil:
+		da.Token = "stored"
+		if !saved.Expiry.IsZero() {
+			da.TokenExpiry = saved.Expiry.UTC().Format(time.RFC3339)
+		}
+		if !saved.UpdatedAt.IsZero() {
+			da.TokenUpdatedAt = saved.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+	case errors.Is(err, secrets.ErrNotFound):
+		da.Token = "missing"
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s has no OAuth2 token (keyring entry %s); sign in with: account login %s", acc.Name, acc.CredentialRef, acc.Name))
+	case errors.Is(err, oauth.ErrTokenCorrupt):
+		da.Token = "unreadable"
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: the OAuth2 token in the keyring (%s) is unreadable; sign in again with: account login %s", acc.Name, acc.CredentialRef, acc.Name))
+	}
 }
 
 // doctorPolicy lädt die Policy-Datei nur lesend (doctor trägt nichts ein).
@@ -443,6 +485,17 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if len(r.Accounts) > 0 {
 		fmt.Fprintln(w, "accounts:")
 		for _, a := range r.Accounts {
+			if a.Auth == ops.AuthOAuth2 {
+				exp := ""
+				if a.TokenExpiry != "" {
+					exp = ", last access token valid until " + a.TokenExpiry + " (renewed automatically)"
+				}
+				if a.TokenUpdatedAt != "" {
+					exp += ", last renewed " + a.TokenUpdatedAt
+				}
+				fmt.Fprintf(w, "  %s: OAuth2 token %s%s, status %s\n", a.Name, a.Token, exp, a.Status)
+				continue
+			}
 			fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
 		}
 	}

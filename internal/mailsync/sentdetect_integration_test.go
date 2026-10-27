@@ -136,7 +136,7 @@ func TestIntegrationSentDetection(t *testing.T) {
 		tag := fmt.Sprintf("%s %d", srv.name, time.Now().UnixNano())
 		sync := func() ops.SyncOutput {
 			t.Helper()
-			out, err := e.runner.Sync(context.Background(), e.acc, itPass, ops.SyncOptions{Mailboxes: []string{e.path, sent}}, nil)
+			out, err := e.runner.Sync(context.Background(), e.acc, provider.PasswordCredential(itPass), ops.SyncOptions{Mailboxes: []string{e.path, sent}}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

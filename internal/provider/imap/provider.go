@@ -2,10 +2,12 @@ package imap
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
@@ -46,21 +48,56 @@ type Provider struct {
 	cfg        Config
 	caps       provider.Capabilities
 	raw        []string
+	// mech ist das Anmeldeverfahren der letzten Anmeldung (LOGIN,
+	// OAUTHBEARER oder XOAUTH2).
+	mech atomic.Value
 
 	mu    sync.Mutex
 	cache map[string]searchCache
 }
 
-// Connect meldet sich an (mit Watchdog, Reconnect und Backoff) und liest
-// die Fähigkeiten. Anmeldefehler sind provider.ErrAuth und werden nicht
-// wiederholt.
+// Connect meldet sich mit Passwort an (mit Watchdog, Reconnect und Backoff)
+// und liest die Fähigkeiten. Anmeldefehler sind provider.ErrAuth und werden
+// nicht wiederholt.
 func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provider, error) {
+	return ConnectWith(ctx, cfg, provider.PasswordCredential(password))
+}
+
+// ConnectWith meldet sich mit Passwort oder OAuth2-Token an (S3.7). Bei
+// OAuth2 holt jede Anmeldung, auch nach einem Reconnect, ein gültiges
+// Access-Token aus cred.Token und meldet sich per SASL an (OAUTHBEARER vor
+// XOAUTH2, je nach CAPABILITY vor der Anmeldung). Scheitert die Tokenquelle
+// (Refresh abgelehnt, Token nicht speicherbar), ist das ein Anmeldefehler
+// (provider.ErrAuth): kein Wiederholen mit Backoff, `sync --watch` endet.
+func ConnectWith(ctx context.Context, cfg Config, cred provider.Credential) (*Provider, error) {
+	p := &Provider{cfg: cfg}
+	login := func(c *imapx.Client) error {
+		if !cred.IsOAuth() {
+			p.mech.Store("LOGIN")
+			return c.Login(cfg.Username, cred.Password)
+		}
+		tok, err := cred.Token.Token(ctx)
+		if err != nil {
+			return fmt.Errorf("%w: %w", provider.ErrAuth, err)
+		}
+		pre, err := c.Caps()
+		if err != nil {
+			return err
+		}
+		sc, err := imapx.OAuthClient(pre, cfg.Username, cfg.Host, cfg.Port, tok)
+		if err != nil {
+			return fmt.Errorf("%w: %w", provider.ErrAuth, err)
+		}
+		mech, _, _ := sc.Start()
+		p.mech.Store(mech)
+		return c.Authenticate(sc)
+	}
 	newSession := func() *imapx.Session {
 		return imapx.NewSession(imapx.Config{
 			Host: cfg.Host, Port: cfg.Port, TLS: imapx.TLSMode(cfg.TLS),
 			InsecureTestServer: cfg.InsecureTestServer, CommandTimeout: cfg.CommandTimeout,
 			CommandMaxDuration: cfg.CommandMaxDuration, MaxMessageBytes: cfg.MaxMessageBytes,
-		}, func(c *imapx.Client) error { return c.Login(cfg.Username, password) }, cfg.Session)
+		}, login, cfg.Session)
 	}
 	s := newSession()
 	var raw []string
@@ -73,7 +110,15 @@ func Connect(ctx context.Context, cfg Config, password secrets.Secret) (*Provide
 		_ = s.Close()
 		return nil, err
 	}
-	return &Provider{s: s, newSession: newSession, cfg: cfg, caps: Capabilities(raw), raw: raw}, nil
+	p.s, p.newSession, p.caps, p.raw = s, newSession, Capabilities(raw), raw
+	return p, nil
+}
+
+// AuthMechanism nennt das Anmeldeverfahren der letzten Anmeldung (LOGIN,
+// OAUTHBEARER oder XOAUTH2).
+func (p *Provider) AuthMechanism() string {
+	m, _ := p.mech.Load().(string)
+	return m
 }
 
 // Capabilities liefert die erkannten Fähigkeiten.
