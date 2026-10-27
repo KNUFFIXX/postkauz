@@ -140,7 +140,8 @@ func (c *Client) UIDSearch(from uint32, o SearchOptions) ([]uint32, error) {
 // Schleife über und endet nie, und ein Server, der „1:4294967294“ meldet, ließe vier
 // Milliarden Zahlen anlegen (T1a Punkt 2). Deshalb bereichsweise mit
 // Obergrenzen: kein „*“, kein Bereich bis 4294967295, und zusammen
-// höchstens so viele UIDs, wie der Ordner Nachrichten hat (EXISTS). Sonst
+// höchstens so viele UIDs, wie der Ordner Nachrichten hat (EXISTS), und
+// nie mehr als MaxReceivedUIDs (EXISTS kommt auch vom Server; W2). Sonst
 // ErrRejected („invalid UID set“), nichts wird geliefert.
 func (c *Client) receivedUIDs(data *imap.SearchData, from uint32) ([]uint32, error) {
 	if data.All == nil {
@@ -150,18 +151,7 @@ func (c *Client) receivedUIDs(data *imap.SearchData, from uint32) ([]uint32, err
 	if !ok {
 		return nil, errBadUIDSet
 	}
-	nums, err := boundedUIDs(set, c.existsBound())
-	if err != nil {
-		return nil, err
-	}
-	out := nums[:0]
-	for _, u := range nums {
-		if u >= from {
-			out = append(out, u)
-		}
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return boundedUIDs(set, from, c.existsBound())
 }
 
 var errBadUIDSet = fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
@@ -176,11 +166,21 @@ func (c *Client) existsBound() uint32 {
 	return max(c.sel.Messages, c.exists.Load())
 }
 
-// boundedUIDs liefert die UIDs eines empfangenen Sets, bereichsweise
-// aufgelöst. Abgelehnt (errBadUIDSet): „*“ (Start oder Stop 0), ein Bereich
-// bis 4294967295 und mehr als limit UIDs insgesamt.
-func boundedUIDs(set imap.UIDSet, limit uint32) ([]uint32, error) {
-	var total uint64
+// MaxReceivedUIDs ist die vom Server unabhängige Obergrenze für die UIDs
+// einer SEARCH-Antwort (W2): EXISTS stammt selbst vom Server; mit EXISTS
+// 4294967294 und „1:4294967294“ stünden sonst rund 16 GiB an. 10 Millionen
+// UIDs belegen höchstens 40 MB; kein echter Ordner hat so viele
+// Nachrichten (Gmail „Alle Nachrichten“ beim Betreiber: rund 50.000).
+const MaxReceivedUIDs = 10_000_000
+
+// boundedUIDs liefert die UIDs ab from eines empfangenen Sets, aufsteigend
+// und ohne Dubletten. Bereichsweise: Erst werden alle Bereiche geprüft und
+// gezählt (ohne Speicher), dann nur die Teile ab from aufgelöst. Abgelehnt
+// (errBadUIDSet): „*“ (Start oder Stop 0), ein Bereich bis 4294967295 und
+// mehr UIDs insgesamt als limit (EXISTS) oder MaxReceivedUIDs.
+func boundedUIDs(set imap.UIDSet, from, limit uint32) ([]uint32, error) {
+	limit = min(limit, MaxReceivedUIDs)
+	var total, wanted uint64
 	for _, r := range set {
 		start, stop := uint32(r.Start), uint32(r.Stop)
 		if start == 0 || stop == 0 {
@@ -194,20 +194,24 @@ func boundedUIDs(set imap.UIDSet, limit uint32) ([]uint32, error) {
 		}
 		total += uint64(stop-start) + 1
 		if total > uint64(limit) {
-			return nil, fmt.Errorf("%w (%d UIDs or more for %d messages)", errBadUIDSet, total, limit)
+			return nil, fmt.Errorf("%w (%d UIDs or more for at most %d messages)", errBadUIDSet, total, limit)
+		}
+		if stop >= from {
+			wanted += uint64(stop-max(start, from)) + 1
 		}
 	}
-	out := make([]uint32, 0, total)
+	out := make([]uint32, 0, wanted) // wanted <= total <= MaxReceivedUIDs
 	for _, r := range set {
 		start, stop := uint32(r.Start), uint32(r.Stop)
 		if start > stop {
 			start, stop = stop, start
 		}
-		for u := start; u <= stop; u++ { // stop < maxUID: kein Überlauf
+		for u := max(start, from); u <= stop; u++ { // stop < maxUID: kein Überlauf
 			out = append(out, u)
 		}
 	}
-	return out, nil
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // MessageMeta ist die Kopfsicht einer Nachricht ohne Inhalt.

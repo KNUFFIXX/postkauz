@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-imap/v2"
 
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 )
@@ -191,6 +194,9 @@ func TestReceivedUIDSetsAreBounded(t *testing.T) {
 		{"plain max uid", `* SEARCH 4294967294 4294967295`, 5, nil, true},
 		{"more than exists", `* ESEARCH (TAG "TAGX") UID ALL 1:6`, 5, nil, true},
 		{"huge below max", `* ESEARCH (TAG "TAGX") UID ALL 1:4294967294`, 50000, nil, true},
+		// W2: EXISTS kommt auch vom Server; die Obergrenze gilt unabhängig.
+		{"huge exists", `* ESEARCH (TAG "TAGX") UID ALL 1:4294967294`, 4294967294, nil, true},
+		{"above own limit", `* ESEARCH (TAG "TAGX") UID ALL 1:10000001`, 4294967294, nil, true},
 		{"esearch ok", `* ESEARCH (TAG "TAGX") UID ALL 2:4,9`, 4, []uint32{2, 3, 4, 9}, false},
 		{"plain ok", `* SEARCH 9 2 3`, 3, []uint32{2, 3, 9}, false},
 		{"empty", ``, 0, nil, false},
@@ -228,6 +234,33 @@ func TestReceivedUIDSetsAreBounded(t *testing.T) {
 	s.search = `* SEARCH 1 4294967295`
 	if _, err := c.SearchHeader("Message-ID", "x@example.org", 0); !errors.Is(err, ErrRejected) {
 		t.Fatalf("SearchHeader = %v", err)
+	}
+}
+
+// W2: Auch mit EXISTS 4294967294 entsteht kein großer Speicher; erlaubte
+// große Bereiche werden ab from aufgelöst, nicht ganz.
+func TestReceivedUIDSetsMemory(t *testing.T) {
+	set := imap.UIDSet{imap.UIDRange{Start: 1, Stop: 4294967294}}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if _, err := boundedUIDs(set, 0, 4294967294); !errors.Is(err, ErrRejected) {
+		t.Fatalf("1:4294967294 with EXISTS 4294967294 = %v", err)
+	}
+	got, err := boundedUIDs(imap.UIDSet{{Start: 1, Stop: MaxReceivedUIDs - 5}, {Start: 3, Stop: 4}}, MaxReceivedUIDs-7, 4294967294)
+	if err != nil || !slices.Equal(got, []uint32{MaxReceivedUIDs - 7, MaxReceivedUIDs - 6, MaxReceivedUIDs - 5}) {
+		t.Fatalf("from near the end = %v %v", got, err)
+	}
+	runtime.ReadMemStats(&after)
+	if d := after.TotalAlloc - before.TotalAlloc; d > 1<<20 {
+		t.Fatalf("allocated %d bytes", d)
+	}
+	// Bis zur eigenen Grenze geht es, darüber nicht.
+	if got, err := boundedUIDs(imap.UIDSet{{Start: 1, Stop: MaxReceivedUIDs}}, 0, 4294967294); err != nil || len(got) != MaxReceivedUIDs {
+		t.Fatalf("at the limit: %d %v", len(got), err)
+	}
+	if _, err := boundedUIDs(imap.UIDSet{{Start: 1, Stop: MaxReceivedUIDs}, {Start: MaxReceivedUIDs + 2, Stop: MaxReceivedUIDs + 2}}, 0, 4294967294); !errors.Is(err, ErrRejected) {
+		t.Fatalf("one above the limit: %v", err)
 	}
 }
 
