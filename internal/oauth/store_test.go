@@ -27,6 +27,11 @@ type memStore struct {
 	// hook läuft vor jedem Get, Set und Delete (ohne Sperre): zweiter
 	// Prozess an einer bestimmten Stelle.
 	hook func(op, ref string)
+	// lateMain: Das nächste Set des Haupteintrags meldet die Zeitgrenze wie
+	// secrets.Keyring.call, schreibt aber erst, wenn der Test late aufruft
+	// (die Goroutine des Schlüsselbunds läuft weiter).
+	lateMain bool
+	late     func()
 }
 
 func newMemStore() *memStore { return &memStore{m: map[string]string{}, max: 2560} }
@@ -54,6 +59,15 @@ func (s *memStore) Set(ref string, v secrets.Secret) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sets++
+	if s.lateMain && ref == testRef {
+		s.lateMain = false
+		s.late = func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.m[ref] = v.Reveal()
+		}
+		return fmt.Errorf("%w (keyring did not answer within 10s)", secrets.ErrTimeout)
+	}
 	if s.failSet || s.sets == s.failAt {
 		return fmt.Errorf("%w: test keyring locked", secrets.ErrUnavailable)
 	}
@@ -248,6 +262,66 @@ func TestSaveFailureKeepsOldToken(t *testing.T) {
 			if !slices.Equal(before, after) {
 				t.Fatalf("%s, write %d fails: entries %v, want %v", c.name, k, after, before)
 			}
+		}
+	}
+}
+
+// W (Gegenprüfung T4): Das Schreiben des Haupteintrags läuft in die
+// Zeitgrenze des Schlüsselbunds, kommt aber verspätet doch an. Vorher hielt
+// Save es für gescheitert und löschte die neuen Teile; danach zeigte der
+// Haupteintrag auf eine gelöschte Generation (Load: ErrTokenCorrupt).
+func TestSaveMainTimeoutWriteArrivesLate(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, c := range []struct {
+		name     string
+		old, new secrets.Secret
+		lands    bool
+	}{
+		{"big to big, lands", bigToken("old"), bigToken("new"), true},
+		{"small to big, lands", "CANARY-small-old", bigToken("new"), true},
+		{"big to small, lands", bigToken("old"), "CANARY-small-new", true},
+		{"big to big, never lands", bigToken("old"), bigToken("new"), false},
+	} {
+		st := newMemStore()
+		if err := Save(st, testRef, Token{RefreshToken: c.old}, now); err != nil {
+			t.Fatal(err)
+		}
+		st.lateMain = true
+		err := Save(st, testRef, Token{RefreshToken: c.new}, now)
+		if !errors.Is(err, secrets.ErrTimeout) {
+			t.Fatalf("%s: Save = %v, want ErrTimeout", c.name, err)
+		}
+		// Bis zur Ankunft gilt das alte Token.
+		if got, err := Load(st, testRef); err != nil || got.RefreshToken != c.old {
+			t.Fatalf("%s: before the late write: %v", c.name, err)
+		}
+		want := c.old
+		if c.lands {
+			st.late()
+			want = c.new
+		}
+		got, err := Load(st, testRef)
+		if err != nil || got.RefreshToken != want {
+			t.Fatalf("%s: after the late write: %v", c.name, err)
+		}
+		// Das nächste Speichern räumt die abgelöste Generation ab.
+		if err := Save(st, testRef, Token{RefreshToken: bigToken("next")}, now); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := Load(st, testRef); err != nil || got.RefreshToken != bigToken("next") {
+			t.Fatalf("%s: next save: %v", c.name, err)
+		}
+		gen := genOf(t, st)
+		var left []string
+		for _, r := range st.keys() {
+			if r != testRef && !strings.Contains(r, "g"+gen+"/") {
+				left = append(left, r)
+			}
+		}
+		// Kam das Schreiben nie an, bleiben die Teile der neuen Generation
+		// liegen (beschriebener Rest); sonst nichts.
+		if wantLeft := map[bool]int{true: 0, false: 3}[c.lands]; len(left) != wantLeft {
+			t.Fatalf("%s: parts left %v, want %d", c.name, left, wantLeft)
 		}
 	}
 }

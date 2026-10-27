@@ -291,3 +291,29 @@ func TestKeyringCallRecoversPanic(t *testing.T) {
 		t.Fatalf("panic value leaked into the error: %v", err)
 	}
 }
+
+// W (Gegenprüfung T4): Nach der Zeitgrenze läuft der Aufruf weiter; ein Set
+// kann verspätet ankommen. call meldet das als ErrTimeout (unsicherer
+// Ausgang), weiterhin auch als ErrUnavailable.
+func TestKeyringTimeoutIsUncertain(t *testing.T) {
+	release := make(chan struct{})
+	landed := make(chan string, 1)
+	k := &Keyring{service: "postkauz-test", timeout: 50 * time.Millisecond, api: keyringAPI{
+		set: func(svc, user, pw string) error {
+			<-release
+			landed <- pw
+			return nil
+		},
+	}}
+	err := k.Set(AccountRef("1a2b3c4d", "demo"), canary)
+	if !errors.Is(err, ErrTimeout) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("set = %v, want ErrTimeout and ErrUnavailable", err)
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Fatal("error leaks the secret")
+	}
+	close(release)
+	if pw := <-landed; pw != canary {
+		t.Fatalf("late write = %q", pw)
+	}
+}

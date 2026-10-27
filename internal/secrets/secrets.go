@@ -78,6 +78,11 @@ var (
 	// ErrUnavailable: Der gewählte Speicher ist nicht erreichbar (z. B. kein
 	// Secret Service unter Linux).
 	ErrUnavailable = errors.New("secrets: secret store unavailable")
+	// ErrTimeout: Der Speicher hat nicht rechtzeitig geantwortet (gehört zu
+	// ErrUnavailable). Der Ausgang ist unsicher: Der Aufruf läuft im
+	// Hintergrund weiter, ein Schreiben oder Löschen kann danach noch
+	// ankommen. Aufrufer dürfen daraus nicht „nicht geschrieben“ folgern.
+	ErrTimeout = fmt.Errorf("%w: no answer in time", ErrUnavailable)
 )
 
 // Store speichert Geheimnisse unter einem Verweis (credential_ref).

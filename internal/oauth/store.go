@@ -33,7 +33,8 @@ import (
 // alten Teile; zwei Prozesse, die gleichzeitig speichern, überschreiben nie
 // die Teile des anderen. Der Schlüsselbund kennt kein Auflisten: Teile einer
 // Generation, die kein Haupteintrag mehr nennt, findet nur das Speichern,
-// das sie abgelöst hat (Rest: siehe Save).
+// das sie abgelöst hat, oder über PrevGen das darauf folgende (Rest: siehe
+// Save).
 //
 // Kodiert wird ausdrücklich mit Reveal: json.Marshal eines Tokens liefert
 // absichtlich "[redacted]" (secrets.Secret) und darf nie die Ablage sein.
@@ -65,8 +66,14 @@ type stored struct {
 	Gen          string `json:"gen,omitempty"`
 	Parts        int    `json:"parts,omitempty"`
 	PartsSHA256  string `json:"parts_sha256,omitempty"`
-	Expiry       string `json:"expiry,omitempty"`
-	UpdatedAt    string `json:"updated_at,omitempty"`
+	// PrevGen und PrevParts nennen die Generation, die dieser Eintrag
+	// abgelöst hat (Gegenprüfung T4, W): Kam das Schreiben nach einer
+	// Zeitüberschreitung verspätet an, hat niemand sie gelöscht; das
+	// nächste Speichern und Delete räumen sie darüber ab.
+	PrevGen   string `json:"prev_gen,omitempty"`
+	PrevParts int    `json:"prev_parts,omitempty"`
+	Expiry    string `json:"expiry,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 // Saved ist, was Load aus dem Schlüsselbund liest.
@@ -103,7 +110,8 @@ func readMain(st secrets.Store, ref string) (raw string, rec stored, ok bool) {
 	}
 	raw = v.Reveal()
 	if json.Unmarshal([]byte(raw), &rec) != nil || rec.V != storedVersion || (rec.Gen != "" && !genRE.MatchString(rec.Gen)) ||
-		rec.Parts < 0 || rec.Parts > maxParts {
+		rec.Parts < 0 || rec.Parts > maxParts || (rec.PrevGen != "" && !genRE.MatchString(rec.PrevGen)) ||
+		rec.PrevParts < 0 || rec.PrevParts > maxParts {
 		return raw, stored{}, false
 	}
 	return raw, rec, true
@@ -127,6 +135,11 @@ func newGen(not ...string) (string, error) {
 // Reihenfolge: neue Teile, Haupteintrag, dann die Teile der abgelösten
 // Generationen löschen. Scheitert ein Schreiben, bleibt das alte Token
 // lesbar (die schon geschriebenen neuen Teile werden wieder gelöscht).
+// Läuft das Schreiben des Haupteintrags in die Zeitgrenze
+// (secrets.ErrTimeout), ist der Ausgang unsicher: Save löscht dann nichts
+// und meldet den Fehler; kommt das Schreiben später an, gilt das neue Token,
+// sonst weiter das alte. Rest: Kommt es nie an, bleiben die neuen Teile
+// liegen (wie unten).
 //
 // Speichert ein zweiter Prozess zur selben Zeit, gewinnt der zuletzt
 // geschriebene Haupteintrag; Save meldet dann trotzdem Erfolg (das neuere
@@ -148,7 +161,10 @@ func Save(st secrets.Store, ref string, tok Token, now time.Time) error {
 	if !tok.Expiry.IsZero() {
 		rec.Expiry = tok.Expiry.UTC().Format(time.RFC3339)
 	}
-	main, err := json.Marshal(rec)
+	// Größe mit dem längsten Verweis auf die abgelöste Generation prüfen.
+	probe := rec
+	probe.PrevGen, probe.PrevParts = "ffffffff", maxParts
+	main, err := json.Marshal(probe)
 	if err != nil {
 		return err
 	}
@@ -159,7 +175,7 @@ func Save(st secrets.Store, ref string, tok Token, now time.Time) error {
 		if parts > maxParts {
 			return fmt.Errorf("oauth: refresh token too long to store (%d bytes)", len(rt))
 		}
-		gen, err := newGen(old.Gen)
+		gen, err := newGen(old.Gen, old.PrevGen)
 		if err != nil {
 			return err
 		}
@@ -172,29 +188,54 @@ func Save(st secrets.Store, ref string, tok Token, now time.Time) error {
 		}
 		sum := sha256.Sum256([]byte(rt))
 		rec.RefreshToken, rec.Gen, rec.Parts, rec.PartsSHA256 = "", gen, parts, hex.EncodeToString(sum[:])
-		if main, err = json.Marshal(rec); err != nil {
-			deleteParts(st, ref, gen, parts)
-			return err
-		}
 	}
 	// Unmittelbar vor dem Umstellen nochmals lesen: Hat ein zweiter Prozess
 	// inzwischen gespeichert, ist auch dessen Generation abgelöst.
 	curRaw, cur, curOK := readMain(st, ref)
+	switch {
+	case curOK:
+		rec.PrevGen, rec.PrevParts = cur.Gen, cur.Parts
+	case oldOK:
+		rec.PrevGen, rec.PrevParts = old.Gen, old.Parts
+	}
+	if main, err = json.Marshal(rec); err != nil {
+		deleteParts(st, ref, rec.Gen, rec.Parts)
+		return err
+	}
 	if err := st.Set(ref, secrets.Secret(main)); err != nil {
+		if errors.Is(err, secrets.ErrTimeout) {
+			// Unsicherer Ausgang (Gegenprüfung T4, W): Das Schreiben kann
+			// noch ankommen und den Haupteintrag auf die neue Generation
+			// stellen. Daher weder die neuen noch die alten Teile löschen;
+			// das nächste Speichern räumt die dann abgelöste Generation über
+			// alt/aktuell ab.
+			return fmt.Errorf("oauth: store token (outcome unknown, nothing deleted): %w", err)
+		}
 		deleteParts(st, ref, rec.Gen, rec.Parts)
 		return fmt.Errorf("oauth: store token: %w", err)
 	}
 	got, loadErr := Load(st, ref)
 	nowRaw, _, _ := readMain(st, ref)
-	superseded := nowRaw != string(main) && nowRaw != oldRaw && nowRaw != curRaw && loadErr == nil
+	// nowRaw == "": Lesefehler (z. B. Zeitüberschreitung) zählt nicht als
+	// „abgelöst“, sonst löschte Save die eigenen, gültigen Teile.
+	superseded := nowRaw != "" && nowRaw != string(main) && nowRaw != oldRaw && nowRaw != curRaw && loadErr == nil
 	// Abgelöste Generationen löschen (eine Generation kehrt nie zurück; die
 	// eigene ist neu, also nie die alte). Auch die Teile ohne Generation
-	// (0.3.0-ms.1), wenn das neue Token in den Haupteintrag passt.
-	if oldOK && old.Parts > 0 {
-		deleteParts(st, ref, old.Gen, old.Parts)
+	// (0.3.0-ms.1), wenn das neue Token in den Haupteintrag passt, und die
+	// Generationen, die alt und aktuell selbst abgelöst hatten (nach einer
+	// Zeitüberschreitung hat sie niemand gelöscht).
+	drop := func(gen string, n int) {
+		if n > 0 && (rec.Parts == 0 || gen != rec.Gen) {
+			deleteParts(st, ref, gen, n)
+		}
 	}
-	if curOK && cur.Parts > 0 && curRaw != oldRaw {
-		deleteParts(st, ref, cur.Gen, cur.Parts)
+	if oldOK {
+		drop(old.Gen, old.Parts)
+		drop(old.PrevGen, old.PrevParts)
+	}
+	if curOK && curRaw != oldRaw {
+		drop(cur.Gen, cur.Parts)
+		drop(cur.PrevGen, cur.PrevParts)
 	}
 	if superseded {
 		// Ein zweiter Prozess hat nach uns gespeichert: Dessen Token gilt.
@@ -295,14 +336,22 @@ func load(st secrets.Store, ref, raw string) (Saved, error) {
 	return out, nil
 }
 
-// Delete löscht Haupteintrag und alle Teile: die der Generation, die der
-// Haupteintrag nennt, und die Teile ohne Generation (0.3.0-ms.1), je bis
-// maxParts (auch hinter einer Lücke). Fehlt der Haupteintrag:
+// Delete löscht Haupteintrag und alle Teile, die er kennt: die der
+// Generation, die der Haupteintrag nennt, die der von ihm abgelösten
+// Generation (PrevGen) und die Teile ohne Generation (0.3.0-ms.1), je bis
+// maxParts (auch hinter einer Lücke). Teile älterer Generationen, die kein
+// Haupteintrag mehr nennt (Rest aus Save), findet Delete nicht: Der
+// Schlüsselbund kann nicht auflisten. Fehlt der Haupteintrag:
 // secrets.ErrNotFound (Teile ohne Generation werden trotzdem gelöscht).
 func Delete(st secrets.Store, ref string) error {
 	st = secrets.Stored(st)
-	if _, rec, ok := readMain(st, ref); ok && rec.Gen != "" {
-		deleteParts(st, ref, rec.Gen, maxParts)
+	if _, rec, ok := readMain(st, ref); ok {
+		if rec.Gen != "" {
+			deleteParts(st, ref, rec.Gen, maxParts)
+		}
+		if rec.PrevGen != "" {
+			deleteParts(st, ref, rec.PrevGen, maxParts)
+		}
 	}
 	err := st.Delete(ref)
 	deleteParts(st, ref, "", maxParts)
