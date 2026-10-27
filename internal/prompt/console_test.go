@@ -183,6 +183,22 @@ func TestReadConsoleLineErrors(t *testing.T) {
 	if _, err := readConsoleLine(context.Background(), f, time.Second, &rep); !errors.Is(err, ErrTooLong) || f.m != shellMode {
 		t.Fatalf("too long: %v", err)
 	}
+	// K6: Bei zu langer Eingabe liest der Leser die Zeile zu Ende (der Rest
+	// bliebe sonst für die Shell im Puffer), aber nicht weiter.
+	for _, n := range []int{MaxLen + 1, MaxLen + 3, 3 * MaxLen} {
+		rep = Report{}
+		f = newFake(shellMode, u16(strings.Repeat("y", n)+"\r\n"), u16("next\r\n"))
+		_, err := readConsoleLine(context.Background(), f, time.Second, &rep)
+		if !errors.Is(err, ErrTooLong) || len(f.chunks) != 1 || string(utf16.Decode(f.chunks[0])) != "next\r\n" ||
+			rep.Units != n+2 || rep.Terminator != "crlf" || f.m != shellMode {
+			t.Fatalf("too long %d: %v rest=%d rep=%+v", n, err, len(f.chunks), rep)
+		}
+	}
+	// Genau MaxLen Zeichen gehen noch.
+	f = newFake(shellMode, u16(strings.Repeat("z", MaxLen)+"\r\n"), u16("next\r\n"))
+	if b, err := readConsoleLine(context.Background(), f, time.Second, &rep); err != nil || len(b) != MaxLen || len(f.chunks) != 1 {
+		t.Fatalf("max: %d %v", len(b), err)
+	}
 	// Strg+Z allein (Dateiende der Konsole) ergibt eine leere Eingabe.
 	f = newFake(shellMode, []uint16{0x1a, '\r', '\n'})
 	if b, err := readConsoleLine(context.Background(), f, time.Second, &rep); err != nil || len(b) != 0 {

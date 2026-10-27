@@ -45,18 +45,36 @@ func readConsoleLine(ctx context.Context, c console, timeout time.Duration, rep 
 
 	type result struct {
 		units []uint16
+		total int    // gelesene Einheiten, auch verworfene
+		over  bool   // länger als MaxLen: Rest bis Zeilenende verworfen
+		term  string // Zeilenende des letzten Stücks (nur bei over)
 		reads int
 		err   error
 	}
 	done := make(chan result, 1)
 	go func() {
-		var units []uint16
+		var r result
 		buf := make([]uint16, 256)
-		for reads := 1; ; reads++ {
+		for r.reads = 1; ; r.reads++ {
 			n, err := c.read(buf)
-			units = append(units, buf[:n]...)
-			if hasLineEnd(units) || err != nil || n == 0 || len(units) > MaxLen+2 {
-				done <- result{units, reads, err}
+			chunk := buf[:n]
+			r.total += n
+			if !r.over {
+				r.units = append(r.units, chunk...)
+				// Zu lang: nicht mehr sammeln, aber die Zeile zu Ende lesen.
+				// Sonst bliebe der Rest im Eingabepuffer der Konsole, und
+				// die Shell läse ihn danach als Befehl (Gegenprüfung K6).
+				if len(r.units) > MaxLen+2 && !hasLineEnd(r.units) {
+					clear(r.units)
+					r.units, r.over = nil, true
+				}
+			}
+			if hasLineEnd(chunk) || err != nil || n == 0 {
+				if r.over {
+					_, r.term = lineEnd(chunk)
+				}
+				r.err = err
+				done <- r
 				return
 			}
 		}
@@ -73,12 +91,32 @@ func readConsoleLine(ctx context.Context, c console, timeout time.Duration, rep 
 		c.cancel()
 		return nil, ErrTimeout
 	}
-	rep.Reads, rep.Units = r.reads, len(r.units)
+	rep.Reads, rep.Units = r.reads, r.total
+	if r.over {
+		rep.Terminator = r.term
+		return nil, ErrTooLong
+	}
 	b, err := decodeLine(r.units, rep)
 	if err == nil && r.err != nil && rep.Terminator == "none" {
 		err = r.err
 	}
 	return b, err
+}
+
+// lineEnd liefert die Stelle des ersten Zeilenendes in u und seine Art
+// (crlf, cr, lf; none ohne Zeilenende, dann len(u)).
+func lineEnd(u []uint16) (int, string) {
+	for i, x := range u {
+		switch {
+		case x == '\r' && i+1 < len(u) && u[i+1] == '\n':
+			return i, "crlf"
+		case x == '\r':
+			return i, "cr"
+		case x == '\n':
+			return i, "lf"
+		}
+	}
+	return len(u), "none"
 }
 
 func hasLineEnd(u []uint16) bool {
@@ -96,21 +134,9 @@ func hasLineEnd(u []uint16) bool {
 // und wandelt UTF-16 in UTF-8; ein einzelnes Surrogat wird U+FFFD und
 // zählt als ungültig.
 func decodeLine(u []uint16, rep *Report) ([]byte, error) {
-	rep.Terminator = "none"
-	for i, x := range u {
-		if x == '\r' || x == '\n' {
-			switch {
-			case x == '\r' && i+1 < len(u) && u[i+1] == '\n':
-				rep.Terminator = "crlf"
-			case x == '\r':
-				rep.Terminator = "cr"
-			default:
-				rep.Terminator = "lf"
-			}
-			u = u[:i]
-			break
-		}
-	}
+	var cut int
+	cut, rep.Terminator = lineEnd(u)
+	u = u[:cut]
 	if rep.Terminator == "none" && len(u) == 0 {
 		rep.Terminator = "eof"
 	}
