@@ -87,6 +87,45 @@ func TestMigration0017UIDPositive(t *testing.T) {
 	}
 }
 
+// K1: 0017 prüft die Fremdschlüssel nur in message_mailboxes. Ein
+// Altfehler in einer anderen Tabelle hält sie nicht auf; ein Fehler in
+// message_mailboxes bricht sie ab und nennt die Tabelle.
+func TestMigration0017ForeignKeyCheckScope(t *testing.T) {
+	ctx := context.Background()
+	orphan := func(s *SQLite, q string) {
+		t.Helper()
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := schema16(t, 3)
+	orphan(s, `INSERT INTO message_import_folders(message_id,folder_id,imported_at) VALUES (999,998,1)`)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("foreign key error in another table: %v", err)
+	}
+
+	s, _ = schema16(t, 3)
+	orphan(s, `INSERT INTO message_mailboxes(message_id,mailbox_id,uid) VALUES (999,7,4)`)
+	err := s.Migrate(ctx)
+	if err == nil || !strings.Contains(err.Error(), "table message_mailboxes") || !strings.Contains(err.Error(), "in messages") {
+		t.Fatalf("err = %v", err)
+	}
+	if v, _ := s.SchemaVersion(ctx); v != 16 {
+		t.Fatalf("schema = %d", v)
+	}
+}
+
 // T1a Punkt 7: Keine Migration, solange ein Sync oder Import eine
 // Kontosperre im Datenverzeichnis hält; die Sperren gelten während der
 // Migration.

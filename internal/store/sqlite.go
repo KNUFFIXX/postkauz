@@ -358,6 +358,51 @@ var migrationChecks = map[int]func(context.Context, *sql.Tx) error{
 	},
 }
 
+// fkCheckTables nennt je Migration mit fkOffDirective die Tabellen, die
+// sie neu baut; nur diese prüft PRAGMA foreign_key_check (K1): Eine
+// Prüfung der ganzen Datenbank dauert bei großen Beständen und bräche
+// eine Migration wegen eines Altfehlers in einer Tabelle ab, die sie gar
+// nicht anfasst. Ohne Eintrag (0002, 0010, 0014, längst angewendet): die
+// ganze Datenbank, wie bisher.
+var fkCheckTables = map[int][]string{
+	17: {"message_mailboxes"},
+}
+
+// foreignKeyCheck prüft die Fremdschlüssel der Tabellen (nil = alle) und
+// nennt beim ersten Verstoß Tabelle, Zeile und Zieltabelle, nie Inhalte.
+func foreignKeyCheck(ctx context.Context, tx *sql.Tx, tables []string) error {
+	queries := []string{`PRAGMA foreign_key_check`}
+	if tables != nil {
+		queries = queries[:0]
+		for _, t := range tables {
+			// Tabellennamen stammen aus fkCheckTables, nie aus Eingaben.
+			queries = append(queries, `PRAGMA foreign_key_check("`+t+`")`)
+		}
+	}
+	for _, q := range queries {
+		rows, err := tx.QueryContext(ctx, q)
+		if err != nil {
+			return err
+		}
+		var table, parent string
+		var rowid sql.NullInt64
+		var fkid int64
+		bad := rows.Next()
+		if bad {
+			err = rows.Scan(&table, &rowid, &parent, &fkid)
+		}
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		if bad {
+			return fmt.Errorf("foreign key check failed: table %s, row %d refers to a missing row in %s; nothing was changed",
+				table, rowid.Int64, parent)
+		}
+	}
+	return nil
+}
+
 // apply wendet eine Migration an: eigene Verbindung (PRAGMA foreign_keys
 // gilt je Verbindung und nur außerhalb einer Transaktion), eine Transaktion.
 func (s *SQLite) apply(ctx context.Context, m Migration) error {
@@ -388,16 +433,9 @@ func (s *SQLite) apply(ctx context.Context, m Migration) error {
 		return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
 	}
 	if fkOff {
-		rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
-		if err != nil {
+		if err := foreignKeyCheck(ctx, tx, fkCheckTables[m.Version]); err != nil {
 			_ = tx.Rollback()
-			return err
-		}
-		bad := rows.Next()
-		_ = rows.Close()
-		if bad {
-			_ = tx.Rollback()
-			return fmt.Errorf("store: migration %04d_%s: foreign key check failed", m.Version, m.Name)
+			return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, name, applied_at) VALUES (?,?,?)`,
