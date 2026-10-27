@@ -88,7 +88,17 @@ func TestPasswordPromptErrors(t *testing.T) {
 		t.Fatalf("account add with unknown reader: %d\n%s\n%s", code, out.String(), errb.String())
 	}
 	code, info := classify(fmt.Errorf("read: %w", prompt.ErrTimeout))
-	if code != ExitError || info.Code != "prompt_timeout" || !strings.Contains(info.Message, "within 2m0s") || !strings.Contains(info.Hint, "--password-stdin") {
+	if code != ExitError || info.Code != "prompt_timeout" || info.Message != "no input at the hidden prompt within 2m0s" ||
+		!strings.Contains(info.Hint, "--password-stdin") || !strings.Contains(info.Hint, "README, Troubleshooting (prompt_timeout)") {
 		t.Fatalf("timeout: %d %+v", code, info)
+	}
+	// K7: allgemein (account add und set, jedes System); das README hat die
+	// Zeile, auf die der Hinweis zeigt.
+	if strings.Contains(info.Hint, "Get-Clipboard") || strings.Contains(info.Hint, "account add") {
+		t.Fatalf("hint is specific: %q", info.Hint)
+	}
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil || !bytes.Contains(readme, []byte("ends with `prompt_timeout`")) {
+		t.Fatalf("README row for prompt_timeout missing: %v", err)
 	}
 }
