@@ -148,23 +148,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 			round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
 			fill(&round, rep)
 			round.DurationMS = rep.Duration.Milliseconds()
-			out.New += round.New
-			out.Updated += round.Updated
-			out.Removed += round.Removed
-			out.Errors += round.Errors
-			out.MessagesMirrored = round.MessagesMirrored
-			out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
-			out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
-			out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
-			out.SkippedTooLarge += round.SkippedTooLarge
-			if round.MaxMessageBytes > 0 {
-				out.MaxMessageBytes = round.MaxMessageBytes
-			}
-			out.AttachmentsExtracted += round.AttachmentsExtracted
-			out.MessagesIndexed += round.MessagesIndexed
-			out.IndexPending = round.IndexPending
-			addDrafts(&out, round.Drafts)
-			addDraftCheck(&out, round.DraftCheck)
+			addRound(&out, &round)
 			if err != nil {
 				out.Errors++
 			}
@@ -221,6 +205,29 @@ func fill(out *ops.SyncOutput, rep Report) {
 
 // addDraftCheck zählt die Prüfung einer Runde zum Gesamtergebnis des
 // Dauerbetriebs.
+// addRound zählt eine Runde von sync --watch in die Gesamtausgabe.
+func addRound(out, round *ops.SyncOutput) {
+	out.New += round.New
+	out.Updated += round.Updated
+	out.Removed += round.Removed
+	out.Errors += round.Errors
+	out.MessagesMirrored = round.MessagesMirrored
+	out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
+	out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
+	out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
+	// Die Grenze steht nur neben übersprungenen Nachrichten (wie fill;
+	// Gegenprüfung K9), nicht nach einer Runde ohne solche.
+	if round.SkippedTooLarge > 0 {
+		out.SkippedTooLarge += round.SkippedTooLarge
+		out.MaxMessageBytes = round.MaxMessageBytes
+	}
+	out.AttachmentsExtracted += round.AttachmentsExtracted
+	out.MessagesIndexed += round.MessagesIndexed
+	out.IndexPending = round.IndexPending
+	addDrafts(out, round.Drafts)
+	addDraftCheck(out, round.DraftCheck)
+}
+
 func addDraftCheck(out *ops.SyncOutput, c *drafts.CheckReport) {
 	if c == nil {
 		return
