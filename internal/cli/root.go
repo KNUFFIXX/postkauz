@@ -103,7 +103,7 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, version string) (code int) {
 	root, a, err := newRoot(version, stdin, stdout, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "error:", err)
+		fmt.Fprintln(stderr, "error:", termText(err.Error()))
 		return ExitError
 	}
 	defer a.close()
@@ -120,11 +120,11 @@ func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, vers
 				_ = json.NewEncoder(stderr).Encode(map[string]ErrorInfo{"error": info})
 				return
 			}
-			fmt.Fprintln(stderr, "error:", info.Message)
+			fmt.Fprintln(stderr, "error:", termText(info.Message))
 			for _, f := range rep.Stack {
-				fmt.Fprintln(stderr, "    "+f)
+				fmt.Fprintln(stderr, "    "+termLine(f))
 			}
-			fmt.Fprintln(stderr, "hint:", info.Hint)
+			fmt.Fprintln(stderr, "hint:", termText(info.Hint))
 		}
 	}()
 	root.SetArgs(args)
@@ -148,9 +148,13 @@ func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer, vers
 	if slices.Contains(args, "--json") {
 		_ = json.NewEncoder(stderr).Encode(map[string]ErrorInfo{"error": info})
 	} else {
-		fmt.Fprintln(stderr, "error:", info.Message)
+		// Fehlertexte können Serverantworten und Ordnernamen enthalten
+		// (Daten, keine Anweisungen an das Terminal; A03 Nachtrag
+		// 26.10.2026): Steuerzeichen werden zu U+FFFD, Zeilenumbrüche
+		// bleiben.
+		fmt.Fprintln(stderr, "error:", termText(info.Message))
 		if info.Hint != "" {
-			fmt.Fprintln(stderr, "hint:", info.Hint)
+			fmt.Fprintln(stderr, "hint:", termText(info.Hint))
 		}
 	}
 	return code

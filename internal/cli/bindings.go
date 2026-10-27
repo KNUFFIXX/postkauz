@@ -297,7 +297,7 @@ func (a *app) explain(cmd *cobra.Command, op ops.Operation, key policy.Key, res 
 		line += fmt.Sprintf("; audit event %d", id)
 	}
 	if info.Error != "" {
-		line += "; " + info.Error
+		line += "; " + termLine(info.Error)
 	}
 	fmt.Fprintln(a.stderr, line)
 }
@@ -559,11 +559,12 @@ func renderAccountTest(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	// Fähigkeiten und Ordnernamen kommen vom Server: terminalsicher.
 	fmt.Fprintf(w, "account:       %s\nlogin:         %s\nsync strategy: %s\ncapabilities:  %s\nmailboxes:\n",
-		o.Account, o.Login, o.SyncStrategy, strings.Join(o.Capabilities, " "))
+		o.Account, termLine(o.Login), o.SyncStrategy, strings.Join(termLines(o.Capabilities), " "))
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, m := range o.Mailboxes {
-		fmt.Fprintf(tw, "  %s\t%s\n", m.Path, m.Role)
+		fmt.Fprintf(tw, "  %s\t%s\n", termLine(m.Path), m.Role)
 	}
 	return tw.Flush()
 }
