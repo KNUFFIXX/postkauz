@@ -1,0 +1,76 @@
+# Spike P-AUTH: Authelia als externer Autorisierungsserver (nur Container der Sitzung).
+# Platzhalter __...__ ersetzt setup.sh mit Zufallswerten; nichts davon ins Repository.
+server:
+  address: 'tcp://0.0.0.0:9091/'
+  tls:
+    key: '/work/tls/auth.key'
+    certificate: '/work/tls/auth.crt'
+log:
+  level: 'info'
+identity_validation:
+  reset_password:
+    jwt_secret: '__JWT_SECRET__'
+authentication_backend:
+  file:
+    path: '/work/users.yml'
+access_control:
+  default_policy: 'one_factor'
+session:
+  secret: '__SESSION_SECRET__'
+  cookies:
+    - domain: 'pauth.test'
+      authelia_url: 'https://auth.pauth.test:9091'
+storage:
+  encryption_key: '__STORAGE_KEY__'
+  local:
+    path: '/work/db.sqlite3'
+notifier:
+  filesystem:
+    filename: '/work/notification.txt'
+identity_providers:
+  oidc:
+    hmac_secret: '__HMAC_SECRET__'
+    lifespans:
+      access_token: '5m'
+    jwks:
+      - key_id: 'k1'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: |
+__JWK_PEM__
+    clients:
+      - client_id: 'claude-code'
+        client_name: 'MCP client (spike)'
+        public: true
+        authorization_policy: 'one_factor'
+        consent_mode: 'implicit'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'http://127.0.0.1:33418/callback'
+        audience:
+          - 'https://mcp.pauth.test:8443/mcp'
+        # Gemessen: ohne resource-Parameter bleibt aud sonst leer.
+        requested_audience_mode: 'implicit'
+        scopes: ['openid', 'profile', 'offline_access']
+        grant_types: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code']
+        response_types: ['code']
+        token_endpoint_auth_method: 'none'
+        access_token_signed_response_alg: 'RS256'
+      - client_id: 'other-client'
+        client_name: 'Other resource (spike)'
+        public: true
+        authorization_policy: 'one_factor'
+        consent_mode: 'implicit'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'http://127.0.0.1:33418/callback'
+        audience:
+          - 'https://other.pauth.test/mcp'
+        scopes: ['openid', 'profile', 'offline_access']
+        grant_types: ['authorization_code', 'refresh_token']
+        response_types: ['code']
+        token_endpoint_auth_method: 'none'
+        access_token_signed_response_alg: 'RS256'
+# Gemessen: Authelia 4.39.28 lehnt eine URL als client_id beim Start ab (nur RFC-3986-unreserved-Zeichen).

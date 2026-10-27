@@ -1,0 +1,40 @@
+# Spike P-AUTH: Dex als externer Autorisierungsserver (nur Container der Sitzung).
+issuer: https://dex.pauth.test:5556/dex
+storage:
+  type: memory
+web:
+  https: 0.0.0.0:5556
+  tlsCert: __WORK__/tls/dex.crt
+  tlsKey: __WORK__/tls/dex.key
+oauth2:
+  skipApprovalScreen: true
+  grantTypes: ["authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"]
+  pkce:
+    enforce: true
+    codeChallengeMethodsSupported: ["S256"]
+expiry:
+  idTokens: 5m
+enablePasswordDB: true
+staticPasswords:
+  - email: "tester@example.com"
+    hash: "__BCRYPT__"
+    username: "tester"
+    userID: "tester-0001"
+staticClients:
+  - id: claude-code
+    name: MCP client (spike)
+    public: true
+    redirectURIs: ["http://127.0.0.1:33418/callback"]
+  - id: other-client
+    name: Other resource (spike)
+    public: true
+    redirectURIs: ["http://127.0.0.1:33418/callback"]
+  - id: https://client.pauth.test/oauth/client.json
+    name: Static client with URL id (CIMD stand-in)
+    public: true
+    redirectURIs: ["http://127.0.0.1:33418/callback"]
+  - id: https://mcp.pauth.test:8443/mcp
+    name: PostKauz resource (cross-client audience)
+    secret: not-used-resource-only
+    trustedPeers: ["claude-code"]
+    redirectURIs: []
