@@ -415,10 +415,7 @@ func (s *Service) recordCopy(x *store.DraftTx, d *store.Draft, fingerprint strin
 	if adopted {
 		p["adopted"] = true
 	}
-	b, _ := json.Marshal(p)
-	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpPush,
-		ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK,
-		Reason: ReasonAppended, PolicyVersion: s.PolicyVersion, RefID: ref})
+	_, err := x.AppendAudit(s.pushEvent(now, *d, audit.ResultOK, ReasonAppended, ref, p))
 	return current, err
 }
 

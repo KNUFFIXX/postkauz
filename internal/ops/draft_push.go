@@ -334,6 +334,8 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 // Datenbank (kein Zwischenspeicher): Widerruf und Ablauf wie im Executor
 // (KeyGuard), dann die Policy mit Scope mail:draft. Liefert den Grund
 // (key_revoked, key_expired, key_invalid, missing_scope) oder "".
+// Frisch heißt: je Entwurf eine Abfrage, kein Zwischenspeicher wie im
+// KeyGuard des Executors (Widerruf wirkt sofort).
 func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (string, error) {
 	ids := []string{d.CreatedBy}
 	if d.ApprovalID > 0 {
@@ -358,14 +360,13 @@ func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (string, 
 		if err != nil {
 			return "", err
 		}
-		pk := PolicyKey(k)
-		g := &KeyGuard{Repo: st, TTL: time.Nanosecond}
-		if err := g.Check(ctx, pk, p.now()); err != nil {
-			if r := keyReason(err); r != "key_check_failed" {
-				return r, nil
-			}
-			return "", err
+		switch KeyStatus(k, p.now()) {
+		case "revoked":
+			return "key_revoked", nil
+		case "expired":
+			return "key_expired", nil
 		}
+		pk := PolicyKey(k)
 		if dec := policy.Check(pk, policy.Requirement{Name: drafts.OpPush, Scope: policy.ScopeMailDraft, Risk: policy.R2}, false); !dec.Allowed() {
 			return dec.Reason, nil
 		}

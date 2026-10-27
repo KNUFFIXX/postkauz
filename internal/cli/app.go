@@ -184,7 +184,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		// Start ohne Abschluss. Nur Operation, ID und Fehlerart, kein Text
 		// der Datenbank mit Eingaben.
 		OnAuditError: func(op string, startID int64, err error) {
-			a.log.Error("audit end entry not written", "op", op, "start_id", startID, "error", err.Error())
+			a.log.Error("audit end entry not written", "op", op, "start_id", startID, "error_type", ops.ErrorKinds(err))
 		}}
 	return a.exec, nil
 }

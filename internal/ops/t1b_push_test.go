@@ -49,6 +49,10 @@ func TestA7AuditBeforeAppendAndOrphanAfterClose(t *testing.T) {
 		if last.ID != d.PushAttempt.AuditID || last.Result != audit.ResultStarted || last.EndID != 0 {
 			t.Fatalf("start entry before APPEND = %+v", last)
 		}
+		// Ein offener Versuch ist kein Absturz: doctor zählt ihn nicht.
+		if n, err := e.st.AuditOpenStarts(ctx, time.Now().Add(time.Hour)); err != nil || n != 0 {
+			t.Fatalf("open starts with an open attempt = %d %v", n, err)
+		}
 		e.must(t, humanCLI, "drafts.abandon", map[string]any{"draft_id": id})
 		if d := e.draft(t, id); d.PushAttempt == nil || d.Status != string(drafts.StatusAbandoned) {
 			t.Fatalf("after abandon (folder not mirrored yet) = %+v", d)

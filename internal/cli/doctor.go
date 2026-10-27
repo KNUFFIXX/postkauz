@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -374,7 +376,15 @@ const auditUnfinishedAge = 10 * time.Minute
 // doctorAudit meldet den Stand des Audit-Exports und abgebrochene Aufrufe.
 func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
 	// Vor Migration 0018 gibt es keine Start-Einträge (Fehler = alte Tabelle).
-	if n, err := db.AuditOpenStarts(ctx, now.Add(-auditUnfinishedAge)); err == nil && n > 0 {
+	// Läuft ein Sync oder Import (Kontosperre gehalten), ist dessen Start
+	// noch offen, ohne dass etwas abgestürzt ist.
+	var skip []string
+	if release, err := flock.AccountLocks(filepath.Dir(db.Path())); err != nil {
+		skip = []string{"sync.run", "import.run"}
+	} else {
+		release()
+	}
+	if n, err := db.AuditOpenStarts(ctx, now.Add(-auditUnfinishedAge), skip...); err == nil && n > 0 {
 		rep.AuditUnfinished = n
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("audit: %s started more than 10 minutes ago without an end entry (crash or a failed audit write); see: audit --result started",
 			plural(n, "call", "calls")))

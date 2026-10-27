@@ -183,11 +183,24 @@ type scanExtra struct {
 func (x scanExtra) Scan(dest ...any) error { return x.sc.Scan(append(dest, x.extra)...) }
 
 // AuditOpenStarts zählt Start-Einträge ohne Abschluss, die vor before
-// begannen (doctor, A1: abgestürzte oder abgebrochene Aufrufe).
-func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time) (int, error) {
+// begannen (doctor, A1: abgestürzte oder abgebrochene Aufrufe). Nicht
+// gezählt werden Starts eines offenen Ablageversuchs (drafts.push_attempt:
+// Ausgang unbekannt, der nächste Push klärt ihn; A7) und Starts der
+// Operationen in skipOps (doctor: sync.run und import.run, solange ein Sync
+// oder Import läuft: ein sync --watch ist ein einziger Aufruf über Stunden).
+func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, skipOps ...string) (int, error) {
+	q := `SELECT count(*) FROM audit_events a WHERE a.result = 'started' AND a.ts < ?
+		AND NOT EXISTS (SELECT 1 FROM audit_events c WHERE c.ref_id = a.id)
+		AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.push_attempt IS NOT NULL AND json_extract(d.push_attempt, '$.audit_id') = a.id)`
+	args := []any{before.UnixMilli()}
+	if len(skipOps) > 0 {
+		q += ` AND a.operation NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(skipOps)), ",") + `)`
+		for _, op := range skipOps {
+			args = append(args, op)
+		}
+	}
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events a WHERE a.result = 'started' AND a.ts < ?
-		AND NOT EXISTS (SELECT 1 FROM audit_events c WHERE c.ref_id = a.id)`, before.UnixMilli()).Scan(&n)
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
 }
 

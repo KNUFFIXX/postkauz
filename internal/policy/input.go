@@ -55,8 +55,12 @@ func DefaultRules() Rules {
 
 // Rules liefert die Regeln der geladenen Policy-Datei.
 func (f File) Rules() Rules {
-	r := Rules{MoveAgentMay: f.Doc.Move.AgentMay, DeleteAgentMay: f.Doc.Delete.AgentMay,
-		BulkConfirmThreshold: f.Doc.Move.BulkConfirmThreshold}
+	return Rules{MoveAgentMay: f.Doc.Move.AgentMay, DeleteAgentMay: f.Doc.Delete.AgentMay,
+		BulkConfirmThreshold: f.Doc.Move.BulkConfirmThreshold}.withDefaults()
+}
+
+// withDefaults füllt leere Werte mit DefaultRules.
+func (r Rules) withDefaults() Rules {
 	d := DefaultRules()
 	if r.MoveAgentMay == "" {
 		r.MoveAgentMay = d.MoveAgentMay
@@ -91,16 +95,7 @@ func CheckInput(key Key, f Facts, r Rules) Decision {
 	if key.IsHuman() {
 		return Decision{Outcome: Allow, Reason: "ok"}
 	}
-	d := DefaultRules()
-	if r.MoveAgentMay == "" {
-		r.MoveAgentMay = d.MoveAgentMay
-	}
-	if r.DeleteAgentMay == "" {
-		r.DeleteAgentMay = d.DeleteAgentMay
-	}
-	if r.BulkConfirmThreshold <= 0 {
-		r.BulkConfirmThreshold = d.BulkConfirmThreshold
-	}
+	r = r.withDefaults()
 	switch f.Action {
 	case ActionTrash:
 		if r.DeleteAgentMay != "trash_only" {

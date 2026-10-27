@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -256,6 +258,21 @@ func TestAuditListMergesStartAndEnd(t *testing.T) {
 	}
 	if n, err := e.st.AuditOpenStarts(ctx, time.Now().Add(-10*time.Minute)); err != nil || n != 1 {
 		t.Fatalf("open starts after a crash = %d %v", n, err)
+	}
+	// Während ein Sync läuft (doctor sieht die Kontosperre), zählt sein
+	// offener Start nicht.
+	if n, err := e.st.AuditOpenStarts(ctx, time.Now().Add(-10*time.Minute), "sync.run", "import.run"); err != nil || n != 0 {
+		t.Fatalf("open starts while a sync runs = %d %v", n, err)
+	}
+}
+
+// ErrorKinds nennt Typen und Codes, nie den Text eines Fehlers.
+func TestErrorKindsWithoutText(t *testing.T) {
+	err := fmt.Errorf("store: x: %w", errors.Join(errors.New("KANARIE /home/geheim"), &DeniedError{Reason: "draft_closed", Msg: "KANARIE"}))
+	k := ErrorKinds(err)
+	if strings.Contains(k, "KANARIE") || !strings.Contains(k, "*fmt.wrapError") || !strings.Contains(k, "*ops.DeniedError") ||
+		!strings.Contains(k, "reason=draft_closed") {
+		t.Fatalf("kinds = %q", k)
 	}
 }
 

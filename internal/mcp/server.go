@@ -207,7 +207,7 @@ func (h *handler) tool(b toolBinding, op ops.Operation, narrow *jsonschema.Resol
 		// Status, Code, Grund und der Typ des Fehlers.
 		te := classify(err)
 		h.o.Log.Warn("mcp tool failed", "tool", b.tool, "key", h.o.Key.ID, "status", te.Status, "code", te.Code, "reason", te.Reason,
-			"error_type", fmt.Sprintf("%T", err))
+			"error_type", ops.ErrorKinds(err))
 		return errorResult(err), nil
 	}
 }
