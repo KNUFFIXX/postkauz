@@ -33,8 +33,10 @@ func readConsoleLine(ctx context.Context, c console, timeout time.Duration, rep 
 	if err := c.setMode(passwordMode(old)); err != nil {
 		return nil, fmt.Errorf("set console mode: %w", err)
 	}
+	lineInput := false
 	if m, err := c.mode(); err == nil {
 		rep.ModeDuring = ModeNames(m)
+		lineInput = m&modeLineInput != 0
 	}
 	defer func() {
 		_ = c.setMode(old)
@@ -70,6 +72,22 @@ func readConsoleLine(ctx context.Context, c console, timeout time.Duration, rep 
 				}
 			}
 			if hasLineEnd(chunk) || err != nil || n == 0 {
+				// Füllt CR genau das Ende des Puffers, liegt bei Zeilen-
+				// Eingabe das LF noch in der Konsole; ungelesen bekäme es
+				// die Shell als leere Zeile. Deshalb ein Zeichen nachlesen
+				// (nur bei vollem Puffer: sonst kam die Zeile ganz, und ein
+				// CR ohne LF ließe den Leser blockieren).
+				if err == nil && lineInput && n == len(buf) && chunk[n-1] == '\r' {
+					var lf [1]uint16
+					m, lerr := c.read(lf[:])
+					r.reads++
+					r.total += m
+					if m == 1 && !r.over {
+						r.units = append(r.units, lf[0])
+					}
+					chunk = append(chunk[n-1:n:n], lf[:m]...)
+					err = lerr
+				}
 				if r.over {
 					_, r.term = lineEnd(chunk)
 				}

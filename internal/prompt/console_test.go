@@ -194,6 +194,21 @@ func TestReadConsoleLineErrors(t *testing.T) {
 			t.Fatalf("too long %d: %v rest=%d rep=%+v", n, err, len(f.chunks), rep)
 		}
 	}
+	// Restpunkt der Nachprüfung: CR genau am Ende eines Lesepuffers (256
+	// Einheiten), das LF folgt erst im nächsten Lesevorgang. Der Leser
+	// liest es noch, sonst bekäme die Shell eine leere Zeile.
+	for _, n := range []int{255, 256*17 - 1} {
+		rep = Report{}
+		f = newFake(shellMode, u16(strings.Repeat("w", n)+"\r\n"), u16("next\r\n"))
+		b, err := readConsoleLine(context.Background(), f, time.Second, &rep)
+		if n <= MaxLen && (err != nil || len(b) != n) || n > MaxLen && !errors.Is(err, ErrTooLong) {
+			t.Fatalf("cr at buffer end %d: %d %v", n, len(b), err)
+		}
+		if len(f.chunks) != 1 || string(utf16.Decode(f.chunks[0])) != "next\r\n" ||
+			rep.Units != n+2 || rep.Terminator != "crlf" || f.m != shellMode {
+			t.Fatalf("cr at buffer end %d: rest=%d rep=%+v", n, len(f.chunks), rep)
+		}
+	}
 	// Genau MaxLen Zeichen gehen noch.
 	f = newFake(shellMode, u16(strings.Repeat("z", MaxLen)+"\r\n"), u16("next\r\n"))
 	if b, err := readConsoleLine(context.Background(), f, time.Second, &rep); err != nil || len(b) != MaxLen || len(f.chunks) != 1 {
