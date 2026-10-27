@@ -29,8 +29,9 @@ import (
 // Ausgewertet werden ab S2.1 [agent_defaults] max_chars (ersetzt den festen
 // Standard 20.000) und [draft] require_approval_for_ready (nur true).
 // [draft] check_hook und check_hook_timeout liest und prüft S2.1, seit S2.4
-// führt internal/hook den Hook aus; [delete], [move] und [agent_defaults]
-// dry_run_default werden gelesen und geprüft, ausgewertet erst in S3.
+// führt internal/hook den Hook aus; [delete] und [move] wertet seit T1b
+// CheckInput aus (File.Rules); [agent_defaults] dry_run_default wird
+// gelesen und geprüft, ausgewertet erst in S3.
 
 // EnvPolicy überschreibt den Pfad der Policy-Datei.
 var EnvPolicy = brand.EnvPrefix + "_POLICY"

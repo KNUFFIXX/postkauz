@@ -1,8 +1,10 @@
 // Package policy entscheidet, ob ein Schlüssel eine Operation ausführen darf.
 //
-// Stand Phase 0: Gerüst. Die Entscheidungslogik ist bewusst klein und
-// konservativ (MVP = draft-only, siehe docs/sicherheit.md); Richtliniendatei,
-// Limits und Freigabe-Zustandsmaschine kommen mit Schnitt 2.
+// Die Entscheidungslogik ist bewusst klein und konservativ (MVP =
+// draft-only, docs/sicherheit.md): Check für Scope, Mensch, Risiko und
+// Trockenlauf, CheckInput (input.go, seit T1b) für die Eingabe nach den
+// Regeln der Policy-Datei (file.go, seit S2.1). Die Freigabe-
+// Zustandsmaschine der Entwürfe liegt in internal/drafts (seit S2.1).
 package policy
 
 import (
@@ -137,7 +139,7 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 }
 
 // Check ist der Policy-Schritt der Kette Scope → Policy → Freigabe → Audit →
-// Handler. Stub für Phase 0, Regeln:
+// Handler (vor CheckInput). Regeln:
 //
 //   - HumanOnly und ein API-Schlüssel im Spiel (Key.IsHuman false): Deny mit
 //     Grund human_only, vor allen anderen Regeln (A02, E2; S2.0 minimal,
@@ -146,8 +148,9 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 //   - R0: Allow (lesen; ein Trockenlauf ist bedeutungslos).
 //   - R1/R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
 //   - R1 (nur lokale Wirkung) und R2: Allow.
-//   - R3: NeedsApproval. Es gibt im MVP keinen Weg, eine R3-Operation ohne
-//     Mensch auszuführen; die Freigabe-Zustandsmaschine folgt in Schnitt 2.
+//   - R3: NeedsApproval. Es gibt keinen Weg, eine R3-Operation ohne
+//     Mensch auszuführen; bis S2 hat keine Operation R3 (Entscheid 44), der
+//     Papierkorb mit Antrag und Freigabe folgt in T2 (E3).
 func Check(key Key, op Requirement, dryRun bool) Decision {
 	if op.HumanOnly && !key.IsHuman() {
 		return Decision{Outcome: Deny, Reason: "human_only"}
