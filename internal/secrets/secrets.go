@@ -51,6 +51,26 @@ func (s Secret) MarshalText() ([]byte, error)  { return []byte(redacted), nil }
 func (s Secret) LogValue() slog.Value          { return slog.StringValue(redacted) }
 func (s Secret) Format(f fmt.State, verb rune) { _, _ = f.Write([]byte(redacted)) }
 
+// tokenFieldRE findet die Werte von Token-Feldern in JSON oder
+// Formularkodierung (access_token, refresh_token, id_token, device_code,
+// code, client_secret, assertion), tokenJWTRE JWT-förmige Folgen
+// (drei Base64url-Teile, beginnend mit "eyJ").
+var (
+	tokenFieldRE = regexp.MustCompile(`(?i)("?\b(?:access_token|refresh_token|id_token|device_code|code|client_secret|assertion)"?\s*[:=]\s*"?)([^"&,\s}]+)`)
+	tokenJWTRE   = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*`)
+)
+
+// RedactTokens schwärzt Token-Werte in einem Text, bevor er in eine Ausgabe,
+// ein Log oder einen Fehler gelangt (S3.7): Antworten eines Token-Endpunkts
+// (JSON oder Formular) und JWT-förmige Folgen. Der Typ Secret schützt nur
+// Werte, die als Secret vorliegen; diese Funktion fängt Text, der ein Token
+// enthalten kann, ohne dass das sichtbar ist (z. B. der Antwortkörper in
+// oauth2.RetrieveError).
+func RedactTokens(s string) string {
+	s = tokenFieldRE.ReplaceAllString(s, "${1}"+redacted)
+	return tokenJWTRE.ReplaceAllString(s, redacted)
+}
+
 // Fehler, die Aufrufer unterscheiden.
 var (
 	// ErrNotFound: Unter dem Verweis ist nichts gespeichert.
