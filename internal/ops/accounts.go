@@ -842,7 +842,7 @@ func AccountsTest(repo AccountRepo, creds Credentials, prober AccountProber) Ope
 			if err != nil {
 				return nil, err
 			}
-			cred, err := creds.For(a)
+			cred, err := creds.For(a, call.DryRun)
 			if err != nil {
 				return nil, err
 			}

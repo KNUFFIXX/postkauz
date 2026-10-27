@@ -39,6 +39,10 @@ type AS struct {
 	FailRefresh string
 	// Deny: /authorize leitet mit error=access_denied zurück.
 	Deny bool
+	// KeepUsedRefresh: Ein eingelöstes Refresh-Token bleibt gültig, wie bei
+	// Microsoft (das alte wird beim Einlösen nicht widerrufen). Standard:
+	// strenger, jedes Refresh-Token gilt nur einmal.
+	KeepUsedRefresh bool
 
 	mu       sync.Mutex
 	codes    map[string]authReq
@@ -205,7 +209,9 @@ func (as *AS) token(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Microsoft ersetzt das Refresh-Token bei jedem Refresh.
-		delete(as.refresh, rt)
+		if !as.KeepUsedRefresh {
+			delete(as.refresh, rt)
+		}
 		as.writeToken(w, as.refreshToken())
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		if f.Get("device_code") != "CANARY-device-code" {

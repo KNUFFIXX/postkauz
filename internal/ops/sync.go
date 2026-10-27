@@ -245,7 +245,7 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
 			if err != nil {
 				return nil, err
 			}
-			cred, err := creds.For(a)
+			cred, err := creds.For(a, call.DryRun)
 			if err != nil {
 				return nil, err
 			}

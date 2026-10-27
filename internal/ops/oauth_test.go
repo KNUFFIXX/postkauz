@@ -292,3 +292,70 @@ func TestOAuth2RejectsInsecureFileStore(t *testing.T) {
 		t.Fatalf("test for a test server: %v", err)
 	}
 }
+
+// K3 (Gegenprüfung T4): account test und sync im Trockenlauf melden sich
+// mit einem erneuerten Access-Token an, speichern das neue Refresh-Token
+// aber nicht. oauth.refresh steht im Audit, mit dry_run.
+func TestDryRunRefreshStoresNothing(t *testing.T) {
+	e := newOAuthEnv(t)
+	runner := &tokenRunner{}
+	if err := e.x.Registry.Register(SyncRun(e.st, e.creds, runner)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.add", outlookInput(), "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := e.st.AccountByName(context.Background(), "outlook")
+	before, _ := oauth.Load(e.sec, a.CredentialRef)
+	e.as.KeepUsedRefresh = true // wie Microsoft: das gespeicherte bleibt gültig
+
+	res, err := e.run("accounts.test", map[string]any{"name": "outlook"}, "", true)
+	if err != nil || !res.(AccountsTestOutput).DryRun {
+		t.Fatalf("test --dry-run: %v", err)
+	}
+	if _, err := e.run("sync.run", map[string]any{"account": "outlook"}, "", true); err != nil || len(runner.got) != 1 {
+		t.Fatalf("sync --dry-run: %v", err)
+	}
+	after, err := oauth.Load(e.sec, a.CredentialRef)
+	if err != nil || after.RefreshToken != before.RefreshToken || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatal("a dry run must not store the renewed token")
+	}
+	if e.as.Count("refresh_token") != 2 {
+		t.Fatalf("refreshes = %d", e.as.Count("refresh_token"))
+	}
+	evs := e.sys.Events()
+	if len(evs) != 2 {
+		t.Fatalf("system events = %+v", evs)
+	}
+	for _, ev := range evs {
+		if ev.Operation != OpOAuthRefresh || ev.Result != audit.ResultOK || !strings.Contains(string(ev.ParamsRedacted), `"dry_run":true`) {
+			t.Fatalf("event = %+v", ev)
+		}
+	}
+
+	// Ohne Trockenlauf wird gespeichert.
+	if _, err := e.run("accounts.test", map[string]any{"name": "outlook"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ := oauth.Load(e.sec, a.CredentialRef); stored.RefreshToken == before.RefreshToken {
+		t.Fatal("a real run must store the renewed token")
+	}
+	if ev := e.sys.Events()[2]; strings.Contains(string(ev.ParamsRedacted), "dry_run") {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+// tokenRunner ist ein Sync, der sich mit der Tokenquelle „anmeldet".
+type tokenRunner struct{ got []string }
+
+func (r *tokenRunner) Sync(ctx context.Context, a store.Account, cred provider.Credential, o SyncOptions, _ func(Progress)) (SyncOutput, error) {
+	tok, err := cred.Token.Token(ctx)
+	if err != nil {
+		return SyncOutput{}, err
+	}
+	r.got = append(r.got, tok.Reveal())
+	return SyncOutput{Account: a.Name, Mode: "incremental"}, nil
+}

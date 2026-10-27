@@ -59,8 +59,13 @@ func oauthClient(a store.Account) (oauth.Client, error) {
 	return c, nil
 }
 
-// For liefert die Anmeldedaten des Kontos.
-func (c Credentials) For(a store.Account) (provider.Credential, error) {
+// For liefert die Anmeldedaten des Kontos. Im Trockenlauf (dryRun)
+// erneuert die Tokenquelle eines OAuth2-Kontos zwar das Access-Token (ohne
+// Anmeldung kein Test), speichert das erneuerte Refresh-Token aber nicht
+// (Gegenprüfung T4, K3): Microsoft widerruft das alte beim Einlösen nicht,
+// der gespeicherte Stand bleibt nutzbar. Das Systemereignis oauth.refresh
+// entsteht trotzdem (der Token-Endpunkt wurde angesprochen), mit dry_run.
+func (c Credentials) For(a store.Account, dryRun bool) (provider.Credential, error) {
 	if a.AuthType != AuthOAuth2 {
 		pw, err := c.Secrets.Get(a.CredentialRef)
 		if errors.Is(err, secrets.ErrNotFound) {
@@ -86,14 +91,16 @@ func (c Credentials) For(a store.Account) (provider.Credential, error) {
 		return provider.Credential{}, fmt.Errorf("account %s: %w", a.Name, err)
 	}
 	src := oauth.NewSource(oauth.Token{RefreshToken: saved.RefreshToken}, c.OAuth.Refresher(client))
-	src.OnRefresh = func(t oauth.Token) error { return oauth.Save(c.Secrets, a.CredentialRef, t, time.Now()) }
-	src.Report = func(ok bool, reason string) { c.auditRefresh(a, ok, reason) }
+	if !dryRun {
+		src.OnRefresh = func(t oauth.Token) error { return oauth.Save(c.Secrets, a.CredentialRef, t, time.Now()) }
+	}
+	src.Report = func(ok bool, reason string) { c.auditRefresh(a, ok, reason, dryRun) }
 	return provider.Credential{Token: src}, nil
 }
 
 // auditRefresh schreibt das Systemereignis oauth.refresh: Konto, Ergebnis,
 // Code; nie ein Token, nie ein Text des Anbieters.
-func (c Credentials) auditRefresh(a store.Account, ok bool, reason string) {
+func (c Credentials) auditRefresh(a store.Account, ok bool, reason string, dryRun bool) {
 	if c.Audit == nil {
 		return
 	}
@@ -101,7 +108,11 @@ func (c Credentials) auditRefresh(a store.Account, ok bool, reason string) {
 	if !ok {
 		res = audit.ResultError
 	}
-	params, _ := json.Marshal(map[string]string{"account": a.Name})
+	p := map[string]any{"account": a.Name}
+	if dryRun {
+		p["dry_run"] = true
+	}
+	params, _ := json.Marshal(p)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = c.Audit.Append(ctx, audit.Event{TS: time.Now(), ActorType: audit.ActorSystem, KeyID: "system", Scope: string(policy.ScopeMailSync),
