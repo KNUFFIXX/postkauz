@@ -78,7 +78,8 @@ Commits der zweiten Nachbesserung:
 17. `fix: allow the insecure file store for OAuth2 only with a local sign-in` (K3)
 18. `chore: merge main (T1a) into T4`
 19. `fix: store OAuth2 tokens under a lock file and check for leftover parts` (K2; nach dem Merge, weil `internal/flock` aus T1a kommt)
-20. `docs: record the second T4 follow-up and the merge with main` (dieser Stand)
+20. `docs: record the second T4 follow-up and the merge with main`
+21. `docs: record the test runs of build 0.3.0-ms.3` (dieser Stand)
 
 ## 2. Festlegungen (Einspruch möglich)
 
@@ -134,6 +135,19 @@ Neu mit der zweiten Nachbesserung (`0.3.0-ms.3`):
 | `make release VERSION=0.3.0-ms.2` | gebaut auf dem letzten Commit (`dist/` nicht im Repository) |
 | `abnahme_D9.ps1` | weiterhin nur Klammern gezählt (Verhältnis wie vorher), kein `pwsh`; Prüfung vor dem Lauf wie oben |
 
+**Zweite Nachbesserung `0.3.0-ms.3`** (gleiche Sitzungsart, Toolchain go1.27.3 nach der Ausnahme in `CLAUDE.md`; Stand nach dem Merge mit `main` `f536810`):
+
+| Prüfung | Ergebnis |
+|---|---|
+| `make check` je Commit 15 bis 19 (W, K1, K3 je im eigenen Worktree auf dem Commit; Merge und K2 im Arbeitszweig) | grün; Commit 20 (nur Doku) mit `make pii-check guard`, Commit 21 mit vollem `make check` |
+| `make race` (auf Commit 19, Code-Endstand) | grün, 1.272 s (21 min), 29 Pakete, kein `DATA RACE` |
+| `TestConcurrentSavesStress` einzeln | 200 Läufe sauber (ohne Sperre vorher 93 von 300 mit verwaisten Teilen) |
+| `make integration` (Docker: Dovecot 2.4.5, Stalwart v0.11.8, GreenMail 2.1.14; `dockerd` von Hand, Images über `mirror.gcr.io`, weil Docker Hub mit 429 ablehnte; Tags unverändert) | **grün**, 161 s: alle 9 Integrationstests, je gegen alle drei Server, darunter `internal/provider/imap`, `internal/mailsync`; `TestIntegrationImportOverlapDovecot` jetzt grün (T1a-Nachbesserung W3 berücksichtigt die NUL-Umschreibung von Dovecot, `307/171/3/0`) |
+| `make vuln` | nicht gelaufen (Netzregel sperrt `vuln.go.dev`, wie zuvor); keine neue Abhängigkeit (`internal/flock` ist eigenes Paket aus T1a) |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make release VERSION=0.3.0-ms.3` | gebaut auf dem letzten Commit (`dist/` nicht im Repository) |
+| `abnahme_D9.ps1` | Klammern gezählt, kein `pwsh`; Prüfung vor dem Lauf wie oben |
+
 ## 4. CHANGELOG-Zeilen (für „Unreleased“, Abschnitt Added)
 
 - S3.7 (T4): Microsoft-Postfächer per OAuth2 („bring your own client“): `account add <name> --auth oauth2 --client-id <id> [--tenant common|consumers|organizations|<id>]`, `account login <name> [--device-code]` (nur für Menschen, kein MCP-Tool); Anmeldung an IMAP per SASL `XOAUTH2`/`OAUTHBEARER`, `account test` nennt das Verfahren. Im Schlüsselbund liegt nur das Refresh-Token (bei Bedarf in Teilen unter `oauthpart<n>g<generation>/…`, je Speichern eine neue Generation, damit ein abgebrochenes Schreiben, eine Zeitüberschreitung des Schlüsselbunds oder ein zweiter Prozess das gespeicherte Token nie zerstört; gespeichert wird unter der Sperrdatei `oauth-<verweis>.lock` neben der Datenbank, damit keine Teile verwaisen), das Access-Token bleibt im Speicher und wird 2 min vor Ablauf erneuert (vorher liest der Prozess ein inzwischen von einem anderen Prozess gespeichertes Token neu); jeder Refresh ist das Systemereignis `oauth.refresh`; ein Trockenlauf speichert kein erneuertes Token. Ohne Schlüsselbund abgelehnt (R2), der unsichere Testspeicher `insecure-file` ebenso (außer für lokale Testserver mit lokalem Anmeldeserver, also nur in Tests). Anmeldung: Port auf 127.0.0.1 und ::1, Tausch des Codes mit eigener Frist 60 s, Device-Code höchstens 15 min. Neue Fehlercodes `no_token`, `token_not_stored`, `oauth_refresh`, `login_failed`. `doctor` zeigt Token-Stand und -Ablauf, `doctor --secrets` sucht das Refresh-Token. Anleitung `docs/betrieb_microsoft.md`, Abnahme `docs/abnahme_D9.md`/`.ps1`.
@@ -159,6 +173,8 @@ Roadmap-Zeile (für „Stand S3“): S3.7 gebaut (T4, Build `0.3.0-ms.3` nach Ge
 Siehe Abschnitt 3.
 
 ## 7. Fund außerhalb von T4
+
+*Erledigt mit dem Merge von T1a (`0.3.0-ms.3`):* `TestIntegrationImportOverlapDovecot` ist grün; T1a hat die Erwartung an die NUL-Umschreibung von Dovecot angepasst (Commit `e0cb1f7`, W3). Ursprünglicher Befund:
 
 `TestIntegrationImportOverlapDovecot` (`internal/importer`) scheitert gegen das frische Dovecot im Container: `new 307, existing 171, skipped 3, errors 0`, erwartet `305/173/3/0` (zwei überlappende Nachrichten werden nicht als vorhanden erkannt). **Auf dem Ausgangsstand `1c9847a` identisch** (eigener Worktree, gleicher Lauf), also nicht durch T4 verursacht; T4 berührt den Import nicht. Vermutung (ungeprüft): Das Dovecot-Image hat sich geändert und schreibt zwei der Nachrichten anders ab (z. B. die ohne Message-ID, die nur über `content_hash` erkannt werden). Nicht in T4 behoben (anderer Teil, kein Anlass zum Verbreitern). **Vorschlag:** Die Prüfsitzung prüft Image-Tag und -Datum in `deploy/testmail/docker-compose.yml` gegen den letzten grünen Lauf (S2.9, `docs/protokolle/S29_pruefungen.txt`) und gibt den Punkt an T1a oder T1c.
 
