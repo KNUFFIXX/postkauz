@@ -43,6 +43,9 @@ In jedem Fenster fragt das Skript je Leser die Schritte unten ab. Die gelbe Zeil
 3. `paste-rightclick-ascii`: mit Rechtsklick ins Fenster einfügen, Enter.
 4. `type-umlaut`: `Prüfung-äöü-ß7` tippen, Enter.
 5. `paste-ctrlv-umlaut`: mit Strg+V einfügen, Enter.
+6. `paste-rightclick-umlaut`: mit Rechtsklick ins Fenster einfügen, Enter.
+
+Das sind Tippen, Strg+V und Rechtsklick je mit ASCII und mit Umlaut (A3 Punkt 2).
 
 Beim Tippen erscheint nichts; das ist richtig. Geht gar nichts, 60 s warten: Der Schritt endet dann mit `FAIL … why: error: no input` (beim Leser `console` ist das ein Befund, beim Leser `term` die Bestätigung von D5). Nach jedem Einfügen leert das Skript die Zwischenablage.
 
@@ -60,7 +63,7 @@ OK WT+PS51 console type-ascii  (Erwartet: OK)
      expected 17 bytes, hash match True
 …
 OK WT+PS51 data-dir untouched
-A3 WT+PS51: 6 OK, 0 FAIL (console), term: … OK, … FAIL
+A3 WT+PS51: 7 OK, 0 FAIL (console), term: … OK, … FAIL
 …
 A3 matrix: 6 windows, 0 with FAIL (console), started from WT+PS51
 ```

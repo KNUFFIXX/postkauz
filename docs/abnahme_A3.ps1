@@ -6,7 +6,9 @@
 .DESCRIPTION
     Misst je Fenster (Konsole x Shell) und je Leser (console = ReadConsoleW,
     neu ab 0.3.0; term = golang.org/x/term wie bis 0.2.0-rc8), ob die
-    verdeckte Abfrage Tippen und Einfuegen annimmt, ASCII und Umlaute. Dazu
+    verdeckte Abfrage Tippen, Einfuegen mit Strg+V und Einfuegen mit
+    Rechtsklick annimmt, je mit ASCII und mit Umlauten (sechs Schritte,
+    A3 Punkt 2). Dazu
     ruft es das versteckte Kommando "postkauz internal prompt-probe --json"
     auf; das liest eine Zeile wie "account add" und meldet nur Zaehler,
     Konsolenmodus und, ob der SHA-256 der Eingabe dem mit --expect-sha256
@@ -177,7 +179,8 @@ $Steps = @(
     @{ Id = 'paste-ctrlv-ascii'; Value = $ValueAscii; Paste = $true; How = 'Fuege mit Strg+V ein und druecke Enter.' },
     @{ Id = 'paste-rightclick-ascii'; Value = $ValueAscii; Paste = $true; How = 'Fuege mit RECHTSKLICK ins Fenster ein und druecke Enter.' },
     @{ Id = 'type-umlaut'; Value = $ValueUmlaut; Paste = $false; How = "Tippe  $ValueUmlaut  und druecke Enter." },
-    @{ Id = 'paste-ctrlv-umlaut'; Value = $ValueUmlaut; Paste = $true; How = 'Fuege mit Strg+V ein und druecke Enter.' }
+    @{ Id = 'paste-ctrlv-umlaut'; Value = $ValueUmlaut; Paste = $true; How = 'Fuege mit Strg+V ein und druecke Enter.' },
+    @{ Id = 'paste-rightclick-umlaut'; Value = $ValueUmlaut; Paste = $true; How = 'Fuege mit RECHTSKLICK ins Fenster ein und druecke Enter.' }
 )
 
 # ---------------------------------------------------------------- Vorpruefung
