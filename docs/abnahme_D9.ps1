@@ -424,7 +424,13 @@ try {
             Write-Log ''
             Write-Log '===== D9.3 Abbau'
             # Ueber das Programm, nicht cmdkey: account remove loescht den
-            # Haupteintrag und alle Teile (jede Generation, bis 32 Teile).
+            # Haupteintrag, die Teile der Generation, die er nennt, die der
+            # davor abgeloesten Generation und Teile ohne Generation (je bis
+            # 32). Teile aelterer Generationen, die kein Haupteintrag mehr
+            # nennt (seltener Rest nach gleichzeitigem Speichern oder einer
+            # Zeitueberschreitung des Schluesselbunds), findet es nicht: Der
+            # Schluesselbund kann nicht auflisten. Die Kontrolle 3.2 zeigt
+            # sie; Abhilfe in docs/abnahme_D9.md, Abschnitt 5.
             $r = Invoke-Pk @('account', 'remove', $acc, '--json')
             $j = Get-Json $r.Out
             Add-Check '3.1' 'account remove -> Konto entfernt, Token samt Teilen geloescht (secret_deleted true)' ($r.Exit -eq 0 -and $j -and $j.secret_deleted -eq $true) $r.Text
@@ -433,8 +439,8 @@ try {
                 # der Kopfzeile); gesucht wird "/<kennung>/<konto>" am
                 # Zeilenende, das trifft Haupteintrag und Teile jeder Generation.
                 $tail = $script:Ref -replace '^account', ''
-                $o = (& cmdkey.exe '/list') -join "`n"
-                Add-Check '3.2' 'Schluesselbund: kein Eintrag des Kontos mehr (Haupteintrag und Teile; cmdkey /list, nur lesend)' (-not ($o -match ('(?m)' + [regex]::Escape($tail) + '\s*$'))) ''
+                $left = @((& cmdkey.exe '/list') | Where-Object { $_ -match ([regex]::Escape($tail) + '\s*$') } | ForEach-Object { $_.Trim() })
+                Add-Check '3.2' 'Schluesselbund: kein Eintrag des Kontos mehr (Haupteintrag und Teile; cmdkey /list, nur lesend)' ($left.Count -eq 0) ($left -join "`n")
             }
             Remove-Item -LiteralPath $script:Data -Recurse -Force
             Add-Check '3.3' 'Datenverzeichnis geloescht' (-not (Test-Path -LiteralPath $script:Data)) ''
