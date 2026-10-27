@@ -13,13 +13,17 @@
 // stellt den Terminal-Modus wieder her.
 //
 // Ein Report beschreibt das Lesen ohne Geheimnis (Zahl der Bytes und
-// Zeichen, SHA-256, Konsolenmodus nur als Flags); ihn zeigt das versteckte
-// Diagnose-Kommando `postkauz internal prompt-probe`.
+// Zeichen, Konsolenmodus nur als Flags); ihn zeigt das versteckte
+// Diagnose-Kommando `postkauz internal prompt-probe`. Einen Hash der
+// Eingabe enthält er nicht: Ein ungesalzener SHA-256 eines echten
+// Passworts ließe sich per Wörterbuch zurückrechnen (Gegenprüfung W2).
+// Den Testwert prüft MatchesSHA256 gegen einen vorgegebenen Hash.
 package prompt
 
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -82,7 +86,6 @@ type Report struct {
 	Escapes    int    `json:"escapes"`               // ESC-Zeichen (Hypothese e: VT-Eingabe)
 	Controls   int    `json:"controls"`              // übrige Steuerzeichen außer Tab
 	Terminator string `json:"terminator"`            // crlf, cr, lf, eof, none
-	SHA256     string `json:"sha256"`                // des Ergebnisses
 	Duration   string `json:"duration"`
 }
 
@@ -144,8 +147,6 @@ func Password(ctx context.Context, in *os.File, out interface{ Write([]byte) (in
 
 // describe füllt die Zähler des Reports aus dem Ergebnis.
 func describe(b []byte, rep *Report) {
-	sum := sha256.Sum256(b)
-	rep.SHA256 = hex.EncodeToString(sum[:])
 	rep.Bytes = len(b)
 	rep.Runes, rep.NonASCII, rep.Escapes, rep.Controls = 0, 0, 0, 0
 	invalid := 0
@@ -165,6 +166,19 @@ func describe(b []byte, rep *Report) {
 		}
 	}
 	rep.Invalid += invalid
+}
+
+// MatchesSHA256 sagt, ob der SHA-256 von b dem Hex-Wert want entspricht
+// (Groß- und Kleinschreibung egal, Vergleich in konstanter Zeit). Nur für
+// bekannte Testwerte (prompt-probe --expect-sha256); der Hash selbst wird
+// nie ausgegeben.
+func MatchesSHA256(b []byte, want string) bool {
+	w, err := hex.DecodeString(want)
+	if err != nil || len(w) != sha256.Size {
+		return false
+	}
+	sum := sha256.Sum256(b)
+	return subtle.ConstantTimeCompare(sum[:], w) == 1
 }
 
 // Konsolenmodus (Werte der Windows-API, hier ohne golang.org/x/sys/windows,

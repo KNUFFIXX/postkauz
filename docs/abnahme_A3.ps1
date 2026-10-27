@@ -9,8 +9,9 @@
     verdeckte Abfrage Tippen und Einfuegen annimmt, ASCII und Umlaute. Dazu
     ruft es das versteckte Kommando "postkauz internal prompt-probe --json"
     auf; das liest eine Zeile wie "account add" und meldet nur Zaehler,
-    Konsolenmodus und den SHA-256 der Eingabe, nie den Wert. Das Skript
-    kennt die Testwerte und vergleicht den Hash.
+    Konsolenmodus und, ob der SHA-256 der Eingabe dem mit --expect-sha256
+    vorgegebenen Hash des Testwerts entspricht (hash_match), nie den Wert
+    und nie den Hash. Nie ein echtes Passwort eingeben.
 
     Der Betreiber tippt bzw. fuegt nur auf Aufforderung ein. Testwerte sind
     keine Geheimnisse (fest im Skript); vor jedem Einfuegen legt das Skript
@@ -195,7 +196,7 @@ foreach ($reader in $Readers) {
             Write-Host 'Der Testwert liegt in der Zwischenablage.'
         }
         Write-Host ("Gleich erscheint 'Type or paste the test value'. {0} (Es erscheint nichts beim Tippen. Geht nichts: 60 s warten.)" -f $s.How) -ForegroundColor Yellow
-        $probeArgs = @('internal', 'prompt-probe', '--json', '--reader', $reader, '--timeout', '60s', '--data-dir', $DataDir, '--config', $Config)
+        $probeArgs = @('internal', 'prompt-probe', '--json', '--reader', $reader, '--timeout', '60s', '--expect-sha256', $expected, '--data-dir', $DataDir, '--config', $Config)
         if ($Via -eq 'cmd') {
             # Ueber cmd.exe: im Ordner des Programms, damit der erste Teil
             # der Befehlszeile keine Anfuehrungszeichen braucht.
@@ -215,7 +216,7 @@ foreach ($reader in $Readers) {
             $r = $p.report
             if ($code -ne 0) { $why += "exit $code" }
             if ($p.error) { $why += "error: $($p.error)" }
-            if ($r.sha256 -ne $expected) { $why += 'hash differs from the test value' }
+            if ($p.hash_match -ne $true) { $why += 'hash differs from the test value' }
             if ($r.mode_before -and $r.mode_after -and $r.mode_before -ne $r.mode_after) { $why += 'console mode not restored' }
         }
         $verdict = if ($why.Count -eq 0) { 'OK' } else { 'FAIL' }
@@ -227,7 +228,7 @@ foreach ($reader in $Readers) {
             Write-Log ("     stdin {0}, terminal {1}, code pages in/out/ansi {2}/{3}/{4}, windows terminal {5}" -f $e.stdin_type, $r.is_terminal, $e.input_code_page, $e.output_code_page, $e.ansi_code_page, $e.windows_terminal)
             Write-Log ("     mode before {0}; during {1}; after {2}" -f $r.mode_before, $r.mode_during, $r.mode_after)
             Write-Log ("     reads {0}, utf16 {1}, bytes {2}, chars {3}, non-ascii {4}, invalid {5}, escape {6}, control {7}, line end {8}, {9}" -f $r.reads, $r.utf16_units, $r.bytes, $r.chars, $r.non_ascii, $r.invalid, $r.escapes, $r.controls, $r.terminator, $r.duration)
-            Write-Log ("     expected {0} bytes, hash match {1}" -f $script:Utf8.GetByteCount($s.Value), ($r.sha256 -eq $expected))
+            Write-Log ("     expected {0} bytes, hash match {1}" -f $script:Utf8.GetByteCount($s.Value), ($p.hash_match -eq $true))
         }
         if ($why.Count -gt 0) { Write-Log ("     why: {0}" -f ($why -join '; ')) }
     }

@@ -9,7 +9,7 @@ Beim D5 (23.10.2026, Heim-PC) nahm die verdeckte Passwortabfrage von `account ad
 - **console** (neu): muss überall gehen. Das ist die Abnahme.
 - **term** (alt, `golang.org/x/term`): nur Messung. Zeigt, ob der Befund D5 auf dem Büro-PC überhaupt auftritt.
 
-Geprüft wird nie der Wert, nur sein SHA-256: Das versteckte Kommando `postkauz internal prompt-probe --json` liest eine Zeile wie `account add` und meldet Zähler, Konsolenmodus und Hash. Die Testwerte stehen im Skript (`PostKauz-Test-123` und `Prüfung-äöü-ß7`); sie sind keine Geheimnisse.
+Geprüft wird nie der Wert: Das versteckte Kommando `postkauz internal prompt-probe --json --expect-sha256 <hex>` liest eine Zeile wie `account add` und meldet Zähler, Konsolenmodus und nur, ob der SHA-256 der Eingabe dem vorgegebenen Hash entspricht (`hash_match`); den Hash selbst gibt es nie aus. Die Testwerte stehen im Skript (`PostKauz-Test-123` und `Prüfung-äöü-ß7`); sie sind keine Geheimnisse. **Nie ein echtes Passwort eingeben**, auch nicht zum Ausprobieren.
 
 ## Vorbereitung
 

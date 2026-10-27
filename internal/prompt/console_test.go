@@ -191,7 +191,8 @@ func TestReadConsoleLineErrors(t *testing.T) {
 }
 
 // Kanarientest: Der Report (wie prompt-probe ihn ausgibt) enthält die
-// Eingabe nicht, nur Zähler und den Hash.
+// Eingabe nicht und auch keinen Hash (W2), nur Zähler; MatchesSHA256
+// vergleicht mit einem vorgegebenen Hash.
 func TestReportHasNoSecret(t *testing.T) {
 	const canary = "Kanarie-Prüfung-4711"
 	f := newFake(shellMode, u16(canary+"\r\n"))
@@ -205,8 +206,14 @@ func TestReportHasNoSecret(t *testing.T) {
 	if bytes.Contains(out, []byte(canary)) || bytes.Contains(out, []byte("Kanarie")) || bytes.Contains(out, []byte("4711")) {
 		t.Fatalf("report leaks the input: %s", out)
 	}
-	if sum := sha256.Sum256([]byte(canary)); rep.SHA256 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("sha256 = %q", rep.SHA256)
+	sum := sha256.Sum256([]byte(canary))
+	want := hex.EncodeToString(sum[:])
+	if bytes.Contains(out, []byte(want)) || bytes.Contains(out, []byte("sha256")) {
+		t.Fatalf("report carries a hash of the input: %s", out)
+	}
+	if !MatchesSHA256(b, want) || !MatchesSHA256(b, strings.ToUpper(want)) || MatchesSHA256(b, want[:62]) ||
+		MatchesSHA256(b, "zz"+want[2:]) || MatchesSHA256([]byte("anders"), want) || MatchesSHA256(b, "") {
+		t.Fatal("MatchesSHA256")
 	}
 }
 

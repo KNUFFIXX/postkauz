@@ -30,17 +30,25 @@ func TestPromptProbeWithoutTerminal(t *testing.T) {
 	if code != ExitError || strings.Contains(out.String()+errb.String(), canary) ||
 		!strings.Contains(out.String(), "stdin:         disk (terminal: no)") ||
 		!strings.Contains(out.String(), "error:         standard input is not a terminal") ||
+		!strings.Contains(out.String(), "hash match:    not checked") ||
+		!strings.Contains(out.String(), "note:          test values only: never enter a real password here") ||
 		!strings.Contains(errb.String(), "prompt probe: standard input is not a terminal") {
 		t.Fatalf("probe: %d\n%s\n%s", code, out.String(), errb.String())
 	}
 	_, _ = f.Seek(0, 0)
 	out.Reset()
 	errb.Reset()
-	code = RunWithInput([]string{"internal", "prompt-probe", "--json", "--reader", "term"}, f, &out, &errb, "test")
+	code = RunWithInput([]string{"internal", "prompt-probe", "--json", "--reader", "term", "--expect-sha256", strings.Repeat("ab", 32)}, f, &out, &errb, "test")
 	var p PromptProbe
 	if code != ExitError || json.Unmarshal(out.Bytes(), &p) != nil || p.Report.Reader != "term" || p.Report.IsTerminal ||
 		p.Env.StdinType != "disk" || strings.Contains(out.String(), canary) {
 		t.Fatalf("probe --json: %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	// W2: kein Hash in der Ausgabe, hash_match nur bei gelesener Eingabe,
+	// die Warnung steht auch im JSON.
+	if strings.Contains(out.String(), "sha256") || p.HashMatch != nil || p.Note != probeNote ||
+		!strings.Contains(out.String(), `"note":"test values only: never enter a real password here"`) {
+		t.Fatalf("probe --json hash/note: %s", out.String())
 	}
 	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 		t.Fatalf("prompt-probe created the data directory: %v", err)
@@ -49,7 +57,8 @@ func TestPromptProbeWithoutTerminal(t *testing.T) {
 	if _, help, _ := run(t, "--help"); strings.Contains(help, "internal") || strings.Contains(help, "prompt-probe") {
 		t.Fatalf("help shows the hidden command:\n%s", help)
 	}
-	for _, args := range [][]string{{"internal", "prompt-probe", "--reader", "x"}, {"internal", "prompt-probe", "--timeout", "0s"}} {
+	for _, args := range [][]string{{"internal", "prompt-probe", "--reader", "x"}, {"internal", "prompt-probe", "--timeout", "0s"},
+		{"internal", "prompt-probe", "--expect-sha256", "abc"}, {"internal", "prompt-probe", "--expect-sha256", strings.Repeat("g", 64)}} {
 		if code, _, _ := run(t, args...); code != ExitUsage {
 			t.Errorf("%v: %d", args, code)
 		}
