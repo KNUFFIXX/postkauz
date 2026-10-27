@@ -103,7 +103,12 @@ $ErrorActionPreference = 'Stop'
 $script:Utf8 = New-Object System.Text.UTF8Encoding $false
 $script:Ok = @{ console = 0; term = 0 }
 $script:Fail = @{ console = 0; term = 0 }
-try { [Console]::OutputEncoding = $script:Utf8 } catch { }
+# Die Ausgabe-Codepage bleibt, wie das Fenster sie hat: Sie ist ein
+# Messwert (Hypothese c). Die JSON-Ausgabe der Probe ist ASCII.
+
+# -File reicht "a,b" als einen String durch: Pfadlisten selbst trennen,
+# sonst griffe der Schutz vor dem Live-Pfad nicht.
+$LivePath = @($LivePath | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
 # ---------------------------------------------------------------- Hilfen
 
@@ -123,6 +128,13 @@ function Write-Log {
             Start-Sleep -Milliseconds 250
         }
     }
+}
+
+# Setzt einen Wert fuer die Befehlszeile in Anfuehrungszeichen; Backslashes
+# am Ende werden verdoppelt (sonst maskierte "D:\x\" das Zeichen ").
+function Format-Arg {
+    param([string] $Value)
+    return '"' + ($Value -replace '(\\+)$', '$1$1') + '"'
 }
 
 # Wartet, bis ein Fenster seine Fertig-Datei geschrieben hat; Q bricht das
@@ -202,7 +214,11 @@ if (Test-Path -LiteralPath $DataDir) {
 }
 if (-not (Test-Path -LiteralPath $Config)) { [System.IO.File]::WriteAllText($Config, "", $script:Utf8) }
 $DataDir = (Resolve-Path -LiteralPath $DataDir).Path
+if ($DataDir.Length -gt 3) { $DataDir = $DataDir.TrimEnd('\') }
 $Config = (Resolve-Path -LiteralPath $Config).Path
+# Absolut, damit weitere Fenster (Windows Terminal startet im Profilordner)
+# in dieselbe Datei schreiben.
+$Protocol = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Protocol)
 $protoDir = Split-Path -Parent $Protocol
 if ($protoDir -and -not (Test-Path -LiteralPath $protoDir)) { New-Item -ItemType Directory -Path $protoDir | Out-Null }
 
@@ -212,7 +228,8 @@ $psv = $PSVersionTable.PSVersion.ToString()
 $wtSession = [bool]$env:WT_SESSION
 Write-Log ''
 Write-Log ("== A3 {0}  {1}  PowerShell {2}  via {3}  Windows Terminal: {4}  {5}" -f $HostLabel, (Get-Date -Format 's'), $psv, $Via, $wtSession, $Exe)
-$ver = & $Exe version 2>&1 | Select-Object -First 1
+$ver = 'unknown'
+try { $ver = & $Exe version --data-dir $DataDir --config $Config | Select-Object -First 1 } catch { }
 Write-Log ("   version: {0}" -f $ver)
 
 foreach ($reader in $Readers) {
@@ -281,7 +298,12 @@ $ownCode = if ($script:Fail['console'] -gt 0) { 1 } else { 0 }
     throw
 } finally {
     if ($DoneFile) {
-        try { [System.IO.File]::WriteAllText($DoneFile, "$ownCode", $script:Utf8) } catch { }
+        # Erst unter anderem Namen, dann umbenennen: Das Startfenster sieht
+        # die Datei nie halb geschrieben.
+        try {
+            [System.IO.File]::WriteAllText("$DoneFile.tmp", "$ownCode", $script:Utf8)
+            [System.IO.File]::Move("$DoneFile.tmp", $DoneFile)
+        } catch { }
         [void](Read-Host 'Fertig. Enter schliesst dieses Fenster')
     }
 }
@@ -294,8 +316,8 @@ if ($DoneFile) { exit $ownCode }
 $matrixFail = 0
 if ($Launch) {
     $self = $PSCommandPath
-    $common = "-NoProfile -ExecutionPolicy Bypass -File `"$self`" -Exe `"$Exe`" -DataDir `"$DataDir`" -Config `"$Config`" -Protocol `"$Protocol`""
-    foreach ($lp in $LivePath) { $common += " -LivePath `"$lp`"" }
+    $common = "-NoProfile -ExecutionPolicy Bypass -File $(Format-Arg $self) -Exe $(Format-Arg $Exe) -DataDir $(Format-Arg $DataDir) -Config $(Format-Arg $Config) -Protocol $(Format-Arg $Protocol)"
+    if ($LivePath.Count -gt 0) { $common += " -LivePath $(Format-Arg ($LivePath -join ','))" }
     $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue)
     $wt = (Get-Command wt.exe -ErrorAction SilentlyContinue)
@@ -315,7 +337,11 @@ if ($Launch) {
         Write-Host ("=== Naechstes Fenster: {0}. Es oeffnet sich nach Enter; dort genauso abarbeiten, danach geht es hier weiter." -f $w.Label) -ForegroundColor Cyan
         [void](Read-Host 'Enter oeffnet das Fenster')
         $done = Join-Path ([System.IO.Path]::GetTempPath()) ("postkauz-a3-{0}.done" -f [guid]::NewGuid())
-        $args1 = "$common -HostLabel $($w.Label) -Via $($w.Via) -DoneFile `"$done`""
+        $args1 = "$common -HostLabel $($w.Label) -Via $($w.Via) -DoneFile $(Format-Arg $done)"
+        # Sonst erbten conhost-Fenster WT_SESSION aus diesem Fenster und
+        # meldeten falsch "Windows Terminal: True" (Windows Terminal setzt
+        # fuer seine Fenster einen eigenen Wert).
+        Remove-Item Env:WT_SESSION -ErrorAction SilentlyContinue
         if ($w.Term -eq $conhost) {
             # conhost.exe endet mit der Shell im Fenster: -Wait reicht.
             Start-Process -FilePath $conhost -ArgumentList "`"$($w.Shell)`" $args1" -Wait
@@ -323,10 +349,20 @@ if ($Launch) {
             # wt.exe kehrt sofort zurueck; das Ende meldet die Fertig-Datei.
             Start-Process -FilePath $w.Term -ArgumentList "-w new `"$($w.Shell)`" $args1"
         }
-        $finished = Wait-DoneFile -File $done -Label $w.Label
+        if ($w.Term -eq $conhost) {
+            # -Wait ist zurueck; fehlt die Datei (Fenster mit X geschlossen),
+            # kommt sie nicht mehr.
+            Start-Sleep -Seconds 1
+            $finished = Test-Path -LiteralPath $done
+        } else {
+            $finished = Wait-DoneFile -File $done -Label $w.Label
+        }
         $code = $null
         if ($finished) {
-            try { $code = [int]([System.IO.File]::ReadAllText($done).Trim()) } catch { }
+            try {
+                $text = [System.IO.File]::ReadAllText($done).Trim()
+                if ($text -match '^\d+$') { $code = [int]$text }
+            } catch { }
             Remove-Item -LiteralPath $done -ErrorAction SilentlyContinue
         }
         if ($code -ne 0) {

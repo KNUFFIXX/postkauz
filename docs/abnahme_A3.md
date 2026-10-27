@@ -14,7 +14,7 @@ Geprüft wird nie der Wert: Das versteckte Kommando `postkauz internal prompt-pr
 ## Vorbereitung
 
 1. Build `0.3.0-alpha.c2` aus `dist/` (`postkauz-windows-amd64.exe`) in einen eigenen Ordner kopieren, z. B. `D:\pk\a3\postkauz.exe`. Prüfsumme gegen `dist/SHA256SUMS`.
-2. Einen **neuen, leeren** Ordner für `-DataDir` und einen Pfad für `-Config` wählen. Nie das Live-Datenverzeichnis des Dauerbetriebs: Das Skript verweigert `%LOCALAPPDATA%\postkauz`, `%APPDATA%\postkauz` und jeden Pfad aus `-LivePath` (dort das Live-Datenverzeichnis und die Live-Konfiguration angeben). `prompt-probe` öffnet weder Datenbank noch Schlüsselbund; das Skript prüft am Ende, dass im Datenverzeichnis nichts entstanden ist.
+2. Einen **neuen, leeren** Ordner für `-DataDir` und einen Pfad für `-Config` wählen. Nie das Live-Datenverzeichnis des Dauerbetriebs: Das Skript verweigert `%LOCALAPPDATA%\postkauz`, `%APPDATA%\postkauz` und jeden Pfad aus `-LivePath` (dort das Live-Datenverzeichnis und die Live-Konfiguration angeben, mehrere Pfade durch Komma getrennt; das Skript trennt sie selbst, weil `powershell.exe -File` `a,b` als einen Wert übergibt). `prompt-probe` öffnet weder Datenbank noch Schlüsselbund; das Skript prüft am Ende, dass im Datenverzeichnis nichts entstanden ist.
 3. Der Dauerläufer (rc8) darf weiterlaufen; der Test berührt ihn nicht.
 
 ## Ablauf
