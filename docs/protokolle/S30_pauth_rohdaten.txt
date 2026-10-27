@@ -1,0 +1,164 @@
+# Spike P-AUTH, Rohdaten (27.10.2026, Container der Sitzung, Ausgangsstand main 1c9847a)
+# Ausgaben von spike/pauth/cmd/probe; kein Token enthalten (nur Kopf- und Claim-Beschreibung).
+# Alle Namen unter .pauth.test sind Testnamen im Container; Konto 'tester' ist synthetisch.
+
+==================================================================
+== Authelia 4.39.28 (Docker authelia/authelia:latest = 4.39.28), requested_audience_mode explicit, RS mit typ-Pflicht at+jwt
+==================================================================
+discovery via /.well-known/oauth-authorization-server
+
+## PKCE
+authorize with PKCE none  → rejected: error=invalid_request (The request is missing a required parameter, includes an invalid parameter value, includes a parameter more than once, or is otherwise malformed. Clients must include a 'code_challenge' when performing the authorize c…
+authorize with PKCE plain → rejected: error=invalid_request (The request is missing a required parameter, includes an invalid parameter value, includes a parameter more than once, or is otherwise malformed. Authorization was requested with 'code_challenge_method' value 'plain',…
+authorize with PKCE S256  → code issued and exchanged (accepted)
+
+## Audience / RFC 8707
+resource="https://mcp.pauth.test:8443/mcp" → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+resource="https://mcp.pauth.test:8443/mcp" → id token:     JWT typ=JWT alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[claude-code] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=3600s jti?=true
+resource="" → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=<nil> sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+resource="" → id token:     JWT typ=JWT alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[claude-code] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=3600s jti?=true
+audience="https://mcp.pauth.test:8443/mcp" (Authelia-Parameter) → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+
+## Resource Server (Prototyp, in-process)
+RS listens on https://mcp.pauth.test:8443/mcp (require at+jwt: true)
+
+## SDK client (AuthorizationCodeHandler, pre-registered client)
+scopes discovered from PRM/challenge: []
+tools/list: 1 tools, err=<nil>, protocol 2026-07-28
+whoami: {"client_id":"claude-code","key":"cloud-reader","subject":"4fce8606-f0d5-4059-b1a1-c7469cbfd266","transport":"http"}
+SDK token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true; refresh token present: true
+refresh took 8ms
+refresh → new access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true; RS status 200
+
+## Negative cases against RS
+other-client token (resource=https://other.pauth.test/mcp): JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://other.pauth.test/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=other-client azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+  → RS status 401 (want 401)
+  other-client id token → RS status 401 (want 401)
+claude-code id token → RS status 401 (want 401)
+claude-code access token → RS status 200 (want 200)
+
+## Device authorization (RFC 8628)
+device authorization: user_code present true, verification_uri auth.pauth.test:9091/consent/openid/device-authorization, complete uri present true, interval 10 s
+device token poll without approval → context deadline exceeded
+
+## CIMD / URL als client_id (statisch eingetragen, Metadatendokument nicht vorhanden)
+authorize with client_id=https://client.pauth.test/oauth/client.json → rejected: stuck at auth.pauth.test:9091/consent/completion [error=invalid_client,error_description=Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).,error_hint=The requested …
+authorize with unregistered URL client_id → rejected: stuck at auth.pauth.test:9091/consent/completion [error_description=Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).,error_hint=The requested OAuth 2.0 Client does…
+consent clicks needed in this run: 9
+
+==================================================================
+== Authelia 4.39.28, requested_audience_mode implicit, RS mit typ-Pflicht at+jwt
+==================================================================
+discovery via /.well-known/oauth-authorization-server
+
+## PKCE
+authorize with PKCE none  → rejected: error=invalid_request (The request is missing a required parameter, includes an invalid parameter value, includes a parameter more than once, or is otherwise malformed. Clients must include a 'code_challenge' when performing the authorize c…
+authorize with PKCE plain → rejected: error=invalid_request (The request is missing a required parameter, includes an invalid parameter value, includes a parameter more than once, or is otherwise malformed. Authorization was requested with 'code_challenge_method' value 'plain',…
+authorize with PKCE S256  → code issued and exchanged (accepted)
+
+## Audience / RFC 8707
+resource="https://mcp.pauth.test:8443/mcp" → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+resource="https://mcp.pauth.test:8443/mcp" → id token:     JWT typ=JWT alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[claude-code] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=3600s jti?=true
+resource="" → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+resource="" → id token:     JWT typ=JWT alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[claude-code] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=3600s jti?=true
+audience="https://mcp.pauth.test:8443/mcp" (Authelia-Parameter) → access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+
+## Resource Server (Prototyp, in-process)
+RS listens on https://mcp.pauth.test:8443/mcp (require at+jwt: true)
+
+## SDK client (AuthorizationCodeHandler, pre-registered client)
+scopes discovered from PRM/challenge: []
+tools/list: 1 tools, err=<nil>, protocol 2026-07-28
+whoami: {"client_id":"claude-code","key":"cloud-reader","subject":"4fce8606-f0d5-4059-b1a1-c7469cbfd266","transport":"http"}
+SDK token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true; refresh token present: true
+refresh took 14ms
+refresh → new access token: JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://mcp.pauth.test:8443/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=claude-code azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true; RS status 200
+
+## Negative cases against RS
+other-client token (resource=https://other.pauth.test/mcp): JWT typ=at+jwt alg=RS256 kid?=true | iss=https://auth.pauth.test:9091 aud=[https://other.pauth.test/mcp] sub=4fce8606-f0d5-4059-b1a1-c7469cbfd266 client_id=other-client azp=<nil> scope=<nil> scp=[openid profile offline_access] lifetime=300s jti?=true
+  → RS status 401 (want 401)
+  other-client id token → RS status 401 (want 401)
+claude-code id token → RS status 401 (want 401)
+claude-code access token → RS status 200 (want 200)
+
+## Device authorization (RFC 8628)
+device authorization: user_code present true, verification_uri auth.pauth.test:9091/consent/openid/device-authorization, complete uri present true, interval 10 s
+device token poll without approval → context deadline exceeded
+
+## CIMD / URL als client_id (statisch eingetragen, Metadatendokument nicht vorhanden)
+authorize with client_id=https://client.pauth.test/oauth/client.json → rejected: stuck at auth.pauth.test:9091/consent/completion [error=invalid_client,error_description=Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).,error_hint=The requested …
+authorize with unregistered URL client_id → rejected: stuck at auth.pauth.test:9091/consent/completion [error=invalid_client,error_description=Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).,error_hint=The requested …
+consent clicks needed in this run: 9
+
+==================================================================
+== Dex v2.46.1 (Docker dexidp/dex:v2.46.1), Speicher memory, Scopes ohne Cross-Client
+==================================================================
+discovery via /.well-known/openid-configuration
+
+## PKCE
+authorize with PKCE none  → rejected: error=invalid_request (PKCE is required. The code_challenge parameter must be provided.)
+authorize with PKCE plain → rejected: error=invalid_request (Unsupported PKCE challenge method ("plain").)
+authorize with PKCE S256  → code issued and exchanged (accepted)
+
+## Audience / RFC 8707
+resource="https://mcp.pauth.test:8443/mcp" → access token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=claude-code sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="https://mcp.pauth.test:8443/mcp" → id token:     JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=claude-code sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="" → access token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=claude-code sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="" → id token:     JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=claude-code sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+
+## Resource Server (Prototyp, in-process)
+RS listens on https://mcp.pauth.test:8443/mcp (require at+jwt: false)
+
+## SDK client (AuthorizationCodeHandler, pre-registered client)
+scopes discovered from PRM/challenge: []
+scopes discovered from PRM/challenge: []
+SDK connect: FAIL calling "initialize": sending "initialize": Unauthorized
+
+## Negative cases against RS
+other-client token (resource=https://other.pauth.test/mcp): JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=other-client sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+  → RS status 401 (want 401)
+  other-client id token → RS status 401 (want 401)
+claude-code id token → RS status 401 (want 401)
+claude-code access token → RS status 401 (want 200)
+
+## Device authorization (RFC 8628)
+device authorization: user_code present true, verification_uri dex.pauth.test:5556/dex/device, complete uri present true, interval 5 s
+device token poll without approval → context deadline exceeded
+
+## CIMD / URL als client_id (statisch eingetragen, Metadatendokument nicht vorhanden)
+authorize with client_id=https://client.pauth.test/oauth/client.json → code issued and exchanged (accepted)
+  token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=https://client.pauth.test/oauth/client.json sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=<nil> scope=<nil> scp=<nil> lifetime=300s jti?=true
+authorize with unregistered URL client_id → rejected: stuck at dex.pauth.test:5556/dex/auth [code_challenge,code_challenge_method,redirect_uri,resource,response_type,scope,state,client_id]: status 400
+consent clicks needed in this run: 0
+
+==================================================================
+== Dex v2.46.1, Speicher sqlite3, Scope audience:server:client_id:<resource> (trustedPeers); Lauf nach Refresh-Hänger per timeout beendet
+==================================================================
+discovery via /.well-known/openid-configuration
+
+## PKCE
+authorize with PKCE none  → rejected: error=invalid_request (PKCE is required. The code_challenge parameter must be provided.)
+authorize with PKCE plain → rejected: error=invalid_request (Unsupported PKCE challenge method ("plain").)
+authorize with PKCE S256  → code issued and exchanged (accepted)
+
+## Audience / RFC 8707
+resource="https://mcp.pauth.test:8443/mcp" → access token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=[https://mcp.pauth.test:8443/mcp claude-code] sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="https://mcp.pauth.test:8443/mcp" → id token:     JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=[https://mcp.pauth.test:8443/mcp claude-code] sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="" → access token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=[https://mcp.pauth.test:8443/mcp claude-code] sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=300s jti?=true
+resource="" → id token:     JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=[https://mcp.pauth.test:8443/mcp claude-code] sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=300s jti?=true
+
+## Resource Server (Prototyp, in-process)
+RS listens on https://mcp.pauth.test:8443/mcp (require at+jwt: false)
+
+## SDK client (AuthorizationCodeHandler, pre-registered client)
+scopes discovered from PRM/challenge: []
+tools/list: 1 tools, err=<nil>, protocol 2026-07-28
+whoami: {"client_id":"claude-code","key":"cloud-reader","subject":"Cgt0ZXN0ZXItMDAwMRIFbG9jYWw","transport":"http"}
+SDK token: JWT typ=<nil> alg=RS256 kid?=true | iss=https://dex.pauth.test:5556/dex aud=[https://mcp.pauth.test:8443/mcp claude-code] sub=Cgt0ZXN0ZXItMDAwMRIFbG9jYWw client_id=<nil> azp=claude-code scope=<nil> scp=<nil> lifetime=300s jti?=true; refresh token present: true
+refresh took 20.019s
+refresh: FAIL Post "https://dex.pauth.test:5556/dex/token": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+
+## Negative cases against RS
+other-client flow: Get "https://dex.pauth.test:5556/dex/auth?client_id=other-client&code_challenge=3bVUVRN2BtjTV3JUoohbvVarZ282q0MLR-iAsvZFtFM&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A33418%2Fcallback&resource=https%3A%2F%2Fother.pauth.test%2Fmcp&response_type=code&scope=openid+profile+offline_access+audience%3Aserver%3Aclient_id%3Ahttps%3A%2F%2Fmcp.pauth.test%3A8443%2Fmcp&state=323032362d31302d32372031313a3131": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+
+## Device authorization (RFC 8628)
