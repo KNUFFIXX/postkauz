@@ -583,7 +583,9 @@ func renderAccountTest(w io.Writer, out any) error {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
 	login := o.Login
-	if o.AuthMechanism != "" {
+	// Das Verfahren nur bei SASL nennen; Passwort-Konten zeigen weiter
+	// „login: ok" wie in den Abnahmen D1 bis D5.
+	if o.AuthMechanism != "" && o.AuthMechanism != "LOGIN" {
 		login += " (" + o.AuthMechanism + ")"
 	}
 	fmt.Fprintf(w, "account:       %s\nlogin:         %s\nsync strategy: %s\ncapabilities:  %s\nmailboxes:\n",

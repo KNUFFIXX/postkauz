@@ -309,7 +309,7 @@ func TestAccountLifecycleWithCanary(t *testing.T) {
 			}
 
 			out = step("", ExitOK, "account", "test", "demo")
-			if !strings.Contains(out, "login:         ok") || !strings.Contains(out, "INBOX") || !strings.Contains(out, "inbox") {
+			if !strings.Contains(out, "login:         ok\n") || !strings.Contains(out, "INBOX") || !strings.Contains(out, "inbox") {
 				t.Fatalf("test: %s", out)
 			}
 			out = step("", ExitOK, "account", "test", "demo", "--json")
