@@ -72,18 +72,29 @@ type Source struct {
 	// ReasonNotStored, ein Code des Anbieters wie invalid_grant oder ein
 	// fester Code). Für das Audit-Ereignis oauth.refresh; nie mit Token.
 	Report func(ok bool, reason string)
+	// Reload liest das gespeicherte Refresh-Token neu (nil = nie). Die
+	// Quelle ruft es vor jedem Refresh (Gegenprüfung T4, K7): Weicht das
+	// gespeicherte vom zuletzt gelesenen oder selbst gespeicherten ab, hat
+	// ein anderer Prozess danach gespeichert (etwa sync --watch neben
+	// account test); es ist also neuer, und die Quelle erneuert damit.
+	// Fehler beim Lesen zählen nicht (dann mit dem eigenen).
+	Reload func() (secrets.Secret, error)
 	Now    func() time.Time
 
 	failedAt time.Time
 	lastErr  error
 	// unstored: neues Token, das noch nicht gespeichert ist.
 	unstored *Token
+	// stored: das zuletzt gelesene oder selbst gespeicherte Refresh-Token.
+	stored secrets.Secret
 }
 
 // NewSource legt eine Quelle für ein vorhandenes Token an. Ohne
 // Access-Token (gespeichert ist nur das Refresh-Token) erneuert der erste
 // Aufruf von Token.
-func NewSource(tok Token, r Refresher) *Source { return &Source{tok: tok, refresher: r} }
+func NewSource(tok Token, r Refresher) *Source {
+	return &Source{tok: tok, refresher: r, stored: tok.RefreshToken}
+}
 
 func (s *Source) now() time.Time {
 	if s.Now != nil {
@@ -130,6 +141,11 @@ func (s *Source) Token(ctx context.Context) (secrets.Secret, error) {
 	if s.lastErr != nil && now.Sub(s.failedAt) < cooldown {
 		return "", s.lastErr
 	}
+	if s.Reload != nil {
+		if rt, err := s.Reload(); err == nil && !rt.IsZero() && rt.Reveal() != s.stored.Reveal() {
+			s.tok.RefreshToken, s.stored = rt, rt
+		}
+	}
 	if s.tok.RefreshToken.IsZero() {
 		s.report(false, ReasonNoRefresh)
 		return "", fmt.Errorf("%w: no refresh token; authorize the account again", ErrRefresh)
@@ -165,6 +181,7 @@ func (s *Source) store(t Token) error {
 		if err := s.OnRefresh(t); err != nil {
 			return fmt.Errorf("%w (%s); stopping, fix the keyring and run the command again", ErrTokenNotStored, secrets.RedactTokens(err.Error()))
 		}
+		s.stored = t.RefreshToken
 	}
 	s.unstored = nil
 	return nil

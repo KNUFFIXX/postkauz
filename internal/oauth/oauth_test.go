@@ -139,3 +139,32 @@ func TestSourceStartsWithRefreshTokenOnly(t *testing.T) {
 		t.Fatalf("reports = %v", reports)
 	}
 }
+
+// K7 (Gegenprüfung T4): Vor einem Refresh liest die Quelle das gespeicherte
+// Refresh-Token neu; hat ein anderer Prozess eines gespeichert, erneuert sie
+// damit. Das eigene, selbst gespeicherte gilt nicht als fremd.
+func TestSourceReloadsNewerStoredToken(t *testing.T) {
+	now := time.Now()
+	r := &fakeRefresher{next: Token{AccessToken: "access-2", RefreshToken: "refresh-2", Expiry: now.Add(time.Minute)}}
+	s := NewSource(Token{RefreshToken: "refresh-0"}, r)
+	keyring := secrets.Secret("refresh-1") // ein anderer Prozess hat gespeichert
+	reloads := 0
+	s.Reload = func() (secrets.Secret, error) { reloads++; return keyring, nil }
+	s.OnRefresh = func(t Token) error { keyring = t.RefreshToken; return nil }
+	if tok, err := s.Token(context.Background()); err != nil || tok.Reveal() != "access-2" || r.calls != 1 || reloads != 1 {
+		t.Fatalf("%v calls=%d reloads=%d", err, r.calls, reloads)
+	}
+	// Das eigene gespeicherte Token (refresh-2) ist nicht fremd; der
+	// Refresher kennt nur refresh-1 und lehnt refresh-2 ab: Die Quelle
+	// nimmt also ihr eigenes, nicht ein „neues" aus dem Speicher.
+	r.next = Token{AccessToken: "access-3", Expiry: now.Add(time.Hour)}
+	if _, err := s.Token(context.Background()); !errors.Is(err, ErrRefresh) || s.tok.RefreshToken.Reveal() != "refresh-2" {
+		t.Fatalf("own token: %v", err)
+	}
+	// Lesefehler: weiter mit dem eigenen.
+	s2 := NewSource(Token{RefreshToken: "refresh-1"}, &fakeRefresher{next: Token{AccessToken: "a"}})
+	s2.Reload = func() (secrets.Secret, error) { return "", secrets.ErrUnavailable }
+	if _, err := s2.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

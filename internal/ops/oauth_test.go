@@ -359,3 +359,41 @@ func (r *tokenRunner) Sync(ctx context.Context, a store.Account, cred provider.C
 	r.got = append(r.got, tok.Reveal())
 	return SyncOutput{Account: a.Name, Mode: "incremental"}, nil
 }
+
+// K7 (Gegenprüfung T4): zwei Prozesse mit eigener Tokenquelle auf demselben
+// Schlüsselbund (sync --watch und account test). Der Fake-AS lässt jedes
+// Refresh-Token nur einmal zu; ohne Neulesen scheiterte der zweite mit
+// invalid_grant, weil der erste das gemeinsame Token schon eingelöst hat.
+func TestTwoProcessesShareRotatedToken(t *testing.T) {
+	e := newOAuthEnv(t)
+	if _, err := e.run("accounts.add", outlookInput(), "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	e.as.ExpiresIn = 60 // kürzer als die 2 Minuten Vorlauf: jeder Aufruf erneuert
+	a, _ := e.st.AccountByName(context.Background(), "outlook")
+	p1, err := e.creds.For(a, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := e.creds.For(a, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for i, p := range []provider.Credential{p1, p2, p1, p2} {
+		if _, err := p.Token.Token(ctx); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if n := e.as.Count("refresh_token"); n != 4 {
+		t.Fatalf("refreshes = %d", n)
+	}
+	for _, ev := range e.sys.Events() {
+		if ev.Result != audit.ResultOK {
+			t.Fatalf("event = %+v", ev)
+		}
+	}
+}

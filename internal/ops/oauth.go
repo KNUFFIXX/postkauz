@@ -95,6 +95,12 @@ func (c Credentials) For(a store.Account, dryRun bool) (provider.Credential, err
 		src.OnRefresh = func(t oauth.Token) error { return oauth.Save(c.Secrets, a.CredentialRef, t, time.Now()) }
 	}
 	src.Report = func(ok bool, reason string) { c.auditRefresh(a, ok, reason, dryRun) }
+	// K7: Ein zweiter Prozess (sync --watch neben account test) kann
+	// inzwischen ein neueres Refresh-Token gespeichert haben.
+	src.Reload = func() (secrets.Secret, error) {
+		s, err := oauth.Load(c.Secrets, a.CredentialRef)
+		return s.RefreshToken, err
+	}
 	return provider.Credential{Token: src}, nil
 }
 
