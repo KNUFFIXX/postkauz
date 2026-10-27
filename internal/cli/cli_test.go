@@ -394,9 +394,14 @@ func TestAccountTestErrors(t *testing.T) {
 		t.Fatalf("auth: code=%d %s", code, errs)
 	}
 
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	closed := ln.Addr().String()
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if code, _, errs := runIn(t, "pw\n", "account", "add", "gone", "--imap", closed, "--user", "u", "--tls", "none", "--insecure-test-server", "--password-stdin"); code != ExitOK {
 		t.Fatalf("add gone: %d %s", code, errs)
 	}

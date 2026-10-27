@@ -25,7 +25,9 @@ func TestAuditExportChainAndManifest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := e.run(t, adminKey, "keys.list", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
 	res, err := e.run(t, adminKey, "audit.export", map[string]any{})
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +171,9 @@ func forgeLine(t *testing.T, content []byte, n int, genesis string) []byte {
 func TestAuditVerifyLegacyFormat(t *testing.T) {
 	e := newAdminEnv(t)
 	ctx := t.Context()
-	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := e.run(t, adminKey, "keys.list", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
 	days, _ := e.st.AuditDays(ctx)
 	d, err := auditDayFromDB(ctx, e.st, days[0], 0, 1, "")
 	if err != nil {

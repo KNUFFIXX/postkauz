@@ -137,9 +137,14 @@ func TestWatchdogDetectsSilentServer(t *testing.T) {
 }
 
 func TestDialRefusedIsErrConnection(t *testing.T) {
-	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	addr := ln.Addr().String()
-	ln.Close()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Dial(context.Background(), cfgFor(t, addr)); !errors.Is(err, provider.ErrConnection) {
 		t.Fatalf("err = %v", err)
 	}
