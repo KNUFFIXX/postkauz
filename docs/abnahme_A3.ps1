@@ -47,7 +47,7 @@
     Wiederholung, falls die Datei kurz gesperrt ist (IOException).
 
 .PARAMETER Exe
-    Pfad zu postkauz.exe (Build 0.3.0-alpha.c1 aus dist\).
+    Pfad zu postkauz.exe (Build 0.3.0-alpha.c2 aus dist\).
 
 .PARAMETER DataDir
     Frisches, leeres Datenverzeichnis nur fuer diesen Test (wird angelegt).

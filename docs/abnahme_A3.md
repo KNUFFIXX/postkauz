@@ -13,7 +13,7 @@ Geprüft wird nie der Wert: Das versteckte Kommando `postkauz internal prompt-pr
 
 ## Vorbereitung
 
-1. Build `0.3.0-alpha.c1` aus `dist/` (`postkauz-windows-amd64.exe`) in einen eigenen Ordner kopieren, z. B. `D:\pk\a3\postkauz.exe`. Prüfsumme gegen `dist/SHA256SUMS`.
+1. Build `0.3.0-alpha.c2` aus `dist/` (`postkauz-windows-amd64.exe`) in einen eigenen Ordner kopieren, z. B. `D:\pk\a3\postkauz.exe`. Prüfsumme gegen `dist/SHA256SUMS`.
 2. Einen **neuen, leeren** Ordner für `-DataDir` und einen Pfad für `-Config` wählen. Nie das Live-Datenverzeichnis des Dauerbetriebs: Das Skript verweigert `%LOCALAPPDATA%\postkauz`, `%APPDATA%\postkauz` und jeden Pfad aus `-LivePath` (dort das Live-Datenverzeichnis und die Live-Konfiguration angeben). `prompt-probe` öffnet weder Datenbank noch Schlüsselbund; das Skript prüft am Ende, dass im Datenverzeichnis nichts entstanden ist.
 3. Der Dauerläufer (rc8) darf weiterlaufen; der Test berührt ihn nicht.
 
@@ -55,7 +55,7 @@ Je Fenster im Protokoll:
 
 ```
 == A3 WT+PS51  2026-…  PowerShell 5.1.…  via direct  Windows Terminal: True  D:\pk\a3\postkauz.exe
-   version: postkauz 0.3.0-alpha.c1 (go1.27.3 windows/amd64)
+   version: postkauz 0.3.0-alpha.c2 (go1.27.3 windows/amd64)
 OK WT+PS51 console type-ascii  (Erwartet: OK)
      stdin char, terminal True, code pages in/out/ansi 850/850/1252, windows terminal True
      mode before 0x… PROCESSED_INPUT|LINE_INPUT|ECHO_INPUT|…; during 0x… PROCESSED_INPUT|LINE_INPUT|…; after (wie before)
