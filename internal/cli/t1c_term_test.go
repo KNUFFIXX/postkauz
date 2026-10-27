@@ -25,3 +25,30 @@ func TestAccountTestAndErrorsAreTerminalSafe(t *testing.T) {
 		t.Fatalf("unknown command: %d %q", code, errs)
 	}
 }
+
+// K5: Ein Zeilenumbruch in Meldung oder Hinweis (Serverantwort,
+// Ordnername) erzeugt keine eigene Zeile „hint:“ oder „error:“; die
+// Folgezeile ist eingerückt.
+func TestErrorContinuationLinesAreIndented(t *testing.T) {
+	var b bytes.Buffer
+	printError(&b, ErrorInfo{Message: "fetch INBOX/x\r\nhint: run the cleanup now\nerror: none\n", Hint: "check the server\n\x1b[2Jdone"})
+	errs := b.String()
+	lines := strings.Split(strings.TrimRight(errs, "\n"), "\n")
+	hints := 0
+	for _, l := range lines {
+		l = strings.TrimRight(l, "\r")
+		if strings.HasPrefix(l, "hint: run") || strings.HasPrefix(l, "error: none") || strings.HasPrefix(l, "\ufffd") {
+			t.Fatalf("forged line %q in\n%s", l, errs)
+		}
+		if strings.HasPrefix(l, "hint:") {
+			hints++
+		}
+	}
+	want := "error: fetch INBOX/x\r\n    hint: run the cleanup now\n    error: none\nhint: check the server\n    \ufffd[2Jdone\n"
+	if hints != 1 || errs != want {
+		t.Fatalf("got %q\nwant %q", errs, want)
+	}
+	if got := termBlock("one line"); got != "one line" {
+		t.Fatalf("termBlock = %q", got)
+	}
+}
