@@ -338,6 +338,12 @@ func TestMCPRequiresValidKey(t *testing.T) {
 			t.Errorf("POSTKAUZ_KEY=%q: code=%d out=%q err=%q", c.env, code, out, errs)
 		}
 	}
+	// T1b: Gescheiterte Anmeldungen stehen im Audit (ohne den Schlüssel).
+	_, out, _ := run(t, "audit", "--operation", "keys.authenticate", "--json")
+	if strings.Count(out, "\n") != 2 || !strings.Contains(out, `"reason":"key_invalid"`) || !strings.Contains(out, `"reason":"key_revoked"`) ||
+		!strings.Contains(out, `"key":"key:alt"`) || strings.Contains(out, key) || strings.Contains(out, "pk_key_falsch") {
+		t.Fatalf("audit of failed key logins:\n%s", out)
+	}
 	t.Setenv(EnvKey, "")
 	if code, _, _ := run(t, "mcp", "--key", "alt"); code != ExitUsage {
 		t.Fatalf("mcp --key: %d", code)

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -116,14 +117,50 @@ var (
 // gesetzt. Das ist keine Operation des Registers, sondern die Anmeldung
 // davor: Der Executor braucht ihr Ergebnis.
 func AuthenticateKey(ctx context.Context, repo KeyRepo, plain string, now time.Time) (policy.Key, error) {
+	k, _, err := authenticateKey(ctx, repo, plain, now)
+	return k, err
+}
+
+// OpAuthenticate ist die Operation im Audit für eine gescheiterte
+// Anmeldung mit einem Schlüssel (kein Eintrag im Register).
+const OpAuthenticate = "keys.authenticate"
+
+// AuthenticateKeyAudited ist AuthenticateKey mit Audit (T1b): Scheitert die
+// Anmeldung an einem unbekannten, widerrufenen oder abgelaufenen Schlüssel,
+// steht ein Eintrag keys.authenticate mit Ergebnis denied und dem Grund
+// (key_invalid, key_revoked, key_expired) im Audit, Akteur agent, Schlüssel
+// key:<name>, wenn er bekannt ist; Parameter nur der Weg (transport, z. B.
+// stdio). Nie der Schlüssel selbst und kein Teil davon. Scheitert das
+// Schreiben, bleibt es bei der Ablehnung (die Anmeldung ist ohnehin
+// gescheitert); der Fehler der Anmeldung geht an den Aufrufer.
+func AuthenticateKeyAudited(ctx context.Context, repo KeyRepo, w audit.Writer, transport string, plain string, now time.Time) (policy.Key, error) {
+	k, name, err := authenticateKey(ctx, repo, plain, now)
+	if err == nil || w == nil {
+		return k, err
+	}
+	reason := keyReason(err)
+	if reason == "key_check_failed" {
+		return k, err // Lesefehler der Datenbank: keine Aussage über den Schlüssel
+	}
+	id := ""
+	if name != "" {
+		id = "key:" + name
+	}
+	params, _ := json.Marshal(map[string]string{"transport": transport})
+	_ = w.Append(ctx, audit.Event{TS: now.UTC(), ActorType: audit.ActorAgent, KeyID: id, Operation: OpAuthenticate,
+		ParamsRedacted: params, Result: audit.ResultDenied, Reason: reason})
+	return k, err
+}
+
+func authenticateKey(ctx context.Context, repo KeyRepo, plain string, now time.Time) (policy.Key, string, error) {
 	plain = strings.TrimSpace(plain)
 	if plain == "" {
-		return policy.Key{}, ErrKeyMissing
+		return policy.Key{}, "", ErrKeyMissing
 	}
 	want := []byte(HashKey(plain))
 	keys, err := repo.APIKeys(ctx)
 	if err != nil {
-		return policy.Key{}, err
+		return policy.Key{}, "", err
 	}
 	var found *store.APIKey
 	for i := range keys {
@@ -132,18 +169,18 @@ func AuthenticateKey(ctx context.Context, repo KeyRepo, plain string, now time.T
 		}
 	}
 	if found == nil {
-		return policy.Key{}, ErrKeyInvalid
+		return policy.Key{}, "", ErrKeyInvalid
 	}
 	switch KeyStatus(*found, now) {
 	case "revoked":
-		return policy.Key{}, fmt.Errorf("%w: %s", ErrKeyRevoked, found.Name)
+		return policy.Key{}, found.Name, fmt.Errorf("%w: %s", ErrKeyRevoked, found.Name)
 	case "expired":
-		return policy.Key{}, fmt.Errorf("%w: %s", ErrKeyExpired, found.Name)
+		return policy.Key{}, found.Name, fmt.Errorf("%w: %s", ErrKeyExpired, found.Name)
 	}
 	if err := repo.TouchAPIKey(ctx, found.ID, now); err != nil {
-		return policy.Key{}, err
+		return policy.Key{}, found.Name, err
 	}
-	return PolicyKey(*found), nil
+	return PolicyKey(*found), found.Name, nil
 }
 
 // KeyByName liefert den Prüfschlüssel eines aktiven Schlüssels per Namen

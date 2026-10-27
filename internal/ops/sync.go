@@ -181,9 +181,11 @@ type SyncRunInput struct {
 // Er sendet nie, löscht nie, verschiebt nie.
 func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 	return Operation{
-		Name:       "sync.run",
-		Scope:      policy.ScopeMailSync,
-		Risk:       policy.R1,
+		Name:  "sync.run",
+		Scope: policy.ScopeMailSync,
+		// R2 (T1b, A03 Nachtrag 24.10.): Der Sync legt wartende Entwürfe per
+		// APPEND im Entwürfe-Ordner ab, ändert also den Server (reversibel).
+		Risk:       policy.R2,
 		Idempotent: true,
 		Summary:    "Mirror an account: resumable first sync in windows, then incremental; on the server it only puts queued drafts into the Drafts folder, it never sends, deletes or moves.",
 		InputSchema: json.RawMessage(`{

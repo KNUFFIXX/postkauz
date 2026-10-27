@@ -1699,9 +1699,11 @@ type DraftsRequestOutput struct {
 func DraftsRequestReady(d Deps) Operation {
 	o := newDraftOps(d)
 	return Operation{
-		Name:    "drafts.request_ready",
-		Scope:   policy.ScopeMailDraft,
-		Risk:    policy.R1,
+		Name:  "drafts.request_ready",
+		Scope: policy.ScopeMailDraft,
+		// R2 (T1b, A03 Nachtrag 24.10.): Die Vorlage kann eine neue Kopie
+		// im Entwürfe-Ordner einreihen (APPEND auf dem Server).
+		Risk:    policy.R2,
 		Summary: "Submit a draft for approval by a human (runs the check hook first); only a human can approve.",
 		InputSchema: json.RawMessage(`{
   "type": "object",

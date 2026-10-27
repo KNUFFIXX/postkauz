@@ -3,6 +3,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"sort"
@@ -371,5 +373,25 @@ func TestToolBudgetFollowsPolicy(t *testing.T) {
 	}
 	if n != 3 {
 		t.Fatalf("%d tools with max_chars, want 3 (mail_get_message, mail_get_attachment_text, mail_get_draft)", n)
+	}
+}
+
+// T1b (A03 Nachtrag 26.10.): Ein unbekannter Fehler kommt nie mit seinem
+// rohen Text zum Agenten, weder über ein Tool noch über eine Resource.
+func TestRawErrorTextNotPassedOn(t *testing.T) {
+	raw := errors.New("constraint failed near KANARIE-/home/geheim/postkauz.db")
+	te := classify(fmt.Errorf("wrapped: %w", raw))
+	if te.Status != "error" || te.Code != "error" || strings.Contains(te.Message, "KANARIE") {
+		t.Fatalf("classify = %+v", te)
+	}
+	if err := resourceErr("mail://accounts", raw); strings.Contains(err.Error(), "KANARIE") {
+		t.Fatalf("resource error = %v", err)
+	}
+	res := errorResult(raw)
+	if b, _ := json.Marshal(res); strings.Contains(string(b), "KANARIE") {
+		t.Fatalf("tool result = %s", b)
+	}
+	if te := classify(context.Canceled); te.Code != "canceled" {
+		t.Fatalf("canceled = %+v", te)
 	}
 }

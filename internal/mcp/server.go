@@ -201,7 +201,12 @@ func (h *handler) tool(b toolBinding, op ops.Operation, narrow *jsonschema.Resol
 					Meta: sdk.Meta{"audit_id": res.AuditID}}, nil
 			}
 		}
-		h.o.Log.Warn("mcp tool failed", "tool", b.tool, "key", h.o.Key.ID, "error", err.Error())
+		// Nie der rohe Fehlertext (T1b, A03 Nachtrag 26.10.): Er kann Pfade,
+		// Texte der Datenbank oder Eingabewerte enthalten. Ins Log gehen
+		// Status, Code, Grund und der Typ des Fehlers.
+		te := classify(err)
+		h.o.Log.Warn("mcp tool failed", "tool", b.tool, "key", h.o.Key.ID, "status", te.Status, "code", te.Code, "reason", te.Reason,
+			"error_type", fmt.Sprintf("%T", err))
 		return errorResult(err), nil
 	}
 }
@@ -258,8 +263,12 @@ func classify(err error) ToolError {
 		return ToolError{Status: "error", Code: "not_found", Message: "identity not found; see the from address of your drafts"}
 	case errors.Is(err, store.ErrAccountNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "account not found; see mail_list_accounts"}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return ToolError{Status: "error", Code: "canceled", Message: "the call was canceled or ran out of time"}
 	}
-	return ToolError{Status: "error", Code: "error", Message: err.Error()}
+	// Unbekannter Fehler: kein roher Text an den Agenten (er kann Pfade oder
+	// Texte der Datenbank enthalten); der Code genügt, um nachzufragen.
+	return ToolError{Status: "error", Code: "error", Message: "the operation failed; ask the user to look at the log of the mail server"}
 }
 
 func errorResult(err error) *sdk.CallToolResult {

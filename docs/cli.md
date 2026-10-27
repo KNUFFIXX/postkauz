@@ -36,7 +36,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S2.0 ✓ | `account set <name> --aliases a@…,b@…` (Abschnitt 2a) | `accounts.set` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
 | S2.1 ✓ | `account set <name> --password-stdin` (Abschnitt 2a; Entscheid 36) | `accounts.set` mit `replace_password` (das Passwort selbst geht getrennt von der Eingabe, nie ins Audit) |
-| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`) | `sync.run` (Scope `mail:sync`, R1) |
+| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`) | `sync.run` (Scope `mail:sync`, R2 seit T1b: legt Entwürfe per APPEND ab) |
 | S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
 | S1.9 ✓ | `mailbox overview <mailbox-id> [--since D] [--limit N]` | `mailboxes.overview` (R0, `mail:read`) |
 | S1.5–S1.8 ✓ | `show <id>` bzw. `show <Message-ID>`, `--headers`, `--strip-quotes`, `--max-chars` | `messages.get` (R0, `mail:read`; Untrusted-Hülle seit S1.8) |
@@ -51,7 +51,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S2.3 ✓ | `draft new`, `draft reply`, `draft forward` (Abschnitt 2j) | `drafts.create` (R2, `mail:draft`; eine Operation, drei Kommandos) |
 | S2.3 ✓ | `draft edit <id>` | `drafts.update` (R2, `mail:draft`) |
 | S2.3 ✓ | `draft show <id>` (seit S2.7 mit `--eml`), `draft list` | `drafts.get`, `drafts.list` (R0, `mail:draft`) |
-| S2.3 ✓ | `draft request <id>` | `drafts.request_ready` (R1, `mail:draft`) |
+| S2.3 ✓ | `draft request <id>` | `drafts.request_ready` (R2 seit T1b, `mail:draft`) |
 | S2.3 ✓ | `approve <approval-id>`, `reject <approval-id> [--reason]`, `draft abandon <id>`, `draft mark-sent <id>` | `drafts.approve`, `drafts.reject`, `drafts.abandon`, `drafts.mark_sent` (R1, `mail:draft`, nur Mensch: mit `--key` Exit 3 `human_only`) |
 | S2.3 ✓ | `approval show <approval-id>` | `approvals.get` (R0, `mail:draft`) |
 | S2.3 ✓ | `identity add`, `identity list`, `identity set-default <id>`, `identity remove <id>` | `identities.add`, `identities.list`, `identities.set_default`, `identities.remove` (`admin`, nur Mensch; nicht über MCP) |

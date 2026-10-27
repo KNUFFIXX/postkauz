@@ -51,7 +51,7 @@ func mcpCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			key, err := ops.AuthenticateKey(ctx, a.st, plain, time.Now())
+			key, err := ops.AuthenticateKeyAudited(ctx, a.st, a.st.AuditWriter(), "stdio", plain, time.Now())
 			if err != nil {
 				return err
 			}
