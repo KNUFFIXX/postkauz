@@ -83,6 +83,15 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "policy_invalid", Message: err.Error(), Hint: "fix the policy file (see docs/sicherheit.md, section 5) or check it with: doctor"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
+	case errors.Is(err, store.ErrMigrationBlocked):
+		return ExitError, ErrorInfo{Code: "migration_blocked", Message: err.Error(),
+			Hint: "stop the other processes of this data directory (sync --watch and audit export tasks, the MCP server in the Claude app, imports), then run the command again"}
+	case errors.Is(err, store.ErrDatabaseBusy):
+		return ExitError, ErrorInfo{Code: "database_busy", Message: err.Error(),
+			Hint: "another process is migrating the database; wait until it has finished, then run the command again"}
+	case errors.Is(err, store.ErrMigrationMismatch):
+		return ExitError, ErrorInfo{Code: "schema_mismatch", Message: err.Error(),
+			Hint: "this database belongs to another build of the program; use that build or restore the snapshot taken before its migration"}
 	case errors.Is(err, secrets.ErrUnavailable):
 		return ExitError, ErrorInfo{Code: "secret_store_unavailable", Message: err.Error(), Hint: "run doctor"}
 	case errors.Is(err, ops.ErrNoToken):

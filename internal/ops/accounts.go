@@ -769,7 +769,15 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			if call.DryRun {
 				return out, nil
 			}
-			if err := repo.DeleteAccount(ctx, a.ID); err != nil {
+			// Atomar unter der Kontosperre (A12.4): Läuft ein Sync oder
+			// Import, oder kamen inzwischen Nachrichten dazu, bleibt das
+			// Konto.
+			switch err := repo.DeleteAccount(ctx, a.ID); {
+			case errors.Is(err, store.ErrAccountBusy):
+				return nil, fmt.Errorf("%w: account %s", ErrSyncRunning, a.Name)
+			case errors.Is(err, store.ErrAccountHasMessages):
+				return nil, fmt.Errorf("account %s has archived messages; deleting the archive is a separate operation (not available yet)", a.Name)
+			case err != nil:
 				return nil, err
 			}
 			// Erst die Zeile, dann das Geheimnis: Ein verwaister Eintrag im

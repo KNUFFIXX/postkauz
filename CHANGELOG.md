@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- Nachbesserung T1a (0.3.0-alpha.1b): README-Abschnitt „Updating“ und `docs/abnahme_T1.md` Schritt 0 (vor dem Update von 0.2.0-rc8 die Aufgaben `sync --watch` und Audit-Export stoppen und die Claude-App beenden); Regeln für Symlinks und Spezialdateien in `attach_dir` (`docs/sicherheit.md`, `docs/cli.md`); Dovecot ersetzt NUL-Bytes durch 0x80 (`docs/testkorpus.md`); Prüfläufe in `docs/protokolle/T1a_pruefungen.md`.
+- T1a: Schema-Plan für Schnitt 3 mit festen Migrationsnummern (`docs/datenmodell.md`), Bedrohungsmodell „Verknüpfung über Message-ID und Größe“ (`docs/sicherheit.md` Abschnitt 1), Protokoll `docs/protokolle/T1a_pruefungen.md` (Prüfläufe, Laufzeit Migration 0017).
 - `auftraege/A03_teile.md`: Schnitt 3 in fünf Teilen (T1 Teil A und Härtung des Dauerbetriebs, T2 Aktionen, T3 Sicherung, T4 Microsoft, T5 Fernzugriff) mit Ausgangsstand, Haltepunkt und Startprompt; `auftraege/A03_s3.md`: Stand nach D6, R1–R3 entschieden, Nachtrag A12 (Prüfwerkzeuge in der CI, Funde des Fremdmodell-Laufs).
 - Release `v0.2.0-rc8` (27.10.2026, D6): Tag auf `99a7cc0`, Programme aus einem Nachbau mit Go 1.27.3, bytegleich mit dem abgenommenen Build.
 - D5 auf dem Büro-PC mit 0.2.0-rc8: Runde 1 (Wiederholung, Gmail im Browser) und Runde 2 (Thunderbird) und Runde 3 (Hostinger-Webmail) bestanden, alle `sent_by_human` per Rückfall (die Hostinger-Webmail entfernt `In-Reply-To`/`References`); Protokoll `docs/protokolle/D5_windows.txt`, Messtabelle `docs/versanderkennung.md` Abschnitt 9.
@@ -17,6 +19,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- Nachbesserung T1a (0.3.0-alpha.1b): Prozesssperre `<datenbank>.lock` neben der Datenbank; jeder Prozess hält sie geteilt, eine Migration exklusiv. Neuer Fehlercode `database_busy` (ein anderer Prozess migriert gerade).
+- Nachbesserung T1a: `doctor` zeigt je Konto die unvollständigen Serverantworten (Zeile `incomplete server answers: …`, JSON `incomplete_answers`, `incomplete_answers_last`, `incomplete_answers_at`) und warnt bei einem Fall in den letzten sieben Tagen.
+- T1a: Migration 0017 (Schema 17): `message_mailboxes.uid` mit `CHECK (uid > 0)`; die Migration bricht mit Meldung ab, statt eine Zeile mit UID 0 still zu bereinigen.
+- T1a: Neue Fehlercodes `migration_blocked` (eine Migration steht an, aber ein Sync oder Import desselben Datenverzeichnisses läuft) und `schema_mismatch` (Datenbank von einem anderen Programmstand migriert). Paket `internal/flock` für die Kontosperre.
+- T1a: `sync` zählt leere oder unvollständige Serverantworten (`incomplete server answers: N`, `--json` `incomplete_answers`).
 - 0.2.0-rc6: `import` arbeitet die Textextraktion der Anhänge bis zum Ende ab (Fortschritt `attachment text: N/M` auf stderr, Zeile `attachment text: …`, `--json` `extract_pending`); Strg+C lässt den Rest `pending` für den nächsten Sync. `--no-extract` lässt es beim Zeitbudget des Syncs (60 s). `sync` behält sein Budget.
 - S2.1: Schema 10 (Migration 0010): Entwürfe, Freigaben, Identitäten neu gebaut, Job-Typ `draft_push`, `policies.sha256`, `policy_version` in jedem Audit-Eintrag.
 - S2.1: `internal/drafts`: Zustandsmaschine der Freigabe, `preview_hash`, Eingabegrenzen, Message-IDs, Identitäten und eigene Adressen, Ablauf von Freigaben (noch ohne Operationen).
@@ -54,6 +61,20 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- Nachbesserung T1a (W1): Zwei Programmversionen können nicht mehr zugleich auf derselben Datenbank arbeiten: Jeder Prozess (Sync, Watch, Import, MCP-Server, Audit-Export, jedes Kommando) prüft das Schema erst unter der geteilten Prozesssperre und hält sie bis zum Ende; `Migrate` sperrt exklusiv und liest die Version danach neu (`migration_blocked`, solange ein anderer Prozess die Datenbank offen hat).
+- Nachbesserung T1a (W2): Ein empfangenes UID-Set ist zusätzlich zu `EXISTS` auf 10 Millionen UIDs begrenzt und wird nur ab der gesuchten UID aufgelöst (vorher forderte `EXISTS 4294967294` mit `1:4294967294` rund 16 GiB an).
+- Nachbesserung T1a (K1): Migration 0017 prüft Fremdschlüssel nur in `message_mailboxes` und nennt im Fehler die Tabelle.
+- Nachbesserung T1a (K2): Liefert `UID SEARCH ALL` mehr UIDs als `EXISTS` (Mail kam zwischen `SELECT` und `SEARCH`), holt der Sync die neuen Nachrichten und lässt nur den Löschabgleich des Ordners aus.
+- Nachbesserung T1a (K3): Beim ersten Kopf über dem Budget eines Abrufs bricht der FETCH samt Verbindung ab; der Rest kommt auf neuer Verbindung (vorher wurden alle Köpfe übertragen, verworfen und erneut angefordert).
+- Nachbesserung T1a, Tests: `TestIntegrationImportOverlapDovecot` war seit rc6 rot; Ursache sind die zwei Korpus-Nachrichten mit NUL-Bytes, die Dovecot als 0x80 speichert (andere Bytes als im Thunderbird-Export, daher zweite Fassung); der Test rechnet sie heraus, der Import bleibt (W3). Die Negativtests der Migration 0017 nutzen frische Paare und prüfen wirklich CHECK und UNIQUE (K6).
+- Nachbesserung T1a (K5): Abgerufene Nachrichten werden mit `cmp.Compare` nach UID sortiert (auf 32-Bit-Systemen lief die Differenz über 2^31 über).
+- T1a: UID 0 (in go-imap „*“, die neueste Nachricht), UID 4294967295, leere UID-Listen und UIDVALIDITY 0 erreichen den Server nie; empfangene UID-Sets werden bereichsweise mit Obergrenze aufgelöst (vorher Endlosschleife bei `1:4294967295`). `make guard` prüft, dass UID-Sets nur an einer Stelle entstehen und Ziele nie aus `Locations` kommen.
+- T1a: Eine leere Ordnerliste (oder eine ohne INBOX) entfernt keine Ordner mehr und löst keine Zuordnungen; ein `UID SEARCH ALL`, das nicht zu `EXISTS` passt, löst nichts (Ordner wird übersprungen). Vorher sperrte das abgelegte Entwürfe dauerhaft auf `missing` und erzwang einen vollen Neuabgleich.
+- T1a: Ein verspäteter Audit-Eintrag (Lauf über Mitternacht UTC) schreibt einen abgeschlossen exportierten Tag nicht mehr neu; er geht in den nächsten offenen Tag. Der Audit-Export ersetzt am Ziel keine fremden Dateien mehr.
+- T1a: Schreibbefehle werden nach einem Verbindungsfehler nur wiederholt, wenn der Aufrufer Idempotenz zusichert (APPEND mit Message-ID); sonst höchstens einmal.
+- T1a: Köpfe werden begrenzt geladen (1 MiB je Kopf, 16 MiB je Abruf); ein größerer Kopf ist ein Fehler dieser Nachricht und wird gemerkt.
+- T1a: Serverfehler gehen nur als Statustyp und bekannter Code weiter, nie als Freitext (ein Server konnte das Passwort in eine Fehlerantwort spiegeln).
+- T1a: Eine FIFO in `attach_dir` blockiert nicht mehr; `account remove` prüft und löscht atomar unter der Kontosperre; `store.Migrate` verweigert, solange ein Sync oder Import läuft oder ein fremder Migrationsname in der Datenbank steht.
 - 0.2.0-rc8, Gegenprüfung rc7: Der Executor gibt bei einem Fehler nur dann eine Ausgabe weiter, wenn die Operation es erklärt (`OutputOnError`, bisher nur `import.run`). Import: Bericht bei Abbruch auch schon beim Einlesen mit `extract_pending`/`index_pending` und neuem Feld `interrupted`; Hinweis bei geänderter Datei nennt `--rescan`; eine Teilkopie wird bevorzugt einer Nachricht mit Rohmail zugeordnet, die kein Entwurf ist; Notiz zu Windows (Thunderbird kann während des Imports nicht kompaktieren).
 - 0.2.0-rc7, Gegenprüfung rc6: Eine Thunderbird-Teilkopie mit bekannter Message-ID wird zugeordnet statt als zweite, abgeschnittene Nachricht gespeichert. Das zweite Lesen einer anderen Fassung geht über dasselbe Datei-Handle und prüft den Hash (keine fremde Nachricht nach Kompaktieren). Bei Strg+C während Import oder Extraktion kommt der Bericht trotzdem (Index vorher); `MessageNearImport` schließt Entwürfe und Nachrichten ohne Rohmail aus; Hilfe zu `--labels-from` beschreibt den Abgleich nach Inhalt (andere Fassung: übersprungen mit Hinweis; Teilkopie: zugeordnet).
 - Gegenprüfung rc5: `linked despite size difference` zählt erst nach dem Speichern der Verknüpfung; Gmail-typischer Kopf (Date mit Zone und Kommentar, gefalteter RFC-2047-Betreff) als Test der Toleranz.

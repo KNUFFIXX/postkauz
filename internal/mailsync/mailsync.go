@@ -73,6 +73,8 @@ type Store interface {
 	MarkSkipped(ctx context.Context, mailboxID int64, uidValidity, uid uint32, size int64, reason string) error
 	PruneSkipped(ctx context.Context, mailboxID int64, uidValidity uint32, present []uint32) (int, error)
 	ClearSkipped(ctx context.Context, mailboxID int64) error
+	// Zähler unvollständiger Serverantworten für doctor (K2).
+	RecordIncompleteAnswers(ctx context.Context, accountID int64, n int, at time.Time) error
 }
 
 // JobRunner führt die Jobs eines Kontos aus (internal/jobs): Extraktion
@@ -155,6 +157,11 @@ type MailboxReport struct {
 	// einzelne Nachrichten); ein voller Abgleich gilt dann als nicht
 	// erledigt (Watch).
 	Failed bool `json:"-"`
+	// Incomplete: übersprungen, weil UID SEARCH ALL nicht zu EXISTS passte
+	// (provider.ErrIncomplete), oder (DeletionCheckSkipped) neue Nachrichten
+	// geholt, aber der Löschabgleich ausgelassen (mehr UIDs als EXISTS, K2).
+	Incomplete           bool `json:"-"`
+	DeletionCheckSkipped bool `json:"-"`
 }
 
 // Report ist das Ergebnis eines Laufs.
@@ -174,6 +181,12 @@ type Report struct {
 	// Mirrored zählt die Nachrichten des Kontos, die der Server führt und
 	// die lokal gespiegelt sind (ohne Dubletten über Ordner hinweg).
 	Mirrored int `json:"messages_mirrored"`
+	// Incomplete zählt leere oder unvollständige Serverantworten dieses
+	// Laufs (provider.ErrIncomplete, T1a Punkt 3): LIST ohne Ordner bzw.
+	// ohne INBOX (der Lauf bricht ab), UID SEARCH ALL mit weniger UIDs als
+	// EXISTS (der Ordner wird übersprungen) und mit mehr (neue Nachrichten
+	// geholt, Löschabgleich ausgelassen; K2). Keines löst etwas.
+	Incomplete int `json:"incomplete_answers,omitempty"`
 	// Extracted zählt Anhänge, deren Text in diesem Lauf extrahiert wurde
 	// (oder deren Extraktion endgültig scheiterte).
 	Extracted int `json:"attachments_extracted"`
@@ -191,11 +204,12 @@ type Report struct {
 }
 
 // failedMailboxes zählt die Ordner, die wegen eines Fehlers übersprungen
-// wurden.
+// wurden oder deren Löschabgleich ausfiel (K2); ein voller Abgleich gilt
+// dann als nicht erledigt.
 func (r Report) failedMailboxes() int {
 	n := 0
 	for _, m := range r.Mailboxes {
-		if m.Failed {
+		if m.Failed || m.DeletionCheckSkipped {
 			n++
 		}
 	}
@@ -204,6 +218,9 @@ func (r Report) failedMailboxes() int {
 
 func (r *Report) add(m MailboxReport) {
 	r.Mailboxes = append(r.Mailboxes, m)
+	if m.Incomplete {
+		r.Incomplete++
+	}
 	r.New += m.New
 	r.Updated += m.Updated
 	r.Removed += m.Removed
@@ -299,6 +316,13 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			e.log().Info("messages already known locally", "downloaded_anyway", rep.KnownDownloaded,
 				"downloaded_anyway_bytes", rep.KnownDownloadedBytes, "linked_despite_size_difference", rep.LinkedSizeDiff)
 		}
+		// Unvollständige Serverantworten für doctor festhalten (K2), auch
+		// nach Abbruch des Laufs (LIST ohne INBOX).
+		if rep.Incomplete > 0 {
+			if err := e.Store.RecordIncompleteAnswers(context.WithoutCancel(ctx), e.AccountID, rep.Incomplete, time.Now()); err != nil {
+				e.log().Warn("incomplete server answers not recorded", "error", err.Error())
+			}
+		}
 	}()
 	// Zuerst die Entwürfe (A02 E1): Der Spiegel sieht ihre Kopien dann in
 	// diesem Lauf. Ein Push-Fehler hält den Lauf nur bei Verbindungs- und
@@ -313,18 +337,12 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		}
 		e.log().Warn("drafts not pushed", "error", err.Error())
 	}
-	boxes, err := e.Remote.ListMailboxes(ctx)
-	if err != nil {
+	if err := e.syncMailboxList(ctx); err != nil {
+		if errors.Is(err, provider.ErrIncomplete) {
+			rep.Incomplete++
+		}
+		rep.Duration = time.Since(start)
 		return rep, err
-	}
-	specs := make([]store.MailboxSpec, 0, len(boxes))
-	for _, b := range boxes {
-		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
-	}
-	if _, removed, err := e.Store.SyncMailboxes(ctx, e.AccountID, specs); err != nil {
-		return rep, err
-	} else if len(removed) > 0 {
-		e.log().Info("mailboxes removed on the server", "count", len(removed))
 	}
 	local, err := e.Store.Mailboxes(ctx, e.AccountID)
 	if err != nil {
@@ -358,6 +376,10 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			// setzt am gespeicherten Stand wieder an.
 			mr.Errors++
 			mr.Failed = true
+			if errors.Is(err, provider.ErrIncomplete) {
+				mr.Incomplete = true
+				e.log().Warn("incomplete UID list from the server; mailbox skipped, nothing removed", "mailbox", mb.Path)
+			}
 			mr.problem(err.Error())
 			check.SkipSent = check.SkipSent || isDrafts
 			check.KeepMark = check.KeepMark || isSent
@@ -432,6 +454,47 @@ func (e *Engine) backlog(ctx context.Context) error {
 	}
 	if n > 0 {
 		e.log().Info("cleaned up messages mirrored with an older version", "count", n)
+	}
+	return nil
+}
+
+// ErrIncompleteList: LIST lieferte keine Ordner oder kein INBOX, obwohl
+// lokal Ordner bekannt sind (T1a Punkt 3).
+var ErrIncompleteList = fmt.Errorf("%w: the mailbox list from the server is empty or has no INBOX; nothing removed, retrying in the next run", provider.ErrIncomplete)
+
+// syncMailboxList holt die Ordnerliste und gleicht sie lokal ab. Eine
+// leere Liste oder eine ohne INBOX ist nie die Wahrheit, sobald lokal
+// Ordner bekannt sind: Der Abgleich entfernte sonst alle Ordner, löste
+// alle Zuordnungen (deleted_remote_at), setzte abgelegte Entwürfe auf
+// missing und erzwänge danach einen vollen Neuabgleich (Tageslimit des
+// Anbieters). Dann ErrIncompleteList, nichts wird geändert.
+func (e *Engine) syncMailboxList(ctx context.Context) error {
+	boxes, err := e.Remote.ListMailboxes(ctx)
+	if err != nil {
+		return err
+	}
+	hasInbox := false
+	specs := make([]store.MailboxSpec, 0, len(boxes))
+	for _, b := range boxes {
+		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
+		hasInbox = hasInbox || b.Role == provider.RoleInbox || strings.EqualFold(b.Path, "INBOX")
+	}
+	if !hasInbox {
+		local, err := e.Store.Mailboxes(ctx, e.AccountID)
+		if err != nil {
+			return err
+		}
+		if len(local) > 0 {
+			e.log().Warn("incomplete mailbox list from the server; nothing removed", "mailboxes", len(boxes), "known", len(local))
+			return ErrIncompleteList
+		}
+	}
+	_, removed, err := e.Store.SyncMailboxes(ctx, e.AccountID, specs)
+	if err != nil {
+		return err
+	}
+	if len(removed) > 0 {
+		e.log().Info("mailboxes removed on the server", "count", len(removed))
 	}
 	return nil
 }
@@ -537,6 +600,11 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 	}
 
 	fetch := slices.Clone(cs.Created)
+	if cs.PresentIncomplete && !rep.DeletionCheckSkipped {
+		rep.DeletionCheckSkipped = true
+		rep.Incomplete = true
+		e.log().Warn("UID list longer than EXISTS (mail arrived meanwhile); new messages fetched, deletion check skipped", "mailbox", mb.Path)
+	}
 	if cs.Present != nil {
 		var local []uint32
 		if !cs.Reset {
@@ -619,6 +687,18 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 		var need []provider.Header
 		for _, h := range headers {
+			if h.HeaderTooLarge {
+				// A12.4: Kopf über der Grenze des Providers, nicht gelesen.
+				// Fehler dieser Nachricht, gemerkt wie eine zu große
+				// Nachricht (sync --full prüft erneut).
+				if err := e.Store.MarkSkipped(ctx, mb.ID, uv, uint32(h.UID), h.Size, store.SkipTooLarge); err != nil {
+					return err
+				}
+				rep.Errors++
+				rep.problem(fmt.Sprintf("uid %d: header larger than the limit; message not fetched, sync --full checks it again", h.UID))
+				e.log().Warn("message header too large; not fetched", "mailbox", mb.Path, "uid", h.UID, "size", h.Size)
+				continue
+			}
 			// Toleranz nur für Nachrichten, die keine Entwürfe sind: Im
 			// Entwürfe-Ordner und bei \Draft bleibt es exakt
 			// (Übernahme-Erkennung, Versanderkennung).

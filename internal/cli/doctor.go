@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,6 +95,12 @@ type DoctorAccount struct {
 	Token          string `json:"token,omitempty"`
 	TokenExpiry    string `json:"token_expiry,omitempty"`
 	TokenUpdatedAt string `json:"token_updated_at,omitempty"`
+	// IncompleteAnswers: leere oder unvollständige Serverantworten bisher
+	// (LIST ohne INBOX, UID-Liste passt nicht zu EXISTS; K2), Last und
+	// LastAt die des letzten Laufs mit solchen Antworten.
+	IncompleteAnswers     int        `json:"incomplete_answers"`
+	IncompleteAnswersLast int        `json:"incomplete_answers_last,omitempty"`
+	IncompleteAnswersAt   *time.Time `json:"incomplete_answers_at,omitempty"`
 }
 
 func doctorCmd(a *app) *cobra.Command {
@@ -226,8 +233,20 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		rep.Warnings = append(rep.Warnings, "accounts: "+err.Error())
 		return rep
 	}
+	incomplete, err := db.IncompleteAnswersByAccount(ctx)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "incomplete server answers: "+err.Error())
+	}
 	for _, acc := range list {
 		da := DoctorAccount{Name: acc.Name, EnvVar: secrets.EnvName(acc.CredentialRef), Status: acc.Status, Password: "unknown"}
+		if ia, ok := incomplete[acc.Name]; ok {
+			at := ia.LastAt
+			da.IncompleteAnswers, da.IncompleteAnswersLast, da.IncompleteAnswersAt = ia.Total, ia.Last, &at
+			if time.Since(at) < 7*24*time.Hour {
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: %d incomplete server answers in the sync of %s (%d in total); nothing was removed, the next sync retries; if this repeats every day, the server answers inconsistently (see the log)",
+					acc.Name, ia.Last, at.Format("2006-01-02 15:04 UTC"), ia.Total))
+			}
+		}
 		if acc.AuthType == ops.AuthOAuth2 {
 			doctorOAuthAccount(sec, acc, &da, &rep)
 			rep.Accounts = append(rep.Accounts, da)
@@ -386,20 +405,29 @@ const auditExportStale = 48 * time.Hour
 
 // doctorAudit meldet den Stand des Audit-Exports.
 func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
-	days, err := db.AuditDays(ctx)
-	if err != nil {
-		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
-		return
-	}
 	done, err := db.AuditExports(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
 		return
 	}
-	exported := map[string]bool{}
+	// Dieselbe Zuordnung der Tage wie audit.export (verspätete Einträge,
+	// T1a Punkt 4). Eine noch nicht migrierte Datenbank kennt nicht alle
+	// Spalten: dann wie bisher nach Tagen ohne Nachweis.
+	days, err := ops.AuditUnexportedDays(ctx, db)
+	if err != nil {
+		all, derr := db.AuditDays(ctx)
+		if derr != nil {
+			rep.Warnings = append(rep.Warnings, "audit: "+derr.Error())
+			return
+		}
+		exported := map[string]bool{}
+		for _, e := range done {
+			exported[e.Day] = true
+		}
+		days = slices.DeleteFunc(all, func(d string) bool { return exported[d] })
+	}
 	var last store.AuditExport
 	for _, e := range done {
-		exported[e.Day] = true
 		if e.ExportedAt.After(last.ExportedAt) {
 			last = e
 		}
@@ -410,9 +438,6 @@ func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now t
 	}
 	stale := false
 	for _, d := range days {
-		if exported[d] {
-			continue
-		}
 		rep.AuditDaysNotExported++
 		if t, err := time.Parse("2006-01-02", d); err == nil && now.Sub(t.Add(24*time.Hour)) > auditExportStale {
 			stale = true
@@ -494,9 +519,13 @@ func printDoctor(w io.Writer, r DoctorReport) {
 					exp += ", last renewed " + a.TokenUpdatedAt
 				}
 				fmt.Fprintf(w, "  %s: OAuth2 token %s%s, status %s\n", a.Name, a.Token, exp, a.Status)
-				continue
+			} else {
+				fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
 			}
-			fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
+			if a.IncompleteAnswersAt != nil {
+				fmt.Fprintf(w, "    incomplete server answers: %d (last: %d on %s)\n", a.IncompleteAnswers, a.IncompleteAnswersLast,
+					a.IncompleteAnswersAt.Format("2006-01-02 15:04 UTC"))
+			}
 		}
 	}
 	if len(r.Warnings) > 0 {

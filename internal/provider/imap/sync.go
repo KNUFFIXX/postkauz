@@ -1,7 +1,10 @@
 package imap
 
 import (
+	"cmp"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -40,14 +43,26 @@ func (p *Provider) cached(mailbox string, st imapx.SelectInfo) []uint32 {
 }
 
 // searchAll liefert alle UIDs des Ordners; fresh fragt den Server auch dann,
-// wenn der Zwischenspeicher passt (voller Abgleich).
-func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) ([]uint32, error) {
+// wenn der Zwischenspeicher passt (voller Abgleich). Liefert der Server
+// weniger UIDs als EXISTS aus demselben SELECT, ist das
+// provider.ErrIncomplete (T1a Punkt 3): Aus einer leeren oder gekürzten
+// Liste folgten sonst Löschungen, die es nicht gab. Mehr UIDs als EXISTS
+// (K2): Zwischen SELECT und SEARCH kam Mail an; die Liste taugt für neue
+// UIDs, aber nicht sicher für den Löschabgleich (partial true, nicht
+// zwischengespeichert).
+func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInfo, fresh bool) (uids []uint32, partial bool, err error) {
 	if uids := p.cached(mailbox, st); uids != nil && !fresh {
-		return uids, nil
+		return uids, false, nil
 	}
-	uids, err := c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
+	uids, err = c.UIDSearch(0, imapx.SearchOptions{ESearch: p.esearch()})
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	if len(uids) < int(st.Messages) {
+		return nil, false, fmt.Errorf("%w: UID SEARCH ALL returned %d UIDs, EXISTS is %d", provider.ErrIncomplete, len(uids), st.Messages)
+	}
+	if len(uids) > int(st.Messages) {
+		return uids, true, nil
 	}
 	p.mu.Lock()
 	if p.cache == nil {
@@ -55,7 +70,7 @@ func (p *Provider) searchAll(c *imapx.Client, mailbox string, st imapx.SelectInf
 	}
 	p.cache[mailbox] = searchCache{uidValidity: st.UIDValidity, uidNext: st.UIDNext, exists: st.Messages, uids: uids}
 	p.mu.Unlock()
-	return uids, nil
+	return uids, false, nil
 }
 
 func (p *Provider) searchFrom(c *imapx.Client, mailbox string, st imapx.SelectInfo, from uint32) ([]uint32, error) {
@@ -157,11 +172,15 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 			needAll = true
 		}
 		if needAll {
-			all, err := p.searchAll(c, mailbox, st, fresh)
+			all, partial, err := p.searchAll(c, mailbox, st, fresh)
 			if err != nil {
 				return err
 			}
-			cs.Present = toUIDs(all)
+			if partial {
+				cs.PresentIncomplete = true
+			} else {
+				cs.Present = toUIDs(all)
+			}
 			newUIDs = fromUID(all, from)
 		}
 
@@ -208,29 +227,49 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 }
 
 // FetchHeaders liefert Flags, Datum, Größe, MODSEQ, Kopf und Message-ID der UIDs.
+//
+// Ganzer Kopf statt HEADER.FIELDS (MESSAGE-ID): GreenMail liefert für die
+// von go-imap gequoteten Feldnamen nichts; der Kopf kostet wenige KB je
+// Nachricht und wird mit demselben Parser gelesen wie später die ganze
+// Nachricht. Köpfe begrenzt (A12.4): Ein zu großer Kopf wird nicht gelesen
+// und gekennzeichnet. Passt ein Kopf nicht mehr ins Budget eines FETCH,
+// bricht imapx den FETCH samt Verbindung ab (K3, imapx.ErrHeaderBudget);
+// die übrigen UIDs kommen mit dem nächsten FETCH auf neuer Verbindung.
 func (p *Provider) FetchHeaders(ctx context.Context, mailbox string, uidValidity uint32, uids []provider.UID) ([]provider.Header, error) {
 	var out []provider.Header
-	err := p.s.Do(ctx, func(c *imapx.Client) error {
-		out = nil
-		if _, err := c.Ensure(mailbox, uidValidity, p.selectOpts()); err != nil {
+	todo := fromUIDs(uids)
+	for len(todo) > 0 {
+		var meta []imapx.MessageMeta
+		err := p.s.Do(ctx, func(c *imapx.Client) error {
+			meta = nil
+			if _, err := c.Ensure(mailbox, uidValidity, p.selectOpts()); err != nil {
+				return err
+			}
+			var err error
+			meta, err = c.FetchMeta(todo, imapx.MetaOptions{Header: true, ModSeq: p.caps.CondStore})
 			return err
+		})
+		aborted := errors.Is(err, imapx.ErrHeaderBudget)
+		if err != nil && !aborted {
+			return nil, err
 		}
-		// Ganzer Kopf statt HEADER.FIELDS (MESSAGE-ID): GreenMail liefert für
-		// die von go-imap gequoteten Feldnamen nichts; der Kopf kostet wenige
-		// KB je Nachricht und wird mit demselben Parser gelesen wie später
-		// die ganze Nachricht.
-		meta, err := c.FetchMeta(fromUIDs(uids), imapx.MetaOptions{Header: true, ModSeq: p.caps.CondStore})
-		if err != nil {
-			return err
+		if aborted && len(meta) == 0 {
+			return nil, fmt.Errorf("%w: no header fits the fetch budget", provider.ErrProtocol)
 		}
+		got := make(map[uint32]bool, len(meta))
 		for _, m := range meta {
+			got[m.UID] = true
 			out = append(out, provider.Header{UID: provider.UID(m.UID), ModSeq: m.ModSeq, Flags: Flags(m.Flags),
 				InternalDate: m.InternalDate, Size: m.Size, MessageID: mimeparse.HeaderMessageID(m.HeaderFields),
-				RawHeader: m.HeaderFields})
+				RawHeader: m.HeaderFields, HeaderTooLarge: m.HeaderSkipped == imapx.HeaderTooLarge})
 		}
-		return nil
-	})
-	return out, err
+		if !aborted {
+			break
+		}
+		todo = slices.DeleteFunc(todo, func(u uint32) bool { return got[u] })
+	}
+	slices.SortFunc(out, func(a, b provider.Header) int { return cmp.Compare(a.UID, b.UID) })
+	return out, nil
 }
 
 // FetchRaw streamt die Rohmails der UIDs (BODY.PEEK[]).

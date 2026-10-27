@@ -178,7 +178,7 @@ func TestImportMaildirTwoVersions(t *testing.T) {
 		}
 	}
 	for i, raw := range [][]byte{sent, received, received} {
-		if err := os.WriteFile(filepath.Join(dir, "cur", "170000000"+string(rune('0'+i))+".M1P1.rc6:2,S"), raw, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "cur", mdName("170000000"+string(rune('0'+i))+".M1P1.rc6:2,S")), raw, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

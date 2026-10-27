@@ -11,6 +11,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
@@ -156,6 +157,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 			out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
 			out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
 			out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
+			out.IncompleteAnswers += round.IncompleteAnswers
 			out.AttachmentsExtracted += round.AttachmentsExtracted
 			out.MessagesIndexed += round.MessagesIndexed
 			out.IndexPending = round.IndexPending
@@ -186,7 +188,7 @@ func (r *Runner) lock(a store.Account) (*accountLock, error) {
 		return nil, nil
 	}
 	l, err := lockAccount(dir, a.ID)
-	if errors.Is(err, errLocked) {
+	if errors.Is(err, flock.ErrLocked) {
 		return nil, fmt.Errorf("%w: account %s", ops.ErrSyncRunning, a.Name)
 	}
 	return l, err
@@ -200,6 +202,7 @@ func fill(out *ops.SyncOutput, rep Report) {
 	out.New, out.Updated, out.Removed, out.Errors, out.MessagesMirrored = rep.New, rep.Updated, rep.Removed, rep.Errors, rep.Mirrored
 	out.AlreadyKnownDownloaded, out.AlreadyKnownDownloadedBytes = rep.KnownDownloaded, rep.KnownDownloadedBytes
 	out.LinkedDespiteSizeDifference = rep.LinkedSizeDiff
+	out.IncompleteAnswers = rep.Incomplete
 	out.AttachmentsExtracted = rep.Extracted
 	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
 	if rep.Drafts != nil {

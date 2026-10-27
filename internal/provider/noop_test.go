@@ -21,11 +21,11 @@ func (noopProvider) FetchHeaders(context.Context, string, uint32, []UID) ([]Head
 func (noopProvider) FetchRaw(context.Context, string, uint32, []UID, func(UID, io.Reader) error) error {
 	return ErrUnsupported
 }
-func (noopProvider) SetFlags(context.Context, string, []UID, FlagPatch) error { return nil }
-func (noopProvider) Move(context.Context, string, []UID, string) (map[UID]UID, error) {
+func (noopProvider) SetFlags(context.Context, string, uint32, []UID, FlagPatch) error { return nil }
+func (noopProvider) Move(context.Context, string, uint32, []UID, string) (map[UID]UID, error) {
 	return nil, nil
 }
-func (noopProvider) Trash(context.Context, string, []UID) error { return nil }
+func (noopProvider) Trash(context.Context, string, uint32, []UID) error { return nil }
 func (noopProvider) Append(context.Context, string, []byte, AppendOptions) (AppendResult, error) {
 	return AppendResult{}, nil
 }

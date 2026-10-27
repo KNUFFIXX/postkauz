@@ -34,12 +34,20 @@ import (
 // Strg+C, Prozessende), findet der nächste Lauf sie über den vorab
 // vermerkten Versuch im Spiegel wieder (internal/drafts, push_attempt;
 // Gegenprüfung S2.4/S2.5, W1).
+//
+// Wiederholt wird nur mit o.MessageID (Session.Do, die Kopie wird vorher
+// gesucht); ohne Message-ID höchstens einmal (Session.DoOnce, T1a Punkt
+// 5): Ein Verbindungsfehler während APPEND kommt dann zurück.
 func (p *Provider) Append(ctx context.Context, mailbox string, raw []byte, o provider.AppendOptions) (provider.AppendResult, error) {
 	var res provider.AppendResult
 	var known []uint32 // UIDs mit dieser Message-ID vor dem ersten Versuch
 	var uv uint32      // UIDVALIDITY vor dem ersten Versuch
 	tried := false
-	err := p.s.Do(ctx, func(c *imapx.Client) error {
+	do := p.s.Do
+	if o.MessageID == "" {
+		do = p.s.DoOnce
+	}
+	err := do(ctx, func(c *imapx.Client) error {
 		res = provider.AppendResult{}
 		if !tried {
 			st, err := c.Select(mailbox, imapx.SelectOptions{ReadOnly: true})

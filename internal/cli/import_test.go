@@ -33,7 +33,7 @@ func TestImportCommand(t *testing.T) {
 		".Projekte/cur/4.M4P1.x:2,F": "Subject: eins\r\nMessage-ID: <eins@example.org>\r\n\r\nWartungsvertrag Heizung\r\n",
 	}
 	for p, c := range files {
-		if err := os.WriteFile(filepath.Join(md, p), []byte(c), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(md, mdName(p)), []byte(c), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -61,8 +61,8 @@ func TestImportCommand(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(lab, "cur"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = os.WriteFile(filepath.Join(lab, "cur", "9.M9P1.x:2,S"), []byte(files["cur/1.M1P1.x:2,S"]), 0o600)
-	_ = os.WriteFile(filepath.Join(lab, "cur", "8.M8P1.x:2,S"), []byte("Subject: fremd\r\nMessage-ID: <fremd@example.org>\r\n\r\nx\r\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(lab, "cur", mdName("9.M9P1.x:2,S")), []byte(files["cur/1.M1P1.x:2,S"]), 0o600)
+	_ = os.WriteFile(filepath.Join(lab, "cur", mdName("8.M8P1.x:2,S")), []byte("Subject: fremd\r\nMessage-ID: <fremd@example.org>\r\n\r\nx\r\n"), 0o600)
 	code, out, _ = run(t, "import", "maildir", md, "-a", "demo", "--mailbox", "Archive", "--labels-from", lab)
 	if code != ExitOK || !strings.Contains(out, "1 folder assignments added") || !strings.HasSuffix(out, "new: 0, existing: 1, skipped: 1, errors: 0\n") {
 		t.Fatalf("labels: %s", out)

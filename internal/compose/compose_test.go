@@ -538,6 +538,47 @@ func TestAttachOutsideDir(t *testing.T) {
 	wantReason(t, err, ReasonInvalidInput)
 }
 
+// K4 (Nachbesserung T1a): Symlinks in attach_dir werden aufgelöst. Ein
+// Symlink auf eine Datei in attach_dir (auch über einen Ordner-Symlink oder
+// ein per Symlink erreichtes attach_dir) gilt als diese Datei; nach außen
+// ist attach_outside_dir; ein Symlink auf eine Spezialdatei bleibt
+// abgelehnt.
+func TestAttachDirSymlinksAndSpecialFiles(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "attach")
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "ok.txt"), []byte("Inhalt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "geheim.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	links := map[string]string{
+		filepath.Join(dir, "inner.txt"):   filepath.Join("sub", "ok.txt"),
+		filepath.Join(dir, "subl"):        filepath.Join(dir, "sub"),
+		filepath.Join(base, "attachlink"): dir,
+		filepath.Join(dir, "outer.txt"):   filepath.Join(base, "geheim.txt"),
+		filepath.Join(dir, "dirlink"):     filepath.Join(dir, "sub"),
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlinks not available: %v", err)
+		}
+	}
+	for _, c := range []struct{ dir, path string }{{dir, "inner.txt"}, {dir, "subl/ok.txt"}, {filepath.Join(base, "attachlink"), "sub/ok.txt"}} {
+		data, name, err := LoadFile("attachments[0]", c.dir, c.path, 0)
+		if err != nil || string(data) != "Inhalt\n" || name == "" {
+			t.Errorf("%s in %s: %q %q %v", c.path, c.dir, data, name, err)
+		}
+	}
+	_, _, err := LoadFile("attachments[0]", dir, "outer.txt", 0)
+	wantReason(t, err, ReasonAttachOutsideDir)
+	_, _, err = LoadFile("attachments[0]", dir, "dirlink", 0)
+	wantReason(t, err, ReasonAttachNotFound)
+}
+
 // Akzeptanz S2.2: 25-MiB-Grenze (Summe der Anhänge).
 func TestAttachmentLimit(t *testing.T) {
 	dir := t.TempDir()

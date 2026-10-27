@@ -173,7 +173,22 @@ func readAttachFile(field, dir, p string, budget int64) ([]byte, string, error) 
 		return nil, "", deny(ReasonAttachNotFound, field, "attach_dir cannot be opened")
 	}
 	defer func() { _ = root.Close() }()
-	f, err := root.Open(rel)
+	// Spezialdateien vor dem Öffnen ablehnen (A12.4): Öffnen einer FIFO
+	// blockiert, bis ein Schreiber kommt, und hielte den Aufruf (auch den
+	// MCP-Server) fest. Geöffnet wird zusätzlich nicht blockierend
+	// (openNonblock, Unix), danach muss es dieselbe reguläre Datei sein,
+	// falls sie zwischen Prüfung und Öffnen ausgetauscht wurde.
+	before, err := root.Lstat(rel)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, "", deny(ReasonAttachNotFound, field, "file not found")
+		}
+		return nil, "", deny(ReasonAttachOutsideDir, field, "path escapes attach_dir")
+	}
+	if !before.Mode().IsRegular() {
+		return nil, "", deny(ReasonAttachNotFound, field, "not a regular file")
+	}
+	f, err := root.OpenFile(rel, os.O_RDONLY|openNonblock, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, "", deny(ReasonAttachNotFound, field, "file not found")
@@ -182,7 +197,7 @@ func readAttachFile(field, dir, p string, budget int64) ([]byte, string, error) 
 	}
 	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() {
+	if err != nil || !st.Mode().IsRegular() || !os.SameFile(before, st) {
 		return nil, "", deny(ReasonAttachNotFound, field, "not a regular file")
 	}
 	if st.Size() > budget {

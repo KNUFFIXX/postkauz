@@ -49,6 +49,12 @@ var (
 	// Verbindung ist in Ordnung; dieselbe Nachricht erneut abzulegen hilft
 	// nicht, eine andere kann gelingen (Gegenprüfung S2.4/S2.5, W3).
 	ErrRejected = errors.New("provider: the server refused to store the message")
+	// ErrIncomplete: Die Antwort des Servers ist leer oder unvollständig,
+	// obwohl sie es nicht sein kann (T1a Punkt 3): UID SEARCH ALL liefert
+	// eine andere Zahl als EXISTS desselben SELECT, oder LIST liefert keine
+	// Ordner bzw. kein INBOX. Der Aufrufer löst und löscht daraufhin nichts
+	// und versucht es im nächsten Lauf erneut.
+	ErrIncomplete = errors.New("provider: incomplete server answer")
 )
 
 // Capabilities beschreibt, was der Server kann. Sie werden beim Verbinden
@@ -180,6 +186,10 @@ type Header struct {
 	// Roh-Kopfzeilen (IMAP: BODY.PEEK[HEADER]); geparst wird
 	// im Store-nahen Code (einheitlich für IMAP, Import und Tests).
 	RawHeader []byte
+	// HeaderTooLarge: Der Kopf ist größer als die Grenze des Providers
+	// (IMAP 1 MiB, A12.4) und wurde nicht gelesen; RawHeader und MessageID
+	// sind leer. Der Sync zählt das als Fehler dieser Nachricht.
+	HeaderTooLarge bool
 }
 
 // FlagUpdate meldet geänderte Flags einer bekannten Nachricht.
@@ -202,6 +212,11 @@ type ChangeSet struct {
 	// (lokal bekannt, aber nicht mehr vorhanden) und holt Fehlendes nach.
 	// nil heißt: nicht ermittelt (nichts deutet auf Löschungen hin).
 	Present []UID
+	// PresentIncomplete: Die UID-Liste war nicht mit EXISTS vergleichbar
+	// (IMAP: mehr UIDs als EXISTS, weil zwischen SELECT und SEARCH Mail
+	// ankam; K2). Present ist dann nil, Created enthält die neuen UIDs
+	// trotzdem; der Löschabgleich dieses Ordners entfällt in diesem Lauf.
+	PresentIncomplete bool
 	// Exists ist die Nachrichtenzahl des Ordners laut Server.
 	Exists uint32
 	// NewState ist der Zustand, ab dem der nächste Aufruf weitermacht. Er wird
@@ -260,18 +275,33 @@ type MailProvider interface {
 	// verarbeiten). uidValidity wie bei FetchHeaders.
 	FetchRaw(ctx context.Context, mailbox string, uidValidity uint32, uids []UID, fn func(UID, io.Reader) error) error
 
-	// SetFlags ändert Flags und Keywords. Nur Nachrichten, die der Aufrufer
-	// zuvor gelesen hat (Policy-Regel „Ziele aus Leseergebnissen").
-	SetFlags(ctx context.Context, mailbox string, uids []UID, patch FlagPatch) error
+	// Schreibvertrag für SetFlags, Move und Trash (T1a, A6; gebaut in S3):
+	//
+	//   - uidValidity ist der Stand, unter dem die UIDs gelesen wurden; 0 ist
+	//     ungültig. Weicht der Server ab, kommt ErrUIDValidityChanged und es
+	//     passiert nichts.
+	//   - UIDs stammen aus dem Spiegel (message_mailboxes), nie aus
+	//     importierten Ordnern (Feld Locations von store.Message, Rolle import)
+	//     und nie aus einer Nutzereingabe (Policy-Regel „Ziele aus
+	//     Leseergebnissen“). UID 0 und 4294967295 sind ungültig und werden
+	//     abgewiesen, bevor ein Kommando den Server erreicht; eine leere
+	//     Liste ist kein Fehler und erreicht den Server nicht.
+	//   - Ein Kommando, das beim Wiederholen doppelt wirken könnte (STORE,
+	//     MOVE), wird nach einem Verbindungsfehler nicht wiederholt
+	//     (imapx.Session.DoOnce); der Aufrufer prüft beim nächsten Lauf.
 
-	// Move verschiebt Nachrichten (IMAP MOVE oder COPY-Ersatz) und liefert die
-	// neuen UIDs im Zielordner, soweit der Server sie nennt (UIDPLUS).
-	Move(ctx context.Context, from string, uids []UID, to string) (map[UID]UID, error)
+	// SetFlags ändert Flags und Keywords.
+	SetFlags(ctx context.Context, mailbox string, uidValidity uint32, uids []UID, patch FlagPatch) error
+
+	// Move verschiebt Nachrichten (nur mit IMAP MOVE, RFC 6851; ohne MOVE
+	// ErrUnsupported, kein COPY-Ersatz, A03 E2) und liefert die neuen UIDs
+	// im Zielordner, soweit der Server sie nennt (UIDPLUS).
+	Move(ctx context.Context, from string, uidValidity uint32, uids []UID, to string) (map[UID]UID, error)
 
 	// Trash verschiebt Nachrichten in den Papierkorb. Es gibt kein
 	// endgültiges Löschen in dieser Schnittstelle. Bei Gmail bedeutet das
 	// „in [Gmail]/Papierkorb verschieben", nicht „Label entfernen".
-	Trash(ctx context.Context, mailbox string, uids []UID) error
+	Trash(ctx context.Context, mailbox string, uidValidity uint32, uids []UID) error
 
 	// Append legt eine Rohmail in einem Ordner ab (Entwürfe!). Liefert UID
 	// und UIDVALIDITY der neuen Nachricht (APPENDUID, sonst per Suche nach

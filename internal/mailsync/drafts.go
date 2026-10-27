@@ -247,15 +247,7 @@ func nilIfEmpty(r drafts.CheckReport) *drafts.CheckReport {
 // sonst den Ordner mit Rolle drafts. Die Ordnerliste kommt frisch vom
 // Server (beim ersten Lauf eines Kontos kennt der Spiegel noch keinen).
 func (e *Engine) draftsMailbox(ctx context.Context, path string) (store.Mailbox, error) {
-	boxes, err := e.Remote.ListMailboxes(ctx)
-	if err != nil {
-		return store.Mailbox{}, err
-	}
-	specs := make([]store.MailboxSpec, 0, len(boxes))
-	for _, b := range boxes {
-		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
-	}
-	if _, _, err := e.Store.SyncMailboxes(ctx, e.AccountID, specs); err != nil {
+	if err := e.syncMailboxList(ctx); err != nil {
 		return store.Mailbox{}, err
 	}
 	local, err := e.Store.Mailboxes(ctx, e.AccountID)

@@ -28,7 +28,7 @@ func (c *Client) Idle(ctx context.Context, mailbox string, maxWait time.Duration
 	if maxWait <= 0 {
 		maxWait = DefaultIdleRestart
 	}
-	if _, err := c.Ensure(mailbox, 0, SelectOptions{ReadOnly: true}); err != nil {
+	if _, err := c.ensure(mailbox, 0, SelectOptions{ReadOnly: true}); err != nil {
 		return false, err
 	}
 	// Meldungen aus der Zeit vor IDLE verwerfen: Der Aufrufer synct nach

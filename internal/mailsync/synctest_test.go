@@ -43,7 +43,9 @@ func (r *clockRemote) ListMailboxes(context.Context) ([]provider.Mailbox, error)
 	if d > 0 {
 		time.Sleep(d)
 	}
-	return nil, nil
+	// Mit INBOX: eine leere Liste bricht den Lauf ab, sobald der Store
+	// Ordner kennt (T1a Punkt 3).
+	return []provider.Mailbox{{Path: "INBOX", Name: "INBOX", Role: provider.RoleInbox}}, nil
 }
 
 func (r *clockRemote) Changes(context.Context, string, provider.SyncState, provider.ChangesOptions) (provider.ChangeSet, error) {
@@ -100,8 +102,9 @@ func (nopStore) SkippedUIDs(context.Context, int64, uint32) ([]uint32, error) { 
 func (nopStore) MarkSkipped(context.Context, int64, uint32, uint32, int64, string) error {
 	return nil
 }
-func (nopStore) PruneSkipped(context.Context, int64, uint32, []uint32) (int, error) { return 0, nil }
-func (nopStore) ClearSkipped(context.Context, int64) error                          { return nil }
+func (nopStore) PruneSkipped(context.Context, int64, uint32, []uint32) (int, error)   { return 0, nil }
+func (nopStore) ClearSkipped(context.Context, int64) error                            { return nil }
+func (nopStore) RecordIncompleteAnswers(context.Context, int64, int, time.Time) error { return nil }
 func (nopStore) PendingExtractions(context.Context, int64, int) ([]store.ExtractItem, error) {
 	return nil, nil
 }

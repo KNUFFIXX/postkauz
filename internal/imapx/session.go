@@ -143,9 +143,25 @@ func retryable(err error) bool {
 
 // Do führt f mit einer angemeldeten Verbindung aus. Bei einem
 // Verbindungsfehler wird die Verbindung geschlossen und f nach Backoff auf
-// einer neuen Verbindung wiederholt; f muss deshalb wiederholbar sein
-// (lesende Kommandos). Endet ctx, wird die laufende Verbindung geschlossen.
+// einer neuen Verbindung wiederholt; f muss deshalb wiederholbar sein:
+// lesende Kommandos oder ein Schreibbefehl, dessen Aufrufer Idempotenz
+// zusichert (APPEND mit Message-ID, der vor dem erneuten Versuch die Kopie
+// sucht; internal/provider/imap, Append). Alles andere geht über DoOnce.
+// Endet ctx, wird die laufende Verbindung geschlossen.
 func (s *Session) Do(ctx context.Context, f func(*Client) error) error {
+	return s.do(ctx, f, true)
+}
+
+// DoOnce führt f höchstens einmal aus (T1a Punkt 5): für Schreibbefehle,
+// die beim Wiederholen doppelt wirken könnten (APPEND ohne Message-ID,
+// STORE, MOVE). Nur der Verbindungsaufbau vor f wird mit Backoff
+// wiederholt; endet f mit einem Verbindungsfehler, kommt er zurück, und
+// der Aufrufer prüft beim nächsten Lauf, was angekommen ist.
+func (s *Session) DoOnce(ctx context.Context, f func(*Client) error) error {
+	return s.do(ctx, f, false)
+}
+
+func (s *Session) do(ctx context.Context, f func(*Client) error, repeat bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var last error
@@ -157,8 +173,10 @@ func (s *Session) Do(ctx context.Context, f func(*Client) error) error {
 			return err
 		}
 		c, err := s.connect(ctx)
+		ran := false
 		if err == nil {
 			stop := context.AfterFunc(ctx, c.closeNow)
+			ran = true
 			err = f(c)
 			if !stop() && ctx.Err() != nil {
 				s.drop()
@@ -176,6 +194,9 @@ func (s *Session) Do(ctx context.Context, f func(*Client) error) error {
 		}
 		last = err
 		s.drop()
+		if ran && !repeat {
+			return err
+		}
 		if attempt == s.opts.MaxAttempts {
 			break
 		}
