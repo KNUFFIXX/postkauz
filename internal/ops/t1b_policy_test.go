@@ -125,3 +125,33 @@ func TestExecutorPolicyInput(t *testing.T) {
 		checkPolicyInputResult(t, au.Events(), ran, err, c.want)
 	}
 }
+
+// T1b (A03 Nachtrag 26.10.): Redact sieht nur Eingaben, die das Schema
+// bestanden haben. Eine ungültige Eingabe ist genau ein Eintrag error mit
+// Grund invalid_input und leeren Parametern; der Handler läuft nicht.
+func TestRedactOnlyAfterSchemaCheck(t *testing.T) {
+	redacted, ran := 0, 0
+	op := newTestOp("t.redact", policy.ScopeMailRead, policy.R0, func(context.Context, Call) (any, error) { ran++; return map[string]any{}, nil })
+	op.InputSchema = json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"}},"additionalProperties":false}`)
+	op.Redact = func(raw json.RawMessage) (json.RawMessage, []string) {
+		redacted++
+		return raw, []string{"message:x"} // gäbe die Eingabe ungeprüft ins Audit
+	}
+	reg := NewRegistry()
+	if err := reg.Register(op); err != nil {
+		t.Fatal(err)
+	}
+	au := &audit.Memory{}
+	x := &Executor{Registry: reg, Audit: au}
+	_, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "key:r", Scopes: policy.Roles["reader"]}, Actor: audit.ActorAgent,
+		Operation: "t.redact", Input: json.RawMessage(`{"id":"KANARIE-Betreff"}`)})
+	evs := au.Events()
+	if err == nil || ran != 0 || redacted != 0 || len(evs) != 1 || evs[0].Result != audit.ResultError || evs[0].Reason != "invalid_input" ||
+		string(evs[0].ParamsRedacted) != `{}` || len(evs[0].Targets) != 0 {
+		t.Fatalf("err=%v ran=%d redacted=%d events=%+v", err, ran, redacted, evs)
+	}
+	if _, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "key:r", Scopes: policy.Roles["reader"]}, Actor: audit.ActorAgent,
+		Operation: "t.redact", Input: json.RawMessage(`{"id":5}`)}); err != nil || redacted != 1 || ran != 1 {
+		t.Fatalf("valid input: err=%v redacted=%d ran=%d", err, redacted, ran)
+	}
+}
