@@ -1,6 +1,6 @@
 # ADR-010 (Entwurf): HTTP-MCP zustandslos, PostKauz nur Resource Server, externer Autorisierungsserver, privates Netz
 
-**Status: Entwurf** (27.10.2026, T5 Phase 1). Wird erst nach dem Ja des Betreibers nach `docs/entscheidungen.md` übernommen (A01 N5, A03 E13). Grundlage: Spike P-AUTH, [S30_pauth.md](S30_pauth.md); Entscheide E9 und E10, Rückfrage R1 (entschieden: ja).
+**Status: angenommen am 27.10.2026 und nach [`docs/entscheidungen.md`](../entscheidungen.md) übernommen** (dort gilt der Text; diese Datei bleibt als Entwurfsstand des Spikes, T5 Phase 1). Grundlage: Spike P-AUTH, [S30_pauth.md](S30_pauth.md); Entscheide E9 und E10, Rückfrage R1 (entschieden: ja).
 
 ## ADR-010: HTTP-MCP nach Spezifikation 2026-07-28
 
