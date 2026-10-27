@@ -123,9 +123,12 @@ type PushAttempt struct {
 
 // RemoteCopy ist eine frühere Kopie eines Entwurfs im Entwürfe-Ordner.
 type RemoteCopy struct {
-	MailboxID   int64  `json:"mailbox_id"`
-	UID         int64  `json:"uid"`
-	UIDValidity uint32 `json:"uidvalidity,omitempty"`
+	MailboxID int64 `json:"mailbox_id"`
+	UID       int64 `json:"uid"`
+	// UIDValidity ohne omitempty (A6): Eine Kopie ohne bekannten Stand
+	// steht als 0 sichtbar in remote_previous; wer sie anspricht
+	// (Aufräumen, S3.2), muss das prüfen und darf sie nicht treffen.
+	UIDValidity uint32 `json:"uidvalidity"`
 	// ContentHash der Kopie wie messages.content_hash (seit der
 	// Gegenprüfung S2.6–S2.8, K3: Die Versanderkennung zählt eine Nachricht
 	// mit diesem Hash nie als gesendet); "" bei Kopien von vorher.

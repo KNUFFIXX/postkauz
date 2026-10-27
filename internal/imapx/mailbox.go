@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -53,6 +54,7 @@ func (c *Client) Select(mailbox string, o SelectOptions) (SelectInfo, error) {
 		info.PermanentFlags = append(info.PermanentFlags, string(f))
 	}
 	c.sel = &info
+	c.exists.Store(info.Messages)
 	return info, nil
 }
 
@@ -72,7 +74,19 @@ func (c *Client) Selected() *SelectInfo { return c.sel }
 // Ensure wählt mailbox, falls nicht schon gewählt, und prüft UIDVALIDITY.
 // Ein Wechsel (z. B. nach Reconnect, Ordner neu angelegt) ist
 // provider.ErrUIDValidityChanged: Gespeicherte UIDs gelten nicht mehr.
+// UIDVALIDITY 0 ist ErrInvalidUID, ohne Serveraufruf (A6): Wer UIDs
+// anspricht, muss wissen, unter welchem Stand sie gelten; 0 hieße „ohne
+// Prüfung“.
 func (c *Client) Ensure(mailbox string, uidValidity uint32, o SelectOptions) (SelectInfo, error) {
+	if uidValidity == 0 {
+		return SelectInfo{}, fmt.Errorf("%w: UIDVALIDITY 0", ErrInvalidUID)
+	}
+	return c.ensure(mailbox, uidValidity, o)
+}
+
+// ensure ist Ensure ohne Pflicht-UIDVALIDITY (0 = nicht prüfen); nur für
+// Kommandos ohne UIDs (IDLE).
+func (c *Client) ensure(mailbox string, uidValidity uint32, o SelectOptions) (SelectInfo, error) {
 	if s := c.sel; s != nil && s.Mailbox == mailbox && (s.ReadOnly == o.ReadOnly || !s.ReadOnly) {
 		if uidValidity != 0 && s.UIDValidity != uidValidity {
 			return *s, provider.ErrUIDValidityChanged
@@ -117,22 +131,83 @@ func (c *Client) UIDSearch(from uint32, o SearchOptions) ([]uint32, error) {
 	if err != nil {
 		return nil, cmdErr(err)
 	}
-	var out []uint32
-	if data.All != nil {
-		set, ok := data.All.(imap.UIDSet)
-		if !ok || set.Dynamic() {
-			return nil, fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
-		}
-		nums, _ := set.Nums()
-		out = make([]uint32, 0, len(nums))
-		for _, u := range nums {
-			if uint32(u) >= from {
-				out = append(out, uint32(u))
-			}
+	return c.receivedUIDs(data, from)
+}
+
+// receivedUIDs löst das UID-Set einer SEARCH-Antwort auf (UIDs ab from).
+// Nie über die Methode Nums des UIDSet: go-imap (beta.8) zählt dort mit
+// uint32 bis zum Ende des Bereichs; endet er bei 4294967295, läuft die
+// Schleife über und endet nie, und ein Server, der „1:4294967294“ meldet, ließe vier
+// Milliarden Zahlen anlegen (T1a Punkt 2). Deshalb bereichsweise mit
+// Obergrenzen: kein „*“, kein Bereich bis 4294967295, und zusammen
+// höchstens so viele UIDs, wie der Ordner Nachrichten hat (EXISTS). Sonst
+// ErrRejected („invalid UID set“), nichts wird geliefert.
+func (c *Client) receivedUIDs(data *imap.SearchData, from uint32) ([]uint32, error) {
+	if data.All == nil {
+		return nil, nil
+	}
+	set, ok := data.All.(imap.UIDSet)
+	if !ok {
+		return nil, errBadUIDSet
+	}
+	nums, err := boundedUIDs(set, c.existsBound())
+	if err != nil {
+		return nil, err
+	}
+	out := nums[:0]
+	for _, u := range nums {
+		if u >= from {
+			out = append(out, u)
 		}
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil
+}
+
+var errBadUIDSet = fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
+
+// existsBound ist die größte Zahl von UIDs, die eine Antwort im gewählten
+// Ordner haben kann: EXISTS aus SELECT oder, falls größer, aus einer
+// späteren unaufgeforderten EXISTS-Meldung. Ohne gewählten Ordner 0.
+func (c *Client) existsBound() uint32 {
+	if c.sel == nil {
+		return 0
+	}
+	return max(c.sel.Messages, c.exists.Load())
+}
+
+// boundedUIDs liefert die UIDs eines empfangenen Sets, bereichsweise
+// aufgelöst. Abgelehnt (errBadUIDSet): „*“ (Start oder Stop 0), ein Bereich
+// bis 4294967295 und mehr als limit UIDs insgesamt.
+func boundedUIDs(set imap.UIDSet, limit uint32) ([]uint32, error) {
+	var total uint64
+	for _, r := range set {
+		start, stop := uint32(r.Start), uint32(r.Stop)
+		if start == 0 || stop == 0 {
+			return nil, errBadUIDSet
+		}
+		if start > stop {
+			start, stop = stop, start
+		}
+		if stop >= maxUID {
+			return nil, errBadUIDSet
+		}
+		total += uint64(stop-start) + 1
+		if total > uint64(limit) {
+			return nil, fmt.Errorf("%w (%d UIDs or more for %d messages)", errBadUIDSet, total, limit)
+		}
+	}
+	out := make([]uint32, 0, total)
+	for _, r := range set {
+		start, stop := uint32(r.Start), uint32(r.Stop)
+		if start > stop {
+			start, stop = stop, start
+		}
+		for u := start; u <= stop; u++ { // stop < maxUID: kein Überlauf
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 // MessageMeta ist die Kopfsicht einer Nachricht ohne Inhalt.
@@ -157,12 +232,36 @@ type MetaOptions struct {
 	ModSeq       bool // MODSEQ mitholen (CONDSTORE)
 }
 
-func uidSet(uids []uint32) imap.UIDSet {
+// maxUID (4294967295) wird nie gesendet und nie als Ende eines
+// empfangenen Bereichs angenommen: go-imap (beta.8) zählt in
+// Range.append bis Stop mit uint32 und läuft dort endlos (T1a Punkt 2).
+const maxUID = math.MaxUint32
+
+// ErrInvalidUID: Eine UID (0 oder 4294967295), eine leere UID-Liste oder
+// UIDVALIDITY 0 sollte an den Server gehen. Der Aufruf scheitert, bevor
+// etwas gesendet wird (A6: UID 0 hieße in go-imap „*“, also die neueste
+// Nachricht des Ordners). Kein Verbindungsfehler, nicht wiederholbar.
+var ErrInvalidUID = errors.New("imapx: invalid_uid")
+
+// uidSet baut das UID-Set für ein Kommando. Einzige Stelle, die UID-Sets
+// aus Zahlen zusammensetzt (`make guard`: kein AddNum/AddRange außerhalb).
+// UID 0 („*“ in go-imap), 4294967295 und eine leere Liste sind
+// ErrInvalidUID; das Ergebnis enthält nie „*“.
+func uidSet(uids []uint32) (imap.UIDSet, error) {
+	if len(uids) == 0 {
+		return nil, fmt.Errorf("%w: empty UID list", ErrInvalidUID)
+	}
 	var s imap.UIDSet
 	for _, u := range uids {
+		if u == 0 || u == maxUID {
+			return nil, fmt.Errorf("%w: UID %d", ErrInvalidUID, u)
+		}
 		s.AddNum(imap.UID(u))
 	}
-	return s
+	if s.Dynamic() {
+		return nil, fmt.Errorf("%w: set contains *", ErrInvalidUID)
+	}
+	return s, nil
 }
 
 // FetchMeta holt UID, FLAGS, INTERNALDATE, RFC822.SIZE (und MODSEQ sowie
@@ -171,6 +270,10 @@ func uidSet(uids []uint32) imap.UIDSet {
 func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) {
 	if len(uids) == 0 {
 		return nil, nil
+	}
+	set, err := uidSet(uids)
+	if err != nil {
+		return nil, err
 	}
 	opts := &imap.FetchOptions{UID: true, Flags: true, InternalDate: true, RFC822Size: true, ModSeq: o.ModSeq}
 	var sec *imap.FetchItemBodySection
@@ -182,9 +285,9 @@ func (c *Client) FetchMeta(uids []uint32, o MetaOptions) ([]MessageMeta, error) 
 		opts.BodySection = []*imap.FetchItemBodySection{sec}
 	}
 	var bufs []*imapclient.FetchMessageBuffer
-	err := c.run(func() error {
+	err = c.run(func() error {
 		var err error
-		bufs, err = c.c.Fetch(uidSet(uids), opts).Collect()
+		bufs, err = c.c.Fetch(set, opts).Collect()
 		return err
 	})
 	if err != nil {
@@ -337,11 +440,15 @@ func (c *Client) FetchRaw(uids []uint32, fn func(uid uint32, r io.Reader) error)
 	if len(uids) == 0 {
 		return nil
 	}
+	set, err := uidSet(uids)
+	if err != nil {
+		return err
+	}
 	sec := &imap.FetchItemBodySection{Peek: true}
 	opts := &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{sec}}
 	var fnErr error
-	err := c.run(func() error {
-		cmd := c.c.Fetch(uidSet(uids), opts)
+	err = c.run(func() error {
+		cmd := c.c.Fetch(set, opts)
 		for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
 			var uid uint32
 			var pending io.Reader // gepufferter Inhalt (UID kam erst danach)
@@ -483,21 +590,7 @@ func (c *Client) SearchHeader(field, value string, from uint32) ([]uint32, error
 	if err != nil {
 		return nil, cmdErr(err)
 	}
-	var out []uint32
-	if data.All != nil {
-		set, ok := data.All.(imap.UIDSet)
-		if !ok || set.Dynamic() {
-			return nil, fmt.Errorf("%w: server returned an invalid UID set", ErrRejected)
-		}
-		nums, _ := set.Nums()
-		for _, u := range nums {
-			if uint32(u) >= from {
-				out = append(out, uint32(u))
-			}
-		}
-	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return c.receivedUIDs(data, from)
 }
 
 // StoreFlags setzt (add=true) oder entfernt Flags an den angegebenen UIDs
@@ -505,6 +598,9 @@ func (c *Client) SearchHeader(field, value string, from uint32) ([]uint32, error
 // Sync liest nur); vorbereitet für S3 (mark) und für Testwerkzeuge.
 // Es gibt bewusst kein EXPUNGE in dieser Schicht (ADR-002).
 func (c *Client) StoreFlags(uids []uint32, flags []string, add bool) error {
+	if len(uids) == 0 {
+		return nil // nichts zu tun; nie ein leeres Set an den Server
+	}
 	if c.sel == nil || c.sel.ReadOnly {
 		return fmt.Errorf("imapx: StoreFlags needs a mailbox selected read-write")
 	}
@@ -521,7 +617,11 @@ func (c *Client) StoreFlags(uids []uint32, flags []string, add bool) error {
 	for _, f := range flags {
 		sf.Flags = append(sf.Flags, imap.Flag(f))
 	}
-	err := c.run(func() error { return c.c.Store(uidSet(uids), sf, nil).Close() })
+	set, err := uidSet(uids)
+	if err != nil {
+		return err
+	}
+	err = c.run(func() error { return c.c.Store(set, sf, nil).Close() })
 	return cmdErr(err)
 }
 
@@ -538,6 +638,7 @@ func (c *Client) unilateralHandler() *imapclient.UnilateralDataHandler {
 		Expunge: func(uint32) { kick() },
 		Mailbox: func(d *imapclient.UnilateralDataMailbox) {
 			if d.NumMessages != nil {
+				c.exists.Store(*d.NumMessages)
 				kick()
 			}
 		},

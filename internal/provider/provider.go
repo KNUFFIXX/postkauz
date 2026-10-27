@@ -260,18 +260,33 @@ type MailProvider interface {
 	// verarbeiten). uidValidity wie bei FetchHeaders.
 	FetchRaw(ctx context.Context, mailbox string, uidValidity uint32, uids []UID, fn func(UID, io.Reader) error) error
 
-	// SetFlags ändert Flags und Keywords. Nur Nachrichten, die der Aufrufer
-	// zuvor gelesen hat (Policy-Regel „Ziele aus Leseergebnissen").
-	SetFlags(ctx context.Context, mailbox string, uids []UID, patch FlagPatch) error
+	// Schreibvertrag für SetFlags, Move und Trash (T1a, A6; gebaut in S3):
+	//
+	//   - uidValidity ist der Stand, unter dem die UIDs gelesen wurden; 0 ist
+	//     ungültig. Weicht der Server ab, kommt ErrUIDValidityChanged und es
+	//     passiert nichts.
+	//   - UIDs stammen aus dem Spiegel (message_mailboxes), nie aus
+	//     importierten Ordnern (store.Message.Locations mit Rolle import)
+	//     und nie aus einer Nutzereingabe (Policy-Regel „Ziele aus
+	//     Leseergebnissen“). UID 0 und 4294967295 sind ungültig und werden
+	//     abgewiesen, bevor ein Kommando den Server erreicht; eine leere
+	//     Liste ist kein Fehler und erreicht den Server nicht.
+	//   - Ein Kommando, das beim Wiederholen doppelt wirken könnte (STORE,
+	//     MOVE), wird nach einem Verbindungsfehler nicht wiederholt
+	//     (imapx.Session.DoOnce); der Aufrufer prüft beim nächsten Lauf.
 
-	// Move verschiebt Nachrichten (IMAP MOVE oder COPY-Ersatz) und liefert die
-	// neuen UIDs im Zielordner, soweit der Server sie nennt (UIDPLUS).
-	Move(ctx context.Context, from string, uids []UID, to string) (map[UID]UID, error)
+	// SetFlags ändert Flags und Keywords.
+	SetFlags(ctx context.Context, mailbox string, uidValidity uint32, uids []UID, patch FlagPatch) error
+
+	// Move verschiebt Nachrichten (nur mit IMAP MOVE, RFC 6851; ohne MOVE
+	// ErrUnsupported, kein COPY-Ersatz, A03 E2) und liefert die neuen UIDs
+	// im Zielordner, soweit der Server sie nennt (UIDPLUS).
+	Move(ctx context.Context, from string, uidValidity uint32, uids []UID, to string) (map[UID]UID, error)
 
 	// Trash verschiebt Nachrichten in den Papierkorb. Es gibt kein
 	// endgültiges Löschen in dieser Schnittstelle. Bei Gmail bedeutet das
 	// „in [Gmail]/Papierkorb verschieben", nicht „Label entfernen".
-	Trash(ctx context.Context, mailbox string, uids []UID) error
+	Trash(ctx context.Context, mailbox string, uidValidity uint32, uids []UID) error
 
 	// Append legt eine Rohmail in einem Ordner ab (Entwürfe!). Liefert UID
 	// und UIDVALIDITY der neuen Nachricht (APPENDUID, sonst per Suche nach

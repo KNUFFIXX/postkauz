@@ -167,7 +167,7 @@ func TestStoreFlagsNeedsReadWriteAndNeverDeleted(t *testing.T) {
 func TestEnsureDetectsUIDValidityChange(t *testing.T) {
 	addr, u := memServer(t)
 	c := dialLogin(t, addr)
-	info, err := c.Ensure("Archiv", 0, SelectOptions{ReadOnly: true})
+	info, err := c.Select("Archiv", SelectOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}

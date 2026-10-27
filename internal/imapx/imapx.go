@@ -123,6 +123,10 @@ type Client struct {
 	changed chan struct{}
 	// sel ist der zuletzt per SELECT/EXAMINE gewählte Ordner (mailbox.go).
 	sel *SelectInfo
+	// exists ist die zuletzt gemeldete Nachrichtenzahl des gewählten
+	// Ordners (SELECT oder unaufgefordertes EXISTS); Obergrenze für
+	// empfangene UID-Sets (mailbox.go, receivedUIDs).
+	exists atomic.Uint32
 }
 
 // activityConn merkt sich den Zeitpunkt des letzten gelesenen Bytes. Der
