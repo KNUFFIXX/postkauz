@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/prompt"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -382,19 +384,8 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	case asJSON:
 		return nil, "", usageError{errors.New("no interactive prompt in --json mode; use --password-stdin or --password-from-env")}
 	default:
-		fd, ok := terminalFD(a.stdin)
-		if !ok {
-			return nil, "", usageError{errors.New("standard input is not a terminal; use --password-stdin or --password-from-env")}
-		}
-		fmt.Fprintf(a.stderr, "Password for %s at %s: ", user, host)
-		b, err := term.ReadPassword(fd)
-		fmt.Fprintln(a.stderr)
-		if err != nil {
+		if pw, err = readHiddenPassword(cmd.Context(), a, fmt.Sprintf("Password for %s at %s: ", user, host)); err != nil {
 			return nil, "", err
-		}
-		pw = secrets.Secret(b)
-		if pw.IsZero() {
-			return nil, "", usageError{errors.New("empty password")}
 		}
 	}
 	return raw, pw, nil
@@ -422,7 +413,7 @@ func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 	var pw secrets.Secret
 	if fromStdin, _ := cmd.Flags().GetBool("password-stdin"); fromStdin {
 		var err error
-		if pw, err = readNewPassword(a, args[0]); err != nil {
+		if pw, err = readNewPassword(cmd.Context(), a, args[0]); err != nil {
 			return nil, "", err
 		}
 		in.ReplacePassword = true
@@ -437,18 +428,9 @@ func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 // readNewPassword liest ein neues Passwort von stdin (Entscheid 36): am
 // Terminal verdeckt mit Aufforderung auf stderr, sonst die erste Zeile.
 // Das Passwort ist nie ein Argument (Prozessliste, Verlauf der Shell).
-func readNewPassword(a *app, account string) (secrets.Secret, error) {
-	if fd, ok := terminalFD(a.stdin); ok {
-		fmt.Fprintf(a.stderr, "New password for account %s: ", account)
-		b, err := term.ReadPassword(fd)
-		fmt.Fprintln(a.stderr)
-		if err != nil {
-			return "", err
-		}
-		if len(b) == 0 {
-			return "", usageError{errors.New("empty password")}
-		}
-		return secrets.Secret(b), nil
+func readNewPassword(ctx context.Context, a *app, account string) (secrets.Secret, error) {
+	if f, ok := a.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		return readHiddenPassword(ctx, a, fmt.Sprintf("New password for account %s: ", account))
 	}
 	line, err := bufio.NewReader(a.stdin).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -461,13 +443,29 @@ func readNewPassword(a *app, account string) (secrets.Secret, error) {
 	return pw, nil
 }
 
-func terminalFD(r io.Reader) (int, bool) {
-	f, ok := r.(*os.File)
-	if !ok || !term.IsTerminal(int(f.Fd())) {
-		return 0, false
+// readHiddenPassword fragt am Terminal verdeckt nach einem Passwort
+// (internal/prompt, A3: unter Windows über ReadConsoleW, sonst x/term;
+// Abbruch nach prompt.DefaultTimeout ohne Eingabe).
+func readHiddenPassword(ctx context.Context, a *app, label string) (secrets.Secret, error) {
+	f, ok := a.stdin.(*os.File)
+	if !ok {
+		return "", usageError{errNotTerminal}
 	}
-	return int(f.Fd()), true
+	b, _, err := prompt.Password(ctx, f, a.stderr, label, prompt.Options{})
+	switch {
+	case errors.Is(err, prompt.ErrNotTerminal):
+		return "", usageError{errNotTerminal}
+	case errors.Is(err, prompt.ErrTooLong):
+		return "", usageError{fmt.Errorf("password longer than %d characters", prompt.MaxLen)}
+	case err != nil:
+		return "", err
+	case len(b) == 0:
+		return "", usageError{errors.New("empty password")}
+	}
+	return secrets.Secret(b), nil
 }
+
+var errNotTerminal = errors.New("standard input is not a terminal; use --password-stdin or --password-from-env")
 
 // --- Ausgaben ohne --json ------------------------------------------------------
 

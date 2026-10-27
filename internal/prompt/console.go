@@ -1,0 +1,145 @@
+package prompt
+
+import (
+	"context"
+	"fmt"
+	"time"
+	"unicode/utf16"
+	"unicode/utf8"
+)
+
+// console ist die Windows-Konsole aus Sicht des Lesers (console_windows.go);
+// der Test ersetzt sie durch einen Fake-Konsolenstrom.
+type console interface {
+	mode() (uint32, error)
+	setMode(m uint32) error
+	// read liest wie ReadConsoleW höchstens len(buf) UTF-16-Einheiten.
+	read(buf []uint16) (int, error)
+	// cancel bricht ein laufendes read ab (CancelIoEx), soweit möglich.
+	cancel()
+}
+
+// readConsoleLine liest eine Zeile verdeckt von der Konsole: Modus nach
+// passwordMode setzen, lesen bis Zeilenende, Modus wiederherstellen. Das
+// Lesen läuft in einer eigenen Goroutine, damit Zeitgrenze und ctx greifen,
+// auch wenn ReadConsoleW blockiert; danach ist der Modus wiederhergestellt,
+// eine noch blockierte Goroutine endet spätestens mit dem Prozess.
+func readConsoleLine(ctx context.Context, c console, timeout time.Duration, rep *Report) ([]byte, error) {
+	old, err := c.mode()
+	if err != nil {
+		return nil, ErrNotTerminal
+	}
+	rep.ModeBefore = ModeNames(old)
+	if err := c.setMode(passwordMode(old)); err != nil {
+		return nil, fmt.Errorf("set console mode: %w", err)
+	}
+	if m, err := c.mode(); err == nil {
+		rep.ModeDuring = ModeNames(m)
+	}
+	defer func() {
+		_ = c.setMode(old)
+		if m, err := c.mode(); err == nil {
+			rep.ModeAfter = ModeNames(m)
+		}
+	}()
+
+	type result struct {
+		units []uint16
+		reads int
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var units []uint16
+		buf := make([]uint16, 256)
+		for reads := 1; ; reads++ {
+			n, err := c.read(buf)
+			units = append(units, buf[:n]...)
+			if hasLineEnd(units) || err != nil || n == 0 || len(units) > MaxLen+2 {
+				done <- result{units, reads, err}
+				return
+			}
+		}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var r result
+	select {
+	case r = <-done:
+	case <-ctx.Done():
+		c.cancel()
+		return nil, ctx.Err()
+	case <-timer.C:
+		c.cancel()
+		return nil, ErrTimeout
+	}
+	rep.Reads, rep.Units = r.reads, len(r.units)
+	b, err := decodeLine(r.units, rep)
+	if err == nil && r.err != nil && rep.Terminator == "none" {
+		err = r.err
+	}
+	return b, err
+}
+
+func hasLineEnd(u []uint16) bool {
+	for _, x := range u {
+		if x == '\n' || x == '\r' {
+			return true
+		}
+	}
+	return false
+}
+
+// decodeLine schneidet am ersten Zeilenende ab (CRLF bei Zeilen-Eingabe,
+// CR, wenn die Konsole sie nicht beachtet, Hypothese b), wertet
+// Rückschritt aus (falls die Konsole ihn durchreicht), lässt Strg+Z weg
+// und wandelt UTF-16 in UTF-8; ein einzelnes Surrogat wird U+FFFD und
+// zählt als ungültig.
+func decodeLine(u []uint16, rep *Report) ([]byte, error) {
+	rep.Terminator = "none"
+	for i, x := range u {
+		if x == '\r' || x == '\n' {
+			switch {
+			case x == '\r' && i+1 < len(u) && u[i+1] == '\n':
+				rep.Terminator = "crlf"
+			case x == '\r':
+				rep.Terminator = "cr"
+			default:
+				rep.Terminator = "lf"
+			}
+			u = u[:i]
+			break
+		}
+	}
+	if rep.Terminator == "none" && len(u) == 0 {
+		rep.Terminator = "eof"
+	}
+	var runes []rune
+	for i := 0; i < len(u); i++ {
+		x := rune(u[i])
+		switch {
+		case x == '\b' || x == 0x7f:
+			if len(runes) > 0 {
+				runes = runes[:len(runes)-1]
+			}
+			continue
+		case x == 0x1a: // Strg+Z
+			continue
+		case utf16.IsSurrogate(x):
+			if i+1 < len(u) {
+				if r := utf16.DecodeRune(x, rune(u[i+1])); r != utf8.RuneError {
+					runes = append(runes, r)
+					i++
+					continue
+				}
+			}
+			rep.Invalid++
+			x = utf8.RuneError
+		}
+		runes = append(runes, x)
+	}
+	if len(runes) > MaxLen {
+		return nil, ErrTooLong
+	}
+	return []byte(string(runes)), nil
+}
