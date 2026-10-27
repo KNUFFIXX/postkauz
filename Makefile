@@ -64,8 +64,10 @@ lint: fmt-check vet
 	@echo "lint: placeholder (go vet + gofmt only); a linter is chosen in slice 1"
 
 # Leitplanken des MVP (ADR-002): kein SMTP-Code im Repository.
+# Alle Suchen lassen vendor/ aus (A03 Nachtrag 26.10.2026): fremder Code
+# darf dort SMTP oder go-imap enthalten; Prüfgegenstand ist nur eigener Code.
 guard:
-	@if grep -rEn --include='*.go' '"net/smtp"|emersion/go-smtp' . ; then \
+	@if grep -rEn --include='*.go' --exclude-dir=vendor '"net/smtp"|emersion/go-smtp' . ; then \
 	  echo "guard: SMTP code is not allowed before slice 4 (ADR-002)"; exit 1; fi
 	@# ADR-007: go-imap nur über internal/imapx (Tests dürfen den Fake-Server nutzen).
 	@if grep -rlnF --include='*.go' --exclude='*_test.go' '"github.com/emersion/go-imap' internal cmd | grep -v '^internal/imapx/' ; then \
@@ -79,6 +81,12 @@ guard:
 	  [ "$$(head -c 3 "$$f" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] || { echo "guard: $$f must be UTF-8 with BOM"; exit 1; }; \
 	  if tail -c +4 "$$f" | LC_ALL=C grep -q '[^[:print:][:space:]]'; then echo "guard: $$f must contain ASCII only after the BOM"; exit 1; fi; \
 	done
+	@# A5.5: Go 1.28 verbietet das Muster "..." bei go list im Module-Modus;
+	@# kein Skript, kein Makefile und kein Workflow darf es nutzen.
+	@if grep -rEn --exclude-dir=vendor --exclude-dir=.git --include=Makefile --include='*.mk' --include='*.sh' --include='*.ps1' \
+	  --include='*.yml' --include='*.yaml' --include=pre-commit 'go[[:space:]]+list([[:space:]]+[^[:space:]]+)*[[:space:]]+(\./)?\.\.\.' \
+	  $$(ls -d Makefile scripts deploy docs .github .githooks 2>/dev/null); then \
+	  echo "guard: go list must not use the three-dot pattern in scripts (Go 1.28)"; exit 1; fi
 	@echo "guard: ok"
 
 pii-check:

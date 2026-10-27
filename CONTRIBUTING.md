@@ -11,6 +11,7 @@ PostKauz (Arbeitstitel) ist pre-alpha. Beiträge sind willkommen, aber die Archi
 ## Arbeitsweise
 
 - Go 1.27 (ADR-008), `CGO_ENABLED=0`, `GOTOOLCHAIN=local` (das Makefile setzt beides; die Toolchain 1.27.x muss installiert sein). Neue Abhängigkeiten nur mit Begründung und mit Apache-2.0-kompatibler Lizenz.
+- Go 1.28 (geplant Februar 2027) verbietet bei `go list` das Muster mit drei Punkten im Module-Modus. Skripte, Makefile und Workflows nutzen es deshalb nicht (`make guard` prüft das, A03 A5.5); für Pakete `go list -m` oder `go vet ./...`/`go test ./...` nehmen.
 - Kleine Commits und kleine Pull Requests. Je Operation ein Test; `make check` (gofmt, vet, test, Guards, PII-Gate) muss grün sein. Zusätzlich `make cross`.
 - Commit-Nachrichten **Englisch** mit Präfix: `feat:`, `fix:`, `docs:`, `test:`, `chore:`. Sign-off per `git commit -s` (Developer Certificate of Origin); keine CLA.
 - Kommentare im Code und Dokumentation unter `docs/` **Deutsch**; `README.md` Englisch. Programmausgaben und Fehlermeldungen Englisch.

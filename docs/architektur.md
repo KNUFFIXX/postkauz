@@ -93,7 +93,7 @@ In Textform: Drei Oberflächen rufen **ausschließlich** den Executor. Der Execu
 
  Der Sync heißt `internal/mailsync` (nicht `internal/sync`, das kollidierte mit dem Standardpaket `sync`).
 
-`make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen) und dass go-imap auf v2.0.0-beta.8 gepinnt bleibt.
+`make guard` prüft neben „kein SMTP-Code" auch, dass außer `internal/imapx` kein Paket go-imap importiert (ADR-007; Tests dürfen den Fake-Server der Bibliothek nutzen) und dass go-imap auf v2.0.0-beta.8 gepinnt bleibt. Seit T1c (A03) lassen alle Suchen `vendor/` aus (fremder Code ist kein Prüfgegenstand), und kein Skript, Makefile oder Workflow ruft `go list` mit dem Muster aus drei Punkten auf (Go 1.28, A5.5).
 
 ## 3. Zwei Wahrheiten (ADR-003)
 
