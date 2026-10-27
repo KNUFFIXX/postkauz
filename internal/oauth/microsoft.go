@@ -70,6 +70,9 @@ type Microsoft struct {
 	OpenBrowser func(url string) error
 	// LoginTimeout begrenzt den Loopback-Flow (0 = 5 Minuten).
 	LoginTimeout time.Duration
+	// Listen öffnet die lokalen Ports des Loopback-Flows (nil = net.Listen;
+	// Tests: belegte Ports nachstellen).
+	Listen func(network, addr string) (net.Listener, error)
 	// Now ersetzt die Uhr (Tests).
 	Now func() time.Time
 }
@@ -199,7 +202,7 @@ type Prompt struct {
 }
 
 // LoginLoopback führt den Loopback-Flow aus: freier Port auf 127.0.0.1 (und
-// ::1, falls vorhanden), Umleitung http://localhost:<port>, zufälliger
+// derselbe auf ::1, falls vorhanden; loopbackListeners), Umleitung http://localhost:<port>, zufälliger
 // state, PKCE S256, Frist LoginTimeout. Den Browser öffnet OpenBrowser;
 // show bekommt die Adresse in jedem Fall (falls kein Browser aufgeht).
 // PostKauz zeigt keine eigene Anmeldeseite.
@@ -211,16 +214,15 @@ func (m Microsoft) LoginLoopback(ctx context.Context, c Client, show func(Prompt
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	lns, port, err := m.loopbackListeners()
 	if err != nil {
-		return Token{}, fmt.Errorf("oauth: no free local port for the sign-in: %w", err)
+		return Token{}, err
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	lns := []net.Listener{ln}
-	// Manche Browser lösen localhost zuerst als ::1 auf.
-	if ln6, err := net.Listen("tcp", "[::1]:"+strconv.Itoa(port)); err == nil {
-		lns = append(lns, ln6)
-	}
+	defer func() {
+		for _, l := range lns {
+			_ = l.Close()
+		}
+	}()
 
 	cfg := m.Config(c)
 	cfg.RedirectURL = "http://localhost:" + strconv.Itoa(port)
@@ -292,6 +294,44 @@ func (m Microsoft) LoginLoopback(ctx context.Context, c Client, show func(Prompt
 		return Token{}, endpointErr(err)
 	}
 	return tokenFromFlow(t)
+}
+
+// loopbackAttempts begrenzt die Suche nach einem Port, der auf 127.0.0.1
+// und ::1 frei ist.
+const loopbackAttempts = 20
+
+// loopbackListeners öffnet einen freien Port auf 127.0.0.1 und, wenn der
+// Rechner IPv6-Loopback hat, denselben Port auf ::1: Manche Browser lösen
+// localhost zuerst als ::1 auf und erreichen sonst den Flow nicht oder
+// einen fremden Dienst auf diesem Port (Gegenprüfung T4, K4). Ist der Port
+// auf ::1 belegt, nimmt die Suche einen neuen Port. Ohne IPv6-Loopback
+// (::1 lässt sich gar nicht binden) genügt 127.0.0.1, dann kann auch kein
+// Browser ::1 erreichen.
+func (m Microsoft) loopbackListeners() ([]net.Listener, int, error) {
+	listen := m.Listen
+	if listen == nil {
+		listen = net.Listen
+	}
+	v6 := false
+	if l, err := listen("tcp", "[::1]:0"); err == nil {
+		v6 = true
+		_ = l.Close()
+	}
+	for range loopbackAttempts {
+		ln, err := listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, 0, fmt.Errorf("oauth: no free local port for the sign-in: %w", err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		if !v6 {
+			return []net.Listener{ln}, port, nil
+		}
+		if ln6, err := listen("tcp", "[::1]:"+strconv.Itoa(port)); err == nil {
+			return []net.Listener{ln, ln6}, port, nil
+		}
+		_ = ln.Close()
+	}
+	return nil, 0, errors.New("oauth: no local port free on both 127.0.0.1 and ::1 for the sign-in")
 }
 
 // LoginDeviceCode führt den Device-Code-Flow aus (RFC 8628): Code holen,

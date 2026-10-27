@@ -3,9 +3,12 @@ package oauth_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -65,6 +68,74 @@ func TestLoginLoopbackEndToEnd(t *testing.T) {
 	forms := as.Forms()
 	if len(forms) != 1 || forms[0].Get("code_verifier") == "" || forms[0].Has("client_secret") {
 		t.Fatalf("token request = %v", forms)
+	}
+}
+
+// fakeV6 ist ein nachgestellter Listener auf ::1 (der Container hat kein
+// IPv6-Loopback): Er nimmt nichts an, bis er geschlossen wird.
+type fakeV6 struct {
+	port int
+	done chan struct{}
+	once sync.Once
+}
+
+func (l *fakeV6) Accept() (net.Conn, error) { <-l.done; return nil, net.ErrClosed }
+func (l *fakeV6) Close() error              { l.once.Do(func() { close(l.done) }); return nil }
+func (l *fakeV6) Addr() net.Addr            { return &net.TCPAddr{IP: net.IPv6loopback, Port: l.port} }
+
+// K4 (Gegenprüfung T4): Ist der Port auf ::1 belegt, nimmt der Flow einen
+// neuen Port, statt ohne ::1 weiterzulaufen; ohne IPv6-Loopback genügt
+// 127.0.0.1.
+func TestLoginLoopbackPortFreeOnBothAddresses(t *testing.T) {
+	as := oauthtest.New(t)
+	var mu sync.Mutex
+	var v4, v6 []string
+	busy := 2
+	listen := func(network, addr string) (net.Listener, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if host, port, _ := net.SplitHostPort(addr); host == "::1" {
+			if port != "0" && busy > 0 {
+				busy--
+				return nil, errors.New("address already in use")
+			}
+			p, _ := strconv.Atoi(port)
+			v6 = append(v6, port)
+			return &fakeV6{port: p, done: make(chan struct{})}, nil
+		}
+		l, err := net.Listen(network, addr)
+		if err == nil {
+			_, p, _ := net.SplitHostPort(l.Addr().String())
+			v4 = append(v4, p)
+		}
+		return l, err
+	}
+	var prompt oauth.Prompt
+	show := func(p oauth.Prompt) { prompt = p }
+	m := oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second, Listen: listen}
+	if _, err := m.LoginLoopback(context.Background(), client, show); err != nil {
+		t.Fatal(err)
+	}
+	// Probe ::1:0, dann zwei belegte Ports, der dritte ist auf beiden frei.
+	if len(v4) != 3 || len(v6) != 2 || v6[1] != v4[2] || !strings.Contains(prompt.URL, "localhost%3A"+v4[2]) {
+		t.Fatalf("v4 %v, v6 %v, prompt %s", v4, v6, prompt.URL)
+	}
+
+	// ::1 immer belegt: Abbruch statt Anmeldung ohne ::1.
+	busy, v4, v6 = 1000, nil, nil
+	if _, err := m.LoginLoopback(context.Background(), client, nil); err == nil || !strings.Contains(err.Error(), "127.0.0.1 and ::1") {
+		t.Fatalf("::1 always busy: %v", err)
+	}
+
+	// Kein IPv6-Loopback: 127.0.0.1 genügt.
+	m.Listen = func(network, addr string) (net.Listener, error) {
+		if strings.HasPrefix(addr, "[::1]:") {
+			return nil, errors.New("cannot assign requested address")
+		}
+		return net.Listen(network, addr)
+	}
+	if _, err := m.LoginLoopback(context.Background(), client, nil); err != nil {
+		t.Fatalf("without IPv6: %v", err)
 	}
 }
 
