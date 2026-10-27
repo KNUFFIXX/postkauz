@@ -4,11 +4,11 @@
 |---|---|
 | Werkzeug | golangci-lint **v2.15.0**, gebaut mit go1.27.3 (`go run …@v2.15.0`) |
 | Datum | 27.10.2026 |
-| Stand | 0ba8501 (main 1c9847a plus `.golangci.yml` und `make lint`); Nachlauf nach den Behebungen auf 0ed5715: 78 Befunde |
+| Stand | 9f48174 (main 1c9847a plus `.golangci.yml` und `make lint`; im Worktree des Subagenten als 0ba8501 gelaufen, Code gleich); Nachlauf nach den Behebungen auf 5311845: 78 Befunde; Nachlauf über den ganzen Teil T1c: Abschnitt „Nachlauf T1c“ |
 | Kommando | `make lint` (= `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...`) |
 | Konfiguration | `.golangci.yml`: Standardsatz (errcheck, govet, ineffassign, staticcheck, unused) plus gosec, bodyclose, gocritic; vollständiger Bericht (keine Obergrenzen, `uniq-by-line: false`) |
 
-Einstufung: **echt** (ein Fehler oder ein Mangel, der behoben werden soll), **Fehlalarm** (mit Begründung), **später** (berechtigter Hinweis, aber nicht jetzt; mit Grund). „echt, behoben“ heißt: im Commit 0ed5715 erledigt, `make check` grün.
+Einstufung: **echt** (ein Fehler oder ein Mangel, der behoben werden soll), **Fehlalarm** (mit Begründung), **später** (berechtigter Hinweis, aber nicht jetzt; mit Grund). „echt, behoben“ heißt: im Commit 5311845 erledigt, `make check` grün.
 
 ## Gesamtzahl je Linter
 
@@ -111,3 +111,15 @@ Hinweis zur Messung: Mit der Standardeinstellung `uniq-by-line: true` verdeckt e
 2. Fehlalarme ohne Ausschlussregel (G304, G703, G202, G204, G302, G101, G115 Einzelfälle, watch.go, imapx.go:292) je Stelle mit `//nolint:<linter> // Grund` markieren, damit der Bericht leer wird.
 3. „Später“ (G115 im Store, Stilfragen): Store-Umbau mit Test; Stil beim nächsten Anfassen oder Prüfung abschalten.
 4. Danach den CI-Job `lint` zur Pflicht machen (`continue-on-error` entfernen; eigener Commit, Roadmap).
+
+## Nachlauf T1c (27.10.2026, nach Übernahme aller T1c-Commits)
+
+Derselbe Aufruf über den ganzen Zweig (A3, A5.2 bis A5.5, `doctor --blobs`, kleine Punkte): **80 Befunde**, davon 78 wie oben (zwei Zeilennummern verschoben: `secretscan/secretscan.go:94` steht jetzt in Zeile 101, `store/messages.go:105` unverändert) und **2 neue**:
+
+| Befund | Stelle | Einstufung | Begründung |
+|---|---|---|---|
+| gocritic offBy1 | `cli/a54_test.go:160` | echt, behoben | `out[strings.Index(out, "blobs:"):]` liefe bei fehlendem Abschnitt mit -1 in einen Panic; jetzt `strings.Cut` (Commit „test: avoid an index of -1 in the doctor --blobs test“) |
+| G404 schwacher Zufall | `cli/doctor_blobs.go:199` | Fehlalarm | `math/rand/v2` mischt nur die Stichprobe von `doctor --blobs`; kein Sicherheitszweck (kein Schlüssel, kein Token). Vor der Pflicht-Schaltung `//nolint:gosec // Grund` |
+
+Der neue Code in `internal/prompt` (Windows-Leser) und `internal/cli/probe_cmd.go` ergibt keinen Befund. Danach: **79 offen** (6 echt wie oben, Rest Fehlalarm oder später).
+
