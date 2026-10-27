@@ -169,6 +169,12 @@ func renderSync(w io.Writer, out any) error {
 		// Bytes größer (Restfall C2); gezählt werden Nachrichten.
 		fmt.Fprintf(w, "linked despite size difference: %d messages\n", o.LinkedDespiteSizeDifference)
 	}
+	if o.SkippedTooLarge > 0 {
+		// A5.3 (D5): eigene Zeile statt nur Fehler je Ordner; die Grenze
+		// steht in der Konfiguration ([imap] max_message_bytes).
+		fmt.Fprintf(w, "%d skipped (larger than %d bytes, [imap] max_message_bytes); not fetched, counted as errors; raise the limit and run sync --full to fetch them\n",
+			o.SkippedTooLarge, o.MaxMessageBytes)
+	}
 	if o.MessagesIndexed > 0 || o.IndexPending > 0 {
 		line := fmt.Sprintf("search index: %d messages indexed", o.MessagesIndexed)
 		if o.IndexPending > 0 {

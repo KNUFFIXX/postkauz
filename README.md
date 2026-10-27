@@ -93,6 +93,15 @@ postkauz account test mail
 
 `account add` asks for the password and stores it in the operating system's keyring (never in a file of PostKauz). Port 993 means TLS. Many providers require an **app password** for IMAP (for example Gmail, iCloud, Outlook.com with two-factor authentication); OAuth sign-in is not available yet. `account test` logs in read-only and lists capabilities and folders with their roles (`inbox`, `sent`, `drafts`, …).
 
+A big mailbox (for example a Sent folder with years of attachments) makes the first sync long. To skip very large messages, set a limit in the configuration file (its path: `postkauz doctor`):
+
+```toml
+[imap]
+max_message_bytes = 10485760   # 10 MiB; default 256 MiB, at least 1 MiB
+```
+
+`sync` then reports `N skipped (larger than … bytes, [imap] max_message_bytes)` on a line of its own and counts them as errors; after raising the limit, `sync --full` fetches them.
+
 ### 4. Mirror and search
 
 ```sh

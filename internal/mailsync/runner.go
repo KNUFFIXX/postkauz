@@ -156,6 +156,10 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 			out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
 			out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
 			out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
+			out.SkippedTooLarge += round.SkippedTooLarge
+			if round.MaxMessageBytes > 0 {
+				out.MaxMessageBytes = round.MaxMessageBytes
+			}
 			out.AttachmentsExtracted += round.AttachmentsExtracted
 			out.MessagesIndexed += round.MessagesIndexed
 			out.IndexPending = round.IndexPending
@@ -200,6 +204,9 @@ func fill(out *ops.SyncOutput, rep Report) {
 	out.New, out.Updated, out.Removed, out.Errors, out.MessagesMirrored = rep.New, rep.Updated, rep.Removed, rep.Errors, rep.Mirrored
 	out.AlreadyKnownDownloaded, out.AlreadyKnownDownloadedBytes = rep.KnownDownloaded, rep.KnownDownloadedBytes
 	out.LinkedDespiteSizeDifference = rep.LinkedSizeDiff
+	if rep.SkippedTooLarge > 0 {
+		out.SkippedTooLarge, out.MaxMessageBytes = rep.SkippedTooLarge, rep.MaxMessageBytes
+	}
 	out.AttachmentsExtracted = rep.Extracted
 	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
 	if rep.Drafts != nil {

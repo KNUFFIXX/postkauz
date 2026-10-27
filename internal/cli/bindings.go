@@ -511,9 +511,20 @@ func renderAccountAdd(w io.Writer, out any) error {
 		_, err := fmt.Fprintf(w, "dry run: would add account %s (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where)
 		return err
 	}
-	_, err := fmt.Fprintf(w, "account %s added (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where)
+	if _, err := fmt.Fprintf(w, "account %s added (%s:%d, tls %s, user %s); %s\n", a.Name, a.Host, a.Port, a.TLS, a.Username, where); err != nil {
+		return err
+	}
+	// A5.3 (D5): Ein großer Gesendet-Ordner lädt beim ersten Sync jeden
+	// Anhang; die Grenze steht in der Konfiguration.
+	_, err := fmt.Fprintln(w, maxMessageBytesTip)
 	return err
 }
+
+// maxMessageBytesTip nennt nach account add die Grenze für große
+// Nachrichten mit Beispiel (A5.3).
+const maxMessageBytesTip = "tip: the first sync fetches every message; to skip very large ones (e.g. in a big Sent folder), set " +
+	"max_message_bytes = 10485760 (10 MiB) under [imap] in the configuration file (path: see doctor); " +
+	"sync --full fetches them once you raise the limit"
 
 func renderAccountSet(w io.Writer, out any) error {
 	o, ok := out.(ops.AccountsSetOutput)

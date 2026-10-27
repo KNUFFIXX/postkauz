@@ -71,6 +71,11 @@ type SyncOutput struct {
 	// obwohl die lokale Kopie bis zu MaxLinkSizeExtra Bytes größer ist
 	// (Thunderbird-Import, nie Entwürfe). Fehlt bei 0.
 	LinkedDespiteSizeDifference int `json:"linked_despite_size_difference,omitempty"`
+	// SkippedTooLarge zählt die Nachrichten, die dieser Lauf nicht geladen
+	// hat, weil sie größer als [imap] max_message_bytes sind (MaxMessageBytes,
+	// nur mit SkippedTooLarge > 0); sie zählen auch unter Errors (A5.3).
+	SkippedTooLarge int   `json:"skipped_too_large,omitempty"`
+	MaxMessageBytes int64 `json:"max_message_bytes,omitempty"`
 	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
 	// extrahiert hat (S1.6).
 	AttachmentsExtracted int `json:"attachments_extracted,omitempty"`
