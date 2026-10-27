@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // S1.11: Export mit Hash-Kette über alle Tage und Manifest; verify erkennt
@@ -171,7 +173,8 @@ func TestAuditVerifyLegacyFormat(t *testing.T) {
 	ctx := t.Context()
 	e.run(t, adminKey, "keys.list", map[string]any{})
 	days, _ := e.st.AuditDays(ctx)
-	d, err := auditDayFromDB(ctx, e.st, days[0], 0, 1, "")
+	list, _ := e.st.AuditQuery(ctx, store.AuditFilter{})
+	d, err := auditDayContent(list, 0, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}

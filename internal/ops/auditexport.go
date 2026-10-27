@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
@@ -37,6 +38,10 @@ import (
 // Format 1 (S1.8 bis S1.10): eine Zeile je Eintrag, nur der Eintrag. Solche
 // Exporte prüft verify weiter (Prüfsumme gegen Datenbank); der nächste
 // Export schreibt sie in Format 2 neu.
+
+// auditClock liefert den Zeitpunkt eines Exports (exported_at; Tests
+// setzen ihn, um Läufe über Mitternacht nachzustellen).
+var auditClock = time.Now
 
 // AuditExportFormat ist das Format, das audit.export schreibt.
 const AuditExportFormat = 2
@@ -92,19 +97,119 @@ type auditDay struct {
 	head        string // letzte chain (Format 2), sonst ""
 }
 
-// auditDayFromDB erzeugt den Inhalt der Exportdatei eines Tages aus der
-// Datenbank: aufsteigend nach ID, höchstens bis lastID (0 = alle). Format 2
-// braucht den Kettenwert davor (prev). Dieselbe Funktion dient Export und
-// Prüfung.
-func auditDayFromDB(ctx context.Context, repo AuditRepo, day string, lastID int64, format int, prev string) (auditDay, error) {
-	start, err := time.Parse("2006-01-02", day)
+// auditPlan ordnet jeden Audit-Eintrag genau einem Exporttag zu (T1a
+// Punkt 4, A14). Grundsatz: Ein Tag, der abgeschlossen exportiert ist,
+// ändert sich nie wieder. Abgeschlossen ist ein Tag mit Nachweis in
+// audit_exports, wenn der Export nach seinem Ende lief (exported_at nach
+// Mitternacht UTC) oder ein späterer Tag schon einen Nachweis hat (jeder
+// Export schreibt alle Tage, also lief er nach dem Ende dieses Tages).
+//
+// Ein Eintrag gehört zu seinem Tag (ts, UTC). Trägt er den Zeitstempel
+// eines abgeschlossenen Tages und eine größere ID als dessen letzter
+// exportierter Eintrag (verspäteter Eintrag, z. B. der Abschluss eines
+// `sync --watch`-Laufs, der vor Mitternacht begann), wandert er zum
+// nächsten Tag, und so weiter bis zum ersten Tag, der nicht abgeschlossen
+// ist; Tage ohne Nachweis vor dem letzten abgeschlossenen Tag werden dabei
+// übersprungen (an ihnen lief schon ein Export ohne Einträge vorbei). Die
+// Zuordnung eines Eintrags ändert sich danach nicht mehr: Export und
+// `audit verify` berechnen sie gleich.
+type auditPlan struct {
+	days   []string                       // Exporttage, aufsteigend
+	events map[string][]store.AuditRecord // je Exporttag, aufsteigend nach ID
+}
+
+func auditDayEnd(day string) time.Time {
+	t, err := time.Parse("2006-01-02", day)
 	if err != nil {
-		return auditDay{}, err
+		return time.Time{}
 	}
-	list, err := repo.AuditQuery(ctx, store.AuditFilter{Since: start, Until: start.Add(24 * time.Hour)})
+	return t.Add(24 * time.Hour)
+}
+
+func nextDay(day string) string {
+	return auditDayEnd(day).Format("2006-01-02")
+}
+
+// buildAuditPlan lädt alle Einträge und ordnet sie nach den Nachweisen
+// done (audit_exports) den Exporttagen zu.
+func buildAuditPlan(ctx context.Context, repo AuditRepo, done []store.AuditExport) (auditPlan, error) {
+	list, err := repo.AuditQuery(ctx, store.AuditFilter{})
 	if err != nil {
-		return auditDay{}, err
+		return auditPlan{}, err
 	}
+	records := map[string]store.AuditExport{}
+	lastRecorded := ""
+	for _, e := range done {
+		records[e.Day] = e
+		lastRecorded = max(lastRecorded, e.Day)
+	}
+	closed := func(day string) (int64, bool) {
+		e, ok := records[day]
+		if !ok {
+			return 0, false
+		}
+		if day < lastRecorded || !e.ExportedAt.Before(auditDayEnd(day)) {
+			return e.LastEventID, true
+		}
+		return 0, false
+	}
+	plan := auditPlan{events: map[string][]store.AuditRecord{}}
+	for _, r := range list {
+		day := r.TS.UTC().Format("2006-01-02")
+		for {
+			if last, ok := closed(day); ok {
+				if r.ID <= last {
+					break
+				}
+				day = nextDay(day)
+				continue
+			}
+			if _, ok := records[day]; !ok && day < lastRecorded {
+				day = nextDay(day)
+				continue
+			}
+			break
+		}
+		if _, ok := plan.events[day]; !ok {
+			plan.days = append(plan.days, day)
+		}
+		plan.events[day] = append(plan.events[day], r)
+	}
+	slices.Sort(plan.days)
+	return plan, nil
+}
+
+// AuditUnexportedDays liefert die Exporttage, deren Einträge noch nicht
+// (vollständig) exportiert sind, nach derselben Zuordnung wie audit.export
+// (für doctor).
+func AuditUnexportedDays(ctx context.Context, repo AuditRepo) ([]string, error) {
+	done, err := repo.AuditExports(ctx)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := buildAuditPlan(ctx, repo, done)
+	if err != nil {
+		return nil, err
+	}
+	last := map[string]int64{}
+	for _, e := range done {
+		last[e.Day] = e.LastEventID
+	}
+	var out []string
+	for _, d := range plan.days {
+		evs := plan.events[d]
+		if l, ok := last[d]; !ok || evs[len(evs)-1].ID > l {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+// auditDayContent erzeugt den Inhalt der Exportdatei eines Tages aus
+// seinen Einträgen (aufsteigend nach ID), höchstens bis lastID (0 = alle).
+// Format 2 braucht den Kettenwert davor (prev). Dieselbe Funktion dient
+// Export und Prüfung.
+func auditDayContent(list []store.AuditRecord, lastID int64, format int, prev string) (auditDay, error) {
 	var buf bytes.Buffer
 	d := auditDay{head: prev}
 	for _, r := range list {
@@ -303,14 +408,15 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
-			days, err := repo.AuditDays(ctx)
-			if err != nil {
-				return nil, err
-			}
 			done, err := repo.AuditExports(ctx)
 			if err != nil {
 				return nil, err
 			}
+			plan, err := buildAuditPlan(ctx, repo, done)
+			if err != nil {
+				return nil, err
+			}
+			days := plan.days
 			prev := map[string]store.AuditExport{}
 			for _, e := range done {
 				prev[e.Day] = e
@@ -330,9 +436,13 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			}
 			var todo []pending
 			var manifest []auditManifestDay
+			own, err := ownExportFiles(dir)
+			if err != nil {
+				return nil, err
+			}
 			head := auditChainGenesis
 			for _, day := range days {
-				d, err := auditDayFromDB(ctx, repo, day, 0, AuditExportFormat, head)
+				d, err := auditDayContent(plan.events[day], 0, AuditExportFormat, head)
 				if err != nil {
 					return nil, err
 				}
@@ -354,6 +464,14 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						f.State = "updated"
 					}
 				}
+				// Am Ziel nur eigene Dateien ersetzen (A12.4): eine Datei,
+				// die weder der Nachweis dieses Tages an diesem Ort noch das
+				// Manifest dort als eigene ausweist, bleibt unberührt.
+				if f.State != "unchanged" {
+					if err := checkOwnFile(f.File, own, prev[day], dir); err != nil {
+						return nil, err
+					}
+				}
 				todo = append(todo, pending{f, d.content})
 				manifest = append(manifest, auditManifestDay{Day: day, File: auditFileName(day), Events: d.events,
 					FirstEventID: d.first, LastEventID: d.last, SHA256: f.SHA256, ChainHead: d.head})
@@ -368,7 +486,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					return nil, err
 				}
 				if err := repo.SaveAuditExport(ctx, store.AuditExport{Day: p.f.Day, FirstEventID: p.f.FirstEventID, LastEventID: p.f.LastEventID,
-					SHA256: p.f.SHA256, Location: dir, ExportedAt: time.Now()}); err != nil {
+					SHA256: p.f.SHA256, Location: dir, ExportedAt: auditClock()}); err != nil {
 					return nil, err
 				}
 			}
@@ -380,6 +498,54 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			return out, nil
 		},
 	}
+}
+
+// ErrAuditExportForeign: Am Exportziel liegt unter einem Namen, den der
+// Export schreiben will, eine Datei, die er nicht selbst geschrieben hat
+// (A12.4). Der Export bricht ab, bevor er etwas ersetzt.
+var ErrAuditExportForeign = errors.New("audit export: the target directory holds a file this program did not write")
+
+// ownExportFiles liest das Manifest am Ziel: Tag-Dateien, die es mit
+// Prüfsumme nennt, gelten als eigene. Ein Manifest, das nicht von diesem
+// Programm stammt, ist ErrAuditExportForeign.
+func ownExportFiles(dir string) (map[string]string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var m auditManifest
+	if json.Unmarshal(b, &m) != nil || m.Program != brand.Name || m.Format < 2 {
+		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
+	}
+	own := map[string]string{}
+	for _, d := range m.Days {
+		own[d.File] = d.SHA256
+	}
+	return own, nil
+}
+
+// checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
+// wenn der Nachweis rec dieses Tages genau diese Datei an diesem Ort
+// belegt (Prüfsumme schon vorher geprüft) oder wenn das Manifest am Ziel
+// sie mit ihrer Prüfsumme nennt.
+func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir string) error {
+	got, err := fileSHA256(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if rec.Location == dir && rec.SHA256 == got {
+		return nil
+	}
+	if sum, ok := own[filepath.Base(path)]; ok && sum == got {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrAuditExportForeign, filepath.Base(path))
 }
 
 // writeFileAtomic schreibt über eine Temporärdatei im selben Verzeichnis.
@@ -480,6 +646,10 @@ func AuditVerify(repo AuditRepo) Operation {
 			if err != nil {
 				return nil, err
 			}
+			plan, err := buildAuditPlan(ctx, repo, done)
+			if err != nil {
+				return nil, err
+			}
 			out := AuditVerifyOutput{Status: "ok", Problems: []AuditProblem{}, NotExported: []string{}}
 			add := func(day, file, problem string, line int) {
 				out.Problems = append(out.Problems, AuditProblem{Day: day, File: file, Problem: problem, Line: line})
@@ -505,14 +675,14 @@ func AuditVerify(repo AuditRepo) Operation {
 				fileOK := ferr == nil && sha256Hex(fileBytes) == e.SHA256
 
 				// Welches Format ergibt die Prüfsumme des Nachweises?
-				d2, err := auditDayFromDB(ctx, repo, e.Day, e.LastEventID, 2, head)
+				d2, err := auditDayContent(plan.events[e.Day], e.LastEventID, 2, head)
 				if err != nil {
 					return nil, err
 				}
 				format, db := 0, d2
 				if sha256Hex(d2.content) == e.SHA256 {
 					format = 2
-				} else if d1, err := auditDayFromDB(ctx, repo, e.Day, e.LastEventID, 1, ""); err != nil {
+				} else if d1, err := auditDayContent(plan.events[e.Day], e.LastEventID, 1, ""); err != nil {
 					return nil, err
 				} else if sha256Hex(d1.content) == e.SHA256 {
 					format, db = 1, d1
@@ -577,21 +747,10 @@ func AuditVerify(repo AuditRepo) Operation {
 					}
 				}
 			}
-			days, err := repo.AuditDays(ctx)
-			if err != nil {
-				return nil, err
-			}
-			for _, d := range days {
+			for _, d := range plan.days {
 				e, ok := exported[d]
-				if !ok {
-					out.NotExported = append(out.NotExported, d)
-					continue
-				}
-				all, err := auditDayFromDB(ctx, repo, d, 0, 1, "")
-				if err != nil {
-					return nil, err
-				}
-				if all.last > e.LastEventID {
+				evs := plan.events[d]
+				if !ok || evs[len(evs)-1].ID > e.LastEventID {
 					out.NotExported = append(out.NotExported, d)
 				}
 			}

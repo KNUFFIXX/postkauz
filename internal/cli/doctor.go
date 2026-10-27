@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -344,20 +346,29 @@ const auditExportStale = 48 * time.Hour
 
 // doctorAudit meldet den Stand des Audit-Exports.
 func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
-	days, err := db.AuditDays(ctx)
-	if err != nil {
-		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
-		return
-	}
 	done, err := db.AuditExports(ctx)
 	if err != nil {
 		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
 		return
 	}
-	exported := map[string]bool{}
+	// Dieselbe Zuordnung der Tage wie audit.export (verspätete Einträge,
+	// T1a Punkt 4). Eine noch nicht migrierte Datenbank kennt nicht alle
+	// Spalten: dann wie bisher nach Tagen ohne Nachweis.
+	days, err := ops.AuditUnexportedDays(ctx, db)
+	if err != nil {
+		all, derr := db.AuditDays(ctx)
+		if derr != nil {
+			rep.Warnings = append(rep.Warnings, "audit: "+derr.Error())
+			return
+		}
+		exported := map[string]bool{}
+		for _, e := range done {
+			exported[e.Day] = true
+		}
+		days = slices.DeleteFunc(all, func(d string) bool { return exported[d] })
+	}
 	var last store.AuditExport
 	for _, e := range done {
-		exported[e.Day] = true
 		if e.ExportedAt.After(last.ExportedAt) {
 			last = e
 		}
@@ -368,9 +379,6 @@ func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now t
 	}
 	stale := false
 	for _, d := range days {
-		if exported[d] {
-			continue
-		}
 		rep.AuditDaysNotExported++
 		if t, err := time.Parse("2006-01-02", d); err == nil && now.Sub(t.Add(24*time.Hour)) > auditExportStale {
 			stale = true
