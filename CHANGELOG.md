@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- `auftraege/A03_teile.md`: Schnitt 3 in fünf Teilen (T1 Teil A und Härtung des Dauerbetriebs, T2 Aktionen, T3 Sicherung, T4 Microsoft, T5 Fernzugriff) mit Ausgangsstand, Haltepunkt und Startprompt; `auftraege/A03_s3.md`: Stand nach D6, R1–R3 entschieden, Nachtrag A12 (Prüfwerkzeuge in der CI, Funde des Fremdmodell-Laufs).
+- Release `v0.2.0-rc8` (27.10.2026, D6): Tag auf `99a7cc0`, Programme aus einem Nachbau mit Go 1.27.3, bytegleich mit dem abgenommenen Build.
 - D5 auf dem Büro-PC mit 0.2.0-rc8: Runde 1 (Wiederholung, Gmail im Browser) und Runde 2 (Thunderbird) und Runde 3 (Hostinger-Webmail) bestanden, alle `sent_by_human` per Rückfall (die Hostinger-Webmail entfernt `In-Reply-To`/`References`); Protokoll `docs/protokolle/D5_windows.txt`, Messtabelle `docs/versanderkennung.md` Abschnitt 9.
 - `auftraege/A03_s3.md`, Nachtrag 26.10.2026: Funde aus fünf weiteren Prüfläufen (A13 Blocker vor S3.2/S3.4, A14 wichtige Punkte, kleinere Punkte).
 - `docs/roadmap.md` auf den Stand (ein Bildschirm) gekürzt; der Verlauf je Schritt (S1.1 bis S2.9, Teilabnahmen, Gegenprüfungen) liegt wortgleich in `docs/roadmap_verlauf.md`; Statustabelle auf S2.9 nachgezogen.
