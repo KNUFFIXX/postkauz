@@ -735,6 +735,12 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		if expect != "" && Fingerprint(d) != expect {
 			return changed(d.ID)
 		}
+		// A7: Kopie eines abgebrochenen Ablageversuchs vor dem Schließen
+		// übernehmen; ohne Kopie im Spiegel bleibt der Versuch stehen, bis
+		// ein Sync den Entwürfe-Ordner gespiegelt hat (SettleClosedAttempts).
+		if _, err := s.adoptOrphan(x, &d, now); err != nil {
+			return err
+		}
 		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
 			return err
 		}

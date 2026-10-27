@@ -57,7 +57,37 @@ const (
 	OpRemoteCheck = "drafts.remote_check"
 	// ReasonAppended: Grund eines erfolgreichen Pushs.
 	ReasonAppended = "appended"
+	// ReasonAppend: Grund des Start-Eintrags vor dem APPEND (A7).
+	ReasonAppend = "append"
+	// ReasonAttemptWithoutCopy: Ein Ablageversuch ist ohne Kopie zu Ende
+	// (ein neuer Versuch ersetzt ihn, oder der Entwürfe-Ordner ist
+	// gespiegelt und die Kopie fehlt); Abschluss mit Ergebnis error.
+	ReasonAttemptWithoutCopy = "attempt_without_copy"
 )
+
+// pushEvent baut einen Audit-Eintrag des Pushs (Akteur system): Start
+// (ref 0, Ergebnis started) oder Abschluss des Versuchs mit ref_id.
+func (s *Service) pushEvent(now time.Time, d store.Draft, res audit.Result, reason string, ref int64, params map[string]any) audit.Event {
+	p := map[string]any{"draft_id": d.ID}
+	for k, v := range params {
+		p[k] = v
+	}
+	b, _ := json.Marshal(p)
+	return audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpPush, ParamsRedacted: b,
+		Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: res, Reason: reason, PolicyVersion: s.PolicyVersion, RefID: ref}
+}
+
+// endAttempt schließt den Start-Eintrag eines offenen Versuchs ohne Kopie
+// (Ergebnis error) und löscht den Versuch am Entwurf (nicht gespeichert).
+func (s *Service) endAttempt(x *store.DraftTx, d *store.Draft, now time.Time, reason string) error {
+	a := d.PushAttempt
+	d.PushAttempt = nil
+	if a == nil || a.AuditID == 0 {
+		return nil
+	}
+	_, err := x.AppendAudit(s.pushEvent(now, *d, audit.ResultError, reason, a.AuditID, map[string]any{"mailbox_id": a.MailboxID}))
+	return err
+}
 
 // copyState wertet den Spiegel zur zuletzt abgelegten Kopie aus: "" (da und
 // unverändert oder nicht prüfbar), RemoteTakenOver (eine bearbeitete
@@ -276,10 +306,24 @@ type PushedCopy struct {
 // vermerkt ist, findet der nächste Push sie darüber im Spiegel wieder
 // (adoptOrphan) und legt keine zweite ab. Ein früherer Versuch wird
 // überschrieben (dessen Kopie hätte der Push vorher übernommen).
+//
+// A7 (T1b): In derselben Transaktion entsteht der Audit-Eintrag drafts.push
+// mit Ergebnis started, **vor** dem APPEND; der Vermerk der Kopie
+// (appended, auch adopted), die Ablehnung (push_rejected) oder das Ende
+// ohne Kopie (attempt_without_copy) schließt ihn mit ref_id ab. Ein
+// ersetzter früherer Versuch wird dabei als ohne Kopie abgeschlossen.
 func (s *Service) Attempt(ctx context.Context, id int64, a store.PushAttempt) error {
+	now := s.now()
 	return s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(id)
 		if err != nil {
+			return err
+		}
+		if err := s.endAttempt(x, &d, now, ReasonAttemptWithoutCopy); err != nil {
+			return err
+		}
+		if a.AuditID, err = x.AppendAudit(s.pushEvent(now, d, audit.ResultStarted, ReasonAppend, 0,
+			map[string]any{"mailbox_id": a.MailboxID})); err != nil {
 			return err
 		}
 		d.PushAttempt = &a
@@ -297,6 +341,12 @@ func (s *Service) Rejected(ctx context.Context, id int64) error {
 		d, err := x.Draft(id)
 		if err != nil {
 			return err
+		}
+		if a := d.PushAttempt; a != nil && a.AuditID > 0 {
+			if _, err := x.AppendAudit(s.pushEvent(s.now(), d, audit.ResultError, PushNotePushRejected, a.AuditID,
+				map[string]any{"mailbox_id": a.MailboxID})); err != nil {
+				return err
+			}
 		}
 		d.PushAttempt = nil
 		if d.PushNote != PushNoteApprovalStale {
@@ -334,6 +384,10 @@ func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c Pu
 // recordCopy ist Pushed in einer Transaktion; adopted kennzeichnet eine
 // übernommene Kopie eines abgebrochenen Versuchs (W1) im Audit.
 func (s *Service) recordCopy(x *store.DraftTx, d *store.Draft, fingerprint string, c PushedCopy, now time.Time, adopted bool) (bool, error) {
+	var ref int64 // Start-Eintrag des Versuchs (A7)
+	if d.PushAttempt != nil {
+		ref = d.PushAttempt.AuditID
+	}
 	if d.PushedContentHash != "" && d.RemoteUID > 0 && d.RemoteMailboxID > 0 {
 		d.RemotePrevious = append(d.RemotePrevious, store.RemoteCopy{MailboxID: d.RemoteMailboxID, UID: d.RemoteUID,
 			UIDValidity: d.RemoteUIDValidity, ContentHash: d.PushedContentHash})
@@ -364,7 +418,7 @@ func (s *Service) recordCopy(x *store.DraftTx, d *store.Draft, fingerprint strin
 	b, _ := json.Marshal(p)
 	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpPush,
 		ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK,
-		Reason: ReasonAppended, PolicyVersion: s.PolicyVersion})
+		Reason: ReasonAppended, PolicyVersion: s.PolicyVersion, RefID: ref})
 	return current, err
 }
 

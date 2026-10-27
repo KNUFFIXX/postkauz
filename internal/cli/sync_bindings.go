@@ -256,6 +256,13 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		parts = append(parts, fmt.Sprintf("%d copy/copies gone from the Drafts folder without a matching sent message "+
 			"(close with draft mark-sent or draft abandon)", c.Missing))
 	}
+	if c.AdoptedClosed > 0 {
+		parts = append(parts, fmt.Sprintf("%d copy/copies of an interrupted upload found for closed drafts; they stay in the Drafts folder "+
+			"(draft show <id>)", c.AdoptedClosed))
+	}
+	if c.LostAttempts > 0 {
+		parts = append(parts, fmt.Sprintf("%d interrupted upload(s) of closed drafts never reached the Drafts folder", c.LostAttempts))
+	}
 	if c.TakenOver > 0 {
 		parts = append(parts, fmt.Sprintf("%d edited in the mail client (taken over)", c.TakenOver))
 	}

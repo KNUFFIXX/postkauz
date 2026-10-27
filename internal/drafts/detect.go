@@ -49,6 +49,12 @@ type CheckReport struct {
 	TakenOver int `json:"taken_over,omitempty"`
 	// SentDraftIDs: die als gesendet erkannten Entwürfe.
 	SentDraftIDs []int64 `json:"sent_draft_ids,omitempty"`
+	// AdoptedClosed: Kopien abgebrochener Ablageversuche abgeschlossener
+	// Entwürfe, die die Prüfung übernommen hat (A7; push_note
+	// pushed_after_close). LostAttempts: solche Versuche ohne Kopie im
+	// gespiegelten Entwürfe-Ordner (abgeschlossen mit attempt_without_copy).
+	AdoptedClosed int `json:"adopted_after_close,omitempty"`
+	LostAttempts  int `json:"attempts_without_copy,omitempty"`
 	// Examined: gesendete Nachrichten, die der Rückfall-Abgleich geladen
 	// hat (neue und solche im Fenster neuer oder geänderter Entwürfe; W2).
 	// Nur für Tests und Messungen, nicht in der Ausgabe.
@@ -57,7 +63,7 @@ type CheckReport struct {
 
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
-	return r.SentByMessageID+r.SentByFallback+r.Expired+r.Missing+r.TakenOver == 0
+	return r.SentByMessageID+r.SentByFallback+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+r.LostAttempts == 0
 }
 
 // Add zählt o dazu (Dauerbetrieb: eine Prüfung je Runde).
@@ -67,6 +73,8 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.Expired += o.Expired
 	r.Missing += o.Missing
 	r.TakenOver += o.TakenOver
+	r.AdoptedClosed += o.AdoptedClosed
+	r.LostAttempts += o.LostAttempts
 	r.SentDraftIDs = append(r.SentDraftIDs, o.SentDraftIDs...)
 	r.Examined += o.Examined
 }
@@ -108,7 +116,51 @@ func (s *Service) CheckAfterSync(ctx context.Context, accountID int64, o CheckOp
 	if err != nil || o.SkipSent {
 		return rep, err
 	}
+	if err := s.settleClosedAttempts(ctx, accountID, &rep); err != nil {
+		return rep, err
+	}
 	return rep, s.refreshRemote(ctx, accountID, &rep)
+}
+
+// settleClosedAttempts erledigt offene Ablageversuche abgeschlossener
+// Entwürfe (A7): Der Lauf brach zwischen APPEND und Vermerk ab, danach
+// wurde der Entwurf verworfen oder als gesendet markiert. Der Entwürfe-
+// Ordner ist in diesem Lauf fehlerfrei gespiegelt (sonst SkipSent): Liegt
+// die Kopie dort, wird sie übernommen (pushed_after_close, Audit adopted,
+// draft show nennt sie; nichts wird gelöscht); sonst kam der Versuch nie an
+// und wird mit attempt_without_copy abgeschlossen. Das Audit ist danach
+// vollständig (kein Start-Eintrag ohne Abschluss).
+func (s *Service) settleClosedAttempts(ctx context.Context, accountID int64, rep *CheckReport) error {
+	ids, err := s.Store.ClosedDraftsWithAttempt(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	for _, id := range ids {
+		err := s.tx(ctx, func(x *store.DraftTx) error {
+			d, err := x.Draft(id)
+			if err != nil || d.PushAttempt == nil || !Status(d.Status).Closed() {
+				return err
+			}
+			adopted, err := s.adoptOrphan(x, &d, now)
+			if err != nil {
+				return err
+			}
+			if adopted {
+				rep.AdoptedClosed++
+				return nil
+			}
+			if err := s.endAttempt(x, &d, now, ReasonAttemptWithoutCopy); err != nil {
+				return err
+			}
+			rep.LostAttempts++
+			return x.UpdateDraft(d)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // detectSent erkennt gesendete Entwürfe: zuerst über die Message-ID, für

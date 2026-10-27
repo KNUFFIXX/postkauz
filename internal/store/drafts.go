@@ -119,6 +119,10 @@ type PushAttempt struct {
 	Date string `json:"date"`
 	// Fingerprint des Entwurfs, aus dem die Bytes gebaut wurden.
 	Fingerprint string `json:"fingerprint"`
+	// AuditID ist der Start-Eintrag (result started) dieses Versuchs im
+	// Audit (A7, seit T1b); der Abschluss verweist mit ref_id darauf. 0 bei
+	// Versuchen älterer Versionen.
+	AuditID int64 `json:"audit_id,omitempty"`
 }
 
 // RemoteCopy ist eine frühere Kopie eines Entwurfs im Entwürfe-Ordner.
@@ -380,6 +384,27 @@ func getDraft(ctx context.Context, q querier, id int64) (Draft, error) {
 		return d, fmt.Errorf("%w: %d", ErrDraftNotFound, id)
 	}
 	return d, err
+}
+
+// ClosedDraftsWithAttempt liefert die abgeschlossenen Entwürfe eines Kontos
+// mit offenem Ablageversuch (A7: abgebrochen zwischen APPEND und Vermerk,
+// danach verworfen oder als gesendet markiert).
+func (s *SQLite) ClosedDraftsWithAttempt(ctx context.Context, accountID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM drafts WHERE account_id = ? AND push_attempt IS NOT NULL
+		AND status IN ('sent_by_human', 'abandoned') ORDER BY id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ListDrafts liefert Entwürfe, neueste zuerst.
