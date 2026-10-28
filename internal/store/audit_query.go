@@ -214,8 +214,11 @@ func longRunIn() string {
 // Sync und Import (LongRunOps) der Konten in busy, deren Kontosperre
 // gehalten wird (ein Lauf ist noch im Gang; A-F9: je Konto, nicht alle).
 // Ein Start ohne Ziel zählt nicht, solange irgendeine Sperre gehalten wird.
+// Starts von Sync und Import im Trockenlauf zählen nie: Sie halten keine
+// Sperre, laufen also womöglich noch, und niemand schließt sie ab
+// (CloseDeadStarts); geändert haben sie nichts.
 func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, busy ...string) (int, error) {
-	q := `SELECT count(*) FROM audit_events a WHERE ` + openStart + ` AND a.ts < ?`
+	q := `SELECT count(*) FROM audit_events a WHERE ` + openStart + ` AND a.ts < ? AND NOT (` + longRunIn() + ` AND a.dry_run = 1)`
 	args := []any{before.UnixMilli()}
 	if len(busy) > 0 {
 		q += ` AND NOT (` + longRunIn() + ` AND (COALESCE(json_array_length(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END), 0) = 0
@@ -258,9 +261,18 @@ const DeadStartAge = 10 * time.Minute
 // des Kontos; nil = keines gilt als belegt). So schließt ein Lauf für
 // Konto a nicht den Start eines --all-Prozesses, der für Konto b noch
 // läuft.
+//
+// Trockenläufe (dry_run = 1) schließt CloseDeadStarts nie ab: sync und
+// import im Trockenlauf holen keine Kontosperre, ein solcher Start kann
+// also zu einem Lauf gehören, der parallel zum Sperrhalter noch läuft; sein
+// echter Abschluss scheiterte sonst am UNIQUE-Index audit_events_ref
+// (Codex-Runde auf 589bb8d, Prüfsitzung DRACO-PK09). Ob sein Prozess noch
+// lebt, lässt sich nicht nachweisen; ein Trockenlauf ändert nichts außer
+// dem Audit, deshalb bleibt ein toter Trockenlauf-Start offen (doctor zählt
+// ihn nicht, AuditOpenStarts).
 func (s *SQLite) CloseDeadStarts(ctx context.Context, account string, exceptID int64, now time.Time, busy func(account string) bool) (int, error) {
 	q := `SELECT a.id, a.targets FROM audit_events a
-		WHERE ` + openStart + ` AND ` + longRunIn() + ` AND ` + startOfAccount + ` AND a.ts <= ?`
+		WHERE ` + openStart + ` AND ` + longRunIn() + ` AND a.dry_run = 0 AND ` + startOfAccount + ` AND a.ts <= ?`
 	args := []any{account, now.Add(-DeadStartAge).UnixMilli()}
 	if exceptID > 0 {
 		q += ` AND a.id < ?`

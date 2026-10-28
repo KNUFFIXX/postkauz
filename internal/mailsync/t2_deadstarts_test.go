@@ -14,8 +14,18 @@ import (
 // mit dem Zeitstempel ts (wie vom Executor eines anderen Prozesses).
 func insertStart(t *testing.T, st *store.SQLite, ts time.Time) int64 {
 	t.Helper()
-	if err := st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, api_key_id, operation, params_redacted, targets, result)
-		VALUES (?, 'human', 'cli', 'sync.run', '{}', '["account:demo"]', 'started')`, ts.UnixMilli()); err != nil {
+	return insertStartDry(t, st, ts, false)
+}
+
+// insertStartDry wie insertStart, mit dry_run.
+func insertStartDry(t *testing.T, st *store.SQLite, ts time.Time, dry bool) int64 {
+	t.Helper()
+	d := 0
+	if dry {
+		d = 1
+	}
+	if err := st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, api_key_id, operation, params_redacted, targets, result, dry_run)
+		VALUES (?, 'human', 'cli', 'sync.run', '{}', '["account:demo"]', 'started', ?)`, ts.UnixMilli(), d); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := st.AuditQuery(context.Background(), store.AuditFilter{Result: "started"})
@@ -91,5 +101,33 @@ func TestWatchClosesStartsThatAgeLater(t *testing.T) {
 	// tot, also ebenfalls abgeschlossen; nichts doppelt.
 	if c := closedStarts(t, e.st); !c[own] || len(c) != 2 {
 		t.Fatalf("closed = %v", c)
+	}
+}
+
+// Codex-Runde auf 589bb8d: Ein Trockenlauf (sync/import --dry-run) hält
+// keine Kontosperre und läuft womöglich noch, wenn ein schreibender Lauf
+// desselben Kontos die Sperre holt. Sein Start bleibt offen, auch wenn er
+// älter als DeadStartAge ist, und sein echter Abschluss gelingt danach;
+// ein gleich alter schreibender Start daneben wird abgeschlossen.
+func TestDryRunStartIsNotClosedByParallelRun(t *testing.T) {
+	e := newPushEnv(t)
+	dry := insertStartDry(t, e.st, time.Now().Add(-2*store.DeadStartAge), true)
+	dead := insertStart(t, e.st, time.Now().Add(-2*store.DeadStartAge))
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c := closedStarts(t, e.st)
+	if c[dry] || !c[dead] {
+		t.Fatalf("closed = %v (dry run %d, dead %d)", c, dry, dead)
+	}
+	if err := e.st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, operation, result, dry_run, ref_id) VALUES (?, 'human', 'sync.run', 'ok', 1, ?)`,
+		time.Now().UnixMilli(), dry); err != nil {
+		t.Fatalf("own end entry of the dry run: %v", err)
+	}
+	// doctor zählt einen offenen Trockenlauf-Start nicht.
+	other := insertStartDry(t, e.st, time.Now().Add(-2*store.DeadStartAge), true)
+	n, err := e.st.AuditOpenStarts(context.Background(), time.Now())
+	if err != nil || n != 0 {
+		t.Fatalf("open starts = %d %v (dry run %d)", n, err, other)
 	}
 }
