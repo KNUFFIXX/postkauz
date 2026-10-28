@@ -36,6 +36,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S1.1 ✓ | `account add`, `account test`, `account remove` (siehe Abschnitt 2a) | `accounts.add`, `accounts.test`, `accounts.remove` (Scope `admin`, R1; nicht über MCP) |
 | S2.0 ✓ | `account set <name> --aliases a@…,b@…` (Abschnitt 2a) | `accounts.set` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
 | S2.1 ✓ | `account set <name> --password-stdin` (Abschnitt 2a; Entscheid 36) | `accounts.set` mit `replace_password` (das Passwort selbst geht getrennt von der Eingabe, nie ins Audit) |
+| T2 ✓ | `account set <name> --drafts-mailbox <pfad>` (A5.1; `""` = keiner) | `accounts.set` mit `drafts_mailbox`: Entwürfe-Ordner dieses Kontos; Reihenfolge Konto → `[draft] mailbox` → Rolle `drafts` |
 | S3.7 ✓ | `account add <name> --auth oauth2 --client-id <id> [--tenant …]`, `account login <name> [--device-code]` (Abschnitt 2a; E11) | `accounts.add` mit `auth_type` `oauth2`; `accounts.login` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
 | S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`) | `sync.run` (Scope `mail:sync`, R2 seit T1b: legt Entwürfe per APPEND ab) |
 | S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
@@ -385,7 +386,7 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   [tags]                    # seit T2 (E5)
   sync_keywords = false     # true: Tags zusätzlich als IMAP-Keywords auf den Server (nur in Ordnern mit PERMANENTFLAGS \*)
   max_attachment_bytes = 26214400  # Summe der Anhänge eines Entwurfs (Standard 25 MiB, höchstens 256 MiB)
-  mailbox = ""              # Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts
+  mailbox = ""              # Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts; seit T2 geht ein Ordner je Konto vor (account set --drafts-mailbox)
   quote_line = "On {date}, {from} wrote:"  # Einleitung des Zitats; nur {date}, {date_numeric} und {from}, eine Zeile
   ```
 

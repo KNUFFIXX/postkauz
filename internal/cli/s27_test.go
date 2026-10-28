@@ -247,7 +247,7 @@ func TestDraftShowEMLIsPushedCopy(t *testing.T) {
 	// Entscheid 43: Nach dem zweiten Push liegen zwei Kopien von Entwurf 1
 	// im Ordner (uid 1 und 4); draft show und draft list warnen, auch in
 	// --json, bis der Mensch die alte Kopie im Mailclient löscht.
-	const warn = "older copies in Drafts: 1 (delete them in your mail client; postkauz never deletes)"
+	warn := ops.OlderCopiesWarning(1, 1)
 	out, _ = step(ExitOK, "draft", "show", "1")
 	if !strings.Contains(out, "warning: "+warn) {
 		t.Fatalf("draft show without the warning:\n%s", out)

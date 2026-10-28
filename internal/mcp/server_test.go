@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"slices"
 	"sort"
@@ -406,5 +407,47 @@ func TestRawErrorTextNotPassedOn(t *testing.T) {
 	}
 	if te := classify(context.Canceled); te.Code != "canceled" {
 		t.Fatalf("canceled = %+v", te)
+	}
+}
+
+// T2 Punkt 7: Scheitert ein Tool, nennt das Log die Audit-ID des Aufrufs
+// und einen festen Code, nie den Text des Fehlers oder die Eingabe.
+func TestToolFailureLogHasAuditIDAndCode(t *testing.T) {
+	reg, err := ops.NewDefaultRegistry(ops.Deps{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	key := policy.Key{ID: "key:r", Scopes: policy.Roles["reader"]}
+	au := &audit.Memory{}
+	srv, err := New(Options{Executor: &ops.Executor{Registry: reg, Audit: au}, Key: key, Version: "test", Log: log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, st := sdk.NewInMemoryTransports()
+	ctx := context.Background()
+	ss, err := srv.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ss.Close()
+	cs, err := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "mail_get_message", Arguments: map[string]any{"id": "KANARIE-Eingabe"}})
+	if err != nil || !res.IsError {
+		t.Fatalf("call = %+v %v", res, err)
+	}
+	evs := au.Events()
+	if len(evs) != 1 {
+		t.Fatalf("audit = %+v", evs)
+	}
+	line := buf.String()
+	if !strings.Contains(line, "mcp tool failed") || !strings.Contains(line, "code=invalid_input") ||
+		!strings.Contains(line, "audit_id=") || strings.Contains(line, "audit_id=0") || strings.Contains(line, "KANARIE") {
+		t.Fatalf("log = %s", line)
 	}
 }

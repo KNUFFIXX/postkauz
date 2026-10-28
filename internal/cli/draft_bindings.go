@@ -624,7 +624,7 @@ func renderDraftList(w io.Writer, out any) error {
 	// Entscheid 43: ältere Kopien im Entwürfe-Ordner, je Entwurf eine Zeile.
 	for _, d := range o.Drafts {
 		if d.OlderCopies > 0 {
-			if _, err := fmt.Fprintf(w, "warning: draft %d: %s\n", d.DraftID, ops.OlderCopiesWarning(d.OlderCopies)); err != nil {
+			if _, err := fmt.Fprintf(w, "warning: draft %d: %s\n", d.DraftID, ops.OlderCopiesWarning(d.DraftID, d.OlderCopies)); err != nil {
 				return err
 			}
 		}

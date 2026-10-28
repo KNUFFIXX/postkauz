@@ -145,6 +145,7 @@ var cliSamples = []cliSample{
 		"--tls", "none", "--auth", "app_password", "--insecure-test-server", "--password-from-env", "--dry-run"}, false},
 	{"accounts.set", []string{"account", "set", "demo", "--aliases", "Alias@example.org, zweit@example.net"}, false},
 	{"accounts.set", []string{"account", "set", "demo", "--password-stdin"}, false},
+	{"accounts.set", []string{"account", "set", "demo", "--drafts-mailbox", ""}, false},
 	{"accounts.test", []string{"account", "test", "demo"}, false},
 	// S3.7: OAuth2-Konto anlegen und anmelden (Fake-AS, setupEnv).
 	{"accounts.add", []string{"account", "add", "ms", "--imap", "outlook.office365.com:993", "--user", "ms@example.org",

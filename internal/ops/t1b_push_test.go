@@ -285,3 +285,35 @@ func TestAF3RevokedLastWriterStopsPush(t *testing.T) {
 		}
 	}
 }
+
+// T2 Punkt 7 (Offene Frage 1, Default „ja“): Ein Agent legt vor, der
+// Mensch gibt frei, danach läuft der Schlüssel des Agenten ab (nicht:
+// widerrufen). Die freigegebene Nachricht wird trotzdem abgelegt; ein
+// Entwurf desselben Schlüssels ohne Freigabe nicht.
+func TestExpiredKeyAfterHumanApproval(t *testing.T) {
+	ctx := context.Background()
+	e := newPushEnv(t)
+	e.push(t)
+	if err := e.st.ExecForTest(`UPDATE jobs SET state = 'done'`); err != nil {
+		t.Fatal(err)
+	}
+	approved := e.newDraftFor(t, "Freigegeben")
+	req := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": approved}).(DraftsRequestOutput)
+	e.must(t, humanCLI, "drafts.approve", map[string]any{"approval_id": req.ApprovalID})
+	open := e.newDraftFor(t, "Offen")
+	if err := e.st.ExecForTest(`UPDATE api_keys SET expires_at = ? WHERE name = 'assistent'`, e.now.Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	n := len(e.app.raws)
+	e.settle(t)
+	rep := e.push(t)
+	if rep.Pushed != 1 || len(e.app.raws) != n+1 || e.app.mids[len(e.app.mids)-1] != e.draft(t, approved).MessageIDHeader {
+		t.Fatalf("push = %+v, %d appends", rep, len(e.app.raws)-n)
+	}
+	if d := e.draft(t, open); d.Status != string(drafts.StatusAbandoned) {
+		t.Fatalf("draft of the expired key without approval = %s", d.Status)
+	}
+	if a, _ := e.st.Approval(ctx, req.ApprovalID); a.Decision != drafts.DecisionApproved {
+		t.Fatalf("approval = %+v", a)
+	}
+}

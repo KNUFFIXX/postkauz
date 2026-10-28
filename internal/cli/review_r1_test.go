@@ -12,7 +12,7 @@ import (
 // Kopien; jede nur einmal.
 func TestDraftShowEMLNotesAllWarnings(t *testing.T) {
 	attach := "attachment Rechnung.pdf: the content is not a PDF (declared application/pdf)"
-	older := ops.OlderCopiesWarning(2)
+	older := ops.OlderCopiesWarning(1, 2)
 	got := draftShowNotes(ops.DraftDetail{EML: "Date: x\r\n\r\nx", EMLNote: "byte for byte the copy (uid 4)",
 		Warnings: []string{attach, older}, OlderCopies: 2})
 	want := []string{"eml: byte for byte the copy (uid 4)", attach, older}

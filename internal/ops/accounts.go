@@ -75,6 +75,8 @@ type AccountRepo interface {
 	// SetCredentialRef stellt den Schlüsselbund-Verweis um (S2.0/A2,
 	// accounts.set mit neuem Passwort, Entscheid 36).
 	SetCredentialRef(ctx context.Context, id int64, ref string) error
+	// SetAccountDraftsMailbox setzt den Entwürfe-Ordner (A5.1, T2).
+	SetAccountDraftsMailbox(ctx context.Context, id int64, path string) error
 }
 
 // ProbeMailbox ist ein Ordner im Ergebnis von accounts.test.
@@ -517,6 +519,9 @@ type AccountsSetInput struct {
 	// --password-stdin) und ersetzt das gespeicherte (Entscheid 36). Das
 	// Passwort selbst steht nie in der Eingabe.
 	ReplacePassword bool `json:"replace_password,omitempty"`
+	// DraftsMailbox setzt den Entwürfe-Ordner dieses Kontos (A5.1, T2;
+	// "" = keiner, dann [draft] mailbox bzw. Rolle drafts).
+	DraftsMailbox *string `json:"drafts_mailbox,omitempty"`
 }
 
 // AccountsSetOutput ist die Ausgabe von accounts.set. Sie enthält nie ein
@@ -526,6 +531,10 @@ type AccountsSetOutput struct {
 	Aliases []string `json:"aliases"`
 	// AliasesChanged: Die Eingabe enthielt aliases.
 	AliasesChanged bool `json:"aliases_changed"`
+	// DraftsMailbox: Entwürfe-Ordner des Kontos nach dem Aufruf ("" =
+	// keiner eigener); DraftsMailboxChanged: Die Eingabe enthielt ihn.
+	DraftsMailbox        string `json:"drafts_mailbox"`
+	DraftsMailboxChanged bool   `json:"drafts_mailbox_changed"`
 	// Password: "" (unverändert) | replaced | would_replace (Trockenlauf).
 	Password string `json:"password,omitempty"`
 	// CredentialRef und SecretStore: wohin das Passwort ging (Verweis im
@@ -603,13 +612,14 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 		Risk:       policy.R1,
 		Idempotent: true,
 		HumanOnly:  true,
-		Summary:    "Change account settings: the further own addresses (aliases) and the stored password. Human only.",
+		Summary:    "Change account settings: the further own addresses (aliases), the Drafts folder and the stored password. Human only.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
     "aliases": {"type": "array", "items": {"type": "string"}, "maxItems": 200},
-    "replace_password": {"type": "boolean", "description": "replace the stored password with the secret passed separately (CLI: --password-stdin); the password is never part of the input"}
+    "replace_password": {"type": "boolean", "description": "replace the stored password with the secret passed separately (CLI: --password-stdin); the password is never part of the input"},
+    "drafts_mailbox": {"type": "string", "maxLength": 1000, "description": "Drafts folder of this account (path on the server); empty = [draft] mailbox of the configuration, else the mailbox with role drafts"}
   },
   "required": ["name"],
   "additionalProperties": false
@@ -620,13 +630,14 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
     "account": {"type": "string"},
     "aliases": {"type": "array", "items": {"type": "string"}},
     "aliases_changed": {"type": "boolean"},
+    "drafts_mailbox": {"type": "string"}, "drafts_mailbox_changed": {"type": "boolean"},
     "password": {"type": "string", "enum": ["replaced", "would_replace"]},
     "credential_ref": {"type": "string"},
     "secret_store": {"type": "string"},
     "env_override": {"type": "string"},
     "dry_run": {"type": "boolean"}
   },
-  "required": ["account", "aliases", "aliases_changed", "dry_run"]
+  "required": ["account", "aliases", "aliases_changed", "drafts_mailbox", "drafts_mailbox_changed", "dry_run"]
 }`),
 		Redact: redactAccountSet,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -638,8 +649,10 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 				return nil, err
 			}
 			switch {
-			case in.Aliases == nil && !in.ReplacePassword:
-				return nil, inputErr("nothing to change: give aliases (an empty list removes them) or a new password")
+			case in.Aliases == nil && !in.ReplacePassword && in.DraftsMailbox == nil:
+				return nil, inputErr("nothing to change: give aliases (an empty list removes them), drafts_mailbox or a new password")
+			case in.DraftsMailbox != nil && strings.ContainsAny(*in.DraftsMailbox, "\x00\r\n"):
+				return nil, inputErr("drafts_mailbox contains a line break or NUL")
 			case in.ReplacePassword && call.Secret.IsZero():
 				return nil, inputErr("replace_password needs the new password (CLI: --password-stdin)")
 			case !in.ReplacePassword && !call.Secret.IsZero():
@@ -649,7 +662,10 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 			if err != nil {
 				return nil, err
 			}
-			out := AccountsSetOutput{Account: a.Name, Aliases: a.Aliases, DryRun: call.DryRun}
+			out := AccountsSetOutput{Account: a.Name, Aliases: a.Aliases, DryRun: call.DryRun, DraftsMailbox: a.DraftsMailbox}
+			if in.DraftsMailbox != nil {
+				out.DraftsMailbox, out.DraftsMailboxChanged = strings.TrimSpace(*in.DraftsMailbox), true
+			}
 			if out.Aliases == nil {
 				out.Aliases = []string{}
 			}
@@ -685,6 +701,11 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 			}
 			if in.Aliases != nil {
 				if err := repo.SetAccountAliases(ctx, a.ID, out.Aliases); err != nil {
+					return nil, err
+				}
+			}
+			if in.DraftsMailbox != nil {
+				if err := repo.SetAccountDraftsMailbox(ctx, a.ID, out.DraftsMailbox); err != nil {
 					return nil, err
 				}
 			}

@@ -362,7 +362,7 @@ func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (denial, 
 		content bool
 	}
 	ids := []origin{{id: d.CreatedBy}}
-	humanRequested := false
+	humanRequested, humanApproved := false, false
 	if d.ApprovalID > 0 {
 		a, err := p.o.svc.Store.Approval(ctx, d.ApprovalID)
 		if err != nil && !drafts.IsNotFound(err) {
@@ -372,6 +372,12 @@ func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (denial, 
 			ids = append(ids, origin{id: a.RequestedBy})
 			humanRequested = a.RequestedBy == drafts.HumanKeyID
 		}
+		// T2 Punkt 7 (Offene Frage 1, Default): Hat der Mensch genau diese
+		// Nachricht freigegeben (ready, Freigabe erteilt; approvedMessage
+		// prüft danach den message_hash), hält ein inzwischen nur
+		// abgelaufener Schlüssel die Ablage nicht auf. Ein widerrufener
+		// Schlüssel weiter schon.
+		humanApproved = err == nil && a.Decision == drafts.DecisionApproved && d.Status == string(drafts.StatusReady)
 	}
 	if d.UpdatedBy != "" && d.UpdatedBy != d.CreatedBy && !humanRequested {
 		ids = append(ids, origin{id: d.UpdatedBy, content: true})
@@ -393,6 +399,9 @@ func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (denial, 
 		case "revoked":
 			return denial{"key_revoked", o.content}, nil
 		case "expired":
+			if humanApproved {
+				continue
+			}
 			return denial{"key_expired", o.content}, nil
 		}
 		pk := PolicyKey(k)

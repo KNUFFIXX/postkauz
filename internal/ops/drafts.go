@@ -1350,7 +1350,7 @@ func DraftsGet(d Deps) Operation {
 			}
 			if out.OlderCopies = len(older); out.OlderCopies > 0 {
 				out.OlderCopyUIDs = older
-				out.Warnings = append(out.Warnings, OlderCopiesWarning(out.OlderCopies))
+				out.Warnings = append(out.Warnings, OlderCopiesWarning(dr.ID, out.OlderCopies))
 			}
 			if in.EML {
 				if err := o.eml(ctx, acc, dr, &out); err != nil {
@@ -1381,9 +1381,12 @@ func budgetSource(md, html string, max int) (string, string, bool) {
 
 // OlderCopiesWarning ist die Warnung zu älteren Kopien im Entwürfe-Ordner
 // (Entscheid 43): Der Push legt nach jeder Änderung eine neue Kopie ab, die
-// alte bleibt, weil PostKauz nichts löscht (kein Expunge im MVP).
-func OlderCopiesWarning(n int) string {
-	return fmt.Sprintf("older copies in Drafts: %d (delete them in your mail client; postkauz never deletes)", n)
+// alte bleibt, weil PostKauz nichts endgültig löscht (kein Expunge). Seit
+// T2 nennt sie das Kommando, das sie in den Papierkorb legt
+// (drafts.cleanup_copies, nur der Mensch).
+func OlderCopiesWarning(draftID int64, n int) string {
+	return fmt.Sprintf("older copies in Drafts: %d (move them to the trash with: %s draft cleanup %d; postkauz never deletes for good)",
+		n, brand.Name, draftID)
 }
 
 // olderCopies liefert die UIDs älterer Kopien eines Entwurfs im

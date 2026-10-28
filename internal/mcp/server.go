@@ -216,9 +216,11 @@ func (h *handler) tool(b toolBinding, op ops.Operation, narrow *jsonschema.Resol
 		if err == nil && b.dryRun {
 			input, dryRun, err = takeDryRun(input)
 		}
+		var auditID int64
 		if err == nil {
 			var res ops.Result
 			res, err = h.callNarrow(ctx, op.Name, input, narrow, dryRun)
+			auditID = res.AuditID
 			if err == nil {
 				v, text, err := outputValue(res.Output)
 				if err != nil {
@@ -231,12 +233,29 @@ func (h *handler) tool(b toolBinding, op ops.Operation, narrow *jsonschema.Resol
 		}
 		// Nie der rohe Fehlertext (T1b, A03 Nachtrag 26.10.): Er kann Pfade,
 		// Texte der Datenbank oder Eingabewerte enthalten. Ins Log gehen
-		// Status, Code, Grund und der Typ des Fehlers.
+		// Status, ein fester Code, Grund, die Audit-ID des Aufrufs (T2 Punkt
+		// 7: der Betreiber findet den Eintrag im Audit) und der Typ des
+		// Fehlers.
 		te := classify(err)
-		h.o.Log.Warn("mcp tool failed", "tool", b.tool, "key", h.o.Key.ID, "status", te.Status, "code", te.Code, "reason", te.Reason,
-			"error_type", ops.ErrorKinds(err))
+		if te.AuditID != 0 {
+			auditID = te.AuditID
+		}
+		h.o.Log.Warn("mcp tool failed", "tool", b.tool, "key", h.o.Key.ID, "status", te.Status, "code", logCode(te), "reason", te.Reason,
+			"audit_id", auditID, "error_type", ops.ErrorKinds(err))
 		return errorResult(err), nil
 	}
+}
+
+// logCode ist der feste Code eines Fehlers fürs Log: der Code des
+// Fehlers, sonst der Grund einer Ablehnung, sonst der Status; nie Text.
+func logCode(te ToolError) string {
+	switch {
+	case te.Code != "":
+		return te.Code
+	case te.Reason != "":
+		return te.Status + ":" + te.Reason
+	}
+	return te.Status
 }
 
 // ToolError ist die Fehlerausgabe eines Tools: Status und Grund wie in

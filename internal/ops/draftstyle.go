@@ -161,7 +161,8 @@ var (
 // readStyleFile liest höchstens max Zeichen der Stildatei (ungültiges
 // UTF-8 wird ersetzt). Nur eine gewöhnliche Datei, kein Symlink, keine
 // FIFO und kein Gerät (Gegenprüfung S2.8, K2): os.Lstat prüft vor dem
-// Öffnen, denn das Öffnen einer FIFO blockiert, bis jemand hineinschreibt;
+// Öffnen, denn das Öffnen einer FIFO blockiert, bis jemand hineinschreibt
+// (seit T2 zusätzlich ohne Warten geöffnet, falls sie danach kommt);
 // nach dem Öffnen prüft f.Stat, dass es dieselbe gewöhnliche Datei ist
 // (os.SameFile), falls sie dazwischen ausgetauscht wurde. Die Lesegrenze
 // steht vor dem ersten Lesen fest.
@@ -176,7 +177,10 @@ func readStyleFile(path string, max int) (string, bool, error) {
 	case !before.Mode().IsRegular():
 		return "", false, errStyleNotRegular
 	}
-	f, err := os.Open(path)
+	// Ohne zu warten öffnen (openNonblock): Wird zwischen Lstat und Open
+	// eine FIFO untergeschoben, blockiert das Öffnen nicht; die Prüfung
+	// danach lehnt sie ab.
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonblock, 0)
 	if err != nil {
 		return "", false, err
 	}

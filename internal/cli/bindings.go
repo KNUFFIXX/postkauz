@@ -74,7 +74,7 @@ var bindings = []binding{
 		flags: accountLoginFlags, input: accountLoginInput, human: renderAccountLogin, progress: loginProgress,
 		covers: []string{"name", "device_code"}},
 	{op: "accounts.set", path: []string{"account", "set"}, use: "<name> [--aliases a@example.org,b@example.org] [--password-stdin]", args: cobra.ExactArgs(1),
-		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases", "replace_password"}},
+		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases", "replace_password", "drafts_mailbox"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
 		input: nameInput, human: renderAccountTest, covers: []string{"name"}},
 	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
@@ -459,6 +459,7 @@ func accountAddInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 func accountSetFlags(cmd *cobra.Command) {
 	cmd.Flags().String("aliases", "", "further own addresses of the account, comma separated; replaces the list (\"\" removes all)")
 	cmd.Flags().Bool("password-stdin", false, "replace the stored password with one read from standard input (hidden prompt on a terminal; never as an argument)")
+	cmd.Flags().String("drafts-mailbox", "", "Drafts folder of this account (path on the server; \"\" = [draft] mailbox of the configuration, else role drafts)")
 }
 
 func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error) {
@@ -481,8 +482,12 @@ func accountSetInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage
 		}
 		in.ReplacePassword = true
 	}
-	if in.Aliases == nil && !in.ReplacePassword {
-		return nil, "", usageError{errors.New("nothing to change; use --aliases a@example.org,b@example.org (--aliases \"\" removes all) or --password-stdin")}
+	if cmd.Flags().Changed("drafts-mailbox") {
+		v, _ := cmd.Flags().GetString("drafts-mailbox")
+		in.DraftsMailbox = &v
+	}
+	if in.Aliases == nil && !in.ReplacePassword && in.DraftsMailbox == nil {
+		return nil, "", usageError{errors.New("nothing to change; use --aliases a@example.org,b@example.org (--aliases \"\" removes all), --drafts-mailbox <path> or --password-stdin")}
 	}
 	b, err := json.Marshal(in)
 	return b, pw, err
@@ -613,6 +618,15 @@ func renderAccountSet(w io.Writer, out any) error {
 			aliases = strings.Join(o.Aliases, ", ")
 		}
 		if _, err := fmt.Fprintf(w, "%s: aliases %s\n", prefix, aliases); err != nil {
+			return err
+		}
+	}
+	if o.DraftsMailboxChanged {
+		box := "the configured one ([draft] mailbox) or the mailbox with role drafts"
+		if o.DraftsMailbox != "" {
+			box = termLine(o.DraftsMailbox)
+		}
+		if _, err := fmt.Fprintf(w, "%s: Drafts folder %s\n", prefix, box); err != nil {
 			return err
 		}
 	}

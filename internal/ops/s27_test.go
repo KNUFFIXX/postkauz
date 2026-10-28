@@ -82,7 +82,7 @@ func TestOlderDraftCopies(t *testing.T) {
 	e.mirror(t, []store.NewMessage{mirrored(second)}, nil, uint32(second.RemoteUID)+1)
 	g, n := count()
 	if g.OlderCopies != 1 || n != 1 || g.OlderCopyUIDs[0] != first.RemoteUID ||
-		!slices.Contains(g.Warnings, "older copies in Drafts: 1 (delete them in your mail client; postkauz never deletes)") {
+		!slices.Contains(g.Warnings, OlderCopiesWarning(id, 1)) {
 		t.Fatalf("two copies: %+v, list %d", g, n)
 	}
 	// Ein Mailclient speichert eine bearbeitete Fassung (höhere UID): Beide

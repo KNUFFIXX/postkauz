@@ -103,3 +103,40 @@ func TestWatchAppliesActionsBetweenRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A5.1: Der Entwürfe-Ordner je Konto (account set --drafts-mailbox) geht
+// [draft] mailbox der Konfiguration und der Rolle drafts vor; ohne ihn
+// gilt die Konfiguration.
+func TestDraftsMailboxPerAccount(t *testing.T) {
+	e := newPushEnv(t, "Drafts", "Eigene", "Global")
+	e.runner.DraftMailbox = "Global"
+	ctx := context.Background()
+	d1 := e.newDraft(t, "Konfiguration")
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	client := imapSession(t, e.addr)
+	if len(serverCopies(t, client, "Global", d1.MessageIDHeader)) != 1 {
+		t.Fatal("draft not in the configured mailbox")
+	}
+	if err := e.st.SetAccountDraftsMailbox(ctx, e.acct, "Eigene"); err != nil {
+		t.Fatal(err)
+	}
+	d2 := e.newDraft(t, "Konto")
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(serverCopies(t, client, "Eigene", d2.MessageIDHeader)) != 1 || len(serverCopies(t, client, "Drafts", d2.MessageIDHeader)) != 0 {
+		t.Fatal("draft not in the mailbox of the account")
+	}
+	// Ein zweites Konto ohne eigenen Ordner nimmt weiter die Konfiguration.
+	other, err := e.st.CreateAccount(ctx, store.Account{Name: "zwei", Email: "zwei@example.org", Host: "127.0.0.1", Port: 1, TLS: "none",
+		Username: "z", AuthType: "password", CredentialRef: "account/zwei"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2, _ := e.st.AccountByName(ctx, "zwei")
+	if a2.ID != other || e.runner.draftsMailbox(a2) != "Global" || e.runner.draftsMailbox(e.account(t)) != "Eigene" {
+		t.Fatalf("drafts mailbox: %q / %q", e.runner.draftsMailbox(a2), e.runner.draftsMailbox(e.account(t)))
+	}
+}
