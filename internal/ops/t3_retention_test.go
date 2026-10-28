@@ -36,10 +36,18 @@ const retCanary = "CANARY-Zaunkoenig-7f3a"
 // Dazu den Dienst in den Abhängigkeiten.
 func seedRetention(t *testing.T, e *contractEnv) {
 	t.Helper()
-	if err := e.st.ExecForTest(`INSERT INTO messages(account_id, subject, deleted_remote_at, created_at) VALUES (?, 'Weg', 1, 1)`, e.acct); err != nil {
-		t.Fatal(err)
-	}
-	if err := e.st.ExecForTest(`INSERT INTO blobs(sha256, size, created_at) VALUES (?, 3, 1)`, strings.Repeat("ab", 32)); err != nil {
+	ctx := context.Background()
+	// Eine Transaktion für alle Zeilen: Die Umgebung entsteht je Teiltest
+	// neu, und der Vertragstest liegt nahe an der Zeitgrenze von go test.
+	// audit.rotate braucht einen alten Tag mit zwei Einträgen, exportiert
+	// an einen eigenen Ort (audit.export an den Standardort wirkt dann
+	// noch); Datei, Manifest und Nachweis entstehen unten wie beim Export.
+	day := time.Date(2020, 1, 10, 0, 0, 0, 0, time.UTC)
+	if err := e.st.ExecForTest(`BEGIN;
+		INSERT INTO messages(account_id, subject, deleted_remote_at, created_at) VALUES (?1, 'Weg', 1, 1);
+		INSERT INTO blobs(sha256, size, created_at) VALUES (?2, 3, 1);
+		INSERT INTO audit_events(ts, actor_type, operation, result) VALUES (?3, 'human', 'accounts.list', 'ok'), (?4, 'human', 'accounts.list', 'ok');
+		COMMIT;`, e.acct, strings.Repeat("ab", 32), day.Add(9*time.Hour).UnixMilli(), day.Add(10*time.Hour).UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
 	bs, err := blob.Open(t.TempDir(), blob.Options{})
@@ -48,6 +56,28 @@ func seedRetention(t *testing.T, e *contractEnv) {
 	}
 	e.deps.Retention = &retention.Service{Store: e.st, Blobs: bs, LockDir: filepath.Dir(e.st.Path())}
 	e.deps.RetentionConfig = RetentionConfig{BlobGCMinAge: 24 * time.Hour, AuditRetain: 365 * 24 * time.Hour}
+
+	recs, err := e.st.AuditQuery(ctx, store.AuditFilter{Since: day, Until: day.Add(24 * time.Hour)})
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("old audit day: %d %v", len(recs), err)
+	}
+	d, err := auditDayContent(recs, 0, AuditExportFormat, auditChainGenesis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, name := t.TempDir(), day.Format("2006-01-02")
+	md := auditManifestDay{Day: name, File: auditFileName(name), Events: d.events, FirstEventID: d.first, LastEventID: d.last,
+		SHA256: sha256Hex(d.content), ChainHead: d.head}
+	if err := os.WriteFile(filepath.Join(dir, md.File), d.content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, auditManifestName()), buildManifest([]auditManifestDay{md}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.SaveAuditExport(ctx, store.AuditExport{Day: name, FirstEventID: d.first, LastEventID: d.last, SHA256: md.SHA256,
+		Location: dir, ExportedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type retEnv struct {

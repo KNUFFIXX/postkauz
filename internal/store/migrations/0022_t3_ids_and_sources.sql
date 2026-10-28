@@ -39,3 +39,33 @@ END;
 ALTER TABLE action_targets ADD COLUMN source_path TEXT;
 UPDATE action_targets SET source_path = (SELECT path FROM mailboxes WHERE mailboxes.id = action_targets.mailbox_id)
  WHERE result IS NULL;
+
+-- 3. Paket C (Löschkonzept, T3, A03 E8, A14): Archive der Audit-Rotation.
+--    audit rotate kopiert die Einträge exportierter und per audit verify
+--    bestätigter Tage, die älter als [audit] retain sind, in eine
+--    Archivdatenbank audit-archive-<von>-<bis>.db neben der Datenbank und
+--    löscht sie danach aus audit_events (eine Transaktion: Trigger lösen,
+--    löschen, Trigger neu anlegen). Hier stehen je Archiv Dateiname,
+--    Tagesbereich, ID-Bereich, Zahl der Einträge, die Prüfsumme der Datei
+--    und die Hash-Kette davor (chain_prev) und danach (chain_head, der
+--    Anker für den ersten verbleibenden Tag). Append-only wie audit_events.
+--    Neue Tabelle, kein Umbau: keine Zeile wird verworfen oder geändert.
+
+CREATE TABLE audit_archives (
+    id             INTEGER PRIMARY KEY,
+    file           TEXT NOT NULL UNIQUE CHECK (file GLOB 'audit-archive-*.db' AND file NOT GLOB '*[/\]*'),
+    from_day       TEXT NOT NULL,                 -- YYYY-MM-DD (UTC), erster Exporttag
+    to_day         TEXT NOT NULL CHECK (to_day >= from_day),
+    first_event_id INTEGER NOT NULL,
+    last_event_id  INTEGER NOT NULL CHECK (last_event_id >= first_event_id),
+    events         INTEGER NOT NULL CHECK (events > 0),
+    sha256         TEXT NOT NULL CHECK (length(sha256) = 64),  -- Prüfsumme der Archivdatei
+    chain_prev     TEXT NOT NULL,                 -- Kettenwert vor from_day (Format 2)
+    chain_head     TEXT NOT NULL,                 -- Anker: Kettenwert nach to_day
+    created_at     INTEGER NOT NULL
+) STRICT;
+
+CREATE TRIGGER audit_archives_no_update BEFORE UPDATE ON audit_archives
+BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;
+CREATE TRIGGER audit_archives_no_delete BEFORE DELETE ON audit_archives
+BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;

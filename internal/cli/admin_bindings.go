@@ -293,7 +293,8 @@ func renderAuditVerify(w io.Writer, out any) error {
 		fmt.Fprintf(w, "mismatch: %s in %s\n", plural(len(o.Problems), "problem", "problems"), plural(o.DaysChecked, "exported day", "exported days"))
 		why := map[string]string{ops.AuditFileMissing: "export file is missing", ops.AuditFileChanged: "export file was changed",
 			ops.AuditDatabaseChanged: "database rows differ from the export", ops.AuditChainBroken: "hash chain is broken",
-			ops.AuditManifestMissing: "manifest is missing", ops.AuditManifestChanged: "manifest does not match the recorded exports"}
+			ops.AuditManifestMissing: "manifest is missing", ops.AuditManifestChanged: "manifest does not match the recorded exports",
+			ops.AuditArchiveMissing: "archive is missing", ops.AuditArchiveChanged: "archive was changed"}
 		for _, p := range o.Problems {
 			msg := why[p.Problem]
 			if p.Line > 0 {

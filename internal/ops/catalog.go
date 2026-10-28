@@ -132,6 +132,7 @@ func Catalog(d Deps) []Operation {
 		DraftsCleanupCopies(d),
 		RetentionPurge(d),
 		BlobsGC(d),
+		AuditRotate(d.Audit, d.RetentionConfig.AuditRetain),
 	}
 }
 

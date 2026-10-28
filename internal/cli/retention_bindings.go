@@ -19,6 +19,7 @@ func init() {
 		binding{op: "retention.purge", path: []string{"purge"}, use: "--older-than <period> [--dry-run]", args: cobra.NoArgs,
 			flags: purgeFlags, input: purgeInput, human: renderPurge, covers: []string{"older_than", "account"}},
 		binding{op: "blobs.gc", path: []string{"blob", "gc"}, use: "[--dry-run]", args: cobra.NoArgs, human: renderBlobGC},
+		binding{op: "audit.rotate", path: []string{"audit", "rotate"}, use: "[--dry-run]", args: cobra.NoArgs, human: renderAuditRotate},
 	)
 }
 
@@ -81,4 +82,26 @@ func renderBlobGC(w io.Writer, out any) error {
 		return err
 	}
 	return nil
+}
+
+func renderAuditRotate(w io.Writer, out any) error {
+	o, ok := out.(ops.AuditRotateOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	what := fmt.Sprintf("%s (%s to %s, %s) into %s", plural(o.Days, "day", "days"), o.FromDay, o.ToDay,
+		plural(o.Events, "entry", "entries"), termLine(o.Archive))
+	switch o.Status {
+	case "nothing_to_rotate":
+		_, err := fmt.Fprintf(w, "nothing to rotate: no exported day ended before %s (retain %s)\n", o.Cutoff, o.Retain)
+		return err
+	case "would_rotate":
+		_, err := fmt.Fprintf(w, "dry run: would move %s; nothing changed\n", what)
+		return err
+	}
+	fmt.Fprintf(w, "rotated %s\n", what)
+	fmt.Fprintf(w, "sha256: %s\n", o.SHA256)
+	fmt.Fprintf(w, "chain anchor: %s\n", o.ChainHead)
+	_, err := fmt.Fprintln(w, "check with: audit verify")
+	return err
 }

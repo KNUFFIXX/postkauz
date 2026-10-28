@@ -259,7 +259,7 @@ Folgt mit Teil T5 (Linux-Server, systemd, Fernzugriff über HTTP-MCP).
 
 ## 5. Löschkonzept
 
-PostKauz löscht nie von selbst. Was auf dem Server gelöscht wurde, bleibt im lokalen Archiv, bis du es ausdrücklich entfernst (ADR-003). Dafür gibt es zwei Kommandos; sie laufen nur ohne `--key` (ein Agent kann sie nie aufrufen) und nie, während ein Sync oder Import läuft. Probiere jedes zuerst mit `--dry-run`: Dann zählt es nur und ändert nichts.
+PostKauz löscht nie von selbst. Was auf dem Server gelöscht wurde, bleibt im lokalen Archiv, bis du es ausdrücklich entfernst (ADR-003). Dafür gibt es zwei Kommandos, dazu eines für das Audit (5.3); sie laufen nur ohne `--key` (ein Agent kann sie nie aufrufen) und nie, während ein Sync oder Import läuft. Probiere jedes zuerst mit `--dry-run`: Dann zählt es nur und ändert nichts.
 
 ### 5.1 Was auf dem Server gelöscht wurde: `purge`
 
@@ -308,3 +308,41 @@ dry run: nothing changed
 ```
 
 Ohne `--dry-run` steht statt `would delete` die Zeile `deleted: …`. Danach meldet `doctor --blobs` bei `without reference` nur noch die frischen Dateien.
+
+### 5.3 Altes Audit archivieren: `audit rotate`
+
+Das Audit wächst mit jedem Aufruf. `audit rotate` verschiebt Tage, die älter als ein Jahr sind (`[audit] retain`, Standard `365d`), aus der Datenbank in eine eigene Archivdatei im Datenverzeichnis (`audit-archive-<von>-<bis>.db`). Es nimmt nur Tage, die schon exportiert sind und die `audit verify` bestätigt; sonst lehnt es ab. Die Prüfkette bleibt dabei ganz: `audit verify` und `audit export` lesen die alten Tage danach aus dem Archiv.
+
+1. Erst exportieren und prüfen (das tut die tägliche Aufgabe ohnehin):
+
+   ```powershell
+   C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export
+   C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit verify
+   ```
+
+   Erwartet zum Schluss von `audit verify`: eine Zeile, die mit `ok:` beginnt.
+2. Zählen:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit rotate --dry-run
+   ```
+
+   Erwartet (Daten und Zahlen je nach Bestand):
+
+   ```
+   dry run: would move 120 days (2025-06-01 to 2025-09-28, 8400 entries) into C:\PostKauz\data\audit-archive-2025-06-01-2025-09-28.db; nothing changed
+   ```
+
+   Ist nichts alt genug: `nothing to rotate: no exported day ended before … (retain 365d)`.
+3. Wirklich archivieren: dasselbe ohne `--dry-run`. Erwartet:
+
+   ```
+   rotated 120 days (2025-06-01 to 2025-09-28, 8400 entries) into C:\PostKauz\data\audit-archive-2025-06-01-2025-09-28.db
+   sha256: …
+   chain anchor: …
+   check with: audit verify
+   ```
+
+4. Danach `audit verify`: wieder `ok: …`. Die Archivdatei gehört zum Datenverzeichnis; sichere sie mit (das Backup tut das). **Lösche sie nie:** Ohne sie meldet `audit verify` `archive is missing`.
+
+Meldungen: `denied (not_exported)` heißt, ein alter Tag ist noch nicht (fertig) exportiert: `audit export`, dann `audit verify`, dann noch einmal. `denied (not_verified)` heißt, `audit verify` findet eine Abweichung; erst klären (Abschnitt 1.8), dann noch einmal.

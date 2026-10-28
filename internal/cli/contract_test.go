@@ -225,6 +225,7 @@ var cliSamples = []cliSample{
 	// zählen nur.
 	{"retention.purge", []string{"purge", "--older-than", "30d", "-a", "demo"}, false},
 	{"blobs.gc", []string{"blob", "gc", "--dry-run"}, false},
+	{"audit.rotate", []string{"audit", "rotate", "--dry-run"}, false},
 }
 
 // sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf

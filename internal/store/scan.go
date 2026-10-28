@@ -12,7 +12,7 @@ import (
 // Tabellen mit Mailinhalt fehlen bewusst: Ein Passwort, das jemand per Mail
 // geschickt hat, ist kein Leck des Programms.
 var ScanTables = []string{"meta", "accounts", "identities", "mailboxes", "api_keys", "policies", "jobs",
-	"audit_events", "audit_exports", "import_sources", "import_folders"}
+	"audit_events", "audit_exports", "audit_archives", "import_sources", "import_folders"}
 
 // TableText liefert den Inhalt einer Tabelle aus ScanTables als Text: eine
 // Zeile je Datensatz, Spalten durch Tabulator getrennt (für die Suche nach

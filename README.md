@@ -242,10 +242,12 @@ Details: `docs/cli.md` (section 2k), `docs/mcp.md`, `docs/sicherheit.md`.
 
 ## Deleting from the local archive
 
-Slice 3, part T3. PostKauz keeps what was deleted on the server until you remove it yourself; only a human (no `--key`) can, agents never see these commands, and neither runs while a sync or import is running (`sync_running`). Try each with `--dry-run` first: it only counts.
+Slice 3, part T3. PostKauz keeps what was deleted on the server until you remove it yourself; only a human (no `--key`) can, and agents never see these commands; `purge` and `blob gc` never run while a sync or import is running (`sync_running`). Try each with `--dry-run` first: it only counts.
 
 - `purge --older-than 180d` deletes messages that were deleted on the server more than 180 days ago, with their text, tags and search index. Imported archive messages and messages a draft refers to always stay. Default period: `[retention] deleted_remote_after` (none).
 - `blob gc` then deletes stored files (raw messages, attachments) nothing refers to any more and that are older than `[retention] blob_gc_min_age` (24 hours); draft attachments always stay.
+
+- `audit rotate` moves audit days older than `[audit] retain` (365 days) into an archive database `audit-archive-<from>-<to>.db` next to the database, but only days that were exported and confirmed by `audit verify` (otherwise `not_exported` / `not_verified`). `audit verify` and `audit export` keep working across the archive; keep the file with your backups.
 
 Step by step (German): `docs/betrieb.md`, section 5; details: `docs/cli.md`, section 2l.
 
