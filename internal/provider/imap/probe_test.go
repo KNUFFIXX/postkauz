@@ -179,3 +179,26 @@ func TestConnectAndListMailboxesInProcess(t *testing.T) {
 		t.Fatalf("roles = %v", got)
 	}
 }
+
+// V13 der Nachbesserung T2: virtuelle Sichten aus SPECIAL-USE oder dem
+// Gmail-Namen (englisch und deutsch), sonst nicht.
+func TestVirtualView(t *testing.T) {
+	for _, tc := range []struct {
+		m    imapx.MailboxInfo
+		want bool
+	}{
+		{imapx.MailboxInfo{Path: "[Gmail]/Markiert", Delim: "/"}, true},
+		{imapx.MailboxInfo{Path: "[Google Mail]/Wichtig", Delim: "/"}, true},
+		{imapx.MailboxInfo{Path: "[Gmail]/Starred", Delim: "/"}, true},
+		{imapx.MailboxInfo{Path: "[Gmail]/Important", Delim: "/"}, true},
+		{imapx.MailboxInfo{Path: "Notes", Attrs: []string{`\Important`}}, true},
+		{imapx.MailboxInfo{Path: "Virtual/Flagged", Delim: "/", Attrs: []string{`\Flagged`}}, true},
+		{imapx.MailboxInfo{Path: "Wichtig", Delim: "/"}, false},
+		{imapx.MailboxInfo{Path: "[Gmail]/Alle Nachrichten", Delim: "/"}, false},
+		{imapx.MailboxInfo{Path: "INBOX", Delim: "/"}, false},
+	} {
+		if got := VirtualView(tc.m); got != tc.want {
+			t.Errorf("%s %v: %v, want %v", tc.m.Path, tc.m.Attrs, got, tc.want)
+		}
+	}
+}

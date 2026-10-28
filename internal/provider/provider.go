@@ -132,6 +132,10 @@ type Mailbox struct {
 	Path string // Pfad in UTF-8 (IMAP-UTF-7 bereits dekodiert)
 	Name string
 	Role Role // aus SPECIAL-USE, sonst Namensheuristik je Anbieter
+	// Virtual: virtuelle Sicht, die nur Nachrichten anderer Ordner zeigt
+	// (Gmail „Markiert“/„Wichtig“, SPECIAL-USE \Flagged bzw. \Important);
+	// nie Quelle einer Aktion ohne ausdrücklich genannten Ordner (V13).
+	Virtual bool
 	// Zustand, falls beim Auflisten bekannt.
 	State SyncState
 }

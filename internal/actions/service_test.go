@@ -61,3 +61,40 @@ func TestPlanMoveSkipsMessageAlreadyInTarget(t *testing.T) {
 		t.Fatalf("plan = %+v, err %v", p, err)
 	}
 }
+
+// V13: Virtuelle Sichten (Gmail „Wichtig“, „Markiert“) sind keine Quelle:
+// trash ohne from nimmt die Kopie im Posteingang (D7a B6 mit einer
+// Testmail, die Gmail als wichtig einstuft).
+func TestPlanMoveIgnoresVirtualViews(t *testing.T) {
+	st, acct, ids := envAll(t, []store.MailboxSpec{
+		{Path: "[Gmail]/Alle Nachrichten", Name: "Alle Nachrichten", Role: "all"},
+		{Path: "[Gmail]/Wichtig", Name: "Wichtig", Role: "custom", Virtual: true},
+		{Path: "[Gmail]/Markiert", Name: "Markiert", Role: "custom", Virtual: true},
+		{Path: "[Gmail]/Papierkorb", Name: "Papierkorb", Role: "trash"},
+	}, map[string]map[int64]uint32{
+		"[Gmail]/Alle Nachrichten": {1: 11},
+		"[Gmail]/Wichtig":          {1: 21},
+		"[Gmail]/Markiert":         {1: 31},
+	})
+	ctx := context.Background()
+	svc := &Service{Store: st}
+	dest, ok, err := svc.FindMailbox(ctx, acct, "", "trash")
+	if err != nil || !ok {
+		t.Fatalf("trash mailbox: %v %v", ok, err)
+	}
+	p, err := svc.PlanMove(ctx, []int64{1}, "", dest)
+	if err != nil || len(p.Targets) != 1 || p.Targets[0].Mailbox != "INBOX" {
+		t.Fatalf("plan = %+v, err %v", p, err)
+	}
+	// Ausdrücklich genannt, ist auch eine Sicht Quelle.
+	p, err = svc.PlanMove(ctx, []int64{1}, "[Gmail]/Wichtig", dest)
+	if err != nil || len(p.Targets) != 1 || p.Targets[0].MailboxID != ids["[Gmail]/Wichtig"] {
+		t.Fatalf("plan with from = %+v, err %v", p, err)
+	}
+	// Liegt die Nachricht schon im Ziel (INBOX) und sonst nur in Alle und
+	// den Sichten: übersprungen.
+	p, err = svc.PlanMove(ctx, []int64{1}, "", Target{MailboxID: ids["INBOX"], Path: "INBOX", Role: "inbox"})
+	if !slices.Equal(p.Skipped, []int64{1}) || len(p.Targets) != 0 || err == nil {
+		t.Fatalf("plan into inbox = %+v, err %v", p, err)
+	}
+}

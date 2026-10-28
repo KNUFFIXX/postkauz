@@ -185,7 +185,9 @@ func (s *Service) PlanFlags(ctx context.Context, ids []int64) (Plan, error) {
 
 // PlanMove löst die Quellkopien von move und trash auf: je Nachricht genau
 // eine Kopie. from (Pfad) wählt den Ordner; sonst die einzige Kopie
-// außerhalb von „Alle Nachrichten“ (Rolle all), ohne solche die Kopie dort.
+// außerhalb von „Alle Nachrichten“ (Rolle all) und der virtuellen Sichten
+// (Gmail „Markiert“, „Wichtig“; V13), ohne solche die Kopie in „Alle
+// Nachrichten“.
 // Kopien im Zielordner zählen nicht; liegt eine Nachricht dort und
 // außerhalb von Ziel und „Alle Nachrichten“ nirgends, wird sie
 // übersprungen (V9: sonst verschöbe move --role inbox die Kopie aus „Alle
@@ -220,8 +222,14 @@ func (s *Service) PlanMove(ctx context.Context, ids []int64, from string, dest T
 			}
 			continue
 		}
-		var main []store.ServerCopy
+		// real: ohne virtuelle Sichten (V13); main: zusätzlich ohne „Alle
+		// Nachrichten“.
+		var real, main []store.ServerCopy
 		for _, c := range cand {
+			if c.Virtual {
+				continue
+			}
+			real = append(real, c)
 			if c.Role != string(provider.RoleAll) {
 				main = append(main, c)
 			}
@@ -233,11 +241,13 @@ func (s *Service) PlanMove(ctx context.Context, ids []int64, from string, dest T
 			amb = append(amb, strconv.FormatInt(id, 10))
 		case inDest:
 			p.Skipped = append(p.Skipped, id)
-		case len(cand) == 1:
-			p.Targets = append(p.Targets, target(cand[0]))
+		case len(real) == 1:
+			p.Targets = append(p.Targets, target(real[0]))
 		case len(cand) == 0:
 			none = append(none, strconv.FormatInt(id, 10))
 		default:
+			// mehrere Kopien in „Alle Nachrichten“ oder nur in virtuellen
+			// Sichten: from nennt den Ordner.
 			amb = append(amb, strconv.FormatInt(id, 10))
 		}
 	}

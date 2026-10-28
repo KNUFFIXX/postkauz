@@ -92,7 +92,8 @@ func hasAttr(attrs []string, want string) bool {
 }
 
 // Rollen aus SPECIAL-USE (RFC 6154). \Flagged und \Important sind
-// virtuelle Sichten (Gmail „Markiert"/„Wichtig") und bleiben custom.
+// virtuelle Sichten (Gmail „Markiert"/„Wichtig") und bleiben custom;
+// VirtualView kennzeichnet sie.
 var specialUse = map[string]provider.Role{
 	`\sent`: provider.RoleSent, `\drafts`: provider.RoleDrafts, `\trash`: provider.RoleTrash,
 	`\junk`: provider.RoleJunk, `\archive`: provider.RoleArchive, `\all`: provider.RoleAll,
@@ -124,6 +125,29 @@ var gmailRoles = map[string]provider.Role{
 	"all mail": provider.RoleAll, "alle nachrichten": provider.RoleAll,
 	"starred": provider.RoleCustom, "markiert": provider.RoleCustom,
 	"important": provider.RoleCustom, "wichtig": provider.RoleCustom,
+}
+
+// VirtualView meldet, ob ein Ordner eine virtuelle Sicht ist, die nur
+// Nachrichten anderer Ordner zeigt: SPECIAL-USE \Flagged oder \Important
+// (RFC 6154, RFC 8457), sonst Gmail „Starred"/„Markiert" und
+// „Important"/„Wichtig" unter „[Gmail]" bzw. „[Google Mail]" (V13 der
+// Nachbesserung T2).
+func VirtualView(m imapx.MailboxInfo) bool {
+	if hasAttr(m.Attrs, `\Flagged`) || hasAttr(m.Attrs, `\Important`) {
+		return true
+	}
+	if m.Delim == "" {
+		return false
+	}
+	first, _, ok := strings.Cut(m.Path, m.Delim)
+	if !ok || (!strings.EqualFold(first, "[Gmail]") && !strings.EqualFold(first, "[Google Mail]")) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(leafName(m))) {
+	case "starred", "markiert", "important", "wichtig":
+		return true
+	}
+	return false
 }
 
 func specialUseRole(attrs []string) provider.Role {

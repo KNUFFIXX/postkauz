@@ -26,6 +26,8 @@ func TestMigration0020(t *testing.T) {
 		`INSERT INTO accounts(id,name,email,host,port,username,credential_ref,created_at) VALUES (1,'demo','demo@example.org','127.0.0.1',143,'u','account/demo',1)`,
 		`INSERT INTO jobs(type,payload,run_at,key_id,audit_id) VALUES ('draft_push','{"account_id":1}',5,'key:agent',7)`,
 		`INSERT INTO messages(id,account_id,subject,created_at) VALUES (5,1,'Hallo',1)`,
+		`INSERT INTO mailboxes(id,account_id,path,name,role) VALUES (1,1,'INBOX','INBOX','inbox'),
+		        (2,1,'[Gmail]/Wichtig','Wichtig','custom'), (3,1,'[Google Mail]/Starred','Starred','custom'), (4,1,'Wichtig','Wichtig','custom')`,
 		`INSERT INTO tags(id,account_id,name,source) VALUES (3,1,'rechnung','local')`,
 		`INSERT INTO message_tags(message_id,tag_id,set_by,set_at) VALUES (5,3,'cli',9)`,
 		`INSERT INTO drafts(id,account_id,kind,message_id_header,from_email,status,created_by,created_at,updated_at,content_changed_at)
@@ -53,6 +55,13 @@ func TestMigration0020(t *testing.T) {
 	_ = s.db.QueryRow(`SELECT updated_by FROM drafts WHERE id = 2`).Scan(&u2)
 	if u1 == nil || *u1 != "key:agent" || u2 != nil {
 		t.Fatalf("updated_by = %v %v", u1, u2)
+	}
+	// V13: Bestand der Gmail-Sichten nach Namen gekennzeichnet, nur unter
+	// [Gmail]/[Google Mail].
+	var virt string
+	if err := s.db.QueryRow(`SELECT group_concat(id) FROM (SELECT id FROM mailboxes WHERE virtual_view = 1 ORDER BY id)`).Scan(&virt); err != nil ||
+		virt != "2,3" {
+		t.Fatalf("virtual views = %q %v", virt, err)
 	}
 	if tags, err := s.MessageTags(ctx, []int64{5}); err != nil || len(tags[5]) != 1 || tags[5][0] != "rechnung" {
 		t.Fatalf("tags = %v %v", tags, err)
@@ -322,4 +331,59 @@ func TestMeasureMigration0020(t *testing.T) {
 	took, links := measureFillAndMigrate(t, s, 20)
 	fi, _ := os.Stat(path)
 	t.Logf("migration 0020 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; snapshot %s", took, links, fi.Size(), filepath.Base(s.LastSnapshot))
+}
+
+// V13: Der Ordnerabgleich setzt und löscht die Kennzeichnung; ServerCopies
+// liefert sie.
+func TestSyncMailboxesVirtualView(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	acct, err := s.CreateAccount(ctx, Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143, TLS: "none",
+		Username: "u", AuthType: "password", CredentialRef: "account/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	virtualOf := func() map[string]bool {
+		out := map[string]bool{}
+		rows, err := s.db.Query(`SELECT path, virtual_view FROM mailboxes WHERE account_id = ?`, acct)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p string
+			var v bool
+			if err := rows.Scan(&p, &v); err != nil {
+				t.Fatal(err)
+			}
+			out[p] = v
+		}
+		return out
+	}
+	if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Role: "inbox"}, {Path: "Flagged", Role: "custom", Virtual: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if v := virtualOf(); v["INBOX"] || !v["Flagged"] {
+		t.Fatalf("after first sync: %v", v)
+	}
+	if _, err := s.ApplyBatch(ctx, MirrorBatch{AccountID: acct, MailboxID: 2, New: []NewMessage{{Link: LinkFlags{UID: 3}, MessageID: "a@example.org",
+		Subject: "x", Size: 1, ContentHash: "h"}}, State: &MailboxState{UIDValidity: 5, UIDNext: 4, Phase: PhaseReady, Total: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if cs, err := s.ServerCopies(ctx, 1); err != nil || len(cs) != 1 || !cs[0].Virtual {
+		t.Fatalf("copies = %+v %v", cs, err)
+	}
+	if _, _, err := s.SyncMailboxes(ctx, acct, []MailboxSpec{{Path: "INBOX", Role: "inbox"}, {Path: "Flagged", Role: "custom"}}); err != nil {
+		t.Fatal(err)
+	}
+	if v := virtualOf(); v["Flagged"] {
+		t.Fatalf("after second sync: %v", v)
+	}
 }

@@ -30,6 +30,12 @@
 --      des letzten drafts.update aus dem Audit nach (auch gescheiterte
 --      Versuche zählen, das ist strenger). Ohne solchen Eintrag bleibt NULL
 --      (dann gilt created_by).
+--   7. mailboxes.virtual_view (Nachbesserung T2, V13): 1 = virtuelle Sicht,
+--      die nur Nachrichten anderer Ordner zeigt (Gmail „Markiert“/„Wichtig“,
+--      SPECIAL-USE \Flagged/\Important). Sie ist nie Quelle von move/trash
+--      ohne ausdrücklich genannten Ordner. Gesetzt vom Ordnerabgleich; der
+--      Bestand bekommt den Wert hier aus der Gmail-Namenszuordnung (die
+--      Attribute kennt erst der nächste Abgleich).
 --
 -- Keine Zeile wird verworfen oder inhaltlich geändert.
 
@@ -138,3 +144,9 @@ UPDATE drafts SET updated_by = (
                   WHERE t.value = 'draft:' || drafts.id)
     ORDER BY a.id DESC LIMIT 1)
 WHERE updated_by IS NULL;
+
+-- 7. mailboxes -----------------------------------------------------------
+ALTER TABLE mailboxes ADD COLUMN virtual_view INTEGER NOT NULL DEFAULT 0 CHECK (virtual_view IN (0,1));
+UPDATE mailboxes SET virtual_view = 1
+ WHERE lower(path) IN ('[gmail]/starred', '[gmail]/markiert', '[gmail]/important', '[gmail]/wichtig',
+                       '[google mail]/starred', '[google mail]/markiert', '[google mail]/important', '[google mail]/wichtig');

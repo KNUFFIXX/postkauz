@@ -506,7 +506,7 @@ func (e *Engine) syncMailboxList(ctx context.Context) error {
 	hasInbox := false
 	specs := make([]store.MailboxSpec, 0, len(boxes))
 	for _, b := range boxes {
-		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role)})
+		specs = append(specs, store.MailboxSpec{Path: b.Path, Name: b.Name, Role: string(b.Role), Virtual: b.Virtual})
 		hasInbox = hasInbox || b.Role == provider.RoleInbox || strings.EqualFold(b.Path, "INBOX")
 	}
 	if !hasInbox {

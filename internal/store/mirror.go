@@ -31,6 +31,8 @@ type MailboxSpec struct {
 	Path string
 	Name string
 	Role string
+	// Virtual: virtuelle Sicht (mailboxes.virtual_view, Migration 0020, V13).
+	Virtual bool
 }
 
 // Mailbox ist eine Zeile aus mailboxes samt lokalen Zählern.
@@ -89,14 +91,14 @@ func (s *SQLite) SyncMailboxes(ctx context.Context, accountID int64, boxes []Mai
 			role = "custom"
 		}
 		if _, ok := existing[b.Path]; ok {
-			if _, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ?, role = ? WHERE account_id = ? AND path = ?`,
-				b.Name, role, accountID, b.Path); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ?, role = ?, virtual_view = ? WHERE account_id = ? AND path = ?`,
+				b.Name, role, b2i(b.Virtual), accountID, b.Path); err != nil {
 				return nil, nil, fmt.Errorf("store: update mailbox %q: %w", b.Path, err)
 			}
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(account_id, path, name, role) VALUES (?,?,?,?)`,
-			accountID, b.Path, b.Name, role); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(account_id, path, name, role, virtual_view) VALUES (?,?,?,?,?)`,
+			accountID, b.Path, b.Name, role, b2i(b.Virtual)); err != nil {
 			return nil, nil, fmt.Errorf("store: add mailbox %q: %w", b.Path, err)
 		}
 		added = append(added, b.Path)

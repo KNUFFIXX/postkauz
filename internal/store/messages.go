@@ -162,6 +162,9 @@ type ServerCopy struct {
 	// ContentLoaded: PostKauz hat den Inhalt dieser Kopie selbst geladen
 	// (sonst nur per Message-ID und Größe verknüpft; Migration 0020).
 	ContentLoaded bool
+	// Virtual: Der Ordner ist eine virtuelle Sicht (Gmail „Markiert“,
+	// „Wichtig“; Migration 0020, V13).
+	Virtual bool
 }
 
 // ServerCopies liefert die Serverkopien einer Nachricht, nur aus
@@ -170,7 +173,7 @@ type ServerCopy struct {
 // Aktionen auf dem Server (S3); store.Message.Locations dient nur der
 // Anzeige.
 func (s *SQLite) ServerCopies(ctx context.Context, messageID int64) ([]ServerCopy, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, b.uidvalidity, mm.content_loaded
+	rows, err := s.db.QueryContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, b.uidvalidity, mm.content_loaded, b.virtual_view
 		FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
 		WHERE mm.message_id = ? AND mm.uid > 0 AND b.uidvalidity > 0 ORDER BY b.path`, messageID)
 	if err != nil {
@@ -181,7 +184,7 @@ func (s *SQLite) ServerCopies(ctx context.Context, messageID int64) ([]ServerCop
 	for rows.Next() {
 		var c ServerCopy
 		var uid, uv int64
-		if err := rows.Scan(&c.MessageID, &c.MailboxID, &c.Mailbox, &c.Role, &uid, &uv, &c.ContentLoaded); err != nil {
+		if err := rows.Scan(&c.MessageID, &c.MailboxID, &c.Mailbox, &c.Role, &uid, &uv, &c.ContentLoaded, &c.Virtual); err != nil {
 			return nil, err
 		}
 		c.UID, c.UIDValidity = uint32(uid), uint32(uv)
