@@ -186,8 +186,10 @@ func (s *Service) PlanFlags(ctx context.Context, ids []int64) (Plan, error) {
 // PlanMove löst die Quellkopien von move und trash auf: je Nachricht genau
 // eine Kopie. from (Pfad) wählt den Ordner; sonst die einzige Kopie
 // außerhalb von „Alle Nachrichten“ (Rolle all), ohne solche die Kopie dort.
-// Kopien im Zielordner zählen nicht; liegt eine Nachricht nur dort, wird
-// sie übersprungen. Mehrere mögliche Kopien ohne from lehnen den Aufruf ab
+// Kopien im Zielordner zählen nicht; liegt eine Nachricht dort und
+// außerhalb von Ziel und „Alle Nachrichten“ nirgends, wird sie
+// übersprungen (V9: sonst verschöbe move --role inbox die Kopie aus „Alle
+// Nachrichten“ einer Mail, die schon im Posteingang liegt). Mehrere mögliche Kopien ohne from lehnen den Aufruf ab
 // (ambiguous_source), statt zu raten.
 func (s *Service) PlanMove(ctx context.Context, ids []int64, from string, dest Target) (Plan, error) {
 	var p Plan
@@ -229,10 +231,10 @@ func (s *Service) PlanMove(ctx context.Context, ids []int64, from string, dest T
 			p.Targets = append(p.Targets, target(main[0]))
 		case len(main) > 1:
 			amb = append(amb, strconv.FormatInt(id, 10))
+		case inDest:
+			p.Skipped = append(p.Skipped, id)
 		case len(cand) == 1:
 			p.Targets = append(p.Targets, target(cand[0]))
-		case len(cand) == 0 && inDest:
-			p.Skipped = append(p.Skipped, id)
 		case len(cand) == 0:
 			none = append(none, strconv.FormatInt(id, 10))
 		default:
