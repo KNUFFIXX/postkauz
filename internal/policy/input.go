@@ -108,6 +108,8 @@ func (r Rules) withDefaults() Rules {
 // jeden Aufrufer gilt die Obergrenze MaxTargets (too_many_ids); die übrigen
 // Regeln gelten nur mit Schlüssel (der Mensch am Terminal handelt selbst):
 //
+//   - move in einen Ordner mit Rolle trash: target_is_trash, für jeden
+//     (der Papierkorb geht nur über trash mit Freigabe, E3).
 //   - trash mit [delete] agent_may = none: policy_forbids.
 //   - move mit [move] agent_may = none: policy_forbids; archive_only: nur
 //     Ziele mit Rolle archive oder all; within_account: kein Ziel in einem
@@ -121,6 +123,11 @@ func CheckInput(key Key, f Facts, r Rules) Decision {
 	deny := func(reason string) Decision { return Decision{Outcome: Deny, Reason: reason} }
 	if f.Targets > MaxTargets {
 		return deny("too_many_ids")
+	}
+	// Der Papierkorb ist R3 mit Freigabe (E3); Verschieben dorthin wäre ein
+	// Umweg darum herum, auch für den Menschen (er nutzt trash --yes).
+	if f.Action == ActionMove && f.TargetRole == "trash" {
+		return deny("target_is_trash")
 	}
 	if key.IsHuman() {
 		return Decision{Outcome: Allow, Reason: "ok"}

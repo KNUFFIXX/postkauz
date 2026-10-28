@@ -57,7 +57,13 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S2.3 ✓ | `approval show <approval-id>` | `approvals.get` (R0, `mail:draft`) |
 | S2.3 ✓ | `identity add`, `identity list`, `identity set-default <id>`, `identity remove <id>` | `identities.add`, `identities.list`, `identities.set_default`, `identities.remove` (`admin`, nur Mensch; nicht über MCP) |
 | S2.8 ✓ | `draft style [<identität>]` | `drafts.style` (R0, `mail:draft`; über MCP als Resource `mail://style/{identity}`) |
-| S3 | `tag`, `mark`, `move`, `trash`, `attach save` | `messages.*`, `attachments.save` |
+| T2 ✓ | `tag add <tag>[,…] <id>…`, `tag remove <tag>[,…] <id>…`, `tag list` (Abschnitt 2k) | `messages.tag` (R1, `mail:tag`), `tags.list` (R0, `mail:read`) |
+| T2 ✓ | `mark <id>… --seen\|--unseen\|--flagged\|--unflagged` | `messages.mark` (R2, `mail:tag`) |
+| T2 ✓ | `move <id>… --to <ordner>\|--role archive\|all\|inbox\|junk\|sent\|drafts [--from <ordner>]` | `messages.move` (R2, `mail:move`) |
+| T2 ✓ | `trash <id>… [--from <ordner>] [--yes]` | `messages.trash` (R3, `mail:trash`; legt nur den Antrag an, Exit 4; mit `--yes` gibt der Mensch ihn im selben Zug frei) |
+| T2 ✓ | `action approve <id>`, `action reject <id> [--reason]`, `action show <id>`, `action list` | `actions.approve` (R2), `actions.reject` (R1), beide `mail:trash`, nur Mensch; `actions.get`, `actions.list` (R0, `mail:read`) |
+| T2 ✓ | `draft cleanup <draft-id>` | `drafts.cleanup_copies` (R2, `mail:draft`, nur Mensch) |
+| S3 | `attach save` | `attachments.save` |
 | S3 | `export`, `backup`, `restore` | `export.run`, `backup.run`, `restore.run` |
 
 Es gibt **kein** `send`, kein `rule` und kein `serve --rest` vor Schnitt 4.
@@ -211,7 +217,7 @@ Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehr
 
 ## 2e. API-Schlüssel und Probe der Policy (S1.8)
 
-`key create --name <name> [--role reader|assistant|operator|admin] [--scopes s1,s2] [--expires 90d|never] [--dry-run-default=false]`
+`key create --name <name> [--role reader|triage|assistant|operator|admin] [--scopes s1,s2] [--expires 90d|never] [--dry-run-default=false]`
 
 - Legt einen Schlüssel für einen Agenten an (Scope `admin`, nur der Mensch; nicht über MCP). Rollen und Scopes wie [sicherheit.md](sicherheit.md) Abschnitt 2; Standard `assistant`. `--scopes` **verengt** die Rolle (z. B. `--role reader --scopes mail:search` für einen Triage-Agenten ohne Bodies); ein Scope außerhalb der Rolle ist ein Eingabefehler. Laufzeit Standard 90 Tage (`--expires never` ohne Ablauf); `dry_run_default` ist an (schreibende Aufrufe laufen als Trockenlauf, bis der Agent `dry_run: false` setzt).
 - Der Schlüssel (`pk_key_` und 43 Zeichen) erscheint **genau einmal** in der Ausgabe (`--json`: Feld `secret`). Gespeichert wird nur sein SHA-256; `key list` zeigt ihn nie, auch nicht den Hash. Verloren: `key revoke` und neu anlegen.
@@ -319,6 +325,16 @@ Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeicher
 - **Ältere Kopien im Entwürfe-Ordner** (seit S2.7, Entscheid 43): Nach jeder Änderung legt der Push eine neue Kopie ab; die alte bleibt, weil PostKauz nichts löscht. Solange laut Spiegel ältere Kopien desselben Entwurfs (gleiche Message-ID, ältere UID; neueste ist die zuletzt abgelegte oder eine noch neuere, die der Mailclient gespeichert hat) im Ordner liegen, warnen `draft show` (`warning: older copies in Drafts: 2 (delete them in your mail client; postkauz never deletes)`, `--json`: `older_copies`, `older_copy_uids` und der Text in `warnings`) und `draft list` (siehe Tabelle). Die Zahl stammt aus dem Spiegel: Was der Mensch im Mailclient löscht, verschwindet nach dem nächsten `sync` aus der Warnung. Kopien in anderen Ordnern (z. B. Gmail „All Mail") zählen nicht. Ab S2.6 legt der Push einen geänderten Entwurf erst ab, wenn er 30 Sekunden unverändert ist (weniger Zwischenstände); das Löschen alter Kopien entscheidet S3.
 - **`draft show <id> --eml`** (seit S2.7): schreibt statt der Übersicht die Nachricht als RFC-5322-Text auf stdout (CRLF, sonst nichts; umleitbar: `postkauz draft show 1 --eml > entwurf.eml`). Gebaut wird sie wie beim Push, mit der `Date`-Kopfzeile der abgelegten Kopie (`pushed_date`); ist der Entwurf seitdem unverändert, sind es **Byte für Byte** die Bytes der Kopie im Entwürfe-Ordner (belegt gegen den IMAP-Server im Prozess und seit der Gegenprüfung S2.6–S2.8 im Integrationstest `TestIntegrationDraftPush` gegen Dovecot, Stalwart und GreenMail, je nach erster und zweiter Ablage, Kopie per FETCH vom Server). Was die Bytes sind, steht auf stderr: `note: eml: byte for byte the copy (uid 7) that postkauz put into the Drafts folder`; nach einer Änderung (am Entwurf, an Identität, Signatur, Zitat oder Anhängen) `note: eml: the draft … changed after the copy (uid 7) was put into the Drafts folder; this is the current draft with the Date of that copy` (der nächste Push legt eine neue Kopie ab); vor dem ersten Push `note: eml: not in the Drafts folder yet; Date is the time the draft was created, the push sets its own`. Hat der Mensch die Kopie im Mailclient geändert oder entfernt, wird das angehängt. Alle Warnungen, die `draft show` sonst zeigt (Anhangtyp nach Entscheid 39, ältere Kopien im Entwürfe-Ordner nach Entscheid 43), stehen ebenfalls als `note: …` auf stderr (Gegenprüfung S2.6–S2.8, K8). Mit `--json` steht die Nachricht im Feld `eml` (7-Bit-Text: Kopfzeilen RFC-2047-kodiert, Text quoted-printable, Anhänge Base64), dazu `eml_date`, `eml_matches_copy` (`true` nur bei Gleichheit) und `eml_note`; ohne `--eml` fehlen diese Felder. Die Operation ist `drafts.get` mit `"eml": true` (Scope `mail:draft`, R0).
 
+## 2k. Tags und Postfach-Aktionen (T2, A03 S3.1/S3.2)
+
+- **Tags** sind lokale Etiketten des Archivs (E5): `tag add rechnung,steuer 1201 1202` setzt, `tag remove steuer 1202` entfernt, `tag list` zeigt sie mit Zahl der Nachrichten; suchen mit `search tag:rechnung`, angezeigt in `show` und `search`. Namen nur Kleinbuchstaben, Ziffern, `.`, `_`, `-` (1 bis 64 Zeichen; Großbuchstaben werden klein). Tags überleben das Löschen auf dem Server. Mit `[tags] sync_keywords = true` (Abschnitt 5) gehen sie zusätzlich als IMAP-Keywords auf den Server (nur in Ordnern mit `PERMANENTFLAGS \*`, sonst bleiben sie lokal und `action show` nennt `unsupported`).
+- **Markieren** `mark 1201 --seen` (oder `--unseen`, `--flagged`, `--unflagged`): Der Spiegel zeigt die Änderung sofort (`show` nennt sie `pending`), auf den Server kommt sie über den Job `mailbox_action`: ein laufendes `sync --watch` binnen 10 s (`--jobs-interval`), sonst der nächste `sync`. Lehnt der Server ab, gilt wieder der Stand davor; danach gewinnt der Server.
+- **Verschieben** `move 1201 --role archive` oder `--to "Projekte/2026"`; liegt eine Nachricht in mehreren Ordnern, nennt `--from` den Quellordner (sonst `denied (ambiguous_source)`). Nur innerhalb des Kontos, nur mit IMAP `MOVE` (ohne MOVE: `unsupported`, nichts passiert; kein Ersatz über Löschen, E2). **Gmail „Label entfernen“** (Vorgang 1): `move <id> --from <Label-Ordner> --role all` verschiebt die Kopie aus dem Label-Ordner nach „Alle Nachrichten“; Gmail entfernt dabei das Label (am Testserver nicht prüfbar, gemessen in D7a). In den Papierkorb führt `move` nie (`denied (target_is_trash)`).
+- **Papierkorb** `trash 1201`: legt nur einen **Antrag** an (Exit 4, Ausgabe nennt `action approve <n>`); `action approve <n>` gibt frei (nur der Mensch ohne `--key`; mit `--key` Exit 3 `human_only`), `action reject <n> [--reason …]` lehnt ab. `trash 1201 --yes` stellt den Antrag und gibt ihn im selben Zug frei (zwei Audit-Einträge). Ein Antrag verfällt nach `[approval] ttl` (Standard 7 Tage). Was sich seit dem Antrag auf dem Server geändert hat (andere UID, anderer Ordner), wird nicht angefasst (`stale`). Endgültiges Löschen gibt es nicht.
+- **Stand einer Aktion:** `action show <n>` (Ergebnis je Nachricht: `ok`, `not_found`, `stale`, `unsupported`, `failed`, `skipped`), `action list [--state requested]`.
+- **Alte Entwurfskopien aufräumen** (Entscheid 43): `draft cleanup <draft-id>` legt frühere Kopien eines Entwurfs aus dem Entwürfe-Ordner in den Papierkorb, nur die, die der Spiegel unter Ordner, UID und UIDVALIDITY mit genau dem Inhalt führt, den PostKauz abgelegt hat; `draft show` nennt das Kommando, solange solche Kopien liegen.
+- **Grenzen mit Schlüssel** (Policy-Datei, `policy show --key <name>` zeigt sie): höchstens 1.000 IDs je Aufruf (für jeden); über `[move] bulk_confirm_threshold` (Standard 50) verlangt ein Schlüssel `--confirm-count` mit genau der Zahl der IDs; `[move] agent_may = archive_only` erlaubt nur Ziele mit Rolle `archive` oder `all`; `[delete] agent_may = none` verbietet den Antrag auf Papierkorb.
+
 ## 3. Maschinenlesbarkeit (`--json`)
 
 - **Ein Ergebnis = ein JSON-Objekt** auf stdout, einzeilig. Listen, die streambar sein sollen (Suche, Audit), liefern **NDJSON** (ein Objekt je Zeile) ab S1.
@@ -332,7 +348,7 @@ Draft-only (ADR-002): **PostKauz sendet nie.** Ein Entwurf wird lokal gespeicher
 
 ## 4. Exit-Codes
 
-Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go`: `TestExitCodesMatchDocs` liest diese Tabelle und die Liste der Fehlercodes (Abschnitt 3) und vergleicht sie mit dem Code; `TestExitCodesEndToEnd` löst die Codes 0, 1, 2, 3 und 5 mit echten Aufrufen aus. Exit 4 kommt in S2 nicht vor (Entscheid 44): Keine Operation hat Risiko R3, und die Freigabe eines Entwurfs ist ein eigener Schritt (`draft request` endet mit Exit 0 und Status `pending_approval`, eine verweigerte Freigabe mit Exit 3).
+Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go`: `TestExitCodesMatchDocs` liest diese Tabelle und die Liste der Fehlercodes (Abschnitt 3) und vergleicht sie mit dem Code; `TestExitCodesEndToEnd` löst die Codes 0, 1, 2, 3 und 5 mit echten Aufrufen aus. Exit 4 kam in S2 nicht vor (Entscheid 44): Die Freigabe eines Entwurfs ist ein eigener Schritt (`draft request` endet mit Exit 0 und Status `pending_approval`, eine verweigerte Freigabe mit Exit 3). **Seit T2** endet `trash` ohne `--yes` mit Exit 4: Der Antrag ist angelegt, die Ausgabe (stdout) nennt Aktion, Freigabe und das Kommando zur Freigabe, stderr den Code `needs_approval`.
 
 | Code | Name | Bedeutung |
 |---|---|---|
@@ -340,7 +356,7 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
 | 1 | `ExitError` | allgemeiner Fehler; auch Abbruch per Strg+C (`interrupted`) |
 | 2 | `ExitUsage` | Eingabefehler (unbekanntes Kommando oder Flag, fehlendes Argument, ungültige Eingabe der Operation) |
 | 3 | `ExitDenied` | Scope oder Policy verweigert |
-| 4 | `ExitNeedsApproval` | Freigabe erforderlich (für Operationen mit Risiko R3, ab S3; in S2 nicht erreichbar) |
+| 4 | `ExitNeedsApproval` | Freigabe erforderlich (Operationen mit Risiko R3; seit T2 `trash` ohne `--yes`: der Antrag steht, ausgeführt wird erst nach `action approve`) |
 | 5 | `ExitConnection` | Verbindung zum Server fehlgeschlagen oder Zeitüberschreitung (Watchdog) |
 
 ## 5. Konfiguration und Pfade

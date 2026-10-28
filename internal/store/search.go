@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -62,7 +63,8 @@ type SearchHit struct {
 	Draft          bool
 	HasAttachments bool
 	DeletedRemote  bool
-	RemoteStatus   string // present | imported_only | deleted_remote (A4)
+	RemoteStatus   string   // present | imported_only | deleted_remote (A4)
+	Tags           []string // lokale Tags (E5, T2)
 	// Score ist der Sortierwert: Relevanz mit Datumsanteil, bei reiner
 	// Datumssortierung das Datum in Unix-Millisekunden.
 	Score float64
@@ -94,8 +96,9 @@ func (s *SQLite) Search(ctx context.Context, p SearchParams) (SearchResult, erro
 		var h SearchHit
 		var date int64
 		var seen, flagged, answered, draft, att, deleted int
+		var tags string
 		if err := rows.Scan(&h.ID, &h.Score, &res.Total, &h.AccountID, &h.Account, &h.ThreadID, &date, &h.From, &h.Subject,
-			&h.Snippet, &seen, &flagged, &answered, &draft, &att, &deleted, &h.RemoteStatus); err != nil {
+			&h.Snippet, &seen, &flagged, &answered, &draft, &att, &deleted, &h.RemoteStatus, &tags); err != nil {
 			return res, err
 		}
 		if date > 0 {
@@ -103,6 +106,8 @@ func (s *SQLite) Search(ctx context.Context, p SearchParams) (SearchResult, erro
 		}
 		h.Seen, h.Flagged, h.Answered, h.Draft = seen == 1, flagged == 1, answered == 1, draft == 1
 		h.HasAttachments, h.DeletedRemote = att == 1, deleted == 1
+		h.Tags = []string{}
+		_ = json.Unmarshal([]byte(tags), &h.Tags)
 		res.Hits = append(res.Hits, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -164,7 +169,7 @@ func searchWhereOpt(p SearchParams, negatives bool) (string, []any) {
 // pageSQL holt die Zeilen einer Seite (ranked: id, score, total).
 const pageSQL = ` SELECT r.id, r.score, r.total, m.account_id, a.name, COALESCE(m.thread_id, 0), ` + dateExpr + `,
 	m.from_addr, m.subject, m.snippet, m.flag_seen, m.flag_flagged, m.flag_answered, m.flag_draft, m.has_attachments,
-	m.deleted_remote_at IS NOT NULL, ` + remoteStatusExpr + `
+	m.deleted_remote_at IS NOT NULL, ` + remoteStatusExpr + `, ` + tagsExpr + `
 	FROM ranked r JOIN messages m ON m.id = r.id JOIN accounts a ON a.id = m.account_id
 	ORDER BY r.score DESC, r.id DESC`
 

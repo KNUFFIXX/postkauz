@@ -407,7 +407,15 @@ func renderShow(w io.Writer, out any) error {
 	}
 	fmt.Fprintf(tw, "subject:\t%s\n", termLine(o.Subject))
 	fmt.Fprintf(tw, "size:\t%d\n", o.Size)
-	fmt.Fprintf(tw, "flags:\t%s\n", strings.Join(termLines(o.Flags), ", "))
+	flags := strings.Join(termLines(o.Flags), ", ")
+	if o.PendingFlags {
+		// E1: lokal schon geändert (mark), der Server folgt mit dem Job.
+		flags += " (pending: not yet on the server)"
+	}
+	fmt.Fprintf(tw, "flags:\t%s\n", flags)
+	if len(o.Tags) > 0 {
+		fmt.Fprintf(tw, "tags:\t%s\n", strings.Join(o.Tags, ", "))
+	}
 	if len(o.Keywords) > 0 {
 		fmt.Fprintf(tw, "keywords:\t%s\n", strings.Join(termLines(o.Keywords), ", "))
 	}

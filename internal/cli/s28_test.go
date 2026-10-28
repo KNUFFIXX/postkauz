@@ -47,7 +47,8 @@ func TestMCPAssistantSession(t *testing.T) {
 
 	init := cs.InitializeResult()
 	if !strings.Contains(init.Instructions, "can create drafts in the Drafts folder") ||
-		!strings.Contains(init.Instructions, "Nothing is sent, deleted or moved") || !strings.Contains(init.Instructions, "untrusted") {
+		!strings.Contains(init.Instructions, "It cannot move, delete") || !strings.Contains(init.Instructions, "Nothing is ever sent") ||
+		!strings.Contains(init.Instructions, "untrusted") {
 		t.Fatalf("instructions: %s", init.Instructions)
 	}
 	var names []string
@@ -62,11 +63,13 @@ func TestMCPAssistantSession(t *testing.T) {
 			}
 		}
 	}
-	if len(names) != 15 || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
+	// 15 aus S2.8, seit T2 dazu mail_get_action, mail_list_actions,
+	// mail_list_tags, mail_tag und mail_mark; nie mail_move/mail_trash.
+	if len(names) != 20 || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
 		t.Fatalf("tools = %v", names)
 	}
 	for _, n := range names {
-		for _, bad := range []string{"approve", "reject", "send", "delete", "move", "abandon", "mark"} {
+		for _, bad := range []string{"approve", "reject", "send", "delete", "move", "trash", "abandon", "sent"} {
 			if strings.Contains(n, bad) {
 				t.Fatalf("tool %s", n)
 			}

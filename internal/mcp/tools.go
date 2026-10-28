@@ -121,7 +121,8 @@ var tools = []toolBinding{
 			"since: duration back from now (10m, 24h, 7d), a date or RFC 3339; default 24h."},
 	{tool: "mail_get_policy", op: "policy.get", title: "What may this key do?",
 		desc: "Describe the policy of the key this server runs with: scopes, allowed operations with risk level, dry-run default, " +
-			"character budget. This server never sends, deletes or moves mail; drafts only with mail:draft."},
+			"character budget, and the limits for mailbox actions. This server never sends mail and never deletes mail for good; " +
+			"what this key may change (drafts, tags, read/flag state, moves, trash requests) is listed in operations."},
 
 	// Entwürfe (S2.8, A02 S2.8; Scope mail:draft). Freigeben, ablehnen,
 	// verwerfen, als gesendet markieren und Identitäten verwalten bleiben
@@ -163,6 +164,35 @@ var tools = []toolBinding{
 	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
 		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +
 			"the reason of the human), superseded (the draft changed) or expired, with who decided and when. " + neverSends},
+
+	// Tags und Postfach-Aktionen (T2, A03 S3.1/S3.2). Freigabe und
+	// Ablehnung eines Antrags bleiben dem Menschen (notbound.go).
+	{tool: "mail_tag", op: "messages.tag", title: "Tag messages", dryRun: true,
+		desc: "Add or remove local tags on messages (ids from mail_search of the same account): lowercase letters, digits, '.', " +
+			"'_' and '-', up to 64 characters. Tags are local labels of the archive; find them with mail_search tag:<name>. " +
+			"More ids than the bulk threshold (see mail_get_policy) need confirm_count = exact number of ids; at most 1000 ids."},
+	{tool: "mail_list_tags", op: "tags.list", title: "List tags",
+		desc: "List the local tags of an account with the number of messages."},
+	{tool: "mail_mark", op: "messages.mark", title: "Mark read or flagged", dryRun: true,
+		desc: "Mark messages (ids from mail_search) as read (seen=true) or unread (seen=false), flagged or not (flagged). The " +
+			"archive shows the change at once; the server gets it from the sync job (status queued, remote pending; a running " +
+			"sync --watch within about 10 s). More ids than the bulk threshold need confirm_count = exact number of ids."},
+	{tool: "mail_move", op: "messages.move", title: "Move messages", dryRun: true, destructive: true,
+		desc: "Move messages (ids from mail_search) to another mailbox of the same account, by path (mailbox) or role: archive, " +
+			"all (in Gmail this removes a label: move from the label folder to All Mail), inbox, junk. Never to the trash: use " +
+			"mail_trash. If a message is in several mailboxes, name the source mailbox in from. The sync job applies the move " +
+			"(status queued). The policy may allow only archive and all (archive_only) or nothing; more ids than the bulk " +
+			"threshold need confirm_count."},
+	{tool: "mail_trash", op: "messages.trash", title: "Request moving to the trash", dryRun: true,
+		desc: "Request moving messages (ids from mail_search) to the trash. This only files a request (status needs_approval, " +
+			"approval_id): nothing happens until a human approves it; you cannot (human_only=true). Tell the user the command in " +
+			"next_step (" + brand.Name + " action approve <id>, or reject). Never deletes for good; there is no way to empty " +
+			"the trash. Follow the request with mail_get_action. More ids than the bulk threshold need confirm_count."},
+	{tool: "mail_get_action", op: "actions.get", title: "State of a mailbox action",
+		desc: "Show a mailbox action (action_id from mail_mark, mail_move or mail_trash): state (requested = waiting for a " +
+			"human, queued, running, done, partial, failed, rejected, expired) and the result per message."},
+	{tool: "mail_list_actions", op: "actions.list", title: "List mailbox actions",
+		desc: "List mailbox actions, newest first; filter by account and state (requested = waiting for the approval of a human)."},
 }
 
 // narrows meldet, ob das Tool ein anderes Eingabeschema als die Operation

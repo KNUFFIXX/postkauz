@@ -260,6 +260,58 @@ var contractInputs = map[string]struct {
 	"identities.list":        {input: `{"account":"demo"}`},
 	"identities.set_default": {input: `{"id":2}`},
 	"identities.remove":      {input: `{"id":2}`},
+	// Aktionen und Tags (T2): Umgebung aus seedActions (Archiv, Papierkorb,
+	// Entwürfe-Ordner mit früherer Kopie von Entwurf 1, Antrag 1).
+	"messages.tag":          {input: `{"account":"demo","ids":[1],"add":["rechnung","Nacht.1"],"remove":["alt"]}`},
+	"tags.list":             {input: `{"account":"demo"}`},
+	"messages.mark":         {input: `{"account":"demo","ids":[1],"seen":false,"flagged":true}`},
+	"messages.move":         {input: `{"account":"demo","ids":[1],"role":"archive"}`},
+	"messages.trash":        {input: `{"account":"demo","ids":[1]}`},
+	"actions.approve":       {input: `{"action_id":1}`},
+	"actions.reject":        {input: `{"action_id":1,"reason":"nein"}`},
+	"actions.get":           {input: `{"action_id":1}`},
+	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
+	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
+}
+
+// seedActions legt für die Aktionen Ordner und einen Antrag an: Archiv
+// (UIDVALIDITY 4), Papierkorb (5), Entwürfe (6) mit einer früheren Kopie
+// von Entwurf 1 (UID 9, eigener Hash), Antrag 1 (Papierkorb für Nachricht 1).
+func seedActions(t *testing.T, st *store.SQLite, acct int64) {
+	t.Helper()
+	ctx := context.Background()
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+		{Path: "Archiv", Name: "Archiv", Role: "archive"}, {Path: "Papierkorb", Name: "Papierkorb", Role: "trash"},
+		{Path: "Entwuerfe", Name: "Entwuerfe", Role: "drafts"}}); err != nil {
+		t.Fatal(err)
+	}
+	boxes, _ := st.Mailboxes(ctx, acct)
+	ids := map[string]int64{}
+	for _, b := range boxes {
+		ids[b.Path] = b.ID
+	}
+	for path, uv := range map[string]int{"Archiv": 4, "Papierkorb": 5, "Entwuerfe": 6} {
+		if err := st.ExecForTest(`UPDATE mailboxes SET uidvalidity = ? WHERE id = ?`, uv, ids[path]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.ApplyBatch(ctx, store.MirrorBatch{AccountID: acct, MailboxID: ids["Entwuerfe"],
+		New: []store.NewMessage{{Link: store.LinkFlags{UID: 9, Draft: true}, MessageID: "pk.alt@example.org", Subject: "Entwurf",
+			From: "demo@example.org", Size: 10, ContentHash: "hash-alt"}}}); err != nil {
+		t.Fatal(err)
+	}
+	prev := fmt.Sprintf(`[{"mailbox_id":%d,"uid":9,"uidvalidity":6,"content_hash":"hash-alt"},{"mailbox_id":%d,"uid":10,"uidvalidity":6,"content_hash":"x"}]`,
+		ids["Entwuerfe"], ids["Entwuerfe"])
+	if err := st.ExecForTest(`UPDATE drafts SET remote_previous = ? WHERE id = 1`, prev); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := st.CreateAction(ctx, store.NewAction{AccountID: acct, Kind: store.ActionTrash, State: store.ActionRequested, IDsHash: "h",
+		RequestedBy: "key:agent", Params: store.ActionParams{TargetMailboxID: ids["Papierkorb"], TargetRole: "trash"}, Now: now,
+		Targets:  []store.ActionTarget{{MessageID: 1, MailboxID: ids["INBOX"], UID: 5, UIDValidity: 3}},
+		Approval: &store.Approval{Description: "trash", RequestedBy: "key:agent", RequestedAt: now, PreviewHash: "h", ExpiresAt: now.Add(time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // memBlobs ist ein Blob-Store im Speicher: die Blobs von testBlobs und
@@ -403,6 +455,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 		t.Fatal(err)
 	}
 	seedDrafts(t, m.st, m.acct)
+	seedActions(t, m.st, m.acct)
 	// OAuth2-Konto ms (für accounts.login) mit dem Fake-AS (S3.7).
 	if _, err := m.st.CreateAccount(context.Background(), store.Account{Name: "ms", Email: "ms@example.org", Host: "127.0.0.1", Port: 11143,
 		TLS: "tls", Username: "ms@example.org", AuthType: AuthOAuth2, CredentialRef: "account/1a2b3c4d/ms",
@@ -416,7 +469,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
-		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"},
+		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
 	return e
@@ -567,7 +620,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					au := &audit.Memory{}
 					rules := policy.DefaultRules()
 					x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au, Rules: &rules}
-					key := policy.Key{ID: "key-" + role, Scopes: policy.Roles[role], DryRunDefault: mode.keyDefault}
+					key := policy.Key{ID: "key:" + role, Name: role, Scopes: policy.Roles[role], DryRunDefault: mode.keyDefault}
 					human := role == "human"
 					if human {
 						key = policy.Key{ID: "cli", Scopes: policy.Roles["admin"], DryRunDefault: mode.keyDefault, Human: true}

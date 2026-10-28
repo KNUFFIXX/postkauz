@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"slices"
@@ -339,7 +340,7 @@ func (s *SQLite) searchText(ctx context.Context, p SearchParams) (SearchResult, 
 func (s *SQLite) hitRows(ctx context.Context, ids []any) (map[int64]SearchHit, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.account_id, a.name, COALESCE(m.thread_id, 0), `+dateExpr+`,
 		m.from_addr, m.subject, m.snippet, m.flag_seen, m.flag_flagged, m.flag_answered, m.flag_draft, m.has_attachments,
-		m.deleted_remote_at IS NOT NULL, `+remoteStatusExpr+`
+		m.deleted_remote_at IS NOT NULL, `+remoteStatusExpr+`, `+tagsExpr+`
 		FROM messages m JOIN accounts a ON a.id = m.account_id WHERE m.id IN (`+placeholders(len(ids))+`)`, ids...)
 	if err != nil {
 		return nil, err
@@ -350,8 +351,9 @@ func (s *SQLite) hitRows(ctx context.Context, ids []any) (map[int64]SearchHit, e
 		var h SearchHit
 		var date int64
 		var seen, flagged, answered, draft, att, deleted int
+		var tags string
 		if err := rows.Scan(&h.ID, &h.AccountID, &h.Account, &h.ThreadID, &date, &h.From, &h.Subject, &h.Snippet,
-			&seen, &flagged, &answered, &draft, &att, &deleted, &h.RemoteStatus); err != nil {
+			&seen, &flagged, &answered, &draft, &att, &deleted, &h.RemoteStatus, &tags); err != nil {
 			return nil, err
 		}
 		if date > 0 {
@@ -359,6 +361,8 @@ func (s *SQLite) hitRows(ctx context.Context, ids []any) (map[int64]SearchHit, e
 		}
 		h.Seen, h.Flagged, h.Answered, h.Draft = seen == 1, flagged == 1, answered == 1, draft == 1
 		h.HasAttachments, h.DeletedRemote = att == 1, deleted == 1
+		h.Tags = []string{}
+		_ = json.Unmarshal([]byte(tags), &h.Tags)
 		out[h.ID] = h
 	}
 	return out, rows.Err()

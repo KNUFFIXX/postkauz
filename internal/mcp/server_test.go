@@ -194,8 +194,8 @@ func listTools(t *testing.T, key policy.Key) (tools []string, resources []string
 func TestToolListFollowsScopes(t *testing.T) {
 	reader := policy.Key{ID: "key:r", Scopes: policy.Roles["reader"]}
 	tl, res, pr := listTools(t, reader)
-	want := []string{"mail_audit_log", "mail_get_attachment_text", "mail_get_message", "mail_get_policy", "mail_get_thread",
-		"mail_list_accounts", "mail_list_attachments", "mail_list_mailboxes", "mail_search"}
+	want := []string{"mail_audit_log", "mail_get_action", "mail_get_attachment_text", "mail_get_message", "mail_get_policy", "mail_get_thread",
+		"mail_list_accounts", "mail_list_actions", "mail_list_attachments", "mail_list_mailboxes", "mail_list_tags", "mail_search"}
 	if !slices.Equal(tl, want) {
 		t.Fatalf("reader tools = %v", tl)
 	}
@@ -220,11 +220,13 @@ func TestToolListFollowsScopes(t *testing.T) {
 
 	// S2.8: assistant (mit mail:draft) sieht dazu die sechs Entwurfs-Tools,
 	// die Resources für Entwurf und Stil und den Prompt draft_reply.
+	// T2: dazu mail_tag und mail_mark (Scope mail:tag); mail_move und
+	// mail_trash erst mit mail:move bzw. mail:trash (operator, admin).
 	drafting := []string{"mail_create_draft", "mail_get_approval", "mail_get_draft", "mail_list_drafts", "mail_request_ready",
-		"mail_update_draft"}
+		"mail_update_draft", "mail_tag", "mail_mark"}
 	wantAssistant := slices.Sorted(slices.Values(append(slices.Clone(want), drafting...)))
 	tl, res, pr = listTools(t, policy.Key{ID: "key:as", Scopes: policy.Roles["assistant"]})
-	if !slices.Equal(tl, wantAssistant) || len(tl) != 15 {
+	if !slices.Equal(tl, wantAssistant) {
 		t.Fatalf("assistant tools = %v", tl)
 	}
 	if len(res) != 11 || !slices.Contains(res, "mail://{account}/draft/{id}") || !slices.Contains(res, "mail://style/{+identity}") ||
@@ -232,14 +234,16 @@ func TestToolListFollowsScopes(t *testing.T) {
 		t.Fatalf("assistant resources = %v, prompts = %v", res, pr)
 	}
 	// Auch admin (alle Scopes) bekommt kein Tool, das freigibt, ablehnt,
-	// sendet, löscht, verschiebt oder verwaltet.
+	// sendet, endgültig löscht oder verwaltet; Verschieben und den Antrag
+	// auf Papierkorb ja (mail:move, mail:trash).
+	wantAdmin := slices.Sorted(slices.Values(append(slices.Clone(wantAssistant), "mail_move", "mail_trash")))
 	tl, _, _ = listTools(t, policy.Key{ID: "key:a", Scopes: policy.Roles["admin"]})
-	if !slices.Equal(tl, wantAssistant) {
+	if !slices.Equal(tl, wantAdmin) {
 		t.Fatalf("admin tools = %v", tl)
 	}
 	for _, name := range tl {
-		for _, bad := range []string{"send", "delete", "trash", "move", "approve", "reject", "abandon", "mark", "sent", "identit",
-			"key", "account_add", "account_set"} {
+		for _, bad := range []string{"send", "delete", "approve", "reject", "abandon", "sent", "identit", "expunge", "empty",
+			"key", "account_add", "account_set", "cleanup"} {
 			if strings.Contains(name, bad) {
 				t.Fatalf("tool %s looks like a tool reserved for humans", name)
 			}
@@ -247,15 +251,24 @@ func TestToolListFollowsScopes(t *testing.T) {
 	}
 }
 
-// Die Hinweise beim Verbindungsaufbau folgen dem Scope mail:draft.
-func TestInstructionsFollowDraftScope(t *testing.T) {
-	r, d := Instructions(false), Instructions(true)
-	if !strings.Contains(r, "untrusted") || !strings.Contains(r, "nothing is sent, deleted, moved or drafted") || strings.Contains(r, "can create drafts") {
+// Die Hinweise beim Verbindungsaufbau folgen den Scopes (S2.8, T2 Punkt
+// 2): „nothing is … moved“ steht nur für Schlüssel, die nicht verschieben
+// dürfen; wer mail:move oder mail:trash hat, liest, was er darf.
+func TestInstructionsFollowScopes(t *testing.T) {
+	r := Instructions(policy.Key{Scopes: policy.Roles["reader"]})
+	if !strings.Contains(r, "untrusted") || !strings.Contains(r, "nothing is sent, deleted, moved, marked or drafted") || strings.Contains(r, "can create drafts") {
 		t.Fatalf("reader instructions: %s", r)
 	}
+	d := Instructions(policy.Key{Scopes: policy.Roles["assistant"]})
 	if !strings.Contains(d, "can create drafts in the Drafts folder") || !strings.Contains(d, "a human approves and sends") ||
-		!strings.Contains(d, "Nothing is sent, deleted or moved") || !strings.Contains(d, "postkauz approve <approval_id>") {
-		t.Fatalf("draft instructions: %s", d)
+		!strings.Contains(d, "cannot move, delete") || !strings.Contains(d, "postkauz approve <approval_id>") ||
+		!strings.Contains(d, "mail_tag") || strings.Contains(d, "mail_move") {
+		t.Fatalf("assistant instructions: %s", d)
+	}
+	o := Instructions(policy.Key{Scopes: policy.Roles["operator"]})
+	if !strings.Contains(o, "mail_move") || !strings.Contains(o, "only a human can approve") || strings.Contains(o, "cannot move") ||
+		strings.Contains(o, "moved by this server") || !strings.Contains(o, "nothing is deleted for good") {
+		t.Fatalf("operator instructions: %s", o)
 	}
 }
 
@@ -266,7 +279,7 @@ func TestPolicyToolDescriptionFitsEveryKey(t *testing.T) {
 		if b.tool != "mail_get_policy" {
 			continue
 		}
-		if strings.Contains(b.desc, "read-only") || !strings.Contains(b.desc, "never sends, deletes or moves mail; drafts only with mail:draft") {
+		if strings.Contains(b.desc, "read-only") || strings.Contains(b.desc, "moves mail") || !strings.Contains(b.desc, "never sends mail and never deletes mail for good") {
 			t.Fatalf("mail_get_policy: %q", b.desc)
 		}
 		return

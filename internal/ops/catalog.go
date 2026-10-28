@@ -7,6 +7,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -53,6 +54,14 @@ type Deps struct {
 	// Log nimmt Warnungen außerhalb des Executors auf (B-M2: Audit-Eintrag
 	// oauth.refresh nicht geschrieben); nil = keine.
 	Log *slog.Logger
+	// Actions führt Postfach-Aktionen und Tags (T2; nil nur ohne
+	// Handler-Aufrufe).
+	Actions ActionStore
+	// Policy ist die geladene Policy-Datei (policy.get zeigt Budget und
+	// Regeln je Schlüssel; nil = Standards).
+	Policy *policy.File
+	// SyncKeywords: [tags] sync_keywords der Konfiguration (E5).
+	SyncKeywords bool
 	// KeyDryRunDefault ist [agent_defaults] dry_run_default der
 	// Policy-Datei: Standard für keys.create ohne dry_run_default (T2,
 	// E4; nil = true).
@@ -89,7 +98,7 @@ func Catalog(d Deps) []Operation {
 		AuditList(d.Audit),
 		AuditExport(d.Audit, d.AuditExportDir),
 		AuditVerify(d.Audit),
-		PolicyGet(d.MaxChars),
+		PolicyGet(d.MaxChars, d.Policy),
 		DraftsCreate(d),
 		DraftsUpdate(d),
 		DraftsGet(d),
@@ -105,6 +114,16 @@ func Catalog(d Deps) []Operation {
 		IdentitiesList(d),
 		IdentitiesSetDefault(d),
 		IdentitiesRemove(d),
+		MessagesTag(d),
+		TagsList(d),
+		MessagesMark(d),
+		MessagesMove(d),
+		MessagesTrash(d),
+		ActionsApprove(d),
+		ActionsReject(d),
+		ActionsGet(d),
+		ActionsList(d),
+		DraftsCleanupCopies(d),
 	}
 }
 

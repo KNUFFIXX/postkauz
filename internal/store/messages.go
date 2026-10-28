@@ -52,6 +52,11 @@ type Message struct {
 	// RemoteStatus: present | imported_only | deleted_remote (A4, T1b;
 	// remoteStatusExpr).
 	RemoteStatus string
+	// Tags sind die lokalen Tags (E5, T2), alphabetisch.
+	Tags []string
+	// PendingFlags: Eine Kopie trägt eine lokale Änderung (mark), die der
+	// Job noch auf den Server schreibt (E1).
+	PendingFlags bool
 	Locations    []MessageLocation
 }
 
@@ -74,20 +79,30 @@ const remoteStatusExpr = `CASE WHEN m.deleted_remote_at IS NULL
 	WHEN EXISTS (SELECT 1 FROM message_import_folders ri WHERE ri.message_id = m.id) THEN 'imported_only'
 	ELSE 'deleted_remote' END`
 
+// tagsExpr liefert die Tags einer Nachricht m als JSON-Liste, alphabetisch
+// (E5; show, search).
+const tagsExpr = `(SELECT json_group_array(name) FROM (SELECT g.name AS name FROM message_tags mt JOIN tags g ON g.id = mt.tag_id
+	WHERE mt.message_id = m.id ORDER BY g.name))`
+
+// pendingExpr: Eine Kopie trägt eine lokale Änderung, die der Job noch
+// auf den Server schreibt (pending_flags, E1).
+const pendingExpr = `EXISTS (SELECT 1 FROM message_mailboxes pf WHERE pf.message_id = m.id AND pf.pending_flags IS NOT NULL)`
+
 // MessageByID liefert eine Nachricht samt Ordnerkopien.
 func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 	var m Message
 	var mid, reply, blob, irt, list, auth sql.NullString
 	var dh, idate, del, tid sql.NullInt64
-	var to, cc, kw, refs string
+	var to, cc, kw, refs, tags string
 	var seen, flagged, answered, draft, att int
 	err := s.db.QueryRowContext(ctx, `SELECT m.id, m.account_id, a.name, m.message_id_header, m.subject, m.from_addr,
 		m.to_addrs, m.cc_addrs, m.reply_to, m.date_header, m.internal_date, m.size, m.flag_seen, m.flag_flagged,
 		m.flag_answered, m.flag_draft, m.keywords, m.has_attachments, m.snippet, m.blob_sha256, m.in_reply_to, m.refs,
-		m.list_id, m.deleted_remote_at, m.thread_id, m.auth_results, `+remoteStatusExpr+`
+		m.list_id, m.deleted_remote_at, m.thread_id, m.auth_results, `+remoteStatusExpr+`, `+tagsExpr+`, `+pendingExpr+`
 		FROM messages m JOIN accounts a ON a.id = m.account_id WHERE m.id = ?`, id).Scan(
 		&m.ID, &m.AccountID, &m.Account, &mid, &m.Subject, &m.From, &to, &cc, &reply, &dh, &idate, &m.Size,
-		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid, &auth, &m.RemoteStatus)
+		&seen, &flagged, &answered, &draft, &kw, &att, &m.Snippet, &blob, &irt, &refs, &list, &del, &tid, &auth, &m.RemoteStatus,
+		&tags, &m.PendingFlags)
 	if errors.Is(err, sql.ErrNoRows) {
 		return m, fmt.Errorf("%w: id %d", ErrMessageNotFound, id)
 	}
@@ -100,6 +115,8 @@ func (s *SQLite) MessageByID(ctx context.Context, id int64) (Message, error) {
 	m.Seen, m.Flagged, m.Answered, m.Draft, m.HasAttachments = seen == 1, flagged == 1, answered == 1, draft == 1, att == 1
 	_ = json.Unmarshal([]byte(kw), &m.Keywords)
 	_ = json.Unmarshal([]byte(refs), &m.References)
+	m.Tags = []string{}
+	_ = json.Unmarshal([]byte(tags), &m.Tags)
 	if dh.Valid {
 		m.DateHeader = time.UnixMilli(dh.Int64).UTC()
 	}

@@ -92,7 +92,11 @@ type MessageOutput struct {
 	// RemoteStatus (A4, T1b): present (mindestens eine Serverkopie),
 	// imported_only (nur importiert) oder deleted_remote (auf dem Server
 	// gelöscht); deleted_remote allein liest sich bei Importen falsch.
-	RemoteStatus string            `json:"remote_status"`
+	RemoteStatus string `json:"remote_status"`
+	// Tags: lokale Tags (E5, T2); PendingFlags: eine Änderung durch mark
+	// ist im Spiegel, aber noch nicht auf dem Server (E1).
+	Tags         []string          `json:"tags"`
+	PendingFlags bool              `json:"pending_flags"`
 	Mailboxes    []MessageLocation `json:"mailboxes"`
 	Headers      string            `json:"headers,omitempty"` // nur mit headers=true
 	Text         *string           `json:"text,omitempty"`    // nur ohne headers
@@ -150,6 +154,8 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
     "keywords": {"type": "array", "items": {"type": "string"}},
     "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]},
+    "tags": {"type": "array", "items": {"type": "string"}, "description": "local tags (tag add)"},
+    "pending_flags": {"type": "boolean", "description": "a change by mark is in the archive but not yet on the server"},
     "mailboxes": {"type": "array", "items": {"type": "object", "properties": {
       "mailbox": {"type": "string"}, "role": {"type": "string"}, "uid": {"type": "integer"}},
       "required": ["mailbox", "role", "uid"]}},
@@ -167,7 +173,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "attachments": {"type": "array", "items": ` + attachmentSchema + `}
   },
   "required": ["untrusted", "source", "notice", "id", "account", "subject", "from", "to", "cc", "size", "flags", "keywords",
-    "has_attachments", "deleted_remote", "remote_status", "mailboxes", "hidden_text_removed", "alternative_mismatch", "truncated", "auth",
+    "has_attachments", "deleted_remote", "remote_status", "tags", "pending_flags", "mailboxes", "hidden_text_removed", "alternative_mismatch", "truncated", "auth",
     "attachments"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
@@ -215,7 +221,11 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			out := MessageOutput{Envelope: emailEnvelope(), Auth: parseAuthResults(m.AuthResults), Attachments: []AttachmentOutput{},
 				ID: m.ID, Account: m.Account, MessageID: m.MessageID, ThreadID: m.ThreadID, Subject: m.Subject, From: m.From,
 				To: arr(m.To), Cc: arr(m.Cc), Size: m.Size, Keywords: m.Keywords, HasAttachments: m.HasAttachments,
-				DeletedRemote: !m.DeletedRemoteAt.IsZero(), RemoteStatus: m.RemoteStatus, Flags: []string{}, Mailboxes: []MessageLocation{}}
+				DeletedRemote: !m.DeletedRemoteAt.IsZero(), RemoteStatus: m.RemoteStatus, Flags: []string{}, Mailboxes: []MessageLocation{},
+				Tags: m.Tags, PendingFlags: m.PendingFlags}
+			if out.Tags == nil {
+				out.Tags = []string{}
+			}
 			if out.Keywords == nil {
 				out.Keywords = []string{}
 			}

@@ -202,13 +202,36 @@ var cliSamples = []cliSample{
 	{"drafts.abandon", []string{"draft", "abandon", "2"}, false},
 	{"drafts.mark_sent", []string{"draft", "mark-sent", "1"}, false},
 	{"identities.remove", []string{"identity", "remove", "1"}, false},
+	// T2: Tags und Aktionen (Aktion 1 mark, 2 move, 3 und 4 Anträge auf
+	// Papierkorb; 3 freigegeben, 4 abgelehnt). Ausgeführt wird nichts (kein
+	// Sync im Test).
+	{"messages.tag", []string{"tag", "add", "rechnung,wichtig", "{html}", "-a", "demo", "--confirm-count", "1"}, false},
+	{"messages.tag", []string{"tag", "remove", "wichtig", "{html}", "-a", "demo"}, false},
+	{"tags.list", []string{"tag", "list", "-a", "demo"}, false},
+	{"messages.mark", []string{"mark", "{html}", "--unseen", "--flagged", "-a", "demo", "--confirm-count", "1"}, false},
+	{"messages.move", []string{"move", "{html}", "--role", "archive", "--from", "INBOX", "-a", "demo"}, false},
+	{"messages.move", []string{"move", "{html}", "--to", "Archive", "-a", "demo", "--confirm-count", "1", "--dry-run"}, false},
+	{"messages.trash", []string{"trash", "{answer}", "--from", "INBOX", "-a", "demo", "--confirm-count", "1"}, false},
+	{"actions.approve", []string{"action", "approve", "3"}, false},
+	{"messages.trash", []string{"trash", "{html}", "-a", "demo"}, false},
+	{"actions.reject", []string{"action", "reject", "4", "--reason", "nein"}, false},
+	{"actions.get", []string{"action", "show", "3"}, false},
+	{"actions.list", []string{"action", "list", "-a", "demo", "--state", "requested,rejected", "--limit", "5"}, false},
+	{"drafts.cleanup_copies", []string{"draft", "cleanup", "1"}, false},
+}
+
+// sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf
+// Papierkorb: Exit 4, needs_approval; die Ausgabe nennt den Antrag).
+var sampleCode = map[string]int{
+	"trash {answer} --from INBOX -a demo --confirm-count 1": ExitNeedsApproval,
+	"trash {html} -a demo": ExitNeedsApproval,
 }
 
 // seedS16: Konto demo mit den drei Nachrichten aus s16Server, gesynct;
 // liefert die Platzhalter für cliSamples.
 func seedS16(t *testing.T) map[string]string {
 	t.Helper()
-	addr := s16Server(t)
+	addr := s16Server(t, "Archive", "Trash")
 	if code, out, errs := runIn(t, canary+"\n", "account", "add", "demo", "--imap", addr, "--user", "tester@example.invalid",
 		"--tls", "none", "--insecure-test-server", "--password-stdin"); code != ExitOK {
 		t.Fatalf("account add: %d %s %s", code, out, errs)
@@ -337,8 +360,8 @@ func TestCLIContractRegistry(t *testing.T) {
 		if s.captureOnly {
 			continue
 		}
-		if code != ExitOK {
-			t.Fatalf("%v: code=%d out=%s err=%s", args, code, out, errs)
+		if want := sampleCode[strings.Join(s.args, " ")]; code != want {
+			t.Fatalf("%v: code=%d (want %d) out=%s err=%s", args, code, want, out, errs)
 		}
 		ran[s.op] = true
 		// Ausgabe gegen das OutputSchema (NDJSON: je Zeile gegen items).

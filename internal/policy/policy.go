@@ -123,6 +123,11 @@ type Requirement struct {
 var Roles = map[string][]Scope{
 	"reader":    {ScopeMailRead, ScopeMailSearch, ScopeAuditRead},
 	"assistant": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync},
+	// triage: der Scope-Satz der unbeaufsichtigten Nacht-Triage (Lastenheft
+	// Vorgang 5, T2 Punkt 5): lesen, suchen, Entwürfe, Tags und Markieren;
+	// kein Verschieben, kein Papierkorb, kein Sync, kein Audit-Lesen
+	// (TestTriageRoleCanDoNothingElse).
+	"triage": {ScopeMailRead, ScopeMailSearch, ScopeMailDraft, ScopeMailTag},
 	"operator": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,
 		ScopeMailMove, ScopeMailTrash, ScopeMailExport},
 	"admin": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,

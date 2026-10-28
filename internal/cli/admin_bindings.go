@@ -345,11 +345,17 @@ func renderPolicy(w io.Writer, out any) error {
 		o.Key, orDash(o.Role), strings.Join(o.Scopes, ", "), o.DryRunDefault, exp, o.MaxChars, o.DraftOnly)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, op := range o.Operations {
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", op.Name, op.Scope, op.Risk)
+		note := ""
+		if op.NeedsApproval {
+			note = "needs_approval"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", op.Name, op.Scope, op.Risk, note)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	fmt.Fprintf(w, "mailbox actions: move %s, trash %s, confirm_count above %d ids, at most %d ids per call\n",
+		o.Limits.MoveAgentMay, o.Limits.DeleteAgentMay, o.Limits.BulkConfirmThreshold, o.Limits.MaxIDs)
 	// Entscheid 40: was der Schlüssel nie darf (nur der Mensch ohne --key).
 	if len(o.HumanOnly) > 0 {
 		fmt.Fprintln(w, "never with a key (human only):")

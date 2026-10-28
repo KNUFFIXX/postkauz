@@ -867,3 +867,22 @@ func (s *SQLite) MarkContentLoaded(ctx context.Context, messageID, mailboxID int
 	_, err := s.db.ExecContext(ctx, `UPDATE message_mailboxes SET content_loaded = 1 WHERE message_id = ? AND mailbox_id = ?`, messageID, mailboxID)
 	return err
 }
+
+// CopyAt liefert die Serverkopie unter (Ordner, UID) und den Inhalts-Hash
+// ihrer Nachricht (Aufräumen alter Entwurfskopien, drafts.cleanup_copies).
+func (s *SQLite) CopyAt(ctx context.Context, mailboxID int64, uid uint32) (c ServerCopy, contentHash string, ok bool, err error) {
+	var u, uv int64
+	var h sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, COALESCE(b.uidvalidity, 0), mm.content_loaded, m.content_hash
+		FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id JOIN messages m ON m.id = mm.message_id
+		WHERE mm.mailbox_id = ? AND mm.uid = ?`, mailboxID, int64(uid)).Scan(&c.MessageID, &c.MailboxID, &c.Mailbox, &c.Role, &u, &uv,
+		&c.ContentLoaded, &h)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, "", false, nil
+	}
+	if err != nil {
+		return c, "", false, err
+	}
+	c.UID, c.UIDValidity = uint32(u), uint32(uv)
+	return c, h.String, true, nil
+}

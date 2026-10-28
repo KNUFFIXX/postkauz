@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -21,7 +22,44 @@ var policyInputCases = map[string][]struct {
 	input string
 	key   policy.Key
 	want  string
-}{}
+}{
+	"messages.tag": {
+		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"]}`, opKey, "confirm_count_required"},
+		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"],"confirm_count":50}`, opKey, "confirm_count_mismatch"},
+		{`{"account":"demo","ids":[1],"add":["x"]}`, opKey, ""},
+	},
+	"messages.mark": {
+		{`{"account":"demo","ids":` + idList(1001) + `,"seen":true,"confirm_count":1001}`, opKey, "too_many_ids"},
+		{`{"account":"demo","ids":[1],"seen":true}`, opKey, ""},
+	},
+	"messages.move": {
+		{`{"account":"demo","ids":[1],"mailbox":"Papierkorb"}`, opKey, "target_is_trash"},
+		{`{"account":"demo","ids":[1],"mailbox":"Papierkorb"}`, humanKey, "target_is_trash"},
+		{`{"account":"demo","ids":` + idList(51) + `,"role":"archive"}`, opKey, "confirm_count_required"},
+		{`{"account":"demo","ids":[1],"role":"archive"}`, opKey, ""},
+	},
+	"messages.trash": {
+		{`{"account":"demo","ids":` + idList(51) + `,"confirm_count":52}`, opKey, "confirm_count_mismatch"},
+		{`{"account":"demo","ids":[1]}`, opKey, ""},
+	},
+}
+
+var (
+	opKey    = policy.Key{ID: "key:op", Name: "op", Scopes: policy.Roles["operator"]}
+	humanKey = policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}
+)
+
+// idList schreibt die IDs 1..n als JSON-Liste.
+func idList(n int) string {
+	b := []byte("[")
+	for i := 1; i <= n; i++ {
+		if i > 1 {
+			b = append(b, ',')
+		}
+		b = strconv.AppendInt(b, int64(i), 10)
+	}
+	return string(append(b, ']'))
+}
 
 // A9: Jede Operation mit Eingabegrenzen hat einen Policy-Testfall; die
 // Ablehnung ist genau ein Eintrag denied mit dem Grund der Policy, vor
@@ -51,8 +89,9 @@ func TestContractPolicyInputCases(t *testing.T) {
 				au := &audit.Memory{}
 				rules := policy.DefaultRules()
 				x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au, Rules: &rules}
+				no := false
 				_, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: op.Name,
-					Input: json.RawMessage(c.input)})
+					Input: json.RawMessage(c.input), DryRun: &no})
 				checkPolicyInputResult(t, au.Events(), ran[op.Name], err, c.want)
 			}
 		})

@@ -58,7 +58,7 @@ type KeyInfo struct {
 
 const keyInfoSchema = `{"type": "object", "properties": {
       "id": {"type": "integer"}, "name": {"type": "string"},
-      "role": {"type": "string", "enum": ["reader", "assistant", "operator", "admin"]},
+      "role": {"type": "string", "enum": ["reader", "triage", "assistant", "operator", "admin"]},
       "scopes": {"type": "array", "items": {"type": "string"}}, "dry_run_default": {"type": "boolean"},
       "status": {"type": "string", "enum": ["active", "expired", "revoked"]},
       "created_at": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"},
@@ -241,7 +241,7 @@ func KeysCreate(repo KeyRepo, dryDefault *bool) Operation {
   "type": "object",
   "properties": {
     "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "unique name, shown in the audit log"},
-    "role": {"type": "string", "enum": ["reader", "assistant", "operator", "admin"], "description": "default assistant"},
+    "role": {"type": "string", "enum": ["reader", "triage", "assistant", "operator", "admin"], "description": "default assistant"},
     "scopes": {"type": "array", "items": {"type": "string"}, "description": "narrow the role to these scopes (never widen)"},
     "expires_in_days": {"type": "integer", "minimum": 0, "maximum": 3650, "description": "default 90; 0 = never"},
     "dry_run_default": {"type": "boolean", "description": "writing calls run as dry run unless dry_run=false (default: [agent_defaults] dry_run_default of the policy file, true without it)"}
@@ -278,7 +278,7 @@ func KeysCreate(repo KeyRepo, dryDefault *bool) Operation {
 			}
 			roleScopes, ok := policy.Roles[in.Role]
 			if !ok {
-				return nil, inputErr("unknown role (reader, assistant, operator, admin)")
+				return nil, inputErr("unknown role (reader, triage, assistant, operator, admin)")
 			}
 			scopes := make([]string, 0, len(roleScopes))
 			for _, s := range roleScopes {

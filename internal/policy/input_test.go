@@ -121,3 +121,12 @@ func TestDryRunDefaultFromFile(t *testing.T) {
 		t.Fatal("dry_run_default = false ignored")
 	}
 }
+
+// E3: Verschieben in den Papierkorb ist kein Weg um die Freigabe herum.
+func TestCheckInputMoveToTrash(t *testing.T) {
+	for _, k := range []Key{{ID: "cli", Human: true, Scopes: Roles["admin"]}, {ID: "key:a", Scopes: Roles["operator"]}} {
+		if d := CheckInput(k, Facts{Action: ActionMove, Targets: 1, TargetRole: "trash"}, DefaultRules()); d.Reason != "target_is_trash" {
+			t.Fatalf("%s: %+v", k.ID, d)
+		}
+	}
+}

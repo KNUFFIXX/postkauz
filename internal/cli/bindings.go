@@ -58,6 +58,11 @@ type binding struct {
 	// eine Ausgabe, wird sie geschrieben, bevor der Fehler gemeldet wird
 	// (import: Bericht trotz Strg+C; Exit bleibt interrupted).
 	outputOnError bool
+	// then nennt einen zweiten Aufruf nach Erfolg (trash --yes: der Mensch
+	// gibt den eben gestellten Antrag frei, E3). Er läuft über den Executor
+	// mit demselben Schlüssel und wird mit der Bindung dieser Operation
+	// ausgegeben (mit --json als zweite Zeile).
+	then func(cmd *cobra.Command, out any) (op string, input json.RawMessage, ok bool)
 }
 
 var bindings = []binding{
@@ -238,7 +243,51 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 	if err == nil && b.check != nil {
 		err = b.check(res.Output)
 	}
+	if err == nil && b.then != nil {
+		if op2, in2, ok := b.then(cmd, res.Output); ok {
+			return a.runFollowUp(cmd, key, op2, in2)
+		}
+	}
+	// E3: Ein Antrag (needs_approval) ist erfolgreich angelegt, aber noch
+	// nicht ausgeführt: Exit 4, die Ausgabe nennt den nächsten Schritt.
+	if err == nil && res.Decision.Outcome == policy.NeedsApproval {
+		return &ops.PolicyError{Operation: b.op, Scope: op.Scope, Decision: res.Decision, AuditID: res.AuditID}
+	}
 	return err
+}
+
+// runFollowUp führt den zweiten Aufruf einer Bindung aus (then) und gibt
+// ihn mit der ersten Bindung dieser Operation aus.
+func (a *app) runFollowUp(cmd *cobra.Command, key policy.Key, opName string, input json.RawMessage) error {
+	var fb *binding
+	for i := range bindings {
+		if bindings[i].op == opName {
+			fb = &bindings[i]
+			break
+		}
+	}
+	if fb == nil {
+		return fmt.Errorf("cli: no binding for %s", opName)
+	}
+	x, err := a.open(cmd.Context())
+	if err != nil {
+		return err
+	}
+	req := ops.Request{Key: key, Actor: audit.ActorHuman, Operation: opName, Input: input}
+	if cmd.Flags().Changed("dry-run") {
+		v, _ := cmd.Flags().GetBool("dry-run")
+		req.DryRun = &v
+	}
+	res, err := x.Execute(cmd.Context(), req)
+	if err != nil {
+		code, reason := errLogInfo(err)
+		a.log.Warn("operation failed", "op", opName, "code", code, "reason", reason)
+		return err
+	}
+	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+		return json.NewEncoder(a.stdout).Encode(res.Output)
+	}
+	return fb.human(a.stdout, res.Output)
 }
 
 // key wählt den Schlüssel: ohne --key der Mensch mit allen Rechten, mit

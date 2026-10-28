@@ -203,6 +203,9 @@ func renderSearch(w io.Writer, out any) error {
 			if h.HasAttachments {
 				subject += " [attachment]"
 			}
+			if len(h.Tags) > 0 {
+				subject += " [" + strings.Join(h.Tags, ", ") + "]"
+			}
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", h.ID, date, cut(h.From, 40), subject)
 		}
 		_ = tw.Flush()

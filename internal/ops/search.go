@@ -34,6 +34,7 @@ type SearchHitOutput struct {
 	HasAttachments bool     `json:"has_attachments"`
 	DeletedRemote  bool     `json:"deleted_remote"`
 	RemoteStatus   string   `json:"remote_status"` // A4: present | imported_only | deleted_remote
+	Tags           []string `json:"tags"`          // lokale Tags (E5, T2)
 	Score          float64  `json:"score"`
 	// Cursor ist die Position nach diesem Treffer: Mit ihm setzt eine
 	// Folgeanfrage genau dahinter fort (auch mitten in einer NDJSON-Liste).
@@ -78,8 +79,9 @@ const searchOutputSchema = `{
       "snippet": {"type": "string"},
       "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
       "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]}, "score": {"type": "number"},
+      "tags": {"type": "array", "items": {"type": "string"}},
       "cursor": {"type": "string"}},
-      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "remote_status", "score", "cursor"]}},
+      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "remote_status", "tags", "score", "cursor"]}},
     "total": {"type": "integer"}, "next_cursor": {"type": "string"},
     "order": {"type": "string", "enum": ["relevance", "date"]}, "index_pending": {"type": "integer"},
     "explain": {"type": "object", "properties": {
@@ -220,7 +222,10 @@ func runSearch(ctx context.Context, accounts AccountRepo, repo SearchRepo, in se
 		c := search.Cursor{Fingerprint: fp, Now: params.Now.UnixMilli(), Score: h.Score, ID: h.ID}
 		o := SearchHitOutput{ID: h.ID, Account: h.Account, ThreadID: h.ThreadID, Date: rfc3339(h.Date), From: h.From,
 			Subject: h.Subject, Snippet: h.Snippet, Flags: []string{}, HasAttachments: h.HasAttachments,
-			DeletedRemote: h.DeletedRemote, RemoteStatus: h.RemoteStatus, Score: h.Score, Cursor: c.Encode()}
+			DeletedRemote: h.DeletedRemote, RemoteStatus: h.RemoteStatus, Tags: h.Tags, Score: h.Score, Cursor: c.Encode()}
+		if o.Tags == nil {
+			o.Tags = []string{}
+		}
 		for _, f := range []struct {
 			on   bool
 			name string

@@ -27,6 +27,11 @@ var notOverMCP = map[string]string{
 	"identities.list":        "admin, human only (A02 E2); CLI identity list",
 	"identities.set_default": "admin, human only (A02 E2); CLI identity set-default",
 	"identities.remove":      "admin, human only (A02 E2); CLI identity remove",
+	// Postfach-Aktionen (T2, E3): Ein Agent erreicht beim Papierkorb nie
+	// mehr als den Antrag.
+	"actions.approve":       "human only (E3): an agent may request moving to the trash but never approve it; CLI action approve",
+	"actions.reject":        "human only (E3): the decision on a request is the human's; CLI action reject",
+	"drafts.cleanup_copies": "human only: moves earlier draft copies to the trash at once; CLI draft cleanup",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
 	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",

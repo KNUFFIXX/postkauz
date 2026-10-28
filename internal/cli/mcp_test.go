@@ -130,7 +130,9 @@ func TestMCPReaderSession(t *testing.T) {
 			t.Errorf("%s is not marked read-only", tl.Name)
 		}
 	}
-	if len(names) != 9 || !slices.Contains(names, "mail_search") || !slices.Contains(names, "mail_get_message") {
+	// 9 lesende Tools aus S1.9, seit T2 dazu mail_get_action,
+	// mail_list_actions und mail_list_tags (alle R0, mail:read).
+	if len(names) != 12 || !slices.Contains(names, "mail_search") || !slices.Contains(names, "mail_get_message") {
 		t.Fatalf("tools = %v", names)
 	}
 
@@ -386,7 +388,7 @@ func TestMCPStdioSmoke(t *testing.T) {
 		t.Fatalf("initialize: %+v", cs.InitializeResult())
 	}
 	lt, err := cs.ListTools(ctx, nil)
-	if err != nil || len(lt.Tools) != 9 {
+	if err != nil || len(lt.Tools) != 12 {
 		t.Fatalf("tools/list: %v %v", lt, err)
 	}
 	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "mail_get_message", Arguments: map[string]any{"id": json.Number(ph["html"])}})
