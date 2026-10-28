@@ -30,6 +30,7 @@ func syncFlags(cmd *cobra.Command) {
 	f.Duration("full-check-interval", 0, "with --watch: time between full UID checks of all mailboxes, which find deletions the message counts miss (default 1h)")
 	f.Duration("jobs-interval", 0, "with --watch: time between checks for queued drafts to put into the Drafts folder, also between syncs (default 10s)")
 	f.StringSlice("mailbox", nil, "only these mailboxes (repeatable)")
+	f.Bool("all", false, "with --watch: watch all accounts in one process (one lock per account; an account that fails does not stop the others)")
 }
 
 func accountFlag(cmd *cobra.Command) string {
@@ -47,15 +48,24 @@ func syncInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secrets
 	fullCheck, _ := f.GetDuration("full-check-interval")
 	jobsEvery, _ := f.GetDuration("jobs-interval")
 	boxes, _ := f.GetStringSlice("mailbox")
+	all, _ := f.GetBool("all")
 	if (interval != 0 || idle != 0 || fullCheck != 0 || jobsEvery != 0) && !watch {
 		return nil, "", usageError{errors.New("--interval, --idle-restart, --full-check-interval and --jobs-interval need --watch")}
+	}
+	switch {
+	case all && !watch:
+		return nil, "", usageError{errors.New("--all needs --watch (sync --watch --all); a one-time sync takes one account: sync -a <name>")}
+	case all && accountFlag(cmd) != "":
+		return nil, "", usageError{errors.New("--all and --account cannot be combined")}
+	case all && len(boxes) > 0:
+		return nil, "", usageError{errors.New("--all and --mailbox cannot be combined")}
 	}
 	if interval < 0 || fullCheck < 0 || jobsEvery < 0 {
 		return nil, "", usageError{errors.New("--interval, --full-check-interval and --jobs-interval must be positive")}
 	}
 	in := ops.SyncRunInput{Account: accountFlag(cmd), Full: full, Watch: watch, Window: window, Mailboxes: boxes,
 		IntervalSeconds: int(interval / time.Second), IdleRestartSeconds: int(idle / time.Second),
-		FullCheckIntervalSeconds: int(fullCheck / time.Second), JobsIntervalSeconds: int(jobsEvery / time.Second)}
+		FullCheckIntervalSeconds: int(fullCheck / time.Second), JobsIntervalSeconds: int(jobsEvery / time.Second), All: all}
 	if jobsEvery > 0 && in.JobsIntervalSeconds == 0 {
 		in.JobsIntervalSeconds = 1
 	}
@@ -80,6 +90,19 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 	return func(p ops.Progress) {
 		mu.Lock()
 		defer mu.Unlock()
+		// sync --watch --all (T2): jede Zeile nennt das Konto.
+		who := ""
+		if p.Account != "" {
+			who = "[" + termLine(p.Account) + "] "
+		}
+		if p.Event == "account" {
+			// Zustand eines Kontos unter --all (wartet, endet); auch ins Log.
+			a.log.Warn("sync --watch --all: account", "account", p.Account, "message", p.Message)
+			if !asJSON {
+				fmt.Fprintf(a.stdout, "%s  %s%s\n", time.Now().UTC().Format(time.RFC3339), who, termLine(p.Message))
+			}
+			return
+		}
 		if asJSON {
 			if p.Event == "round" && p.Round != nil {
 				_ = enc.Encode(p.Round)
@@ -88,32 +111,34 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 		}
 		switch p.Event {
 		case "window":
-			if p.Done >= p.Total || time.Since(last[p.Mailbox]) < time.Second {
+			key := p.Account + "\x00" + p.Mailbox
+			if p.Done >= p.Total || time.Since(last[key]) < time.Second {
 				return // nur laufende Erstsyncs melden, höchstens einmal je Sekunde
 			}
-			last[p.Mailbox] = time.Now()
-			fmt.Fprintf(a.stderr, "  %s: %d/%d\n", termLine(p.Mailbox), p.Done, p.Total)
+			last[key] = time.Now()
+			fmt.Fprintf(a.stderr, "  %s%s: %d/%d\n", who, termLine(p.Mailbox), p.Done, p.Total)
 		case "index":
-			if p.Done >= p.Total || time.Since(last["\x00index"]) < time.Second {
+			key := p.Account + "\x00index"
+			if p.Done >= p.Total || time.Since(last[key]) < time.Second {
 				return
 			}
-			last["\x00index"] = time.Now()
-			fmt.Fprintf(a.stderr, "  search index: %d/%d\n", p.Done, p.Total)
+			last[key] = time.Now()
+			fmt.Fprintf(a.stderr, "  %ssearch index: %d/%d\n", who, p.Done, p.Total)
 		case "error":
-			fmt.Fprintf(a.stderr, "  %s: error: %s\n", termLine(p.Mailbox), termLine(p.Message))
+			fmt.Fprintf(a.stderr, "  %s%s: error: %s\n", who, termLine(p.Mailbox), termLine(p.Message))
 		case "drafts":
 			// Ablage im Entwürfe-Ordner (S2.5); im Dauerbetrieb auch zwischen
 			// zwei Läufen, deshalb mit Zeit auf stdout.
 			if watching, _ := cmd.Flags().GetBool("watch"); watching {
-				fmt.Fprintf(a.stdout, "%s  %d drafts put into %s\n", time.Now().UTC().Format(time.RFC3339), p.Done, termLine(p.Mailbox))
+				fmt.Fprintf(a.stdout, "%s  %s%d drafts put into %s\n", time.Now().UTC().Format(time.RFC3339), who, p.Done, termLine(p.Mailbox))
 			}
 		case "sync_request":
 			// Angeforderter Sync (Job sync, T2): nur im Dauerbetrieb.
-			fmt.Fprintf(a.stdout, "%s  requested sync (job %d): %s\n", time.Now().UTC().Format(time.RFC3339), p.Done, termLine(p.Message))
+			fmt.Fprintf(a.stdout, "%s  %srequested sync (job %d): %s\n", time.Now().UTC().Format(time.RFC3339), who, p.Done, termLine(p.Message))
 		case "round":
 			if r := p.Round; r != nil {
-				line := fmt.Sprintf("%s  %d new, %d updated, %d removed, %d errors; %d messages mirrored",
-					time.Now().UTC().Format(time.RFC3339), r.New, r.Updated, r.Removed, r.Errors, r.MessagesMirrored)
+				line := fmt.Sprintf("%s  %s%d new, %d updated, %d removed, %d errors; %d messages mirrored",
+					time.Now().UTC().Format(time.RFC3339), who, r.New, r.Updated, r.Removed, r.Errors, r.MessagesMirrored)
 				if p.Message != "" {
 					line += "; " + termLine(p.Message)
 				}
@@ -128,6 +153,20 @@ func renderSync(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	if o.DryRun && len(o.Accounts) > 0 {
+		// sync --watch --all --dry-run: je Konto wie ein einzelnes.
+		for _, x := range o.Accounts {
+			x.DryRun = true
+			if x.Error != "" {
+				fmt.Fprintf(w, "account %s: %s\n", termLine(x.Account), termLine(x.Error))
+				continue
+			}
+			if err := renderSync(w, x); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if o.DryRun {
 		fmt.Fprintf(w, "dry run: would sync %d mailboxes of account %s (strategy %s); nothing was written\n", len(o.Mailboxes), o.Account, o.Strategy)
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -139,7 +178,19 @@ func renderSync(w io.Writer, out any) error {
 		_, err := fmt.Fprintf(w, "%d messages mirrored so far\n", o.MessagesMirrored)
 		return err
 	}
-	if o.Mode == "watch" {
+	if len(o.Accounts) > 0 {
+		// sync --watch --all (T2): je Konto eine Zeile, dann die Summen.
+		for _, x := range o.Accounts {
+			line := fmt.Sprintf("account %s: %d rounds: %d new, %d updated, %d removed, %d errors", termLine(x.Account), x.Rounds,
+				x.New, x.Updated, x.Removed, x.Errors)
+			if x.Error != "" {
+				line += "; stopped: " + termLine(x.Error)
+			}
+			fmt.Fprintln(w, line)
+		}
+		fmt.Fprintf(w, "watch of %d accounts stopped after %d rounds: %d new, %d updated, %d removed\n", len(o.Accounts), o.Rounds,
+			o.New, o.Updated, o.Removed)
+	} else if o.Mode == "watch" {
 		fmt.Fprintf(w, "watch stopped after %d rounds: %d new, %d updated, %d removed\n", o.Rounds, o.New, o.Updated, o.Removed)
 	} else {
 		fmt.Fprintf(w, "account %s (strategy %s, %s sync, %.1fs)\n", o.Account, o.Strategy, o.Mode, float64(o.DurationMS)/1000)

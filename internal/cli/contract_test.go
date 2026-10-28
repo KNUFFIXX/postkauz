@@ -153,6 +153,7 @@ var cliSamples = []cliSample{
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m", "--full-check-interval", "30m", "--jobs-interval", "5s"}, true},
+	{"sync.run", []string{"sync", "--watch", "--all"}, true},
 	{"sync.request", []string{"sync", "request", "-a", "demo", "--mailbox", "INBOX"}, false},
 	{"import.run", []string{"import", "mbox", "{mbox}", "-a", "demo", "--mailbox", "Archiv", "--labels-from", "{labels}", "--rescan", "--no-extract"}, false},
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},

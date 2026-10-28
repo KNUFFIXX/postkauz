@@ -77,7 +77,7 @@ func deniedErr(reason, format string, args ...any) error {
 // Progress ist eine Fortschrittsmeldung einer langen Operation. Sie enthält
 // nie Mailinhalte, nur Ordnernamen und Zähler.
 type Progress struct {
-	Event   string `json:"event"` // mailbox_start | window | mailbox_done | round | error | info | import_*
+	Event   string `json:"event"` // mailbox_start | window | mailbox_done | round | error | info | import_* | sync_request | account
 	Mailbox string `json:"mailbox,omitempty"`
 	Done    int    `json:"done,omitempty"`
 	Total   int    `json:"total,omitempty"`
@@ -88,6 +88,9 @@ type Progress struct {
 	Unit   string `json:"unit,omitempty"`
 	// Round ist das Ergebnis eines Laufs im Dauerbetrieb (sync --watch).
 	Round *SyncOutput `json:"round,omitempty"`
+	// Account: das Konto der Meldung bei sync --watch --all (T2; sonst
+	// leer, es gibt nur eines).
+	Account string `json:"account,omitempty"`
 }
 
 func (c Call) progress(p Progress) {

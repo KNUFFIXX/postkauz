@@ -37,7 +37,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S2.0 ✓ | `account set <name> --aliases a@…,b@…` (Abschnitt 2a) | `accounts.set` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
 | S2.1 ✓ | `account set <name> --password-stdin` (Abschnitt 2a; Entscheid 36) | `accounts.set` mit `replace_password` (das Passwort selbst geht getrennt von der Eingabe, nie ins Audit) |
 | S3.7 ✓ | `account add <name> --auth oauth2 --client-id <id> [--tenant …]`, `account login <name> [--device-code]` (Abschnitt 2a; E11) | `accounts.add` mit `auth_type` `oauth2`; `accounts.login` (Scope `admin`, R1, HumanOnly: mit `--key` Exit 3 `human_only`; nicht über MCP) |
-| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`) | `sync.run` (Scope `mail:sync`, R2 seit T1b: legt Entwürfe per APPEND ab) |
+| S1.4/S1.5 ✓ | `sync [--full] [--watch]` (siehe Abschnitt 2b; seit S2.5 legt er zuerst wartende Entwürfe im Entwürfe-Ordner ab, `--jobs-interval`; seit T2 `sync --watch --all` für alle Konten in einem Prozess) | `sync.run` (Scope `mail:sync`, R2 seit T1b: legt Entwürfe per APPEND ab) |
 | T2 ✓ | `sync request [-a <konto>] [--mailbox <ordner>]` (Abschnitt 2b) | `sync.request` (R1, `mail:sync`; reiht den Job `sync` ein; über MCP `mail_sync_now`) |
 | S1.5 ✓ | `mailbox list` | `mailboxes.list` (R0) |
 | S1.9 ✓ | `mailbox overview <mailbox-id> [--since D] [--limit N]` | `mailboxes.overview` (R0, `mail:read`) |
@@ -136,7 +136,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 
 ## 2b. Sync, Ordner, Anzeige (S1.4/S1.5)
 
-`sync [-a <konto>] [--full] [--watch] [--window N] [--interval D] [--idle-restart D] [--full-check-interval D] [--jobs-interval D] [--mailbox P ...]`
+`sync [-a <konto>] [--full] [--watch [--all]] [--window N] [--interval D] [--idle-restart D] [--full-check-interval D] [--jobs-interval D] [--mailbox P ...]`
 
 | Option | Bedeutung |
 |---|---|
@@ -145,6 +145,7 @@ Ohne `--password-stdin`/`--password-from-env` fragt die CLI das Passwort verdeck
 | `--watch` | Dauerläufer: sofort ein Lauf, danach alle `--interval` (Standard 5 min) und bei jeder IDLE-Meldung der INBOX (IDLE-Neustart alle `--idle-restart`, 5 bis 10 min, Standard 8 min); Strg+C beendet ihn |
 | `--full-check-interval` | nur mit `--watch` (seit S2.0): Abstand der vollen UID-Abgleiche aller Ordner, Standard `1h`. Der erste Lauf über alle Ordner und danach der erste Lauf, der mindestens so lange nach dem letzten erfolgreichen vollen Abgleich beginnt (erfolgreich = ohne Fehler und ohne übersprungenen Ordner; sonst gleicht der nächste Lauf erneut voll ab), holt in jedem Ordner die vollständige UID-Liste (`UID SEARCH ALL`) und erkennt so auch Löschungen, die der Zahlenvergleich übersieht (z. B. wenn lokal zugleich eine Nachricht fehlt, die beim Spiegeln scheiterte). Flags bleiben inkrementell (`CHANGEDSINCE`); IDLE-Läufe (nur INBOX) gleichen nie voll ab. Der einmalige `sync` ist davon nicht betroffen |
 | `--jobs-interval` | nur mit `--watch` (seit S2.5): Abstand, in dem der Dauerläufer die Tabelle `jobs` auf wartende Entwürfe prüft (Job `draft_push`), auch zwischen zwei Läufen; Standard `10s`. Ein Entwurf, den `draft new` oder ein Agent über MCP anlegt oder ändert, liegt so spätestens nach diesem Abstand plus der Dauer des APPEND im Entwürfe-Ordner (gemessen gegen die Testserver: 10,0 bis 10,3 s im ungünstigsten Fall) |
+| `--all` | nur mit `--watch` (seit T2): **ein Prozess beobachtet alle Konten**, je Konto eine Goroutine mit eigener Kontosperre und eigenen Zugangsdaten (Schlüsselbund bzw. OAuth2-Token wie bei `sync -a <konto>`). Nicht zusammen mit `-a` oder `--mailbox` (Exit 2); ohne `--watch` Exit 2. Ist die Sperre eines Kontos belegt (ein anderer `sync` läuft) oder sein Server nicht erreichbar, meldet die Zeile `<Zeit>  [konto] another sync is running: account konto; trying again in 1m0s` und das Konto versucht es nach 1 min erneut (Wartezeit verdoppelt bis 30 min); scheitert die Anmeldung oder fehlen die Zugangsdaten, endet nur dieses Konto (`<Zeit>  [konto] stopped: …; the other accounts go on`, dazu eine WARN-Zeile im Log). Jede Fortschrittszeile nennt das Konto in eckigen Klammern (`<Zeit>  [privat] 2 new, 0 updated, …`). Im Audit steht **ein** Aufruf `sync.run` mit allen Konten als Ziel. Am Ende (Strg+C) je Konto eine Zeile `account privat: 12 rounds: 3 new, 0 updated, 0 removed, 0 errors` (mit `; stopped: …`, wenn es vorher endete) und die Summen; `--json` hat dazu `accounts[]` (je Konto das Ergebnis mit `error`). Enden alle Konten von selbst, endet der Prozess mit dem Fehler, der einen Menschen braucht (Anmeldung zuerst; Exit-Code wie bei einem einzelnen Konto) |
 | `--window` | Nachrichten je Fenster im Erstsync (Standard 200) |
 | `--mailbox` | nur diese Ordner (mehrfach möglich). Fehlt der Entwürfe-Ordner, prüft der Lauf danach keine Entwürfe auf Versand (nur den Ablauf der Freigaben; [versanderkennung.md](versanderkennung.md), Abschnitt 1) |
 | `--dry-run` | meldet Ordner und lokalen Stand, schreibt nichts |
