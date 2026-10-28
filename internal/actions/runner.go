@@ -39,7 +39,8 @@ import (
 //
 // Ein Verbindungs- oder Anmeldefehler bricht den Lauf ab; die Aktion bleibt
 // running und wird beim nächsten Lauf fortgesetzt (STORE ist idempotent,
-// MOVE einer nicht mehr vorhandenen UID tut nichts).
+// MOVE einer nicht mehr vorhandenen UID tut nichts und zählt als
+// not_found, V11).
 
 // Remote ist der Teil des Providers, den die Ausführung braucht.
 type Remote interface {
@@ -265,23 +266,54 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 		return results, results, "target_changed", nil
 	}
-	// Ziele je Quellordner, nach der Prüfung von Spiegel und Kopf.
+	// Ziele je Quellordner, nach der Prüfung von Spiegel und Kopf. Die
+	// Köpfe nie selbst geladener Kopien holt der Job je Ordner mit einem
+	// FETCH (V21), nicht je UID.
 	groups := map[int64][]store.ActionTarget{}
 	var order []int64
-	for _, t := range open {
-		res, ok, err := r.check(ctx, t, boxes, remote)
-		if err != nil {
-			return nil, nil, "", err
-		}
-		if !ok {
-			results = append(results, res)
-			unsaved = append(unsaved, res)
-			continue
-		}
+	add := func(t store.ActionTarget) {
 		if _, seen := groups[t.MailboxID]; !seen {
 			order = append(order, t.MailboxID)
 		}
 		groups[t.MailboxID] = append(groups[t.MailboxID], t)
+	}
+	refuse := func(res store.TargetResult, why string) {
+		results = append(results, res)
+		unsaved = append(unsaved, res)
+		if code == "" {
+			code = why
+		}
+	}
+	headers := map[int64][]store.ActionTarget{}
+	var headerOrder []int64
+	for _, t := range open {
+		res, why, st, err := r.checkMirror(ctx, t, boxes)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		switch st {
+		case checkRefused:
+			refuse(res, why)
+		case checkHeader:
+			if _, seen := headers[t.MailboxID]; !seen {
+				headerOrder = append(headerOrder, t.MailboxID)
+			}
+			headers[t.MailboxID] = append(headers[t.MailboxID], t)
+		default:
+			add(t)
+		}
+	}
+	for _, mbID := range headerOrder {
+		passed, refused, why, err := r.checkHeaders(ctx, boxes[mbID], headers[mbID], remote)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		for _, res := range refused {
+			refuse(res, why[res.MessageID])
+		}
+		for _, t := range passed {
+			add(t)
+		}
 	}
 	var saved []store.TargetResult
 	for _, mbID := range order {
@@ -301,7 +333,7 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		saved = append(saved, res...)
 		results = append(results, res...)
 	}
-	return results, unsaved, "", nil
+	return results, unsaved, code, nil
 }
 
 // targetChanged meldet, ob der Zielordner unter der gespeicherten ID nicht
@@ -319,83 +351,149 @@ func targetChanged(a store.Action, dest store.Mailbox) bool {
 	return false
 }
 
-// check prüft ein Ziel vor der Ausführung: Kopie im Spiegel unverändert,
-// UIDVALIDITY des Ordners gleich, bei nie geladenem Inhalt der Kopf.
-func (r *Runner) check(ctx context.Context, t store.ActionTarget, boxes map[int64]store.Mailbox, remote Remote) (store.TargetResult, bool, error) {
+// Ergebnis von checkMirror.
+type checkState int
+
+const (
+	checkOK      checkState = iota // ausführen
+	checkHeader                    // erst den Kopf vom Server vergleichen
+	checkRefused                   // nicht ausführen (Ergebnis steht fest)
+)
+
+// Gründe, die eine Aktion trägt, wenn Ziele bei der Prüfung ausfallen
+// (das Ergebnis je Ziel bleibt stale: die Tabelle action_targets erlaubt nur
+// feste Ergebnisse, Migration 0020).
+const (
+	// ReasonSourceChanged: Der Quellordner hat unter seiner ID nicht mehr
+	// den Pfad, den er beim Anlegen des Ziels hatte (Quellpfad je Ziel,
+	// Nachprüfung zu fd70f19).
+	ReasonSourceChanged = "source_changed"
+	// ReasonNoLocalCopy: Eine nie selbst geladene Serverkopie ließ sich
+	// nicht prüfen, weil die lokale Rohmail fehlt oder unlesbar ist (V17).
+	ReasonNoLocalCopy = "no_local_copy"
+)
+
+// checkMirror prüft ein Ziel gegen den Spiegel: Ordner da, UIDVALIDITY
+// gleich, Pfad des Ordners wie beim Anlegen (source_path; NULL bei
+// Altbestand = nicht geprüft), Kopie unter Ordner und UID vorhanden. Bei
+// nie geladenem Inhalt folgt der Kopfvergleich (checkHeaders).
+func (r *Runner) checkMirror(ctx context.Context, t store.ActionTarget, boxes map[int64]store.Mailbox) (store.TargetResult, string, checkState, error) {
 	res := store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetStale}
 	mb, ok := boxes[t.MailboxID]
 	if !ok || mb.UIDValidity != t.UIDValidity {
-		return res, false, nil
+		return res, "", checkRefused, nil
+	}
+	if t.SourcePath != "" && mb.Path != t.SourcePath {
+		r.log().Warn("source mailbox changed since the action was created; nothing done for this message (stale)",
+			"message_id", t.MessageID, "mailbox_id", t.MailboxID)
+		return res, ReasonSourceChanged, checkRefused, nil
 	}
 	cs, err := r.Store.ServerCopies(ctx, t.MessageID)
 	if err != nil {
-		return res, false, err
+		return res, "", checkRefused, err
 	}
-	var cp *store.ServerCopy
-	for i := range cs {
-		if cs[i].MailboxID == t.MailboxID && cs[i].UID == t.UID && cs[i].UIDValidity == t.UIDValidity {
-			cp = &cs[i]
+	for _, c := range cs {
+		if c.MailboxID == t.MailboxID && c.UID == t.UID && c.UIDValidity == t.UIDValidity {
+			if c.ContentLoaded {
+				return res, "", checkOK, nil
+			}
+			return res, "", checkHeader, nil
 		}
 	}
-	if cp == nil {
-		return res, false, nil
+	return res, "", checkRefused, nil
+}
+
+// checkHeaders vergleicht die Köpfe nie selbst geladener Kopien eines
+// Ordners mit den lokalen Rohmails: ein FETCH für alle (V21). Ohne lokale
+// Rohmail fragt es den Server gar nicht erst (stale, no_local_copy, V17).
+// passed: gleich (gilt danach als geladen); refused: Ergebnis je Ziel
+// (stale, not_found, failed) mit Grund je Nachricht in why. err nur bei
+// Abbruch, Verbindungs-, Anmelde- oder Datenbankfehlern.
+func (r *Runner) checkHeaders(ctx context.Context, mb store.Mailbox, ts []store.ActionTarget, remote Remote) (passed []store.ActionTarget,
+	refused []store.TargetResult, why map[int64]string, err error) {
+	why = map[int64]string{}
+	result := func(t store.ActionTarget, code string) store.TargetResult {
+		return store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: code}
 	}
-	if cp.ContentLoaded {
-		return res, true, nil
+	locals := map[provider.UID][]byte{}
+	var ask []store.ActionTarget
+	var uids []provider.UID
+	for _, t := range ts {
+		local, err := r.localHeader(ctx, t.MessageID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if local == nil {
+			refused = append(refused, result(t, store.TargetStale))
+			why[t.MessageID] = ReasonNoLocalCopy
+			continue
+		}
+		locals[provider.UID(t.UID)] = local
+		ask = append(ask, t)
+		uids = append(uids, provider.UID(t.UID))
 	}
-	same, found, err := r.sameHeader(ctx, t, mb.Path, remote)
+	if len(ask) == 0 {
+		return nil, refused, why, nil
+	}
+	hs, err := remote.FetchHeaders(ctx, mb.Path, mb.UIDValidity, uids)
 	switch {
 	case err != nil && fatal(ctx, err):
-		return res, false, err
-	case errors.Is(err, provider.ErrUIDValidityChanged):
-		return res, false, nil
+		return nil, nil, nil, err
 	case err != nil:
-		res.Result = store.TargetFailed
-		return res, false, nil
-	case !found:
-		res.Result = store.TargetNotFound
-		return res, false, nil
-	case !same:
-		r.log().Warn("server copy differs from the local message; action skipped for it (stale)", "message_id", t.MessageID, "uid", t.UID)
-		return res, false, nil
+		code := store.TargetFailed
+		if errors.Is(err, provider.ErrUIDValidityChanged) {
+			code = store.TargetStale
+		}
+		for _, t := range ask {
+			refused = append(refused, result(t, code))
+		}
+		return nil, refused, why, nil
 	}
-	if err := r.Store.MarkContentLoaded(ctx, t.MessageID, t.MailboxID); err != nil {
-		return res, false, err
+	byUID := map[provider.UID]provider.Header{}
+	for _, h := range hs {
+		byUID[h.UID] = h
 	}
-	return res, true, nil
+	for _, t := range ask {
+		h, found := byUID[provider.UID(t.UID)]
+		switch {
+		case !found:
+			refused = append(refused, result(t, store.TargetNotFound))
+		case h.HeaderTooLarge || !bytes.Equal(normHeader(locals[provider.UID(t.UID)]), normHeader(h.RawHeader)):
+			r.log().Warn("server copy differs from the local message; action skipped for it (stale)", "message_id", t.MessageID, "uid", t.UID)
+			refused = append(refused, result(t, store.TargetStale))
+		default:
+			if err := r.Store.MarkContentLoaded(ctx, t.MessageID, t.MailboxID); err != nil {
+				return nil, nil, nil, err
+			}
+			passed = append(passed, t)
+		}
+	}
+	return passed, refused, why, nil
 }
 
 // maxLocalHeader begrenzt das Lesen des lokalen Kopfes (wie FetchMeta).
 const maxLocalHeader = 1 << 20
 
-// sameHeader vergleicht den Kopf der Serverkopie mit dem der lokalen
-// Nachricht (Zeilenenden vereinheitlicht). found = false: Die UID gibt es
-// auf dem Server nicht mehr.
-func (r *Runner) sameHeader(ctx context.Context, t store.ActionTarget, path string, remote Remote) (same, found bool, err error) {
-	hs, err := remote.FetchHeaders(ctx, path, t.UIDValidity, []provider.UID{provider.UID(t.UID)})
+// localHeader liest den Kopf der lokalen Rohmail einer Nachricht; nil, wenn
+// es keine gibt oder sie unlesbar ist (V17). err nur bei Datenbankfehlern.
+func (r *Runner) localHeader(ctx context.Context, messageID int64) ([]byte, error) {
+	sha, err := r.Store.MessageHeaderBlob(ctx, messageID)
 	if err != nil {
-		return false, false, err
+		return nil, err
 	}
-	if len(hs) == 0 {
-		return false, false, nil
-	}
-	if hs[0].HeaderTooLarge {
-		return false, true, nil
-	}
-	sha, err := r.Store.MessageHeaderBlob(ctx, t.MessageID)
-	if err != nil || sha == "" || r.Blobs == nil {
-		return false, true, err
+	if sha == "" || r.Blobs == nil {
+		return nil, nil
 	}
 	rc, err := r.Blobs.Get(sha)
 	if err != nil {
-		return false, true, nil
+		return nil, nil
 	}
 	defer rc.Close()
 	local, err := readHeader(rc)
 	if err != nil {
-		return false, true, nil
+		return nil, nil
 	}
-	return bytes.Equal(normHeader(local), normHeader(hs[0].RawHeader)), true, nil
+	return local, nil
 }
 
 // readHeader liest den Kopf einer Rohmail bis zur ersten Leerzeile.
@@ -474,8 +572,20 @@ func (r *Runner) apply(ctx context.Context, a store.Action, mb, dest store.Mailb
 			r.log().Warn("mailbox action failed for a mailbox", "action_id", a.ID, "kind", a.Kind, "error_code", byErr(err))
 			return all(byErr(err)), nil
 		}
+		// V11: Eine UID, die es im Quellordner nicht mehr gab, hat der
+		// Server nicht verschoben (COPYUID nennt sie nicht, bzw. kein
+		// EXPUNGE): not_found statt ok; der Spiegel bleibt, der nächste
+		// Sync trägt die Kopie aus.
+		missing := map[provider.UID]bool{}
+		for _, u := range mr.Missing {
+			missing[u] = true
+		}
 		out := make([]store.TargetResult, len(ts))
 		for i, t := range ts {
+			if missing[provider.UID(t.UID)] {
+				out[i] = store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetNotFound}
+				continue
+			}
 			out[i] = store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetOK,
 				DestMailboxID: dest.ID, DestUIDValidity: mr.UIDValidity, NewUID: uint32(mr.UIDs[provider.UID(t.UID)])}
 		}

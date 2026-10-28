@@ -21,6 +21,9 @@ type fakeRemote struct {
 	moveErrFor map[string]error
 	flagErr    error
 	nextUID    provider.UID
+	// gone: UIDs, die es am Server nicht mehr gibt (MOVE meldet sie als
+	// Missing, V11).
+	gone map[provider.UID]bool
 }
 
 func (f *fakeRemote) FetchHeaders(_ context.Context, mailbox string, _ uint32, uids []provider.UID) ([]provider.Header, error) {
@@ -49,6 +52,10 @@ func (f *fakeRemote) Move(_ context.Context, from string, _ uint32, uids []provi
 	}
 	res := provider.MoveResult{UIDValidity: 8, UIDs: map[provider.UID]provider.UID{}}
 	for _, u := range uids {
+		if f.gone[u] {
+			res.Missing = append(res.Missing, u)
+			continue
+		}
 		f.nextUID++
 		res.UIDs[u] = f.nextUID
 	}

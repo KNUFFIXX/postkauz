@@ -182,6 +182,9 @@ type MoveResult struct {
 	UIDValidity uint32
 	// UIDs ordnet alten UIDs die neuen im Zielordner zu (leer ohne UIDPLUS).
 	UIDs map[UID]UID
+	// Missing: UIDs, die der Server nachweislich nicht verschoben hat, weil
+	// es sie im Quellordner nicht mehr gab (V11; leer = keine bzw. unbekannt).
+	Missing []UID
 }
 
 // Header ist die Kopfsicht einer Nachricht, wie sie der Sync braucht.
