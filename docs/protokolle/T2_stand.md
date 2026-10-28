@@ -52,6 +52,8 @@ Festlegungen von WP-A: [T2_wpa.md](T2_wpa.md), „Festlegungen“ 1–16.
 - **`make vuln`:** in dieser Cloud-Umgebung gesperrt (`vuln.go.dev` nicht erreichbar; Zusatz (c)). Nachholen in der Prüfsitzung bzw. im CI-Job.
 - **PowerShell:** `Register-SyncWatch.ps1`, `Run-SyncWatch.ps1` und `abnahme_D7a.ps1` sind auf Windows ungetestet (kein `pwsh` im Container); geprüft nur BOM/ASCII (`make guard`).
 
+- **Build:** `make release VERSION=0.3.0-alpha.4` an `a051d29` (Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`); SHA-256 des Windows-Programms `243702b875fa225397a4b236c55fc377e78a1ae13e0d35b4657a0456de16a6da`. `dist/` liegt nur im Container (nicht im Repository); die Prüfsitzung baut nach oder lädt es aus dem Container.
+
 ## 4. Offen
 
 1. Abnahme D7a ([abnahme_D7a.md](../abnahme_D7a.md), [abnahme_D7a.ps1](../abnahme_D7a.ps1)) durch die Prüfsitzung am Büro-PC.
