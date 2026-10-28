@@ -211,7 +211,7 @@ func TestAccountsLoginTestAndRefreshAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err = e.run("accounts.remove", map[string]any{"name": "outlook"}, "", false)
-	if err != nil || !res.(AccountsRemoveOutput).SecretDeleted || len(e.sec.m) != 0 {
+	if err != nil || !res.(AccountsRemoveOutput).SecretDeleted || res.(AccountsRemoveOutput).SecretKind != "token" || len(e.sec.m) != 0 {
 		t.Fatalf("remove: %v %v", err, e.sec.m)
 	}
 }

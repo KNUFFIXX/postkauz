@@ -614,13 +614,18 @@ func renderAccountRemove(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	// OAuth2-Konten haben kein Passwort, sondern ein Token (T2 Punkt 7).
+	kind := "password"
+	if o.SecretKind == "token" {
+		kind = "token"
+	}
 	if o.DryRun {
-		_, err := fmt.Fprintf(w, "dry run: would remove account %s and its stored password\n", o.Removed)
+		_, err := fmt.Fprintf(w, "dry run: would remove account %s and its stored %s\n", o.Removed, kind)
 		return err
 	}
-	msg := "stored password deleted"
+	msg := "stored " + kind + " deleted"
 	if !o.SecretDeleted {
-		msg = "no stored password found"
+		msg = "no stored " + kind + " found"
 	}
 	_, err := fmt.Fprintf(w, "account %s removed; %s\n", o.Removed, msg)
 	return err
