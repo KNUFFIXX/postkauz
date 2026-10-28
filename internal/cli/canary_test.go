@@ -66,11 +66,11 @@ func TestCanaryAllChannels(t *testing.T) {
 	c.mustRun("account add (wrong password)", 0, c.pwBad+"\n", "account", "add", "bad", "--imap", addr, "--user", "tester@example.invalid",
 		"--tls", "none", "--insecure-test-server", "--password-stdin", "--json")
 	c.mustRun("account test", 0, "", "account", "test", "demo", "--json")
-	c.mustRun("account test (wrong password)", ExitError, "", "account", "test", "bad", "--json")
-	c.mustRun("account test (wrong password, text)", ExitError, "", "account", "test", "bad")
+	c.mustRun("account test (wrong password)", ExitAuth, "", "account", "test", "bad", "--json")
+	c.mustRun("account test (wrong password, text)", ExitAuth, "", "account", "test", "bad")
 	c.mustRun("sync", 0, "", "sync", "-a", "demo", "--json")
 	c.mustRun("sync (text)", 0, "", "sync", "-a", "demo")
-	c.mustRun("sync (wrong password)", ExitError, "", "sync", "-a", "bad", "--json")
+	c.mustRun("sync (wrong password)", ExitAuth, "", "sync", "-a", "bad", "--json")
 	c.mustRun("accounts list", 0, "", "accounts", "list", "--json")
 	c.mustRun("mailbox list", 0, "", "mailbox", "list", "-a", "demo", "--json")
 	created := c.mustRun("key create", 0, "", "key", "create", "--name", "agent", "--role", "reader", "--json")
@@ -87,7 +87,7 @@ func TestCanaryAllChannels(t *testing.T) {
 	// richtigen Passwort an.
 	c.mustRun("account set --password-stdin (key)", ExitDenied, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--key", "agent", "--json")
 	c.mustRun("account set --password-stdin (dry run)", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--dry-run", "--json")
-	c.mustRun("account test (still wrong)", ExitError, "", "account", "test", "bad", "--json")
+	c.mustRun("account test (still wrong)", ExitAuth, "", "account", "test", "bad", "--json")
 	c.mustRun("account set --password-stdin", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin", "--json")
 	c.mustRun("account set --password-stdin (text)", 0, c.pw+"\n", "account", "set", "bad", "--password-stdin")
 	c.mustRun("account test (password replaced)", 0, "", "account", "test", "bad", "--json")

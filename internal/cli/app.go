@@ -188,6 +188,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		r.Pusher, r.DraftMailbox = ops.NewDraftPusher(deps), a.cfg.Draft.Mailbox
 		// mailbox_action (T2, E1): ebenso nur der Sync.
 		r.Actions = &actions.Runner{Store: st, Blobs: blobs, Origin: ops.ActionOriginCheck(st), Log: a.log}
+		// Job sync (T2, sync.request/mail_sync_now): Der Sync führt
+		// angeforderte Läufe aus bzw. erledigt sie mit.
+		if sj := ops.NewSyncJobs(deps); sj != nil {
+			r.Requests = sj
+		}
 	}
 	reg, err := ops.NewDefaultRegistry(deps)
 	if err != nil {

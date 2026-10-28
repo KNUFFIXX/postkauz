@@ -104,6 +104,13 @@ type SyncOutput struct {
 	// Actions: ausgeführte Postfach-Aktionen (Job mailbox_action, T2);
 	// nil = keine.
 	Actions *SyncActions `json:"actions,omitempty"`
+	// Accounts: je Konto das Ergebnis von sync --watch --all (T2); die
+	// Zähler oben sind die Summen, Account nennt alle Konten.
+	Accounts []SyncOutput `json:"accounts,omitempty"`
+	// Error: nur in Accounts: warum der Dauerläufer dieses Kontos endete
+	// (Anmeldung abgelehnt, Zugangsdaten fehlen …); die übrigen liefen
+	// weiter.
+	Error string `json:"error,omitempty"`
 }
 
 // SyncActions zählt die im Sync ausgeführten Aktionen und ihre Ziele.
@@ -198,6 +205,9 @@ type SyncRunInput struct {
 	// Dauerbetrieb (0 = 10; A02 E1).
 	JobsIntervalSeconds int      `json:"jobs_interval_seconds,omitempty"`
 	Mailboxes           []string `json:"mailboxes,omitempty"`
+	// All: alle Konten in einem Prozess beobachten (nur mit Watch, nicht
+	// mit Account und Mailboxes; T2).
+	All bool `json:"all,omitempty"`
 }
 
 // SyncRun spiegelt ein Konto: Erstsync in Fenstern (wiederaufnehmbar),
@@ -228,7 +238,8 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
     "idle_restart_seconds": {"type": "integer", "minimum": 300, "maximum": 600},
     "full_check_interval_seconds": {"type": "integer", "minimum": 1, "description": "with watch: time between full UID checks of all mailboxes (deletions); default 3600"},
     "jobs_interval_seconds": {"type": "integer", "minimum": 1, "description": "with watch: time between checks for queued jobs (drafts to put into the Drafts folder); default 10"},
-    "mailboxes": {"type": "array", "items": {"type": "string"}}
+    "mailboxes": {"type": "array", "items": {"type": "string"}},
+    "all": {"type": "boolean", "description": "with watch: watch all accounts in one process, one lock per account; an account whose lock is taken or whose login fails does not stop the others"}
   },
   "additionalProperties": false
 }`),
@@ -259,11 +270,16 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
       "required": ["pushed"]},
     "actions": {"type": "object", "description": "mailbox actions applied on the server (mark, move, trash, keywords)", "properties": {
       "actions": {"type": "integer"}, "ok": {"type": "integer"}, "failed": {"type": "integer"}, "stale": {"type": "integer"},
-      "error": {"type": "string"}}, "required": ["actions", "ok", "failed", "stale"]}
+      "error": {"type": "string"}}, "required": ["actions", "ok", "failed", "stale"]},
+    "accounts": {"type": "array", "description": "with all: the result per account", "items": {"type": "object", "properties": {
+      "account": {"type": "string"}, "rounds": {"type": "integer"}, "new": {"type": "integer"}, "errors": {"type": "integer"},
+      "error": {"type": "string", "description": "why watching this account ended; the other accounts went on"}},
+      "required": ["account"]}},
+    "error": {"type": "string"}
   },
   "required": ["account", "mode", "mailboxes", "new", "updated", "removed", "errors", "messages_mirrored", "duration_ms", "dry_run"]
 }`),
-		Redact: redactAccountRef,
+		Redact: redactSyncRun(repo),
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in SyncRunInput
 			if err := decodeInput(call.Input, &in); err != nil {
@@ -281,6 +297,21 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
 			if (in.IntervalSeconds != 0 || in.IdleRestartSeconds != 0 || in.FullCheckIntervalSeconds != 0 || in.JobsIntervalSeconds != 0) && !in.Watch {
 				return nil, inputErr("interval, idle restart, full check interval and jobs interval only apply with watch")
 			}
+			switch {
+			case in.All && !in.Watch:
+				return nil, inputErr("all only applies with watch (sync --watch --all)")
+			case in.All && in.Account != "":
+				return nil, inputErr("all and account cannot be combined")
+			case in.All && len(in.Mailboxes) > 0:
+				return nil, inputErr("all and mailboxes cannot be combined (mailbox names differ between accounts)")
+			}
+			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
+				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
+				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second,
+				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second, AuditID: call.AuditID}
+			if in.All {
+				return watchAllAccounts(ctx, repo, creds, runner, call, o)
+			}
 			a, err := ResolveAccount(ctx, repo, in.Account)
 			if err != nil {
 				return nil, err
@@ -289,10 +320,6 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
 			if err != nil {
 				return nil, err
 			}
-			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
-				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
-				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second,
-				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second, AuditID: call.AuditID}
 			out, err := runner.Sync(ctx, a, cred, o, call.Progress)
 			if err != nil {
 				return nil, scrub(err, cred.Password)

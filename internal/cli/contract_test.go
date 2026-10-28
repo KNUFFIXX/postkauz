@@ -154,6 +154,8 @@ var cliSamples = []cliSample{
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m", "--full-check-interval", "30m", "--jobs-interval", "5s"}, true},
+	{"sync.run", []string{"sync", "--watch", "--all"}, true},
+	{"sync.request", []string{"sync", "request", "-a", "demo", "--mailbox", "INBOX"}, false},
 	{"import.run", []string{"import", "mbox", "{mbox}", "-a", "demo", "--mailbox", "Archiv", "--labels-from", "{labels}", "--rescan", "--no-extract"}, false},
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},
 	{"mailboxes.overview", []string{"mailbox", "overview", "{mailbox}", "-a", "demo", "--since", "3650d", "--limit", "5"}, false},
@@ -422,7 +424,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		got[m[2]] = int(m[1][0] - '0')
 	}
 	want := map[string]int{"ExitOK": ExitOK, "ExitError": ExitError, "ExitUsage": ExitUsage, "ExitDenied": ExitDenied,
-		"ExitNeedsApproval": ExitNeedsApproval, "ExitConnection": ExitConnection}
+		"ExitNeedsApproval": ExitNeedsApproval, "ExitConnection": ExitConnection, "ExitAuth": ExitAuth}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("docs/cli.md exit code table = %v, code = %v", got, want)
 	}
@@ -461,7 +463,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{store.ErrIdentityNotFound, ExitError, "not_found"},
 		{&ops.DeniedError{Reason: "approval_stale"}, ExitDenied, "denied"},
 		{&ops.PolicyError{Operation: "drafts.approve", Decision: policy.Decision{Outcome: policy.Deny, Reason: "human_only"}}, ExitDenied, "denied"},
-		{provider.ErrAuth, ExitError, "auth"},
+		{provider.ErrAuth, ExitAuth, "auth"},
 		{provider.ErrConnection, ExitConnection, "connection"},
 		{secrets.ErrUnavailable, ExitError, "secret_store_unavailable"},
 		{ops.ErrNoSecret, ExitError, "no_secret"},

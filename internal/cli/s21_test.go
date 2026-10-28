@@ -67,7 +67,7 @@ func TestAccountSetPasswordStdin(t *testing.T) {
 		}
 		return out, errs
 	}
-	step("", ExitError, "account", "test", "demo")
+	step("", ExitAuth, "account", "test", "demo")
 
 	// Ein Schlüssel darf es nicht, auch admin nicht.
 	run(t, "key", "create", "--name", "adm", "--role", "admin")
@@ -80,7 +80,7 @@ func TestAccountSetPasswordStdin(t *testing.T) {
 	if !strings.Contains(out, "dry run: would replace the password of account demo in the OS keyring as account/") {
 		t.Fatalf("dry run: %s", out)
 	}
-	step("", ExitError, "account", "test", "demo")
+	step("", ExitAuth, "account", "test", "demo")
 
 	out, _ = step(right+"\n", ExitOK, "account", "set", "demo", "--password-stdin", "--json")
 	var o ops.AccountsSetOutput

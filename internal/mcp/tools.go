@@ -123,6 +123,13 @@ var tools = []toolBinding{
 		desc: "Describe the policy of the key this server runs with: scopes, allowed operations with risk level, dry-run default, " +
 			"character budget, and the limits for mailbox actions. This server never sends mail and never deletes mail for good; " +
 			"what this key may change (drafts, tags, read/flag state, moves, trash requests) is listed in operations."},
+	// Sync anstoßen (T2, ADR-009 E1, Entscheid 23; Scope mail:sync): Das
+	// Tool reiht nur den Job sync ein; dieser Prozess kennt kein Passwort.
+	{tool: "mail_sync_now", op: "sync.request", title: "Ask for a sync now", dryRun: true,
+		desc: "Ask for a sync of an account now (all mailboxes, or only mailbox). This server has no mail password and does not " +
+			"connect to the mail server itself: it queues a job (status queued, job_id). A running sync --watch of the user runs it " +
+			"within about 10 s; without one, the user's next sync does it. Asking again while a sync is queued adds to that job " +
+			"(merged=true). Check the result later with mail_list_mailboxes (last_sync_at) or mail_search. dry_run=true queues nothing."},
 
 	// Entwürfe (S2.8, A02 S2.8; Scope mail:draft). Freigeben, ablehnen,
 	// verwerfen, als gesendet markieren und Identitäten verwalten bleiben

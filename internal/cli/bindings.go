@@ -81,7 +81,9 @@ var bindings = []binding{
 		input: nameInput, human: renderAccountRemove, covers: []string{"name"}},
 	{op: "sync.run", path: []string{"sync"}, args: cobra.NoArgs, flags: syncFlags, input: syncInput,
 		human: renderSync, progress: syncProgress,
-		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes"}},
+		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes", "all"}},
+	{op: "sync.request", path: []string{"sync", "request"}, args: cobra.NoArgs, flags: syncRequestFlags, input: syncRequestInput,
+		human: renderSyncRequest, covers: []string{"account", "mailbox"}},
 	{op: "import.run", path: []string{"import"}, use: "<mbox|maildir> <file-or-folder>", args: cobra.ExactArgs(2),
 		flags: importFlags, input: importInput, human: renderImport, progress: importProgress,
 		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan", "no_extract"}, outputOnError: true},
@@ -677,13 +679,18 @@ func renderAccountRemove(w io.Writer, out any) error {
 	if !ok {
 		return fmt.Errorf("cli: unexpected output type %T", out)
 	}
+	// OAuth2-Konten haben kein Passwort, sondern ein Token (T2 Punkt 7).
+	kind := "password"
+	if o.SecretKind == "token" {
+		kind = "token"
+	}
 	if o.DryRun {
-		_, err := fmt.Fprintf(w, "dry run: would remove account %s and its stored password\n", o.Removed)
+		_, err := fmt.Fprintf(w, "dry run: would remove account %s and its stored %s\n", o.Removed, kind)
 		return err
 	}
-	msg := "stored password deleted"
+	msg := "stored " + kind + " deleted"
 	if !o.SecretDeleted {
-		msg = "no stored password found"
+		msg = "no stored " + kind + " found"
 	}
 	_, err := fmt.Fprintf(w, "account %s removed; %s\n", o.Removed, msg)
 	return err

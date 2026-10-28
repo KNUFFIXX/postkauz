@@ -275,6 +275,10 @@ type Engine struct {
 	// Actions wendet zu Beginn jedes Laufs wartende Postfach-Aktionen auf
 	// dem Server an (Job mailbox_action, T2; actions.go); nil = nicht.
 	Actions *Actions
+	// Requests führt im Dauerbetrieb angeforderte Syncs aus und erledigt
+	// sie nach jedem fehlerfreien Lauf (Job sync, T2; syncrequest.go);
+	// nil = nicht.
+	Requests *SyncRequests
 }
 
 func (e *Engine) maxMessageBytes() int64 {

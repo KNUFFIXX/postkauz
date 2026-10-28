@@ -164,7 +164,8 @@ cross:
 
 # Release (S1.11): dist/ mit den drei Programmen ohne Symboltabelle und
 # Debug-Informationen (-s -w), dem Windows-Skript für den täglichen
-# Audit-Export, seit S2.9 den Beispiel-Hooks für die Prüfung vor der
+# Audit-Export, seit T2 den Skripten für den Dauerbetrieb (Register-SyncWatch.ps1,
+# Run-SyncWatch.ps1), seit S2.9 den Beispiel-Hooks für die Prüfung vor der
 # Freigabe (Entscheid 42: check-example.ps1, check-example.sh), VERSION und
 # SHA256SUMS. Beispiel:
 #   make release VERSION=0.2.0-rc1
@@ -188,11 +189,15 @@ release:
 	@# Das Windows-Skript für den täglichen Audit-Export gehört dazu, mit
 	@# Zeilenenden CRLF (wie im Arbeitsbaum unter Windows, .gitattributes).
 	@sed 's/\r*$$/\r/' deploy/windows/Register-AuditExport.ps1 > dist/Register-AuditExport.ps1
+	@# Dauerbetrieb unter Windows (T2): Aufgabe für sync --watch --all und das
+	@# Hilfsskript mit Neustart und Log-Rotation; beide gehören nebeneinander.
+	@sed 's/\r*$$/\r/' deploy/windows/Register-SyncWatch.ps1 > dist/Register-SyncWatch.ps1
+	@sed 's/\r*$$/\r/' deploy/windows/Run-SyncWatch.ps1 > dist/Run-SyncWatch.ps1
 	@# Beispiel-Hooks (Entscheid 42): PowerShell mit CRLF, Shell mit LF und
 	@# ausführbar.
 	@sed 's/\r*$$/\r/' deploy/hooks/check-example.ps1 > dist/check-example.ps1
 	@sed 's/\r*$$//' deploy/hooks/check-example.sh > dist/check-example.sh && chmod 755 dist/check-example.sh
-	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 check-example.ps1 check-example.sh VERSION > SHA256SUMS
+	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 Register-SyncWatch.ps1 Run-SyncWatch.ps1 check-example.ps1 check-example.sh VERSION > SHA256SUMS
 	@cat dist/VERSION; echo; cat dist/SHA256SUMS; echo
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %10d bytes %6.1f MB\n", $$NF, $$5, $$5/1048576}'
 

@@ -64,8 +64,9 @@ func TestMCPAssistantSession(t *testing.T) {
 		}
 	}
 	// 15 aus S2.8, seit T2 dazu mail_get_action, mail_list_actions,
-	// mail_list_tags, mail_tag und mail_mark; nie mail_move/mail_trash.
-	if len(names) != 20 || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
+	// mail_list_tags, mail_tag, mail_mark und mail_sync_now; nie
+	// mail_move/mail_trash.
+	if len(names) != 21 || !slices.Contains(names, "mail_sync_now") || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
 		t.Fatalf("tools = %v", names)
 	}
 	for _, n := range names {

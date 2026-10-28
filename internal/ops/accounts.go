@@ -743,6 +743,9 @@ type AccountsRemoveOutput struct {
 	Removed       string `json:"removed"`
 	DryRun        bool   `json:"dry_run"`
 	SecretDeleted bool   `json:"secret_deleted"`
+	// SecretKind sagt, was im Schlüsselbund steht: password (Passwort-Konto)
+	// oder token (OAuth2-Konto, Refresh-Token samt Teilen; T2 Punkt 7).
+	SecretKind string `json:"secret_kind"`
 }
 
 // AccountsRemove entfernt ein Konto und sein Passwort. Solange Nachrichten
@@ -760,9 +763,10 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
   "properties": {
     "removed": {"type": "string"},
     "dry_run": {"type": "boolean"},
-    "secret_deleted": {"type": "boolean"}
+    "secret_deleted": {"type": "boolean"},
+    "secret_kind": {"type": "string", "enum": ["password", "token"], "description": "what the keyring held: the password, or the OAuth2 refresh token"}
   },
-  "required": ["removed", "dry_run", "secret_deleted"]
+  "required": ["removed", "dry_run", "secret_deleted", "secret_kind"]
 }`),
 		Redact: redactAccountInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -786,7 +790,10 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			if n > 0 {
 				return nil, fmt.Errorf("account %s has %d archived messages; deleting the archive is a separate operation (not available yet)", a.Name, n)
 			}
-			out := AccountsRemoveOutput{Removed: a.Name, DryRun: call.DryRun}
+			out := AccountsRemoveOutput{Removed: a.Name, DryRun: call.DryRun, SecretKind: "password"}
+			if a.AuthType == AuthOAuth2 {
+				out.SecretKind = "token"
+			}
 			if call.DryRun {
 				return out, nil
 			}

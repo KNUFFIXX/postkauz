@@ -183,7 +183,7 @@ func TestAccountsAddListRemove(t *testing.T) {
 		t.Fatalf("remove dry: %+v %v", out, err)
 	}
 	out, err = e.run("accounts.remove", map[string]any{"name": "demo"}, "", false)
-	if err != nil || !out.(AccountsRemoveOutput).SecretDeleted {
+	if err != nil || !out.(AccountsRemoveOutput).SecretDeleted || out.(AccountsRemoveOutput).SecretKind != "password" {
 		t.Fatalf("remove: %+v %v", out, err)
 	}
 	if _, err := e.sec.Get(e.ref(t, "demo")); !errors.Is(err, secrets.ErrNotFound) {

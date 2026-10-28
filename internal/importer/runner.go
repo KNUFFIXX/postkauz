@@ -14,8 +14,9 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
-// Runner implementiert ops.ImportRunner: Quellen finden, Konto sperren
-// (wie der Sync: ein schreibender Lauf je Konto), importieren, danach die
+// Runner implementiert ops.ImportRunner: Konto sperren (wie der Sync: ein
+// schreibender Lauf je Konto; seit T2 vor dem Finden der Quellen), Quellen
+// finden, importieren, danach die
 // Jobs des Kontos (Extraktion, Suchindex) wie am Ende eines Syncs.
 type Runner struct {
 	Store *store.SQLite
@@ -38,6 +39,18 @@ var _ ops.ImportRunner = (*Runner)(nil)
 func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOptions, progress func(ops.Progress)) (ops.ImportOutput, error) {
 	out := ops.ImportOutput{Account: a.Name, Format: o.Format, Sources: []ops.ImportSource{}}
 	start := time.Now()
+	// Die Kontosperre zuerst (T2 Punkt 7): Discover über eine große Quelle
+	// kann dauern; solange gälte der offene Start dieses Aufrufs sonst einem
+	// anderen Lauf des Kontos als tot (store.CloseDeadStarts).
+	locked := false
+	if !o.DryRun {
+		release, l, err := mailsync.LockAccount(ctx, r.Store, r.LockDir, a, o.AuditID, r.Log)
+		if err != nil {
+			return out, err
+		}
+		defer release()
+		locked = l
+	}
 	content, ignored, err := Discover(o.Path, o.Format, o.Mailbox, store.ImportContent)
 	if err != nil {
 		return out, inputError(err)
@@ -52,15 +65,6 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 		srcs = append(srcs, excludeSources(labels, content)...)
 	}
 	out.FilesIgnored = ignored
-	locked := false
-	if !o.DryRun {
-		release, l, err := mailsync.LockAccount(ctx, r.Store, r.LockDir, a, o.AuditID, r.Log)
-		if err != nil {
-			return out, err
-		}
-		defer release()
-		locked = l
-	}
 	eng := &Engine{Store: r.Store, Blobs: r.Blobs, AccountID: a.ID, Log: r.Log, AfterBatch: r.AfterBatch}
 	if progress != nil {
 		eng.Progress = func(ev Event) {

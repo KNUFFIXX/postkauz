@@ -226,6 +226,7 @@ var contractInputs = map[string]struct {
 	"accounts.test":      {input: `{"name":"demo"}`},
 	"accounts.login":     {input: `{"name":"ms"}`},
 	"sync.run":           {input: `{"account":"demo"}`},
+	"sync.request":       {input: `{"account":"demo","mailbox":"INBOX"}`},
 	"import.run":         {input: `{"account":"demo","format":"mbox","path":"/tmp/x","mailbox":"Archiv","labels_from":["/tmp/l"],"rescan":true,"no_extract":true}`},
 	"mailboxes.list":     {input: `{"account":"demo"}`},
 	"mailboxes.overview": {input: `{"account":"demo","mailbox":1,"since":"3650d","limit":5}`},

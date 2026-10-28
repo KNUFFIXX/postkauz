@@ -224,7 +224,7 @@ func TestToolListFollowsScopes(t *testing.T) {
 	// T2: dazu mail_tag und mail_mark (Scope mail:tag); mail_move und
 	// mail_trash erst mit mail:move bzw. mail:trash (operator, admin).
 	drafting := []string{"mail_create_draft", "mail_get_approval", "mail_get_draft", "mail_list_drafts", "mail_request_ready",
-		"mail_update_draft", "mail_tag", "mail_mark"}
+		"mail_update_draft", "mail_tag", "mail_mark", "mail_sync_now"} // mail_sync_now: Scope mail:sync (T2)
 	wantAssistant := slices.Sorted(slices.Values(append(slices.Clone(want), drafting...)))
 	tl, res, pr = listTools(t, policy.Key{ID: "key:as", Scopes: policy.Roles["assistant"]})
 	if !slices.Equal(tl, wantAssistant) {

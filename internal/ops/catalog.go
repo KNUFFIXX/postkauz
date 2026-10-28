@@ -84,6 +84,7 @@ func Catalog(d Deps) []Operation {
 		AccountsTest(d.Accounts, d.credentials(), d.Prober),
 		AccountsLogin(d.Accounts, d.credentials()),
 		SyncRun(d.Accounts, d.credentials(), d.Runner),
+		SyncRequest(d),
 		ImportRun(d.Accounts, d.Importer),
 		MailboxesList(d.Accounts, d.Mailboxes),
 		MailboxesOverview(d.Accounts, d.Mailboxes, d.Search),
