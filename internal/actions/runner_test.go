@@ -346,3 +346,61 @@ func TestRunnerRefusesTargetRoleChange(t *testing.T) {
 		})
 	}
 }
+
+// V5: Ein MOVE mit mehreren UIDs aus einem Ordner legt die neuen
+// Verknüpfungen mit content_loaded = 0 an (die Zuordnung alt → neu ist
+// unsicher); die nächste Aktion prüft deshalb erst den Kopf. Ein MOVE mit
+// einer UID behält den Stand.
+func TestMoveOfSeveralUIDsNeedsHeaderCheckLater(t *testing.T) {
+	st, acct, ids := env(t)
+	ctx := context.Background()
+	svc := &Service{Store: st}
+	dest := Target{MailboxID: ids["Archiv"], Path: "Archiv", Role: "archive"}
+	// Nachricht 2 liegt in INBOX (nur verknüpft) und Archiv: Quelle INBOX.
+	plan, err := svc.PlanMove(ctx, []int64{1, 2}, "INBOX", dest)
+	if err != nil || len(plan.Targets) != 2 {
+		t.Fatalf("plan = %+v %v", plan, err)
+	}
+	if _, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1, 2}, Plan: plan, RequestedBy: "cli",
+		Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path, TargetRole: dest.Role}}); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRemote{nextUID: 40, headers: map[provider.UID]string{2: "Message-ID: <b@example.org>\r\nSubject: Hallo\r\n\r\n"}}
+	if rep, err := (&Runner{Store: st, Blobs: blobs()}).Run(ctx, acct, f); err != nil || rep.OK != 2 {
+		t.Fatalf("run = %+v %v (calls %v)", rep, err, f.calls)
+	}
+	cs, _ := st.ServerCopies(ctx, 1)
+	if len(cs) != 1 || cs[0].Mailbox != "Archiv" || cs[0].ContentLoaded {
+		t.Fatalf("copies of 1 = %+v", cs)
+	}
+	// Nächste Aktion an der neuen Kopie: erst der Kopf.
+	yes := true
+	fp, _ := svc.PlanFlags(ctx, []int64{1})
+	if _, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMark, IDs: []int64{1}, Plan: fp, RequestedBy: "cli",
+		Params: store.ActionParams{Mark: &store.MarkParams{Seen: &yes}}}); err != nil {
+		t.Fatal(err)
+	}
+	f2 := &fakeRemote{headers: map[provider.UID]string{41: rawMail, 42: rawMail}}
+	if _, err := (&Runner{Store: st, Blobs: blobs()}).Run(ctx, acct, f2); err != nil {
+		t.Fatal(err)
+	}
+	if len(f2.calls) == 0 || f2.calls[0] != "FETCH Archiv" {
+		t.Fatalf("calls = %v", f2.calls)
+	}
+
+	// Gegenprobe: eine UID allein behält content_loaded = 1.
+	st, acct, ids = env(t)
+	svc = &Service{Store: st}
+	dest = Target{MailboxID: ids["Archiv"], Path: "Archiv", Role: "archive"}
+	plan, _ = svc.PlanMove(ctx, []int64{1}, "", dest)
+	if _, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1}, Plan: plan, RequestedBy: "cli",
+		Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path, TargetRole: dest.Role}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Runner{Store: st, Blobs: blobs()}).Run(ctx, acct, &fakeRemote{nextUID: 40}); err != nil {
+		t.Fatal(err)
+	}
+	if cs, _ := st.ServerCopies(ctx, 1); len(cs) != 1 || !cs[0].ContentLoaded {
+		t.Fatalf("single move: %+v", cs)
+	}
+}

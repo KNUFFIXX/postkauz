@@ -668,6 +668,17 @@ func (s *SQLite) FinishAction(ctx context.Context, id int64, results []TargetRes
 	}
 	ms := now.UnixMilli()
 	touchedBoxes := map[int64]bool{}
+	// V5: Ein MOVE je Quellordner; mit mehr als einer UID ist die
+	// Zuordnung alter zu neuer UID unsicher (go-imap sortiert die UID-Mengen,
+	// die Reihenfolge der COPYUID-Antwort geht verloren). Die neue
+	// Verknüpfung gilt dann als nie selbst geladen: Vor der nächsten Aktion
+	// prüft der Job ihren Kopf.
+	movedFrom := map[int64]int{}
+	for _, r := range results {
+		if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
+			movedFrom[r.MailboxID]++
+		}
+	}
 	for _, r := range results {
 		if _, err = tx.ExecContext(ctx, `UPDATE action_targets SET result = ?, new_uid = ? WHERE action_id = ? AND message_id = ? AND mailbox_id = ?`,
 			r.Result, nullID(int64(r.NewUID)), id, r.MessageID, r.MailboxID); err != nil {
@@ -681,7 +692,7 @@ func (s *SQLite) FinishAction(ctx context.Context, id int64, results []TargetRes
 			touchedBoxes[r.MailboxID] = true
 		case ActionMove, ActionTrash:
 			if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
-				if err = moveLink(ctx, tx, id, r, ms); err != nil {
+				if err = moveLink(ctx, tx, id, r, movedFrom[r.MailboxID] > 1, ms); err != nil {
 					return "", err
 				}
 				touchedBoxes[r.MailboxID], touchedBoxes[r.DestMailboxID] = true, true
@@ -777,8 +788,10 @@ func settlePending(ctx context.Context, tx *sql.Tx, actionID, messageID, mailbox
 	return refreshMessage(ctx, tx, messageID, now)
 }
 
-// moveLink trägt eine verschobene Kopie im Spiegel um.
-func moveLink(ctx context.Context, tx *sql.Tx, actionID int64, r TargetResult, now int64) error {
+// moveLink trägt eine verschobene Kopie im Spiegel um. unsure: Sie kam mit
+// weiteren UIDs in einem MOVE (V5); die neue Verknüpfung bekommt dann
+// content_loaded = 0.
+func moveLink(ctx context.Context, tx *sql.Tx, actionID int64, r TargetResult, unsure bool, now int64) error {
 	var uid int64
 	var seen, flagged, answered, draft, loaded int
 	var kw string
@@ -795,6 +808,9 @@ func moveLink(ctx context.Context, tx *sql.Tx, actionID int64, r TargetResult, n
 	if _, err := tx.ExecContext(ctx, `DELETE FROM message_mailboxes WHERE message_id = ? AND mailbox_id = ? AND uid = ?`,
 		r.MessageID, r.MailboxID, uid); err != nil {
 		return err
+	}
+	if unsure {
+		loaded = 0
 	}
 	if r.NewUID > 0 && r.DestMailboxID > 0 && r.DestUIDValidity > 0 {
 		var uv sql.NullInt64
