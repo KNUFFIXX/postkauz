@@ -460,11 +460,18 @@ func TestUpdateTakenOver(t *testing.T) {
 // Mehrere Prozesse: zwei Dienste auf derselben Datei ändern gleichzeitig;
 // kurze Transaktionen mit BEGIN IMMEDIATE warten aufeinander statt mit
 // SQLITE_BUSY zu scheitern, kein Übergang geht verloren.
+//
+// Zusatz (d) zu T3: Unter Volllast (make check neben make race oder einer
+// Migrationsmessung) dauerte eine Transaktion so lange, dass ein Schreiber
+// die 5 s des Betriebs nicht immer bekam (SQLite wartet nicht fair:
+// „database is locked“ nach 9,9 s). Geprüft wird hier, dass gewartet wird
+// und nichts verloren geht, nicht die Länge der Frist; deshalb öffnet der
+// Test mit großzügiger Frist.
 func TestConcurrentWritersOnOneFile(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "pk.db")
 	open := func() *store.SQLite {
-		st, err := store.Open(path)
+		st, err := store.OpenWith(path, store.Options{BusyTimeout: 2 * time.Minute})
 		if err != nil {
 			t.Fatal(err)
 		}

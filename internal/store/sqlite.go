@@ -80,6 +80,27 @@ var _ Store = (*SQLite)(nil)
 // (ProcessLockPath); migriert ein anderer Prozess gerade, wartet es bis
 // openLockWait und meldet sonst ErrDatabaseBusy.
 func Open(path string) (st *SQLite, err error) {
+	return OpenWith(path, Options{})
+}
+
+// Options sind Einstellungen für OpenWith; der Nullwert entspricht Open.
+type Options struct {
+	// BusyTimeout: so lange wartet eine Verbindung auf die Schreibsperre
+	// eines anderen Schreibers (0 = DefaultBusyTimeout). Tests mit
+	// absichtlich hoher Konkurrenz setzen mehr (Zusatz (d) zu T3: unter
+	// Volllast reichten 5 s nicht immer).
+	BusyTimeout time.Duration
+}
+
+// DefaultBusyTimeout ist die Wartezeit auf die Schreibsperre im Betrieb.
+const DefaultBusyTimeout = 5 * time.Second
+
+// OpenWith öffnet wie Open, mit Einstellungen.
+func OpenWith(path string, o Options) (st *SQLite, err error) {
+	busy := o.BusyTimeout
+	if busy <= 0 {
+		busy = DefaultBusyTimeout
+	}
 	var plock *flock.Lock
 	if path != ":memory:" {
 		if plock, err = lockShared(path); err != nil {
@@ -93,7 +114,7 @@ func Open(path string) (st *SQLite, err error) {
 	}
 	q := url.Values{}
 	q.Add("_pragma", "foreign_keys(1)")
-	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busy.Milliseconds()))
 	// Schreibende Transaktionen beginnen mit BEGIN IMMEDIATE: Sie holen die
 	// Schreibsperre sofort und warten sonst bis busy_timeout. Mit dem
 	// Standard (DEFERRED) liest eine Transaktion erst und scheitert beim
