@@ -291,6 +291,15 @@ func TestRunnerRefusesReusedTargetID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Seit Migration 0022 vergibt der Store Ordner-IDs nicht neu (A14); die
+	// Prüfung V1 schützt weiter Bestände, in denen das vorher geschah. Der
+	// Test stellt diesen Zustand her: ohne Höchststand und Trigger.
+	if err := st.ExecForTest(`DROP TRIGGER mailboxes_id_floor`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ExecForTest(`DELETE FROM meta WHERE key = 'id_floor_mailboxes'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
 		t.Fatal(err)
 	}

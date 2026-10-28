@@ -97,7 +97,7 @@ func (s *SQLite) SyncMailboxes(ctx context.Context, accountID int64, boxes []Mai
 			}
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(account_id, path, name, role, virtual_view) VALUES (?,?,?,?,?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO mailboxes(id, account_id, path, name, role, virtual_view) VALUES (`+nextMailboxID+`,?,?,?,?,?)`,
 			accountID, b.Path, b.Name, role, b2i(b.Virtual)); err != nil {
 			return nil, nil, fmt.Errorf("store: add mailbox %q: %w", b.Path, err)
 		}
@@ -575,10 +575,10 @@ func insertMessage(ctx context.Context, tx *sql.Tx, accountID int64, n NewMessag
 		refs = []byte("[]")
 	}
 	var mid int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO messages(account_id, message_id_header, subject, from_addr, to_addrs, cc_addrs,
+	err := tx.QueryRowContext(ctx, `INSERT INTO messages(id, account_id, message_id_header, subject, from_addr, to_addrs, cc_addrs,
 		reply_to, date_header, internal_date, size, flag_seen, flag_flagged, flag_answered, flag_draft, keywords,
 		has_attachments, snippet, blob_sha256, in_reply_to, refs, list_id, auth_results, content_hash, deleted_remote_at, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		VALUES (`+nextMessageID+`,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 		accountID, nullStr(n.MessageID), n.Subject, n.From, jsonOr(n.To, "[]"), jsonOr(n.Cc, "[]"),
 		nullStr(n.ReplyTo), nullTime(n.DateHeader), nullTime(n.InternalDate), n.Size,
 		b2i(n.Link.Seen), b2i(n.Link.Flagged), b2i(n.Link.Answered), b2i(n.Link.Draft), keywordsJSON(n.Link.Keywords),

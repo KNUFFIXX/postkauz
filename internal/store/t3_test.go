@@ -75,3 +75,62 @@ func TestMigration0021ExistingColumnWithBadValues(t *testing.T) {
 		t.Fatalf("schema = %d", v)
 	}
 }
+
+// A14 (Migration 0022): Nach dem Löschen der größten Nachricht bzw. des
+// größten Ordners vergibt der Store deren ID nicht neu.
+func TestIDsAreNotReusedAfterDelete(t *testing.T) {
+	ctx := context.Background()
+	s := openMem(t)
+	if _, err := s.db.Exec(`INSERT INTO accounts(id,name,email,host,port,username,credential_ref,created_at) VALUES (1,'demo','demo@example.org','127.0.0.1',143,'u','account/demo',1)`); err != nil {
+		t.Fatal(err)
+	}
+	insert := func() int64 {
+		t.Helper()
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := insertMessage(ctx, tx, 1, NewMessage{Subject: "x"}, 1, nil)
+		if err != nil {
+			_ = tx.Rollback()
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a, b := insert(), insert()
+	if _, err := s.db.Exec(`DELETE FROM messages WHERE id = ?`, b); err != nil {
+		t.Fatal(err)
+	}
+	if c := insert(); c <= b || c <= a {
+		t.Fatalf("message ids %d %d then %d: reused", a, b, c)
+	}
+
+	box := func(paths ...string) map[string]int64 {
+		t.Helper()
+		var specs []MailboxSpec
+		for _, p := range paths {
+			specs = append(specs, MailboxSpec{Path: p, Name: p, Role: map[bool]string{true: "inbox", false: "custom"}[p == "INBOX"]})
+		}
+		if _, _, err := s.SyncMailboxes(ctx, 1, specs); err != nil {
+			t.Fatal(err)
+		}
+		mbs, err := s.Mailboxes(ctx, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := map[string]int64{}
+		for _, m := range mbs {
+			ids[m.Path] = m.ID
+		}
+		return ids
+	}
+	first := box("INBOX", "Alt")
+	box("INBOX")
+	second := box("INBOX", "Neu")
+	if second["Neu"] <= first["Alt"] {
+		t.Fatalf("mailbox id of Neu = %d, Alt had %d: reused", second["Neu"], first["Alt"])
+	}
+}
