@@ -31,7 +31,7 @@ type MailboxSpec struct {
 	Path string
 	Name string
 	Role string
-	// Virtual: virtuelle Sicht (mailboxes.virtual_view, Migration 0020, V13).
+	// Virtual: virtuelle Sicht (mailboxes.virtual_view, Migration 0021, V13).
 	Virtual bool
 }
 

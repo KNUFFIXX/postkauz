@@ -163,7 +163,7 @@ type ServerCopy struct {
 	// (sonst nur per Message-ID und Größe verknüpft; Migration 0020).
 	ContentLoaded bool
 	// Virtual: Der Ordner ist eine virtuelle Sicht (Gmail „Markiert“,
-	// „Wichtig“; Migration 0020, V13).
+	// „Wichtig“; Migration 0021, V13).
 	Virtual bool
 }
 

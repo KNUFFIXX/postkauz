@@ -56,8 +56,8 @@ func TestMigration0020(t *testing.T) {
 	if u1 == nil || *u1 != "key:agent" || u2 != nil {
 		t.Fatalf("updated_by = %v %v", u1, u2)
 	}
-	// V13: Bestand der Gmail-Sichten nach Namen gekennzeichnet, nur unter
-	// [Gmail]/[Google Mail].
+	// V13 (Migration 0021): Bestand der Gmail-Sichten nach Namen
+	// gekennzeichnet, nur unter [Gmail]/[Google Mail].
 	var virt string
 	if err := s.db.QueryRow(`SELECT group_concat(id) FROM (SELECT id FROM mailboxes WHERE virtual_view = 1 ORDER BY id)`).Scan(&virt); err != nil ||
 		virt != "2,3" {
@@ -331,6 +331,19 @@ func TestMeasureMigration0020(t *testing.T) {
 	took, links := measureFillAndMigrate(t, s, 20)
 	fi, _ := os.Stat(path)
 	t.Logf("migration 0020 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; snapshot %s", took, links, fi.Size(), filepath.Base(s.LastSnapshot))
+}
+
+// Laufzeit der Migration 0021 (virtual_view) an der synthetischen
+// Datenbank, ausgehend von Schema 20; nur mit POSTKAUZ_MEASURE_MIGRATION=1.
+func TestMeasureMigration0021(t *testing.T) {
+	if os.Getenv("POSTKAUZ_MEASURE_MIGRATION") == "" {
+		t.Skip("set POSTKAUZ_MEASURE_MIGRATION=1 to measure migration 0021")
+	}
+	s, path := measureDB(t, 20)
+	defer s.Close()
+	took, links := measureFillAndMigrate(t, s, 21)
+	fi, _ := os.Stat(path)
+	t.Logf("migration 0021 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; snapshot %s", took, links, fi.Size(), filepath.Base(s.LastSnapshot))
 }
 
 // V13: Der Ordnerabgleich setzt und löscht die Kennzeichnung; ServerCopies
