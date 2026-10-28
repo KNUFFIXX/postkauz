@@ -1,6 +1,10 @@
 package provider
 
-import "testing"
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
 
 func TestSyncStrategy(t *testing.T) {
 	tests := []struct {
@@ -25,4 +29,17 @@ func TestSyncStrategy(t *testing.T) {
 // absichtlich kein Expunge; wer eines ergänzt, ändert bewusst ADR-002.
 func TestNoopProviderSatisfiesInterface(t *testing.T) {
 	var _ MailProvider = (*noopProvider)(nil)
+}
+
+// A03 E2, Akzeptanzkriterium 1 von S3: Die Schnittstelle hat keine
+// Methode, die endgültig löscht (kein Expunge, kein Delete); Trash ist nur
+// Verschieben in den Papierkorb.
+func TestMailProviderHasNoExpungeOrDelete(t *testing.T) {
+	typ := reflect.TypeFor[MailProvider]()
+	for i := range typ.NumMethod() {
+		name := strings.ToLower(typ.Method(i).Name)
+		if strings.Contains(name, "expunge") || strings.Contains(name, "delete") || strings.Contains(name, "purge") {
+			t.Errorf("MailProvider has %s; final deletion is not allowed (ADR-002, E2)", typ.Method(i).Name)
+		}
+	}
 }

@@ -47,6 +47,18 @@ type Runner struct {
 	// DraftMailbox ist [draft] mailbox der Konfiguration (leer = Ordner mit
 	// Rolle drafts).
 	DraftMailbox string
+	// Actions wendet Postfach-Aktionen an (Job mailbox_action, T2;
+	// actions.Runner); nil = nicht.
+	Actions ActionRunner
+}
+
+// draftsMailbox wählt den Entwürfe-Ordner (A5.1): Konto
+// (account set --drafts-mailbox), sonst [draft] mailbox, sonst Rolle drafts.
+func (r *Runner) draftsMailbox(a store.Account) string {
+	if a.DraftsMailbox != "" {
+		return a.DraftsMailbox
+	}
+	return r.DraftMailbox
 }
 
 // RemoteCloser ist ein Remote mit Close und Strategie.
@@ -135,7 +147,14 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 	if r.Pusher != nil {
 		// draft_push (A02 E1): Dieser Prozess hat die Zugangsdaten und hält
 		// die Kontosperre; er legt die Entwürfe ab.
-		eng.Drafts = &Drafts{Pusher: r.Pusher, Jobs: jr, Account: a, Mailbox: r.DraftMailbox}
+		eng.Drafts = &Drafts{Pusher: r.Pusher, Jobs: jr, Account: a, Mailbox: r.draftsMailbox(a)}
+	}
+	if r.Actions != nil {
+		// mailbox_action (T2, E1): ebenso nur dieser Prozess.
+		eng.Actions = &Actions{Runner: r.Actions, Jobs: jr, Ensure: func(ctx context.Context, id int64) error {
+			_, err := r.Store.EnsureActionJob(ctx, id, time.Now())
+			return err
+		}}
 	}
 	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes, RetryDrafts: !o.Watch}
 	if !o.Watch {
@@ -146,7 +165,8 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 	}
 	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, JobsInterval: o.JobsInterval,
 		// Fortschritt der Ablage meldet die Engine selbst (Event drafts).
-		OnDrafts: func(d ops.SyncDrafts, _ error) { addDrafts(&out, &d) },
+		OnDrafts:  func(d ops.SyncDrafts, _ error) { addDrafts(&out, &d) },
+		OnActions: func(x ops.SyncActions, _ error) { addActions(&out, &x) },
 		OnRound: func(rep Report, err error) {
 			out.Rounds++
 			round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
@@ -221,6 +241,10 @@ func fill(out *ops.SyncOutput, rep Report) {
 		c := *rep.DraftCheck
 		out.DraftCheck = &c
 	}
+	if rep.Actions != nil {
+		x := *rep.Actions
+		out.Actions = &x
+	}
 }
 
 // addRound zählt eine Runde von sync --watch in die Gesamtausgabe.
@@ -245,6 +269,18 @@ func addRound(out, round *ops.SyncOutput) {
 	out.IndexPending = round.IndexPending
 	addDrafts(out, round.Drafts)
 	addDraftCheck(out, round.DraftCheck)
+	addActions(out, round.Actions)
+}
+
+// addActions zählt die Postfach-Aktionen einer Runde dazu.
+func addActions(out *ops.SyncOutput, x *ops.SyncActions) {
+	if x == nil {
+		return
+	}
+	if out.Actions == nil {
+		out.Actions = &ops.SyncActions{}
+	}
+	out.Actions.Add(*x)
 }
 
 // addDraftCheck zählt die Prüfung einer Runde zum Gesamtergebnis des

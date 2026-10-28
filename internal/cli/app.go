@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/actions"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
@@ -185,6 +186,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	// sync.run nie auf).
 	if r, ok := deps.Runner.(*mailsync.Runner); ok {
 		r.Pusher, r.DraftMailbox = ops.NewDraftPusher(deps), a.cfg.Draft.Mailbox
+		// mailbox_action (T2, E1): ebenso nur der Sync.
+		r.Actions = &actions.Runner{Store: st, Blobs: blobs, Origin: ops.ActionOriginCheck(st), Log: a.log}
 	}
 	reg, err := ops.NewDefaultRegistry(deps)
 	if err != nil {

@@ -119,6 +119,8 @@ func (s *SQLite) CompleteJob(ctx context.Context, j Job, owner string) (done boo
 			WHERE m.account_id = ? AND a.extract_status = 'pending')`
 	case JobDraftPush:
 		pending = `SELECT EXISTS (SELECT 1 FROM drafts WHERE account_id = ? AND ` + draftPushDue + `)`
+	case JobMailboxAction:
+		pending = `SELECT EXISTS (SELECT 1 FROM actions WHERE account_id = ? AND state IN ('queued','running'))`
 	default:
 		return false, fmt.Errorf("store: unknown job type %q", j.Type)
 	}

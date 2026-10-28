@@ -768,3 +768,67 @@ func (c *Client) unilateralHandler() *imapclient.UnilateralDataHandler {
 		},
 	}
 }
+
+// MoveResult ist die Antwort auf MOVE: UIDVALIDITY des Zielordners und die
+// neue UID je verschobener UID (COPYUID; leer ohne UIDPLUS).
+type MoveResult struct {
+	UIDValidity uint32
+	UIDs        map[uint32]uint32
+}
+
+// errNoMove: Der Server meldet kein MOVE.
+var errNoMove = errors.New("imapx: server has no MOVE")
+
+// Move verschiebt UIDs aus dem per Select(ReadOnly=false) gewählten Ordner
+// nach dest, **nur** mit IMAP MOVE (RFC 6851 bzw. IMAP4rev2; A03 E2,
+// A13.1). go-imap wiche ohne MOVE in Caps() still auf COPY + \Deleted +
+// EXPUNGE aus (imapclient/move.go), auch wenn die Abfrage der Fähigkeiten
+// scheiterte (Caps() liefert dann nil). Deshalb prüft Move unmittelbar vor
+// dem Aufruf genau die Sicht der Bibliothek und ruft sie sonst nicht auf:
+// Ohne MOVE kommt provider.ErrUnsupported, kein Kommando erreicht den
+// Server. Einzige Stelle, die imapclient.Move aufruft (`make guard`).
+func (c *Client) Move(uids []uint32, dest string) (MoveResult, error) {
+	if len(uids) == 0 {
+		return MoveResult{}, nil // nie ein leeres Set an den Server
+	}
+	if c.sel == nil || c.sel.ReadOnly {
+		return MoveResult{}, fmt.Errorf("imapx: Move needs a mailbox selected read-write")
+	}
+	set, err := uidSet(uids)
+	if err != nil {
+		return MoveResult{}, err
+	}
+	var data *imapclient.MoveData
+	err = c.run(func() error {
+		if !c.c.Caps().Has(imap.CapMove) {
+			return errNoMove
+		}
+		var err error
+		data, err = c.c.Move(set, dest).Wait()
+		return err
+	})
+	if errors.Is(err, errNoMove) {
+		return MoveResult{}, fmt.Errorf("%w: MOVE (RFC 6851); messages are not moved without it", provider.ErrUnsupported)
+	}
+	if err != nil {
+		return MoveResult{}, cmdErr(err)
+	}
+	res := MoveResult{UIDValidity: data.UIDValidity, UIDs: map[uint32]uint32{}}
+	src, ok1 := data.SourceUIDs.(imap.UIDSet)
+	dst, ok2 := data.DestUIDs.(imap.UIDSet)
+	if !ok1 || !ok2 || len(src) == 0 {
+		return res, nil
+	}
+	// Empfangene Sets nur begrenzt auflösen (T1a): höchstens so viele UIDs,
+	// wie verschoben wurden.
+	limit := uint32(len(uids))
+	from, err1 := boundedUIDs(src, 1, limit)
+	to, err2 := boundedUIDs(dst, 1, limit)
+	if err1 != nil || err2 != nil || len(from) != len(to) {
+		return res, nil // ohne Zuordnung: der nächste Sync verknüpft per Message-ID
+	}
+	for i, u := range from {
+		res.UIDs[u] = to[i]
+	}
+	return res, nil
+}

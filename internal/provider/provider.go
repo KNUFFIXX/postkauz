@@ -2,9 +2,9 @@
 // JMAP-Semantik (Zustandstokens, changes, Rollen) und wird für IMAP
 // nachgebildet (ADR-003, docs/architektur.md).
 //
-// Stand S2.5: Die IMAP-Implementierung (internal/provider/imap) deckt
-// Capabilities, ListMailboxes, Changes, FetchHeaders, FetchRaw, Idle und
-// Append (Entwürfe) ab; SetFlags, Move und Trash folgen mit S3.
+// Stand T2: Die IMAP-Implementierung (internal/provider/imap) deckt die
+// ganze Schnittstelle ab, seit T2 auch SetFlags, Move und Trash (nur mit
+// IMAP MOVE).
 //
 // Verbindliche Eigenschaften:
 //
@@ -172,6 +172,14 @@ type FlagPatch struct {
 	AddKeywords, RemoveKeywords    []string
 }
 
+// MoveResult ist das Ergebnis von Move.
+type MoveResult struct {
+	// UIDValidity des Zielordners (0 = vom Server nicht genannt).
+	UIDValidity uint32
+	// UIDs ordnet alten UIDs die neuen im Zielordner zu (leer ohne UIDPLUS).
+	UIDs map[UID]UID
+}
+
 // Header ist die Kopfsicht einer Nachricht, wie sie der Sync braucht.
 type Header struct {
 	UID          UID
@@ -295,8 +303,9 @@ type MailProvider interface {
 
 	// Move verschiebt Nachrichten (nur mit IMAP MOVE, RFC 6851; ohne MOVE
 	// ErrUnsupported, kein COPY-Ersatz, A03 E2) und liefert die neuen UIDs
-	// im Zielordner, soweit der Server sie nennt (UIDPLUS).
-	Move(ctx context.Context, from string, uidValidity uint32, uids []UID, to string) (map[UID]UID, error)
+	// im Zielordner, soweit der Server sie nennt (UIDPLUS), mit der
+	// UIDVALIDITY des Zielordners.
+	Move(ctx context.Context, from string, uidValidity uint32, uids []UID, to string) (MoveResult, error)
 
 	// Trash verschiebt Nachrichten in den Papierkorb. Es gibt kein
 	// endgültiges Löschen in dieser Schnittstelle. Bei Gmail bedeutet das

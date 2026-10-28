@@ -105,6 +105,20 @@ guard:
 	@# kommen aus store.ServerCopies (message_mailboxes).
 	@if grep -rn --include='*.go' --exclude='*_test.go' '\.Locations\b' internal cmd | grep -vE '^internal/(store/messages\.go|ops/messages\.go):' ; then \
 	  echo "guard: use store.ServerCopies, not Message.Locations, for server targets (A13.4)"; exit 1; fi
+	@# E2 und A13.1 (T2): kein Expunge in keiner Form; \Deleted nur in der
+	@# Ablehnung von imapx.StoreFlags (zwei Zeilen); imapclient.Move nur in
+	@# imapx.Client.Move (prüft MOVE selbst, sonst wiche go-imap auf COPY +
+	@# \Deleted + EXPUNGE aus). Kommentare zählen nicht.
+	@if grep -rnE --include='*.go' --exclude='*_test.go' 'Expunge\(|UIDExpunge|FlagDeleted' internal cmd | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' ; then \
+	  echo "guard: no expunge and no \\Deleted flag in any form (ADR-002, A03 E2)"; exit 1; fi
+	@if grep -rnF --include='*.go' --exclude='*_test.go' '\Deleted' internal cmd | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' | grep -v '^internal/imapx/mailbox.go:' ; then \
+	  echo "guard: \\Deleted may only appear in the rejection of imapx.StoreFlags (ADR-002)"; exit 1; fi
+	@[ "$$(grep -F '\Deleted' internal/imapx/mailbox.go | grep -cvE '^[[:space:]]*//')" = 2 ] || { \
+	  echo "guard: internal/imapx/mailbox.go may mention \\Deleted only in the rejection of StoreFlags (ADR-002)"; exit 1; }
+	@if grep -rnE --include='*.go' --exclude='*_test.go' '\.c\.Move\(' internal cmd | grep -v '^internal/imapx/mailbox.go:' ; then \
+	  echo "guard: call imapclient.Move only in imapx.Client.Move, which checks MOVE first (A13.1)"; exit 1; fi
+	@[ "$$(grep -cE '\.c\.Move\(' internal/imapx/mailbox.go)" = 1 ] || { \
+	  echo "guard: internal/imapx/mailbox.go may call imapclient.Move only once, in Client.Move (A13.1)"; exit 1; }
 	@# ADR-007: go-imap bleibt auf v2.0.0-beta.8 gepinnt; ein Wechsel nur über einen ADR.
 	@grep -Eq '^[[:space:]]*github.com/emersion/go-imap/v2 v2\.0\.0-beta\.8$$' go.mod || { \
 	  echo "guard: github.com/emersion/go-imap/v2 must stay pinned to v2.0.0-beta.8 (ADR-007)"; exit 1; }

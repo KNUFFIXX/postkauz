@@ -358,3 +358,28 @@ func (r *Runner) RunDraftPush(ctx context.Context, accountID int64, push func(co
 	}
 	return true, r.fail(ctx, j, err)
 }
+
+// RunMailboxAction führt den fälligen Job mailbox_action eines Kontos aus
+// (T2, E1): run wendet die wartenden Aktionen auf dem Server an. Fehler
+// wie bei RunDraftPush: Abbruch, Verbindungs- oder Anmeldefehler geben den
+// Job ohne Fehlerzählung zurück (die Aktionen bleiben offen), andere
+// zählen mit Wartezeit. Eine Aktion, die der Server je Ziel ablehnt, ist
+// kein Fehler des Jobs (Ergebnis je Ziel).
+func (r *Runner) RunMailboxAction(ctx context.Context, accountID int64, run func(context.Context) error) (ran bool, err error) {
+	j, ok, err := r.Store.ClaimJob(ctx, store.JobMailboxAction, accountID, r.owner(), r.lease(), r.TakeOver)
+	if err != nil || !ok {
+		return false, err
+	}
+	err = run(ctx)
+	switch {
+	case err == nil:
+		if _, err := r.Store.CompleteJob(ctx, j, r.owner()); err != nil && !errors.Is(err, store.ErrJobLost) {
+			return true, err
+		}
+		return true, nil
+	case ctx.Err() != nil || errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth):
+		r.release(ctx, j)
+		return true, err
+	}
+	return true, r.fail(ctx, j, err)
+}

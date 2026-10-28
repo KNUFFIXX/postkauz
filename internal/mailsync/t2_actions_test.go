@@ -1,0 +1,105 @@
+package mailsync
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"slices"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/emersion/go-imap/v2"
+
+	"github.com/KNUFFIXX/postkauz/internal/actions"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+type litBytes struct{ *bytes.Reader }
+
+func (l litBytes) Size() int64 { return int64(l.Len()) }
+
+// T2, S3.1 Akzeptanz 2 (Server im Prozess): mark --seen und move kommen
+// mit sync --watch binnen --jobs-interval auf den Server (zweiter Client
+// prüft), ohne auf einen Lauf über alle Ordner zu warten; die Aktion ist danach
+// done und der Spiegel stimmt (Flag ohne pending, Kopie im Zielordner).
+func TestWatchAppliesActionsBetweenRounds(t *testing.T) {
+	e := newPushEnv(t, "Archiv")
+	for i := 1; i <= 2; i++ {
+		raw := fmt.Sprintf("Message-ID: <t2-%d@example.org>\r\nFrom: a@example.org\r\nSubject: T2 %d\r\n\r\nText %d\r\n", i, i, i)
+		if _, err := e.u.Append("INBOX", litBytes{bytes.NewReader([]byte(raw))}, &imap.AppendOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.runner.Actions = &actions.Runner{Store: e.st, Blobs: e.blobs}
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var rounds atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		out, err := e.runner.Sync(ctx, e.account(t), provider.PasswordCredential(testPass), ops.SyncOptions{Watch: true, Interval: time.Hour,
+			JobsInterval: 100 * time.Millisecond}, func(p ops.Progress) {
+			if p.Event == "round" {
+				rounds.Add(1)
+			}
+		})
+		if err == nil && (out.Actions == nil || out.Actions.OK != 2) {
+			err = fmt.Errorf("watch output actions = %+v", out.Actions)
+		}
+		done <- err
+	}()
+	waitFor(t, 5*time.Second, func() bool { return rounds.Load() == 1 })
+
+	ids1, _ := e.st.MessageIDsByHeader(context.Background(), e.acct, "t2-1@example.org")
+	ids2, _ := e.st.MessageIDsByHeader(context.Background(), e.acct, "t2-2@example.org")
+	svc := &actions.Service{Store: e.st}
+	yes := true
+	plan, err := svc.PlanFlags(context.Background(), ids1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	if _, err := svc.Create(context.Background(), actions.Request{AccountID: e.acct, Kind: store.ActionMark, IDs: ids1, Plan: plan,
+		RequestedBy: "cli", Params: store.ActionParams{Mark: &store.MarkParams{Seen: &yes}}}); err != nil {
+		t.Fatal(err)
+	}
+	dest, _, _ := svc.FindMailbox(context.Background(), e.acct, "Archiv", "")
+	plan, err = svc.PlanMove(context.Background(), ids2, "", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(context.Background(), actions.Request{AccountID: e.acct, Kind: store.ActionMove, IDs: ids2, Plan: plan,
+		RequestedBy: "cli", Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path}}); err != nil {
+		t.Fatal(err)
+	}
+	client := imapSession(t, e.addr)
+	waitFor(t, 5*time.Second, func() bool {
+		for _, fl := range serverCopies(t, client, "INBOX", "t2-1@example.org") {
+			return slices.Contains(fl, imap.FlagSeen)
+		}
+		return false
+	})
+	waitFor(t, 5*time.Second, func() bool { return len(serverCopies(t, client, "Archiv", "t2-2@example.org")) == 1 })
+	t.Logf("mark and move on the server after %s", time.Since(start).Round(time.Millisecond))
+	if len(serverCopies(t, client, "INBOX", "t2-2@example.org")) != 0 {
+		t.Fatal("moved message still in INBOX")
+	}
+	// Ein weiterer Lauf (nur INBOX) folgt hier aus der IDLE-Meldung über die
+	// Änderung; die Aktionen selbst warten nicht auf einen Lauf (109 ms bei
+	// 100 ms jobs-interval, gemessen).
+	// Der Spiegel folgt, sobald der Job die Aktionen abgeschlossen hat.
+	waitFor(t, 5*time.Second, func() bool {
+		m, _ := e.st.MessageByID(context.Background(), ids1[0])
+		cs, _ := e.st.ServerCopies(context.Background(), ids2[0])
+		return m.Seen && !m.PendingFlags && len(cs) == 1 && cs[0].Mailbox == "Archiv"
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

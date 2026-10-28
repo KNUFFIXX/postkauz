@@ -101,6 +101,27 @@ type SyncOutput struct {
 	// Entwürfe-Ordner verschwunden oder bearbeitet (E6); nil = nichts
 	// geändert.
 	DraftCheck *drafts.CheckReport `json:"draft_check,omitempty"`
+	// Actions: ausgeführte Postfach-Aktionen (Job mailbox_action, T2);
+	// nil = keine.
+	Actions *SyncActions `json:"actions,omitempty"`
+}
+
+// SyncActions zählt die im Sync ausgeführten Aktionen und ihre Ziele.
+type SyncActions struct {
+	Actions int    `json:"actions"`
+	OK      int    `json:"ok"`
+	Failed  int    `json:"failed"`
+	Stale   int    `json:"stale"`
+	Error   string `json:"error,omitempty"`
+}
+
+// Add zählt einen weiteren Lauf dazu (sync --watch).
+func (a *SyncActions) Add(o SyncActions) {
+	a.Actions += o.Actions
+	a.OK += o.OK
+	a.Failed += o.Failed
+	a.Stale += o.Stale
+	a.Error = o.Error
 }
 
 // SyncDrafts ist das Ergebnis des Jobs draft_push in einem Sync.
@@ -235,7 +256,10 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
       "pushed": {"type": "integer"}, "taken_over": {"type": "integer"}, "missing": {"type": "integer"},
       "approval_stale": {"type": "integer"}, "failed": {"type": "integer"}, "rejected": {"type": "integer"}, "adopted": {"type": "integer"}, "key_revoked": {"type": "integer"},
       "draft_ids": {"type": "array", "items": {"type": "integer"}}, "mailbox": {"type": "string"}, "error": {"type": "string"}},
-      "required": ["pushed"]}
+      "required": ["pushed"]},
+    "actions": {"type": "object", "description": "mailbox actions applied on the server (mark, move, trash, keywords)", "properties": {
+      "actions": {"type": "integer"}, "ok": {"type": "integer"}, "failed": {"type": "integer"}, "stale": {"type": "integer"},
+      "error": {"type": "string"}}, "required": ["actions", "ok", "failed", "stale"]}
   },
   "required": ["account", "mode", "mailboxes", "new", "updated", "removed", "errors", "messages_mirrored", "duration_ms", "dry_run"]
 }`),

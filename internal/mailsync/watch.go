@@ -50,6 +50,9 @@ type WatchOptions struct {
 	// OnDrafts bekommt das Ergebnis jeder Ablage zwischen zwei Läufen
 	// (die zu Beginn eines Laufs steht in dessen Report).
 	OnDrafts func(d ops.SyncDrafts, err error)
+	// OnActions bekommt das Ergebnis der Postfach-Aktionen zwischen zwei
+	// Läufen (T2).
+	OnActions func(a ops.SyncActions, err error)
 }
 
 // Watch synct sofort, danach alle Interval und zusätzlich bei jeder
@@ -151,6 +154,20 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		if err != nil {
 			e.log().Warn("drafts not pushed; retrying at the next check", "error", err.Error())
 		}
+		// Postfach-Aktionen (T2, E1): binnen JobsInterval auf dem Server.
+		ar, err := e.runActions(ctx, true)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if ar != nil && o.OnActions != nil {
+			o.OnActions(*ar, err)
+		}
+		if errors.Is(err, provider.ErrAuth) {
+			return err
+		}
+		if err != nil {
+			e.log().Warn("mailbox actions not applied; retrying at the next check", "error", err.Error())
+		}
 		return nil
 	}
 
@@ -159,8 +176,8 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	}
 	t := time.NewTicker(o.Interval)
 	defer t.Stop()
-	var jobsC <-chan time.Time // nil = keine Jobs (ohne Engine.Drafts)
-	if e.Drafts != nil {
+	var jobsC <-chan time.Time // nil = keine Jobs (ohne Engine.Drafts und Engine.Actions)
+	if e.Drafts != nil || e.Actions != nil {
 		jt := time.NewTicker(o.JobsInterval)
 		defer jt.Stop()
 		jobsC = jt.C

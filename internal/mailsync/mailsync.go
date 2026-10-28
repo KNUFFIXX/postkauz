@@ -208,6 +208,9 @@ type Report struct {
 	// DraftCheck: Prüfung der Entwürfe nach dem Spiegeln (S2.6,
 	// drafts.go); nil = nichts geändert.
 	DraftCheck *drafts.CheckReport `json:"draft_check,omitempty"`
+	// Actions: Postfach-Aktionen zu Beginn des Laufs (Job mailbox_action,
+	// T2; actions.go); nil = nichts wartete.
+	Actions *ops.SyncActions `json:"actions,omitempty"`
 }
 
 // failedMailboxes zählt die Ordner, die wegen eines Fehlers übersprungen
@@ -269,6 +272,9 @@ type Engine struct {
 	// Drafts legt zu Beginn jedes Laufs wartende Entwürfe im
 	// Entwürfe-Ordner ab (Job draft_push, S2.5; drafts.go); nil = nicht.
 	Drafts *Drafts
+	// Actions wendet zu Beginn jedes Laufs wartende Postfach-Aktionen auf
+	// dem Server an (Job mailbox_action, T2; actions.go); nil = nicht.
+	Actions *Actions
 }
 
 func (e *Engine) maxMessageBytes() int64 {
@@ -344,6 +350,18 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			return rep, fmt.Errorf("drafts: %w", err)
 		}
 		e.log().Warn("drafts not pushed", "error", err.Error())
+	}
+	// Dann die Postfach-Aktionen (E1): Der folgende Abgleich sieht ihr
+	// Ergebnis. Fehler wie beim Push: nur Verbindung und Anmeldung halten
+	// den Lauf auf.
+	ar, err := e.runActions(ctx, true)
+	rep.Actions = ar
+	if err != nil {
+		if fatal(ctx, err) {
+			rep.Duration = time.Since(start)
+			return rep, fmt.Errorf("actions: %w", err)
+		}
+		e.log().Warn("mailbox actions not applied", "error", err.Error())
 	}
 	if err := e.syncMailboxList(ctx); err != nil {
 		if errors.Is(err, provider.ErrIncomplete) {

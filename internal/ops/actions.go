@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/actions"
@@ -987,5 +988,39 @@ func DraftsCleanupCopies(d Deps) Operation {
 			out.ActionID, out.NextStep = act.ID, nextQueued(act.ID)
 			return out, nil
 		},
+	}
+}
+
+// ActionOriginCheck prüft vor der Ausführung einer Aktion den Schlüssel,
+// der sie angelegt hat (A8, frisch aus api_keys wie beim Entwurf):
+// widerrufen, unbekannt oder ohne Scope → nicht ausführen. Ein
+// abgelaufener Schlüssel hält eine Aktion auf, außer ein Mensch hat sie
+// freigegeben (T2 Punkt 7, wie bei Entwürfen). "cli" und "system" sind
+// keine Schlüssel.
+func ActionOriginCheck(keys KeyRepo) actions.OriginCheck {
+	return func(ctx context.Context, keyID string, scope policy.Scope, approved bool) (string, error) {
+		name, ok := strings.CutPrefix(keyID, "key:")
+		if !ok {
+			return "", nil
+		}
+		k, err := keys.APIKeyByName(ctx, name)
+		if errors.Is(err, store.ErrKeyNotFound) {
+			return "key_invalid", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		switch KeyStatus(k, time.Now()) {
+		case "revoked":
+			return "key_revoked", nil
+		case "expired":
+			if !approved {
+				return "key_expired", nil
+			}
+		}
+		if dec := policy.Check(PolicyKey(k), policy.Requirement{Name: "actions.run", Scope: scope, Risk: policy.R2}, false); !dec.Allowed() {
+			return dec.Reason, nil
+		}
+		return "", nil
 	}
 }

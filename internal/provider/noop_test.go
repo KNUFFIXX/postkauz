@@ -22,8 +22,8 @@ func (noopProvider) FetchRaw(context.Context, string, uint32, []UID, func(UID, i
 	return ErrUnsupported
 }
 func (noopProvider) SetFlags(context.Context, string, uint32, []UID, FlagPatch) error { return nil }
-func (noopProvider) Move(context.Context, string, uint32, []UID, string) (map[UID]UID, error) {
-	return nil, nil
+func (noopProvider) Move(context.Context, string, uint32, []UID, string) (MoveResult, error) {
+	return MoveResult{}, nil
 }
 func (noopProvider) Trash(context.Context, string, uint32, []UID) error { return nil }
 func (noopProvider) Append(context.Context, string, []byte, AppendOptions) (AppendResult, error) {
