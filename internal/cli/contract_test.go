@@ -169,6 +169,9 @@ var cliSamples = []cliSample{
 	{"threads.get", []string{"thread", "{answer}", "--message", "-a", "demo"}, false},
 	{"attachments.list", []string{"attach", "list", "{html}"}, false},
 	{"attachments.text", []string{"attach", "text", "{att}", "--max-chars", "5", "--message", "{html}", "-a", "demo"}, false},
+	// S3.3: Anhang unter export_dir, Export in ein frisches Ziel.
+	{"attachments.save", []string{"attach", "save", "{att}", "--subdir", "belege", "--message", "{html}", "-a", "demo"}, false},
+	{"messages.export", []string{"export", "eml", "--to", "{exporttarget}", "-a", "demo", "--mailbox", "INBOX", "--since", "3650d"}, false},
 	{"keys.create", []string{"key", "create", "--name", "k1", "--role", "reader", "--scopes", "mail:search", "--expires", "30d",
 		"--dry-run-default=false"}, false},
 	{"keys.list", []string{"key", "list"}, false},
@@ -291,7 +294,8 @@ func seedS16(t *testing.T) map[string]string {
 	}
 	return map[string]string{"mbox": mbox, "labels": labels, "html": fmt.Sprint(html.ID), "answer": fmt.Sprint(answer.ID), "thread": fmt.Sprint(answer.ThreadID),
 		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "mailbox": fmt.Sprint(boxes.Mailboxes[0].ID), "exportdir": filepath.Join(t.TempDir(), "audit"),
-		"backupdir": filepath.Join(t.TempDir(), "backup")}
+		"backupdir":    filepath.Join(t.TempDir(), "backup"),
+		"exporttarget": filepath.Join(t.TempDir(), "export")}
 }
 
 var errCaptureOnly = errors.New("captured")

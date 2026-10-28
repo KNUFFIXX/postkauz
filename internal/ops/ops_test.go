@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -283,6 +285,10 @@ var contractInputs = map[string]struct {
 	"retention.purge": {input: `{"older_than":"30d","account":"demo"}`},
 	"blobs.gc":        {input: `{}`},
 	"audit.rotate":    {input: `{}`},
+	// Anhänge sichern und Export (S3.3): Ziel ist export_dir der Umgebung
+	// (relatives to von messages.export liegt darunter).
+	"attachments.save": {input: `{"id":1,"message":1,"account":"demo","subdir":"belege/2026"}`},
+	"messages.export":  {input: `{"format":"eml","to":"archiv","account":"demo","mailbox":"INBOX","since":"3650d"}`},
 }
 
 // contractBackup meldet Sicherungen, die schreiben dürften (DryRun=false).
@@ -494,7 +500,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, backup: bk, blobs: blobs, deps: Deps{Backup: bk, Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
-		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st,
+		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st, ExportDir: t.TempDir(), Export: m.st,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
 	seedRetention(t, e)
@@ -553,6 +559,14 @@ func (e *contractEnv) fingerprint(t *testing.T) string {
 		b.WriteString("backup wrote\n")
 	}
 	fmt.Fprintf(&b, "blob puts %d\n", e.blobs.puts)
+	// Dateien unter export_dir (attachments.save, messages.export).
+	_ = filepath.WalkDir(e.deps.ExportDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil {
+			fi, _ := d.Info()
+			fmt.Fprintf(&b, "export %s %d\n", p, fi.Size())
+		}
+		return nil
+	})
 	return b.String()
 }
 

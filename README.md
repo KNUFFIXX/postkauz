@@ -252,6 +252,21 @@ Slice 3, part T3. PostKauz keeps what was deleted on the server until you remove
 
 Step by step (German): `docs/betrieb.md`, section 5; details: `docs/cli.md`, section 2m.
 
+## Export
+
+Slice 3, part T3 (pre-alpha):
+
+- **Save an attachment:** `attach save <attachment-id> [--subdir invoices/2026]` writes the file below `[paths] export_dir` (default `<data dir>/export`, see `doctor`) and nowhere else: no `..`, no absolute path, no symbolic link. The name is cleaned (path separators, control characters, Windows device names such as `CON`), an existing file is never replaced (`invoice-2.pdf`), and programs or scripts get the ending `.blocked`. Agents with the scope `mail:export` (roles `operator`, `admin`) use `mail_save_attachment`.
+- **Export the archive** (humans only, no key, no MCP tool): `export mbox --to <new folder>` writes mboxrd, one file per folder in the Thunderbird layout (`Archive.sbd/2024`); `export eml --to <new folder>` writes every message byte for byte as `<id>-<sha256>.eml`, one folder per mailbox, plus `index.csv` (id, Message-ID, date, folder, size, sha256; no subject, no addresses). The target must be new or empty. `--mailbox` and `--since` narrow it. The export is not encrypted.
+
+```sh
+postkauz attach save 7 --subdir invoices
+postkauz export mbox --to ./export-mbox -a mail
+postkauz import mbox ./export-mbox -a other   # the same messages, same content_hash
+```
+
+Details: `docs/cli.md` (section 2n), `docs/betrieb.md` (section 6, opening the mbox in Thunderbird).
+
 ## Set up MCP in Claude Code
 
 `postkauz mcp` is an MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. A reader key only reads; a key of the role `assistant` can also create drafts and submit them for approval, tag messages locally and ask for a sync. Marking, moving and asking for the trash need the scopes `mail:mark`, `mail:move` and `mail:trash` (roles `operator`, `admin`); the sync job carries such actions out, a move to the trash only after a human approved it. Only a human approves drafts and sends them from the mail client; nothing is ever sent, and nothing is deleted for good.

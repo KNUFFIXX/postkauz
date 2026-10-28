@@ -80,6 +80,11 @@ type Deps struct {
 	// Handler-Aufrufe), RetentionConfig die Fristen aus der Konfiguration.
 	Retention       *retention.Service
 	RetentionConfig RetentionConfig
+	// ExportDir ist [paths] export_dir (absolut): Ziel von attachments.save
+	// und Basis relativer Ziele von messages.export (S3.3, E6).
+	ExportDir string
+	// Export liefert Ordner und Nachrichten für messages.export.
+	Export ExportRepo
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -104,6 +109,8 @@ func Catalog(d Deps) []Operation {
 		ThreadsGet(d.Messages),
 		AttachmentsList(d.Messages),
 		AttachmentsText(d.Accounts, d.Messages, d.Blobs, d.Extractor),
+		AttachmentsSave(d),
+		MessagesExport(d),
 		KeysCreate(d.Keys, d.KeyDryRunDefault),
 		KeysList(d.Keys),
 		KeysRevoke(d.Keys),

@@ -198,4 +198,9 @@ var deniedHints = map[string]string{
 	"no_recipients":        "the draft has no recipient; add one with: draft edit <id> --to <address>, then request again",
 	"not_exported":         "export the audit first (audit export), check it (audit verify), then run audit rotate again",
 	"not_verified":         "run audit verify and clear what it reports, then run audit rotate again",
+	// S3.3 (E6): Anhänge sichern und Export.
+	"outside_export_dir":    "save only below export_dir: give --subdir as a relative folder without .. and without symbolic links (see: doctor)",
+	"invalid_subdir":        "use plain folder names in --subdir (no reserved names like CON, no : or control characters)",
+	"attachment_not_stored": "the attachment was not stored when the message was mirrored; save the message from the mail client instead",
+	"target_not_fresh":      "export only into a new or empty folder; choose another --to",
 }

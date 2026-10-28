@@ -38,6 +38,9 @@ var notOverMCP = map[string]string{
 	"retention.purge": "human only (E8): deletes messages from the local archive; CLI purge",
 	"blobs.gc":        "human only (E8): deletes stored files without reference; CLI blob gc",
 	"audit.rotate":    "human only (E8): moves exported audit days into an archive database; CLI audit rotate",
+	// Export (S3.3, E6): Ein Agent darf einzelne Anhänge ablegen
+	// (mail_save_attachment), nie das Archiv kopieren.
+	"messages.export": "admin, human only (E6): an agent may save single attachments, never copy the archive; CLI export",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
 	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
