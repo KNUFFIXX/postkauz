@@ -26,7 +26,8 @@
       - Schritt 3 (nur mit -Sync und -SyncAccount): lesender Sync nur der
         INBOX eines Kontos mit dem neuen Programm, nur wenn kein Entwurf auf
         seine Kopie im Entwuerfe-Ordner wartet (sonst SKIP; ebenso SKIP,
-        wenn draft list die Obergrenze von 500 erreicht);
+        wenn draft list die Obergrenze von 500 erreicht oder die Kopie ein
+        OAuth2-Konto hat);
       - Zeile 2d: wie viele wartende Entwuerfe der erste Push nach der
         Umstellung verwerfen bzw. zuruecksetzen wuerde (Schluessel
         widerrufen, abgelaufen oder unbekannt; A8, A-F3);
@@ -638,8 +639,15 @@ if (($kl.Exit -eq 0) -and ($null -ne $klj) -and ($dw.Exit -eq 0) -and ($null -ne
 # ---------------------------------------------------------------- Schritt 3
 
 Write-Log ''
+# Ein OAuth2-Konto (Microsoft) in der Kopie: Ein Sync erneuerte das Token
+# und speicherte das neue Refresh-Token unter dem Verweis des Dauerbetriebs
+# im Schluesselbund (die Kopie teilt ihn). Dann kein Schritt 3.
+$oauthAccounts = 0
+if ($null -ne $dj) { foreach ($x in @($dj.accounts)) { if ([string] $x.auth -eq 'oauth2') { $oauthAccounts++ } } }
 if (-not $Sync) {
     Add-Skip '3' 'lesender Sync (nur mit -Sync -SyncAccount <konto> und Zustimmung des Betreibers)'
+} elseif (($null -eq $dj) -or ($oauthAccounts -gt 0)) {
+    Add-Skip '3' ('lesender Sync: die Kopie hat ' + $oauthAccounts + ' OAuth2-Konto/Konten (oder doctor war nicht lesbar); ein Token-Refresh wuerde unter dem Verweis des Dauerbetriebs im Schluesselbund speichern')
 } else {
     $dl = Invoke-Pk $NewExe @('draft', 'list', '--account', $SyncAccount, '--status', 'draft', '--status', 'pending_approval', '--status', 'ready', '--limit', '500', '--json')
     $dlj = Get-Json $dl.Out
