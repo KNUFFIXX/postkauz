@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- Nachbesserung T1b und Merge mit `main` (28.10.2026, 0.3.0-alpha.3): Abnahme T1 (`docs/abnahme_T1.md`/`.ps1`) für den neuen Build (`-NewVersion`), mit Markerdatei gegen Junction/`subst`, Prozessprüfung über Pfad und Kommandozeile und exklusivem Öffnen der Live-Datenbank, maskierten Kontonamen und Pfaden, Zeile zu Entwürfen mit ungültigem Schlüssel, Schritt 4 mit genauen Pfaden; Protokoll `docs/protokolle/T1b_nachbesserung.md`; Stand und Festlegungen von T1b in `docs/roadmap.md` übertragen; nach T2 verschobene Punkte in `auftraege/A03_teile.md`.
+- T1b (0.3.0-alpha.2): `docs/abnahme_T1.md` Schritte 1 bis 4 und `docs/abnahme_T1.ps1` (Update einer Kopie von 0.2.0-rc8, Vergleich alt/neu, Laufzeit der Migrationen); ADR-004 Nachtrag (zwei Einträge je Aufruf, Policy prüft die Eingabe); Stand und Festlegungen in `docs/protokolle/T1b_stand.md`.
 - ADR-010 angenommen (27.10.2026): HTTP-MCP zustandslos, PostKauz nur Resource Server, externer Autorisierungsserver (Empfehlung Authelia), zuerst Modus `auth = "key"` (`docs/entscheidungen.md`); Spike P-AUTH (S3.0, T5 Phase 1) mit Prüfliste für Authelia 4.39.28 und Dex v2.46.1: `docs/protokolle/S30_pauth.md`, Rohdaten, Entwurf und Stand T5. Der Spike-Code bleibt auf seinem Zweig.
 - Merge T4 nach `main` (nach T1a und T1c): Anleitung `docs/betrieb_microsoft.md` (App-Registrierung, ungeprüft), Abnahme `docs/abnahme_D9.md`/`.ps1`, Protokoll `docs/protokolle/T4_stand.md`.
 - Merge T1c nach `main` (nach T1a): Abnahme-Skript `docs/abnahme_A3.ps1` (`.md`) für die verdeckte Passwortabfrage unter Windows (sechs Schritte je Leser: tippen, Strg+V, Rechtsklick, je ASCII und Umlaut; Startsignal vor jedem Schritt; mit `-Launch` die übrigen Fenster der Matrix nacheinander); eingestufter Erstlauf von golangci-lint in `docs/protokolle/lint_erstlauf.md`; Stand, Festlegungen und Prüfläufe in `docs/protokolle/T1c_stand.md`; `CONTRIBUTING.md` nennt `make hooks` und die Regel zu `go list`.
@@ -22,6 +24,14 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- Nachbesserung T1b: Migration 0019 ergänzt `drafts.updated_by` (letzter Schreiber des Inhalts) und `drafts.push_hold` (Push hält einen Entwurf des Menschen zurück, dessen Inhalt zuletzt ein ungültiger Schlüssel geändert hat); `draft show --json` zeigt beide.
+- Nachbesserung T1b: `doctor` zeigt je OAuth2-Konto den letzten Token-Refresh aus dem Audit (`token_refresh`) und warnt bei einem Fehler, bis ein späteres `ok` oder eine neue Anmeldung ihn aufhebt (B-M4).
+- T1b (0.3.0-alpha.2): Migration 0018 (Schema 18): Audit mit Start- und Abschluss-Eintrag (`started`, `ref_id`; A1 Variante A). `audit` und `mail_audit_log` zeigen je Aufruf eine Zeile mit Endergebnis (`end_id`), `--raw`/`raw` alle Zeilen, `--result started` offene Aufrufe; `doctor` zählt Aufrufe ohne Abschluss (`audit_unfinished_calls`).
+- T1b: Migration 0019 (Schema 19): `jobs.key_id`, `jobs.audit_id` (Herkunft eines Jobs).
+- T1b: `drafts.request_ready` / `mail_request_ready` liefern `human_only` und `next_step` (wie der Mensch freigibt; A2).
+- T1b: `remote_status` (`present`, `imported_only`, `deleted_remote`) in `show`, `search`, `thread` und MCP (A4).
+- T1b: Die Policy prüft Eingaben zentral (`policy.CheckInput`: `[move]`, `[delete]`, `bulk_confirm_threshold`, höchstens 1.000 Ziele; A9); gebraucht ab T2.
+- T1b: Gescheiterte Anmeldungen des MCP-Servers stehen im Audit (`keys.authenticate`).
 - S3.7 (T4): Microsoft-Postfächer per OAuth2 („bring your own client“): `account add <name> --auth oauth2 --client-id <id> [--tenant common|consumers|organizations|<id>]`, `account login <name> [--device-code]` (nur für Menschen, kein MCP-Tool); Anmeldung an IMAP per SASL `XOAUTH2`/`OAUTHBEARER`, `account test` nennt das Verfahren. Im Schlüsselbund liegt nur das Refresh-Token (bei Bedarf in Teilen unter `oauthpart<n>g<generation>/…`, je Speichern eine neue Generation, damit ein abgebrochenes Schreiben, eine Zeitüberschreitung des Schlüsselbunds oder ein zweiter Prozess das gespeicherte Token nie zerstört; gespeichert wird unter der Sperrdatei `oauth-<verweis>.lock` neben der Datenbank), das Access-Token bleibt im Speicher und wird 2 min vor Ablauf erneuert (vorher liest der Prozess ein inzwischen gespeichertes Token neu); jeder Refresh ist das Systemereignis `oauth.refresh`; ein Trockenlauf speichert kein erneuertes Token. Ohne Schlüsselbund abgelehnt (R2), `insecure-file` ebenso (außer in Tests mit lokalem IMAP- und Anmeldeserver). Anmeldung: Port auf 127.0.0.1 und ::1, Code-Tausch mit eigener Frist 60 s, Device-Code höchstens 15 min. Neue Fehlercodes `no_token`, `token_not_stored`, `oauth_refresh`, `login_failed`. `doctor` zeigt Token-Stand und -Ablauf, `doctor --secrets` sucht das Refresh-Token.
 - `secrets.RedactTokens` schwärzt Token-Felder und JWTs in freiem Text; Fehler des Token-Endpunkts tragen nur Code und AADSTS-Nummer. Der Schlüsselbund meldet eine Zeitüberschreitung als `secrets.ErrTimeout`.
 - `golang.org/x/oauth2` v0.35.0 ist direkte Abhängigkeit.
@@ -60,6 +70,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- Nachbesserung T1b: Wer die Kontosperre holt (Sync, Import), schließt offene `sync.run`-/`import.run`-Starts früherer, hart beendeter Läufe dieses Kontos ab (`error`/`process_ended`, `ref_id`); `doctor` blendet offene Starts nur noch je gesperrtem Konto aus (A-F9).
+- Nachbesserung T1b: Scheitert das Audit eines Token-Refresh, meldet das Log eine Warnung (ohne Token, ohne Fehlertext; B-M2); `doctor --secrets` meldet einen Lesefehler des Schlüsselbunds beim Refresh-Token als `Skipped` (B-M3).
+- T1b: Ein erlaubter Aufruf schreibt zwei Audit-Einträge; der Abschluss trägt seinen eigenen Zeitstempel und die Dauer. Einträge vor Schema 18 bleiben unverändert.
+- T1b: `sync.run` und `drafts.request_ready` haben Risikostufe R2 (legen per APPEND ab).
+- T1b: Die Eingabe wird vor dem Audit gegen das Schema geprüft; eine ungültige Eingabe steht als ein Eintrag `error`/`invalid_input` ohne Parameter im Audit.
+- T1b: Audit-Export, `audit verify` und `doctor` laden nicht mehr das ganze Protokoll (nur offene Tage; abgeschlossene Tage tageweise bzw. gar nicht).
+- T1b: Der MCP-Server gibt bei unbekannten Fehlern einen festen Satz statt des Fehlertexts zurück und loggt nur die Fehlertypen.
 - T1c: Windows: Die verdeckte Passwortabfrage von `account add` und `account set --password-stdin` liest die Konsole selbst (`ReadConsoleW`, Zeilen-Eingabe, Echo aus, UTF-16 nach UTF-8); `POSTKAUZ_PASSWORD_READER=term` schaltet zurück auf `golang.org/x/term`, jeder andere Wert ist ein Eingabefehler vor der Abfrage. Auf allen Systemen endet die Abfrage nach 120 s ohne Eingabe (`prompt_timeout`, Exit 1, Hinweis auf `--password-stdin` und README). Eine Eingabe über 4096 Zeichen wird bis zum Zeilenende gelesen und verworfen, damit kein Rest für die Shell bleibt; fällt das CR genau ans Ende eines Lesepuffers, liest der Leser das LF noch (Restpunkt beim Merge).
 - T1c: Eine Message-ID, die mehrere Nachrichten tragen (`show <message-id>`, `mail_get_message`, Antworten und Weiterleitungen per Message-ID), ist ein Eingabefehler (`ambiguous message_id`) mit bis zu 20 lokalen IDs, statt still die älteste zu nehmen.
 - T1c: `make guard` lässt `vendor/` aus und schlägt bei `go list` mit dem Muster aus drei Punkten in Skripten, Makefile und Workflows an (Go 1.28); seit dem Merge gilt die Regel „UTF-8 mit BOM, sonst nur ASCII“ auch für `docs/*.ps1`.
@@ -77,6 +94,12 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- Nachbesserung T1b: Ein Entwurf des Menschen, den ein Agent geändert hat, wird nach dem Widerruf des Agenten-Schlüssels nicht mehr abgelegt (zurück auf `draft`, Freigabe `rejected`, zurückgehalten; A-F3).
+- Nachbesserung T1b: `audit verify` findet wieder eine nachträglich eingeschobene Zeile mit freier niedriger ID im Zeitraum eines abgeschlossenen Tages (`database_changed`; Regression aus T1b, A-F4).
+- Nachbesserung T1b: Ein hart beendeter `sync --watch` lässt `doctor` nicht mehr dauerhaft warnen (A-F9).
+- Nachbesserung T1b: `account remove` meldet `secret_deleted` nicht mehr, wenn Teile eines OAuth2-Tokens nicht gelöscht werden konnten; der Haupteintrag bleibt dann stehen (B-M1).
+- T1b: Ein Entwurf, dessen API-Schlüssel nach der Freigabe widerrufen wurde, wird nicht mehr abgelegt (Freigabe `rejected`, Entwurf `abandoned`; A8).
+- T1b: Ein Absturz zwischen APPEND und Vermerk lässt keinen Ablageversuch ohne Audit zurück; auch für danach verworfene Entwürfe wird die Kopie übernommen oder der Versuch abgeschlossen (A7).
 - T1c: Fehlermeldungen, Hinweise und Stack-Zeilen auf stderr, `account test` (Ordnernamen, Fähigkeiten) und der Fehlertext von `--explain` werden wie Mailinhalt von Terminal-Steuerzeichen bereinigt; Folgezeilen einer Meldung oder eines Hinweises sind eingerückt, damit ein Zeilenumbruch in einer Serverantwort keine Zeile `hint:` vortäuschen kann.
 - T1c: `audit --since` mit einer überlaufenden Tageszahl (etwa `9223372036854775807d`) wurde still zu einem Zeitpunkt in der Zukunft; solche Werte sind jetzt ein Eingabefehler.
 - T1c: Vier ungeprüfte Fehler in Tests; rohe unsichtbare Zeichen in Testliteralen und Doku durch Escapes ersetzt (erster Lint-Lauf); `make guard` schlägt bei rohen Bidi-Steuerzeichen in Quelltext, Doku und Skripten an.

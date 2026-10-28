@@ -1,5 +1,7 @@
 # T1b — Stand, Festlegungen und CHANGELOG-Zeilen (27.10.2026)
 
+**Übertragen am 28.10.2026** (Nachbesserung T1b, [auftraege/A03_T1b_nachbesserung.md](../../auftraege/A03_T1b_nachbesserung.md) Teil D): Stand nach `docs/roadmap.md` (Abschnitt S3, „Stand T1b“), Festlegungen 1 bis 15 als Entschiedene Frage 54, CHANGELOG-Zeilen nach `CHANGELOG.md` („Unreleased“). Die drei Fragen unten gelten mit ihrer Standardantwort als Festlegung (Einspruch möglich). Die Datei bleibt als Protokoll des Stands vom 27.10.2026; was sich danach geändert hat, steht in [T1b_nachbesserung.md](T1b_nachbesserung.md).
+
 Teil **T1b** von Schnitt 3 nach [auftraege/A03_teile.md](../../auftraege/A03_teile.md) (Audit, Jobs, Policy; Teil A Kern). Ausgangsstand `main` `f536810` (enthält T1a), Zweig `claude/magical-goldberg-lwcx1n`, Build **0.3.0-alpha.2** (nur für die Abnahme T1 an einer Kopie, nicht für den Dauerbetrieb). Parallel laufen T1c und T4; deshalb steht der Stand nach Rahmen 10 hier und nicht in `docs/roadmap.md` und `CHANGELOG.md`. **Die Prüfsitzung überträgt ihn beim Merge.** Haltepunkt: Abnahme T1 ([abnahme_T1.md](../abnahme_T1.md), [abnahme_T1.ps1](../abnahme_T1.ps1)); ausgeführt von der Prüfsitzung.
 
 ## Stand T1b (für `docs/roadmap.md`, Abschnitt S3)
