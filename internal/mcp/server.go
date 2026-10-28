@@ -306,6 +306,8 @@ func classify(err error) ToolError {
 		return ToolError{Status: "error", Code: "not_found", Message: "draft not found; see mail_list_drafts"}
 	case errors.Is(err, store.ErrApprovalNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "approval not found"}
+	case errors.Is(err, store.ErrActionNotFound):
+		return ToolError{Status: "error", Code: "not_found", Message: "action not found; see mail_list_actions"}
 	case errors.Is(err, store.ErrIdentityNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "identity not found; see the from address of your drafts"}
 	case errors.Is(err, store.ErrAccountNotFound):

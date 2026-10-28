@@ -1,6 +1,6 @@
 # Abnahme D7a: Tags, Markieren, Verschieben, Papierkorb
 
-Stand: 28.10.2026 (A03 Teil T2, Build `0.3.0-alpha.3`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
+Stand: 28.10.2026 (A03 Teil T2, Build `0.3.0-alpha.4`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
 
 ## Zweck
 
@@ -57,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d7a\abnahme_D7a.ps
   -AccountDataDir C:\PK\d7a\konto-daten -AccountConfig C:\PK\d7a\konto-config.toml -Label D7a-Test
 ```
 
-Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.3`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
+Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.4`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
 
 ## Teil A: offline (immer)
 
@@ -76,7 +76,7 @@ Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.3`),
 | A2.1 | `trash <id>` (D7.2) | **Exit 3**, `denied (no_trash_mailbox)`: ohne Sync kennt der Spiegel keinen Papierkorb; es entsteht kein Antrag. Antrag, `action approve` und Ausführung prüft Teil B (B6) |
 | A2.2 | `action approve 999 --key test-agent` | **Exit 3**, `denied (human_only)`: die Policy lehnt vor jeder anderen Prüfung ab (auch für eine Aktion, die es nicht gibt) |
 | A2.3 | `action reject 999 --key test-operator` | **Exit 3**, `denied (human_only)`: auch die Rolle operator darf nicht entscheiden |
-| A2.4 | `action approve 999` (Mensch) | Fehler mit „not found“, Exit ungleich 0 (heute Exit 1, siehe Befund D7a-1) |
+| A2.4 | `action approve 999` (Mensch) | `error: action not found`, Exit 1 (Code `not_found`; Befund D7a-1, behoben) |
 | A2.5 | `action list` | `no actions` |
 | A3.1 | `policy show --key test-assistant` (D7.3) | `messages.tag`, `messages.mark`, `sync.request` erlaubt; **keine** Zeile `messages.move`/`messages.trash`; `actions.approve: human_only` |
 | A3.2 | `policy show --key test-operator` | `messages.trash  mail:trash  R3  needs_approval`, `messages.move`, `actions.approve: human_only` |
@@ -141,6 +141,6 @@ Vor jedem Schritt fragt das Skript: **„ja“** eingeben, sonst wird der Schrit
 - **Gmail-Label-Verhalten am Testserver nicht prüfbar:** Dovecot, Stalwart und GreenMail kennen keine Labels; dort heißt `move --role all` nur „in den Ordner mit Rolle all verschieben“ (Dovecot legt dabei eine zweite Kopie unter „All Mail“ an). Ob Gmail dabei das Label entfernt, zeigt nur Teil B (B5.4 und deine Antwort in B5.5).
 - **MOVE:** PostKauz verschiebt nur mit IMAP `MOVE`; ein Server ohne MOVE bekommt `unsupported`, und nichts passiert (E2, kein Ersatz über Kopieren und Löschen). Ob GreenMail 2.1 MOVE anbietet, ist im Container nicht gemessen (Docker Hub lehnte das Laden der Images ab, Fehler 429); Gmail und Dovecot bieten MOVE.
 - **Nicht unter PowerShell ausgeführt:** Im Container gibt es kein PowerShell. Belegt ist vorab: Teil A als Python-Nachbau mit denselben Kommandos und Mustern gegen das Linux-Programm (alle 30 Prüfungen `OK`, MCP-Probe unverändert `3 OK`), Teil B als Python-Nachbau gegen einen lokalen Dovecot 2.3 mit Gmail-ähnlichen Ordnern (Posteingang, „Sent“, „All Mail“ mit `\All`, Label-Ordner, „Trash“; selbst geschickte Mail in drei Ordnern; alle 30 Prüfungen `OK`). Nur unter Windows prüfbar: PowerShell 5.1 selbst (Quoting, Kodierung, `Read-Host`), die Markerprüfung mit Junctions, Python unter Windows, der Schlüsselbund. Bei einem Skriptfehler (nicht bei einer fachlichen Abweichung) Protokoll und Meldung an die Bausitzung zurückgeben.
-- **Befund D7a-1:** `action approve <n>` bzw. `action show <n>` für eine Aktion, die es nicht gibt, endet mit Exit 1 und `error: store: action not found: <n>` (Code `error`, Audit `error (handler_error)`), nicht mit Code `not_found` wie bei Entwürfen und Nachrichten (`internal/cli/exit.go` kennt `store.ErrActionNotFound` nicht). A2.4 prüft deshalb nur „Fehler mit not found“.
-- **Befund D7a-2:** `key create --help` nennt bei `--role` nur `reader | assistant | operator | admin`; die Rolle `triage` (T2, Vorgang 5) fehlt im Hilfetext, funktioniert aber.
+- **Befund D7a-1:** `action approve <n>` bzw. `action show <n>` für eine Aktion, die es nicht gibt, endet mit Exit 1 und `error: store: action not found: <n>` (Code `error`, Audit `error (handler_error)`), nicht mit Code `not_found` wie bei Entwürfen und Nachrichten (`internal/cli/exit.go` kennt `store.ErrActionNotFound` nicht). **Behoben in T2** (CLI und MCP melden `not_found`, ohne Text des Stores); A2.4 prüft das.
+- **Befund D7a-2:** `key create --help` nennt bei `--role` nur `reader | assistant | operator | admin`; die Rolle `triage` (T2, Vorgang 5) fehlte im Hilfetext, funktionierte aber. **Behoben in T2.**
 - `[tags] sync_keywords = true` in `-AccountConfig` schickte den Tag aus B2 beim nächsten Sync als IMAP-Keyword an Gmail; das Skript meldet es (Hinweis unter B2.1). Standard ist aus.

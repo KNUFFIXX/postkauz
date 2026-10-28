@@ -82,6 +82,9 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "not_found", Message: "approval not found", Hint: "the approval id is shown by draft request and draft list"}
 	case errors.Is(err, store.ErrIdentityNotFound):
 		return ExitError, ErrorInfo{Code: "not_found", Message: "identity not found", Hint: "list identities with: identity list"}
+	case errors.Is(err, store.ErrActionNotFound):
+		// Befund D7a-1: vorher Code error mit dem Text des Stores.
+		return ExitError, ErrorInfo{Code: "not_found", Message: "action not found", Hint: "list actions with: action list"}
 	case errors.Is(err, store.ErrKeyExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
 	case errors.Is(err, store.ErrKeyNotFound):

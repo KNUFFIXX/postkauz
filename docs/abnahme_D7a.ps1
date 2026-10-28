@@ -74,7 +74,7 @@
     durch Komma getrennt. Fuer Teil B Pflicht.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.3).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.4).
 
 .PARAMETER Python
     python.exe fuer die MCP-Probe. Ohne Angabe sucht das Skript python.exe
@@ -112,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.3',
+    [string] $ExpectVersion = '0.3.0-alpha.4',
     [string] $Python = '',
     [string] $Probe = '',
     [string] $LiveAccount = '',
@@ -624,9 +624,8 @@ Add-Check 'A2.2' 'action approve 999 --key test-agent -> denied (human_only), Ex
 $r = Invoke-Pk @('action', 'reject', '999', '--key', 'test-operator')
 Add-Check 'A2.3' 'action reject 999 --key test-operator -> denied (human_only), Exit 3 (auch die Rolle operator nicht)' ($r.Exit -eq 3 -and (Test-Has $r.Err 'denied \(human_only\)')) $r.Text
 $r = Invoke-Pk @('action', 'approve', '999')
-# Bekannt (Befund D7a-1): heute Exit 1 mit "store: action not found: 999"
-# (Code error statt not_found). Geprueft wird nur: Fehler, nichts angelegt.
-Add-Check 'A2.4' 'action approve 999 ohne Schluessel -> Fehler "not found" (Exit ungleich 0)' ($r.Exit -ne 0 -and (Test-Has $r.All '(?i)not found')) $r.Text
+# Befund D7a-1 (behoben in T2): Code not_found, ohne Text des Stores.
+Add-Check 'A2.4' 'action approve 999 ohne Schluessel -> "error: action not found", Exit 1 (Code not_found)' ($r.Exit -eq 1 -and (Test-Has $r.Err 'error: action not found') -and -not (Test-Has $r.All 'store:')) $r.Text
 $r = Invoke-Pk @('action', 'list')
 Add-Check 'A2.5' 'action list -> "no actions" (offline entsteht keine Aktion)' ($r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^no actions\s*$')) $r.Text
 

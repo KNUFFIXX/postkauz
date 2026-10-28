@@ -21,7 +21,7 @@ import (
 func keyCreateFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.String("name", "", "name of the key (lowercase letters, digits, '-'); appears in the audit log")
-	f.String("role", "assistant", "reader | assistant | operator | admin")
+	f.String("role", "assistant", "reader | assistant | triage | operator | admin")
 	f.StringSlice("scopes", nil, "narrow the role to these scopes, e.g. mail:search (never widens)")
 	f.String("expires", "90d", "lifetime in days, e.g. 30d; 'never' for no expiry")
 	f.Bool("dry-run-default", true, "writing calls of this key run as dry run unless the agent sets dry_run=false")

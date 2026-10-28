@@ -17,6 +17,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // --- Vertragstest Register ↔ MCP (ADR-004, S1.9) --------------------------------
@@ -404,6 +405,10 @@ func TestRawErrorTextNotPassedOn(t *testing.T) {
 	res := errorResult(raw)
 	if b, _ := json.Marshal(res); strings.Contains(string(b), "KANARIE") {
 		t.Fatalf("tool result = %s", b)
+	}
+	// Befund D7a-1: eine unbekannte Aktion ist not_found, ohne Storetext.
+	if te := classify(fmt.Errorf("%w: 999", store.ErrActionNotFound)); te.Code != "not_found" || strings.Contains(te.Message, "store") {
+		t.Fatalf("action not found = %+v", te)
 	}
 	if te := classify(context.Canceled); te.Code != "canceled" {
 		t.Fatalf("canceled = %+v", te)

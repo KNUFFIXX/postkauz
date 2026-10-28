@@ -461,6 +461,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{store.ErrDraftNotFound, ExitError, "not_found"},
 		{store.ErrApprovalNotFound, ExitError, "not_found"},
 		{store.ErrIdentityNotFound, ExitError, "not_found"},
+		{fmt.Errorf("%w: 999", store.ErrActionNotFound), ExitError, "not_found"},
 		{&ops.DeniedError{Reason: "approval_stale"}, ExitDenied, "denied"},
 		{&ops.PolicyError{Operation: "drafts.approve", Decision: policy.Decision{Outcome: policy.Deny, Reason: "human_only"}}, ExitDenied, "denied"},
 		{provider.ErrAuth, ExitAuth, "auth"},
