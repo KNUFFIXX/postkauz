@@ -50,8 +50,11 @@ func TestSyncAllAndRequestCLI(t *testing.T) {
 	if code, out, errs := run(t, "sync", "-a", "privat"); code != ExitOK {
 		t.Fatalf("sync: %d %s %s", code, out, errs)
 	}
+	// Seit T3 (V18): Binnen 60 s nach der letzten Anforderung reiht eine
+	// neue nichts ein, wenn kein Job mehr wartet; die Meldung zeigt damit
+	// auch, dass der Sync den Job erledigt hat (sonst „added to queued job“).
 	code, out, _ = run(t, "sync", "request", "-a", "privat")
-	if code != ExitOK || !strings.Contains(out, "queued as job ") {
+	if code != ExitOK || !strings.Contains(out, "not queued: the last request (job ") {
 		t.Fatalf("request after sync: %d %q (the sync should have closed the earlier job)", code, out)
 	}
 }

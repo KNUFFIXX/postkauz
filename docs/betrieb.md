@@ -238,6 +238,7 @@ Der MCP-Server, den die Claude-App startet, kennt **kein** Mailpasswort (ADR-009
 - Dafür braucht der Schlüssel des Agenten den Scope `mail:sync` (Rollen `assistant`, `operator`, `admin`; `reader` nicht).
 - Läuft gerade kein Dauer-Sync, wartet der Auftrag bis zum nächsten `postkauz.exe sync` dieses Kontos.
 - Wird der Schlüssel inzwischen widerrufen, läuft der Auftrag nicht (Logzeile `refused (key_revoked)`).
+- Höchstens ein Sync je Minute auf Anforderung (seit T3): Fragt der Agent binnen 60 Sekunden noch einmal, antwortet das Tool `status: too_soon` und nennt mit `retry_after`, ab wann es wieder geht. Das hält einen Agenten in einer Schleife davon ab, das Postfach alle 10 Sekunden abzufragen.
 
 Ausprobieren ohne Claude, von Hand:
 
