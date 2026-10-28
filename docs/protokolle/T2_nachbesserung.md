@@ -49,6 +49,21 @@ Auftrag: [auftraege/A03_T2_nachbesserung.md](../../auftraege/A03_T2_nachbesserun
 
 V3, V8, V11, V14, V16, V17, V18, V19, V21 mit Kurzbeschreibung in [A03_teile.md](../../auftraege/A03_teile.md) T3 und in der Roadmap (Stand T2, „Nachbesserung“). V5 der Prüfsitzung (Offline-Teil von D7a weist D7.1/2 nicht nach) steht als Abweichung in [abnahme_D7a.md](../abnahme_D7a.md).
 
-## 5. Nachtrag: `make race` und Build
+## 5. `make race` und Build
 
-(siehe unten, nach den Läufen ergänzt)
+- **`make race`** (allein, ohne parallelen `make check`) an `692a492` plus den Doku-Änderungen: **alle Pakete grün** in 15:12 min; längste Pakete `internal/cli` 812 s, `internal/importer` 794 s, `internal/mailsync` 688 s, `internal/ops` 476 s (alle unter der Grenze von 30 min je Paket).
+- **Build:** `make release VERSION=0.3.0-alpha.5` an `ab94add` (Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`); `postkauz-linux-amd64 version` → `postkauz 0.3.0-alpha.5`. SHA-256:
+  - `postkauz-windows-amd64.exe` `edb37daf2751fc2618ffa2291841c681a023d21d6278b10dff6317e6f7b01202`
+  - `postkauz-linux-amd64` `acdb229b632160f1ed0ab23c2f7cbcb5c9fa7150a624affeee022470798216c8`
+  - `postkauz-darwin-arm64` `6d4a2920bc4baf29e14edf2f6bf918c07a1cdce250439b2d00aa23a4ca602a48`
+  - `Register-SyncWatch.ps1` `0dafa1012e7aad6d77c5a0a3c1f98d29cfc8de687b16e630565ed55a0cb3b8dc`, `Run-SyncWatch.ps1` `aa9653d09f718067b058dc54a2e041168a7f1d6618489a36ae94e8faab1d36c4`
+
+  `dist/` liegt nur im Container (nicht im Repository); die Prüfsitzung baut nach. Nach dem Build-Commit ändern sich nur dieses Protokoll und die Roadmap (kein Code). Bytegleich ist ein Nachbau nur an `ab94add` selbst: Go stempelt den Commit in das Programm (`vcs.revision`), `dist/VERSION` nennt ihn.
+- **Rauchtest mit dem Release-Programm:** Probelauf B6 (Abschnitt 3) noch einmal mit `dist/postkauz-linux-amd64`: `trash 1 --yes` Exit 0, `actions: 1 done, 0 failed, 0 stale`, Server INBOX 0 / Trash 1 / Alle 1 / Wichtig 1.
+
+## 6. Offen
+
+1. Abnahme D7a mit `0.3.0-alpha.5` durch die Prüfsitzung am Büro-PC (frisches `-DataDir`/`-WorkDir`; die `-AccountDataDir`-Kopie neu ziehen, siehe Festlegung 3).
+2. `make vuln` (hier gesperrt).
+3. PowerShell-Skripte unter Windows: `Register-SyncWatch.ps1` (15-s-Prüfung, auch mit absichtlich falschem `-DataDir` → Warnung und Exit 1), `abnahme_D7a.ps1` (B0.3a).
+4. Gmail-Verhalten bei MOVE und „Label entfernen“ nur in D7a messbar (unverändert).
