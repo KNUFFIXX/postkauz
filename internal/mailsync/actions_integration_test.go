@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/actions"
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -31,128 +33,166 @@ import (
 
 var itOperator = policy.Key{ID: "key:it-operator", Role: "operator", Scopes: policy.Roles["operator"]}
 
+// itActionEnv: Spiegel mit Konto "it" auf dem Testserver, Executor mit
+// den Standardregeln, Runner mit dem Job mailbox_action und dem Job sync,
+// ein Zielordner und drei Testnachrichten in der INBOX.
+type itActionEnv struct {
+	t      *testing.T
+	srv    itServer
+	user   string
+	st     *store.SQLite
+	acc    store.Account
+	x      *ops.Executor
+	runner *Runner
+	c      *imapclient.Client
+	target string
+	trash  string
+	mids   []string
+}
+
+func newITActionEnv(t *testing.T, srv itServer, user string) *itActionEnv {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "pk.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	scopes := []string{}
+	for _, sc := range itOperator.Scopes {
+		scopes = append(scopes, string(sc))
+	}
+	if _, err := st.CreateAPIKey(ctx, store.APIKey{Name: strings.TrimPrefix(itOperator.ID, "key:"), KeyHash: ops.HashKey("pk_it_operator"),
+		Role: itOperator.Role, Scopes: scopes, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := blob.Open(filepath.Join(dir, "blobs"), blob.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateAccount(ctx, store.Account{Name: "it", Email: "it@example.org", Host: srv.host, Port: srv.port, TLS: srv.tls,
+		Username: user, AuthType: "password", CredentialRef: "account/it", InsecureTestServer: true}); err != nil {
+		t.Fatal(err)
+	}
+	e := &itActionEnv{t: t, srv: srv, user: user, st: st}
+	e.acc, _ = st.AccountByName(ctx, "it")
+	deps := ops.Deps{Accounts: st, Messages: st, Actions: st, Drafts: &drafts.Service{Store: st}}
+	reg, err := ops.NewDefaultRegistry(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := policy.DefaultRules()
+	e.x = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Rules: &rules}
+	e.runner = &Runner{Store: st, Blobs: b, CommandTimeout: 15 * time.Second, Requests: ops.NewSyncJobs(deps),
+		Actions: &actions.Runner{Store: st, Blobs: b, Origin: ops.ActionOriginCheck(st)}}
+
+	// Ordner: Ziel des Verschiebens und der Papierkorb (Rolle trash).
+	e.c = itClient(t, srv, user)
+	tag := fmt.Sprintf("%d", time.Now().UnixNano())
+	e.target = "PKITZiel" + tag
+	if err := e.c.Create(e.target, nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	boxes, err := itProvider(t, srv, user, 0).ListMailboxes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range boxes {
+		if m.Role == provider.RoleTrash {
+			e.trash = m.Path
+		}
+	}
+	if e.trash == "" {
+		t.Skipf("%s: no mailbox with role trash", srv.name)
+	}
+	e.mids = []string{"mark-" + tag + "@example.org", "move-" + tag + "@example.org", "trash-" + tag + "@example.org"}
+	for _, mid := range e.mids {
+		e.append("INBOX", mid)
+	}
+	t.Cleanup(e.cleanup)
+	return e
+}
+
+func (e *itActionEnv) append(box, mid string) {
+	e.t.Helper()
+	raw := []byte("Message-ID: <" + mid + ">\r\nFrom: a@example.org\r\nTo: it@example.org\r\nSubject: T2 " + mid +
+		"\r\nDate: Wed, 28 Oct 2026 10:00:00 +0100\r\n\r\nText\r\n")
+	app := e.c.Append(box, int64(len(raw)), nil)
+	if _, err := app.Write(raw); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := app.Close(); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := app.Wait(); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// cleanup entfernt die Testnachrichten und den Zielordner (Testclient).
+func (e *itActionEnv) cleanup() {
+	cc := itClient(e.t, e.srv, e.user)
+	for _, box := range []string{"INBOX", e.target, e.trash} {
+		if _, err := cc.Select(box, nil).Wait(); err != nil {
+			continue
+		}
+		for _, mid := range e.mids {
+			data, err := cc.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: mid}}}, nil).Wait()
+			if err != nil || len(data.AllUIDs()) == 0 {
+				continue
+			}
+			set := imap.UIDSetNum(data.AllUIDs()...)
+			_ = cc.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}, Silent: true}, nil).Close()
+			if err := cc.UIDExpunge(set).Close(); err != nil {
+				_ = cc.Expunge().Close()
+			}
+		}
+	}
+	_ = cc.Unselect().Wait()
+	_ = cc.Delete(e.target).Wait()
+}
+
+func (e *itActionEnv) do(key policy.Key, op string, in any) (ops.Result, error) {
+	raw, _ := json.Marshal(in)
+	actor := audit.ActorAgent
+	if key.IsHuman() {
+		actor = audit.ActorHuman
+	}
+	no := false
+	return e.x.Execute(context.Background(), ops.Request{Key: key, Actor: actor, Operation: op, Input: raw, DryRun: &no})
+}
+
+// sync spiegelt nur die drei Ordner des Tests (gemeinsame Testkonten).
+func (e *itActionEnv) sync() ops.SyncOutput {
+	e.t.Helper()
+	out, err := e.runner.Sync(context.Background(), e.acc, provider.PasswordCredential(itPass),
+		ops.SyncOptions{Mailboxes: []string{"INBOX", e.target, e.trash}}, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return out
+}
+
+func (e *itActionEnv) id(mid string) int64 {
+	e.t.Helper()
+	ids, err := e.st.MessageIDsByHeader(context.Background(), e.acc.ID, mid)
+	if err != nil || len(ids) != 1 {
+		e.t.Fatalf("message %s in the mirror: %v, %v", mid, ids, err)
+	}
+	return ids[0]
+}
+
 func TestIntegrationMailboxActions(t *testing.T) {
 	itRun(t, func(t *testing.T, srv itServer, user string) {
 		ctx := context.Background()
-		dir := t.TempDir()
-		st, err := store.Open(filepath.Join(dir, "pk.db"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = st.Close() })
-		if err := st.Migrate(ctx); err != nil {
-			t.Fatal(err)
-		}
-		scopes := []string{}
-		for _, sc := range itOperator.Scopes {
-			scopes = append(scopes, string(sc))
-		}
-		if _, err := st.CreateAPIKey(ctx, store.APIKey{Name: strings.TrimPrefix(itOperator.ID, "key:"), KeyHash: ops.HashKey("pk_it_operator"),
-			Role: itOperator.Role, Scopes: scopes, CreatedAt: time.Now()}); err != nil {
-			t.Fatal(err)
-		}
-		b, err := blob.Open(filepath.Join(dir, "blobs"), blob.Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.CreateAccount(ctx, store.Account{Name: "it", Email: "it@example.org", Host: srv.host, Port: srv.port, TLS: srv.tls,
-			Username: user, AuthType: "password", CredentialRef: "account/it", InsecureTestServer: true}); err != nil {
-			t.Fatal(err)
-		}
-		acc, _ := st.AccountByName(ctx, "it")
-		deps := ops.Deps{Accounts: st, Messages: st, Actions: st}
-		reg, err := ops.NewDefaultRegistry(deps)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rules := policy.DefaultRules()
-		x := &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Rules: &rules}
-		do := func(key policy.Key, op string, in any) (ops.Result, error) {
-			raw, _ := json.Marshal(in)
-			actor := audit.ActorAgent
-			if key.IsHuman() {
-				actor = audit.ActorHuman
-			}
-			no := false
-			return x.Execute(ctx, ops.Request{Key: key, Actor: actor, Operation: op, Input: raw, DryRun: &no})
-		}
-		runner := &Runner{Store: st, Blobs: b, CommandTimeout: 15 * time.Second,
-			Actions: &actions.Runner{Store: st, Blobs: b, Origin: ops.ActionOriginCheck(st)}}
-
-		// Ordner: Ziel des Verschiebens und der Papierkorb (Rolle trash).
-		c := itClient(t, srv, user)
-		tag := fmt.Sprintf("%d", time.Now().UnixNano())
-		target := "PKITZiel" + tag
-		if err := c.Create(target, nil).Wait(); err != nil {
-			t.Fatal(err)
-		}
-		trash := ""
-		boxes, err := itProvider(t, srv, user, 0).ListMailboxes(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range boxes {
-			if m.Role == provider.RoleTrash {
-				trash = m.Path
-			}
-		}
-		if trash == "" {
-			t.Skipf("%s: no mailbox with role trash", srv.name)
-		}
-		mids := []string{"mark-" + tag + "@example.org", "move-" + tag + "@example.org", "trash-" + tag + "@example.org"}
-		for _, mid := range mids {
-			raw := []byte("Message-ID: <" + mid + ">\r\nFrom: a@example.org\r\nTo: it@example.org\r\nSubject: T2 " + mid +
-				"\r\nDate: Wed, 28 Oct 2026 10:00:00 +0100\r\n\r\nText\r\n")
-			app := c.Append("INBOX", int64(len(raw)), nil)
-			if _, err := app.Write(raw); err != nil {
-				t.Fatal(err)
-			}
-			if err := app.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := app.Wait(); err != nil {
-				t.Fatal(err)
-			}
-		}
-		t.Cleanup(func() {
-			cc := itClient(t, srv, user)
-			for _, box := range []string{"INBOX", target, trash} {
-				if _, err := cc.Select(box, nil).Wait(); err != nil {
-					continue
-				}
-				for _, mid := range mids {
-					data, err := cc.UIDSearch(&imap.SearchCriteria{Header: []imap.SearchCriteriaHeaderField{{Key: "Message-ID", Value: mid}}}, nil).Wait()
-					if err != nil || len(data.AllUIDs()) == 0 {
-						continue
-					}
-					set := imap.UIDSetNum(data.AllUIDs()...)
-					_ = cc.Store(set, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagDeleted}, Silent: true}, nil).Close()
-					if err := cc.UIDExpunge(set).Close(); err != nil {
-						_ = cc.Expunge().Close()
-					}
-				}
-			}
-			_ = cc.Unselect().Wait()
-			_ = cc.Delete(target).Wait()
-		})
-		// Nur die drei Ordner spiegeln (gemeinsame Testkonten).
-		sync := func() ops.SyncOutput {
-			t.Helper()
-			out, err := runner.Sync(ctx, acc, provider.PasswordCredential(itPass), ops.SyncOptions{Mailboxes: []string{"INBOX", target, trash}}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return out
-		}
+		e := newITActionEnv(t, srv, user)
+		st, c, mids, target, trash, do, sync := e.st, e.c, e.mids, e.target, e.trash, e.do, e.sync
 		sync()
-		id := func(mid string) int64 {
-			t.Helper()
-			ids, err := st.MessageIDsByHeader(ctx, acc.ID, mid)
-			if err != nil || len(ids) != 1 {
-				t.Fatalf("message %s in the mirror: %v, %v", mid, ids, err)
-			}
-			return ids[0]
-		}
+		id := e.id
 		markID, moveID, trashID := id(mids[0]), id(mids[1]), id(mids[2])
 
 		// mark --seen (Schlüssel, R2) und move (Schlüssel, R2): ein Lauf.
@@ -250,4 +290,58 @@ func itFlags(t *testing.T, c *imapclient.Client, box, mid string) [][]imap.Flag 
 		out = append(out, m.Flags)
 	}
 	return out
+}
+
+// A03 S3.1 Akzeptanz 2 und S3.5 Akzeptanz 5 gegen den Testserver: Mit
+// laufendem sync --watch (Standardtakt der Jobs, 10 s) kommt mark --seen
+// binnen 10 s auf den Server, und mail_sync_now (sync.request) für einen
+// Ordner ohne IDLE spiegelt eine neue Nachricht binnen 10 s.
+func TestIntegrationWatchActionsAndSyncNow(t *testing.T) {
+	itRun(t, func(t *testing.T, srv itServer, user string) {
+		e := newITActionEnv(t, srv, user)
+		e.sync()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var rounds atomic.Int32
+		done := make(chan error, 1)
+		go func() {
+			_, err := e.runner.Sync(ctx, e.acc, provider.PasswordCredential(itPass), ops.SyncOptions{Watch: true, Interval: time.Hour,
+				Mailboxes: []string{"INBOX", e.target, e.trash}}, func(p ops.Progress) {
+				if p.Event == "round" {
+					rounds.Add(1)
+				}
+			})
+			done <- err
+		}()
+		waitFor(t, 30*time.Second, func() bool { return rounds.Load() >= 1 })
+
+		markID := e.id(e.mids[0])
+		start := time.Now()
+		if _, err := e.do(itOperator, "messages.mark", map[string]any{"account": "it", "ids": []int64{markID}, "seen": true}); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, 11*time.Second, func() bool {
+			fl := itFlags(t, e.c, "INBOX", e.mids[0])
+			return len(fl) == 1 && slices.Contains(fl[0], imap.FlagSeen)
+		})
+		t.Logf("%s: mark --seen on the server after %s", srv.name, time.Since(start).Round(time.Millisecond))
+
+		mid := "now-" + strings.TrimPrefix(e.target, "PKITZiel") + "@example.org"
+		e.mids = append(e.mids, mid)
+		e.append(e.target, mid)
+		start = time.Now()
+		res, err := e.do(itOperator, "sync.request", map[string]any{"account": "it", "mailbox": e.target})
+		if err != nil || res.Output.(ops.SyncRequestOutput).Status != "queued" {
+			t.Fatalf("sync.request = %+v, %v", res.Output, err)
+		}
+		waitFor(t, 11*time.Second, func() bool {
+			ids, _ := e.st.MessageIDsByHeader(context.Background(), e.acc.ID, mid)
+			return len(ids) == 1
+		})
+		t.Logf("%s: requested sync mirrored the new message after %s", srv.name, time.Since(start).Round(time.Millisecond))
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	})
 }
