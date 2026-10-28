@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"log/slog"
+
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
@@ -48,6 +50,9 @@ type Deps struct {
 	// SystemAudit nimmt Systemereignisse außerhalb des Executors auf
 	// (oauth.refresh); nil = keine.
 	SystemAudit audit.Writer
+	// Log nimmt Warnungen außerhalb des Executors auf (B-M2: Audit-Eintrag
+	// oauth.refresh nicht geschrieben); nil = keine.
+	Log *slog.Logger
 	// TokenLockDir ist der Ordner der Sperrdateien beim Speichern eines
 	// OAuth2-Tokens (neben der Datenbank; leer = ohne Sperre).
 	TokenLockDir string

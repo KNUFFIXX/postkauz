@@ -1,9 +1,11 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"maps"
 	"strings"
 	"testing"
@@ -467,5 +469,43 @@ func TestTwoProcessesShareRotatedToken(t *testing.T) {
 		if ev.Result != audit.ResultOK {
 			t.Fatalf("event = %+v", ev)
 		}
+	}
+}
+
+// canaryAudit lehnt jedes Ereignis mit einem Fehlertext ab, der nie im Log
+// stehen darf (B-M2).
+type canaryAudit struct{}
+
+func (canaryAudit) Append(context.Context, audit.Event) error {
+	return errors.New("disk full KANARIE")
+}
+
+// Nachbesserung T1b, B-M2: Scheitert das Schreiben des Systemereignisses
+// oauth.refresh, läuft der Sync weiter, und das Log meldet es als Warnung:
+// mit Konto und Fehlertyp, ohne Token und ohne Fehlertext.
+func TestRefreshAuditFailureIsLogged(t *testing.T) {
+	e := newOAuthEnv(t)
+	var buf bytes.Buffer
+	creds := e.creds
+	creds.Audit, creds.Log = canaryAudit{}, slog.New(slog.NewTextHandler(&buf, nil))
+	runner := &tokenRunner{}
+	if err := e.x.Registry.Register(SyncRun(e.st, creds, runner)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.add", outlookInput(), "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("accounts.login", map[string]any{"name": "outlook"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.run("sync.run", map[string]any{"account": "outlook"}, "", false); err != nil || len(runner.got) != 1 {
+		t.Fatalf("sync with a failing audit writer: %v", err)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "audit entry oauth.refresh not written") || !strings.Contains(log, "account=outlook") {
+		t.Fatalf("log = %q", log)
+	}
+	if strings.Contains(log, "KANARIE") || strings.Contains(log, runner.got[0]) || strings.Contains(log, "CANARY") {
+		t.Fatalf("secret or error text in the log: %q", log)
 	}
 }

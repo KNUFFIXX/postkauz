@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -34,6 +35,9 @@ type Credentials struct {
 	OAuth oauth.Microsoft
 	// Audit nimmt die Systemereignisse oauth.refresh auf (nil = keins).
 	Audit audit.Writer
+	// Log meldet, wenn ein Ereignis oauth.refresh nicht geschrieben werden
+	// konnte (B-M2; nil = verworfen). Nie ein Token, nur Fehlertypen.
+	Log *slog.Logger
 	// LockDir ist der Ordner der Sperrdateien beim Speichern eines Tokens
 	// (oauth.SaveLocked; leer = ohne Sperre, nur Tests und :memory:).
 	LockDir string
@@ -41,7 +45,7 @@ type Credentials struct {
 
 // credentials liefert die Auflösung aus den Abhängigkeiten des Katalogs.
 func (d Deps) credentials() Credentials {
-	return Credentials{Secrets: d.Secrets, OAuth: d.OAuth, Audit: d.SystemAudit, LockDir: d.TokenLockDir}
+	return Credentials{Secrets: d.Secrets, OAuth: d.OAuth, Audit: d.SystemAudit, LockDir: d.TokenLockDir, Log: d.Log}
 }
 
 // ErrNoToken: Ein OAuth2-Konto hat (noch) kein Refresh-Token im
@@ -127,8 +131,14 @@ func (c Credentials) auditRefresh(a store.Account, ok bool, reason string, dryRu
 	params, _ := json.Marshal(p)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = c.Audit.Append(ctx, audit.Event{TS: time.Now(), ActorType: audit.ActorSystem, KeyID: "system", Scope: string(policy.ScopeMailSync),
+	err := c.Audit.Append(ctx, audit.Event{TS: time.Now(), ActorType: audit.ActorSystem, KeyID: "system", Scope: string(policy.ScopeMailSync),
 		Operation: OpOAuthRefresh, ParamsRedacted: params, Targets: []string{"account:" + a.Name}, Result: res, Reason: reason})
+	// B-M2: Der Sync läuft weiter (der Refresh selbst ist geschehen), aber
+	// nicht still; im Log nur Konto, Ergebnis, Code und Fehlertypen.
+	if err != nil && c.Log != nil {
+		c.Log.Warn("audit entry oauth.refresh not written", "account", a.Name, "result", string(res), "reason", reason,
+			"error", ErrorKinds(err))
+	}
 }
 
 // --- accounts.login --------------------------------------------------------
