@@ -442,6 +442,76 @@ func (s *Service) NotePush(ctx context.Context, accountID, draftID int64, note s
 	})
 }
 
+// HumanKeyID ist der Schlüssel des Menschen in created_by, updated_by und
+// approvals.requested_by (wie audit_events.api_key_id).
+const HumanKeyID = "cli"
+
+// HoldForKey setzt einen offenen Entwurf des Menschen zurück, hinter dem
+// ein Schlüssel steht, der nicht mehr gilt (A-F3; reason wie bei
+// CloseForKey). Der Mensch verliert seinen Entwurf nicht: Status draft,
+// eine offene oder erteilte Freigabe wird abgelehnt (DecidedBy system,
+// Grund reason). content: Der Schlüssel hat den Inhalt zuletzt geändert
+// (updated_by); dann hält der Push den Entwurf zurück (push_hold = reason),
+// bis der Mensch ihn ändert oder selbst vorlegt. Sonst (nur die Vorlage
+// kam vom Schlüssel) wird er wieder als gewöhnlicher Entwurf abgelegt.
+// Audit: Systemereignis drafts.push mit dem Grund, in derselben
+// Transaktion. Changed meldet, ob sich etwas geändert hat (sonst kein
+// Eintrag).
+func (s *Service) HoldForKey(ctx context.Context, id int64, reason string, content bool) (Result, error) {
+	now := s.now()
+	var res Result
+	err := s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		from := Status(d.Status)
+		res.Draft, res.From, res.To = d, from, from
+		if from.Closed() {
+			return nil
+		}
+		to := from
+		if from != StatusDraft {
+			t, err := Next(from, EvUpdate)
+			if err != nil {
+				return err
+			}
+			to = t.To
+		}
+		if d.ApprovalID > 0 {
+			a, err := x.Approval(d.ApprovalID)
+			if err != nil {
+				return err
+			}
+			if a.Decision == DecisionPending || a.Decision == DecisionApproved {
+				a.Decision, a.DecidedBy, a.DecidedAt, a.Reason = DecisionRejected, "system", now, reason
+				if err := x.UpdateApproval(a); err != nil {
+					return err
+				}
+				res.Approval = &a
+			}
+		}
+		hold := d.PushHold
+		if content {
+			hold = reason
+		}
+		if to == from && res.Approval == nil && hold == d.PushHold {
+			return nil
+		}
+		d.Status, d.PushHold, d.UpdatedAt = string(to), hold, now
+		if to != from {
+			d.HookResult = ""
+		}
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		res.Draft, res.To, res.Changed = d, to, true
+		_, err = x.AppendAudit(s.systemEvent(now, OpPush, reason, d, from, to, map[string]any{"held": content}))
+		return err
+	})
+	return res, err
+}
+
 // CloseForKey schließt einen offenen Entwurf, dessen Schlüssel nicht mehr
 // gilt (A8: widerrufen, abgelaufen, unbekannt oder ohne Scope mail:draft;
 // reason ist der Grund wie im Audit des Executors, z. B. key_revoked).

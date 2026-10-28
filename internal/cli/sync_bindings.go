@@ -216,7 +216,7 @@ func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
 		parts = append(parts, fmt.Sprintf("%d could not be built (see draft show)", d.Failed))
 	}
 	if d.KeyRevoked > 0 {
-		parts = append(parts, fmt.Sprintf("%d not stored because their API key was revoked or expired; abandoned (see draft show)", d.KeyRevoked))
+		parts = append(parts, fmt.Sprintf("%d not stored because their API key was revoked or expired; agent drafts abandoned, your drafts held until you check them (see draft show)", d.KeyRevoked))
 	}
 	if d.Rejected > 0 {
 		parts = append(parts, fmt.Sprintf("%d refused by the server (see draft show)", d.Rejected))

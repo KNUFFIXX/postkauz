@@ -203,7 +203,7 @@ func (s *Service) Create(ctx context.Context, in NewDraft) (Result, error) {
 			return err
 		}
 		d := store.Draft{AccountID: acc.ID, Kind: string(in.Kind), InReplyToMsg: in.InReplyToMsg, Status: string(StatusDraft),
-			RemoteState: RemotePending, CreatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now, ContentChangedAt: now}
+			RemoteState: RemotePending, CreatedBy: in.CreatedBy, UpdatedBy: in.CreatedBy, CreatedAt: now, UpdatedAt: now, ContentChangedAt: now}
 		switch {
 		case in.IdentityID > 0:
 			id, err := x.Identity(in.IdentityID)
@@ -355,6 +355,12 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 		}
 		setContent(&d, c)
 		d.Status, d.HookResult, d.PushNote, d.UpdatedAt, d.ContentChangedAt = string(t.To), "", "", now, now
+		// A-F3: letzter Schreiber des Inhalts; eine Änderung beendet das
+		// Zurückhalten (der neue Schreiber steht jetzt für den Inhalt).
+		d.PushHold = ""
+		if s.who != nil {
+			d.UpdatedBy = s.who.KeyID
+		}
 		d.PreviewHash = PreviewHash(HashOf(d))
 		if d.RemoteState == RemotePushed {
 			// Neue Kopie beim nächsten Push; die alte bleibt im
@@ -478,6 +484,11 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		}
 		d.Status, d.ApprovalID = string(t.To), a.ID
 		repush := staleCopy(&d, chk.MessageHash)
+		if d.PushHold != "" && requestedBy == HumanKeyID {
+			// A-F3: Der Mensch legt den zurückgehaltenen Inhalt selbst vor;
+			// die Freigabe bindet genau diesen Stand (preview_hash).
+			d.PushHold, repush = "", true
+		}
 		if err := x.UpdateDraft(d); err != nil {
 			return err
 		}

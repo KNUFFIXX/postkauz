@@ -72,11 +72,19 @@ type Draft struct {
 	RemoteState       string // pending | pushed | taken_over | missing
 	PushedContentHash string
 	CreatedBy         string // "cli" | "key:<name>"
-	ApprovalID        int64
-	SentMessageID     int64
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	ClosedAt          time.Time // Nullzeit = offen
+	// UpdatedBy: wer den Inhalt zuletzt geändert hat ("cli" | "key:<name>";
+	// Migration 0019, A-F3). "" = unbekannt (Entwurf älterer Versionen,
+	// dann gilt CreatedBy).
+	UpdatedBy string
+	// PushHold: Grund, warum der Push den Entwurf zurückhält ("" = keiner;
+	// Migration 0019, A-F3): Der Inhalt stammt von einem Schlüssel, der
+	// nicht mehr gilt. Solche Entwürfe stehen nicht in der Warteschlange.
+	PushHold      string
+	ApprovalID    int64
+	SentMessageID int64
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ClosedAt      time.Time // Nullzeit = offen
 	// ContentChangedAt: letzte Änderung des Inhalts (Anlegen, drafts.update;
 	// Migration 0015, Gegenprüfung S2.6–S2.8, W1). Ablauf, Lesen, Vorlage,
 	// Freigabe und Push ändern sie nicht; das Zeitfenster des
@@ -215,7 +223,7 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
 	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
 	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, ''), content_changed_at,
-	COALESCE(fallback_checked_at, 0)`
+	COALESCE(fallback_checked_at, 0), COALESCE(updated_by, ''), COALESCE(push_hold, '')`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
@@ -226,7 +234,7 @@ func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
 		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
-		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked); err != nil {
+		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked, &d.UpdatedBy, &d.PushHold); err != nil {
 		return d, err
 	}
 	if attempt != "" {
@@ -319,14 +327,15 @@ func draftArgs(d Draft) ([]any, error) {
 		d.Status, nullStr(d.PreviewHash), nullStr(d.HookResult), nullID(d.RemoteMailboxID), nullID(d.RemoteUID), remote,
 		nullStr(d.PushedContentHash), nullStr(d.CreatedBy), nullID(d.ApprovalID), nullID(d.SentMessageID),
 		d.UpdatedAt.UnixMilli(), closed, opts, nullStr(d.PushedDate), nullID(int64(d.RemoteUIDValidity)), ps,
-		nullStr(d.PushNote), nullStr(d.PushedMessageHash), attempt, contentChanged.UnixMilli()}, nil
+		nullStr(d.PushNote), nullStr(d.PushedMessageHash), attempt, contentChanged.UnixMilli(), nullStr(d.UpdatedBy), nullStr(d.PushHold)}, nil
 }
 
 const draftWriteCols = `identity_id, kind, in_reply_to_msg, message_id_header, from_name, from_email,
 	to_addrs, cc_addrs, bcc_addrs, subject, body_markdown, body_text, body_html, headers_json, attachment_blobs,
 	status, preview_hash, hook_result, remote_mailbox_id, remote_uid, remote_state,
 	pushed_content_hash, created_by, approval_id, sent_message_id, updated_at, closed_at, compose_options,
-	pushed_date, remote_uidvalidity, remote_previous, push_note, pushed_message_hash, push_attempt, content_changed_at`
+	pushed_date, remote_uidvalidity, remote_previous, push_note, pushed_message_hash, push_attempt, content_changed_at,
+	updated_by, push_hold`
 
 func nullID(v int64) any {
 	if v <= 0 {

@@ -16,8 +16,10 @@ import (
 
 // draftPushPending ist die Bedingung für einen Entwurf, dessen Kopie
 // aussteht: remote_state pending und nicht abgeschlossen (sent_by_human und
-// abandoned werden nie abgelegt).
-const draftPushPending = `remote_state = 'pending' AND status IN ('draft','pending_approval','ready')`
+// abandoned werden nie abgelegt) und nicht zurückgehalten (push_hold, A-F3:
+// Inhalt eines Schlüssels, der nicht mehr gilt; erst eine Änderung oder
+// Vorlage durch den Menschen gibt ihn frei).
+const draftPushPending = `remote_state = 'pending' AND status IN ('draft','pending_approval','ready') AND push_hold IS NULL`
 
 // draftPushDue ist die Bedingung für einen Entwurf, den der nächste Push
 // ablegt: wartend und nicht mit push_rejected oder push_failed vermerkt

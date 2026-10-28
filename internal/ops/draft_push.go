@@ -267,15 +267,26 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	case !drafts.Pending(d):
 		return nil // inzwischen abgelegt, abgeschlossen oder übernommen
 	}
-	// A8: Gilt der Schlüssel, für den der Entwurf entstand bzw. vorgelegt
-	// wurde, noch (Widerruf, Ablauf, Scope)? Sonst kein APPEND.
-	if reason, err := p.originDenied(ctx, d); err != nil {
+	// A8, A-F3: Gilt der Schlüssel, für den der Entwurf entstand, der ihn
+	// zuletzt geändert oder vorgelegt hat, noch (Widerruf, Ablauf, Scope)?
+	// Sonst kein APPEND: Entwurf eines Agenten verworfen, Entwurf des
+	// Menschen zurück auf draft (bei fremdem Inhalt zurückgehalten).
+	if den, err := p.originDenied(ctx, d); err != nil {
 		return err
-	} else if reason != "" {
-		if _, err := svc.CloseForKey(ctx, d.ID, reason); err != nil {
+	} else if den.reason != "" {
+		var res drafts.Result
+		if d.CreatedBy == drafts.HumanKeyID {
+			res, err = svc.HoldForKey(ctx, d.ID, den.reason, den.content)
+		} else {
+			res, err = svc.CloseForKey(ctx, d.ID, den.reason)
+			res.Changed = res.To != res.From
+		}
+		if err != nil {
 			return err
 		}
-		rep.KeyRevoked++
+		if res.Changed {
+			rep.KeyRevoked++
+		}
 		return nil
 	}
 	fp := drafts.Fingerprint(d)
@@ -328,50 +339,68 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	return nil
 }
 
-// originDenied prüft die Schlüssel hinter einem Entwurf (A8): den, mit dem
-// er angelegt wurde (created_by), und den, der die offene oder erteilte
-// Freigabe beantragt hat (requested_by). Für "key:<name>" frisch aus der
-// Datenbank (kein Zwischenspeicher): Widerruf und Ablauf wie im Executor
-// (KeyGuard), dann die Policy mit Scope mail:draft. Liefert den Grund
-// (key_revoked, key_expired, key_invalid, missing_scope) oder "".
+// denial ist das Ergebnis von originDenied: der Grund (key_revoked,
+// key_expired, key_invalid, missing_scope; "" = alles gültig) und ob der
+// abgelehnte Schlüssel den Inhalt zuletzt geändert hat (updated_by).
+type denial struct {
+	reason  string
+	content bool
+}
+
+// originDenied prüft die Schlüssel hinter einem Entwurf (A8, A-F3): den,
+// mit dem er angelegt wurde (created_by), den, der den Inhalt zuletzt
+// geändert hat (updated_by), und den, der die offene oder erteilte Freigabe
+// beantragt hat (requested_by). Hat der Mensch selbst vorgelegt, steht er
+// für den Inhalt (die Freigabe bindet ihn über preview_hash); updated_by
+// zählt dann nicht. Für "key:<name>" frisch aus der Datenbank: Widerruf und
+// Ablauf wie im Executor (KeyGuard), dann die Policy mit Scope mail:draft.
 // Frisch heißt: je Entwurf eine Abfrage, kein Zwischenspeicher wie im
 // KeyGuard des Executors (Widerruf wirkt sofort).
-func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (string, error) {
-	ids := []string{d.CreatedBy}
+func (p *DraftPusher) originDenied(ctx context.Context, d store.Draft) (denial, error) {
+	type origin struct {
+		id      string
+		content bool
+	}
+	ids := []origin{{id: d.CreatedBy}}
+	humanRequested := false
 	if d.ApprovalID > 0 {
 		a, err := p.o.svc.Store.Approval(ctx, d.ApprovalID)
 		if err != nil && !drafts.IsNotFound(err) {
-			return "", err
+			return denial{}, err
 		}
 		if err == nil && (a.Decision == drafts.DecisionPending || a.Decision == drafts.DecisionApproved) {
-			ids = append(ids, a.RequestedBy)
+			ids = append(ids, origin{id: a.RequestedBy})
+			humanRequested = a.RequestedBy == drafts.HumanKeyID
 		}
 	}
+	if d.UpdatedBy != "" && d.UpdatedBy != d.CreatedBy && !humanRequested {
+		ids = append(ids, origin{id: d.UpdatedBy, content: true})
+	}
 	st := p.o.svc.Store
-	for _, id := range ids {
-		name, ok := strings.CutPrefix(id, "key:")
+	for _, o := range ids {
+		name, ok := strings.CutPrefix(o.id, "key:")
 		if !ok {
 			continue // "cli" (Mensch) oder leer
 		}
 		k, err := st.APIKeyByName(ctx, name)
 		if errors.Is(err, store.ErrKeyNotFound) {
-			return "key_invalid", nil
+			return denial{"key_invalid", o.content}, nil
 		}
 		if err != nil {
-			return "", err
+			return denial{}, err
 		}
 		switch KeyStatus(k, p.now()) {
 		case "revoked":
-			return "key_revoked", nil
+			return denial{"key_revoked", o.content}, nil
 		case "expired":
-			return "key_expired", nil
+			return denial{"key_expired", o.content}, nil
 		}
 		pk := PolicyKey(k)
 		if dec := policy.Check(pk, policy.Requirement{Name: drafts.OpPush, Scope: policy.ScopeMailDraft, Risk: policy.R2}, false); !dec.Allowed() {
-			return dec.Reason, nil
+			return denial{dec.Reason, o.content}, nil
 		}
 	}
-	return "", nil
+	return denial{}, nil
 }
 
 // AfterSync prüft die Entwürfe des Kontos nach dem Spiegeln (S2.6;

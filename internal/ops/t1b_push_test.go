@@ -204,3 +204,84 @@ func TestA8RevokedKeyStopsPush(t *testing.T) {
 		t.Fatalf("second push = %+v", rep)
 	}
 }
+
+// A-F3: Der Mensch legt einen Entwurf an, ein Agent ändert ihn per
+// drafts.update, dann wird der Schlüssel des Agenten widerrufen. Der Push
+// legt nichts ab (KeyRevoked 1, kein APPEND): Der Entwurf bleibt beim
+// Menschen (draft, zurückgehalten mit push_hold), Systemereignis im Audit.
+// Erst eine Änderung durch den Menschen gibt ihn wieder frei. Ein Entwurf,
+// den der Mensch selbst vorlegt, zählt den Inhalt als seinen.
+func TestAF3RevokedLastWriterStopsPush(t *testing.T) {
+	ctx := context.Background()
+	for _, humanRequests := range []bool{false, true} {
+		e := newPushEnv(t)
+		e.push(t)
+		own := e.must(t, humanCLI, "drafts.create", map[string]any{"kind": "new", "account": "demo", "to": []string{"b@example.org"},
+			"subject": "Vom Menschen", "body_markdown": "Hallo"}).(DraftsWriteOutput).DraftID
+		e.settle(t)
+		e.push(t)
+		e.must(t, assistant, "drafts.update", map[string]any{"draft_id": own, "body_markdown": "Hallo vom Agenten"})
+		if d := e.draft(t, own); d.UpdatedBy != assistant.ID || d.CreatedBy != drafts.HumanKeyID {
+			t.Fatalf("writers = %q/%q", d.CreatedBy, d.UpdatedBy)
+		}
+		k, err := e.st.APIKeyByName(ctx, "assistent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.st.RevokeAPIKey(ctx, k.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if humanRequests {
+			// Der Mensch prüft und legt selbst vor: dann steht er für den
+			// Inhalt, die Freigabe bindet ihn.
+			req := e.must(t, humanCLI, "drafts.request_ready", map[string]any{"draft_id": own}).(DraftsRequestOutput)
+			e.must(t, humanCLI, "drafts.approve", map[string]any{"approval_id": req.ApprovalID})
+			n := len(e.app.raws)
+			e.settle(t)
+			if rep := e.push(t); rep.KeyRevoked != 0 || rep.Pushed != 1 || len(e.app.raws) != n+1 {
+				t.Fatalf("push after human request = %+v", rep)
+			}
+			continue
+		}
+		n := len(e.app.raws)
+		e.settle(t)
+		rep := e.push(t)
+		if rep.KeyRevoked != 1 || rep.Pushed != 0 || len(e.app.raws) != n {
+			t.Fatalf("push after revoke = %+v, %d appends", rep, len(e.app.raws)-n)
+		}
+		d := e.draft(t, own)
+		if d.Status != string(drafts.StatusDraft) || d.PushHold != "key_revoked" || d.RemoteState != drafts.RemotePending {
+			t.Fatalf("draft after revoke = %s/%s/%q", d.Status, d.RemoteState, d.PushHold)
+		}
+		evs, err := e.st.AuditQuery(ctx, store.AuditFilter{Operation: drafts.OpPush})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		for _, ev := range evs {
+			if ev.Reason == "key_revoked" && ev.ActorType == audit.ActorSystem {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Fatalf("system events key_revoked = %d", found)
+		}
+		show := e.must(t, humanCLI, "drafts.get", map[string]any{"draft_id": own}).(DraftDetail)
+		if show.PushHold != "key_revoked" || show.RemoteNote != pushHoldNote("key_revoked") {
+			t.Fatalf("draft show = %q / %q", show.PushHold, show.RemoteNote)
+		}
+		// Weitere Läufe versuchen ihn nicht und schreiben nichts mehr.
+		if rep := e.push(t); rep.KeyRevoked != 0 || rep.Pushed != 0 || len(e.app.raws) != n {
+			t.Fatalf("second push = %+v", rep)
+		}
+		// Der Mensch ändert: frei, abgelegt.
+		e.must(t, humanCLI, "drafts.update", map[string]any{"draft_id": own, "body_markdown": "Hallo, geprüft"})
+		e.settle(t)
+		if rep := e.push(t); rep.Pushed != 1 || len(e.app.raws) != n+1 {
+			t.Fatalf("push after human edit = %+v", rep)
+		}
+		if d := e.draft(t, own); d.PushHold != "" || d.UpdatedBy != drafts.HumanKeyID {
+			t.Fatalf("draft after human edit = %+v", d)
+		}
+	}
+}

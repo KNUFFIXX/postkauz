@@ -121,6 +121,13 @@ var pushNotes = map[string]string{
 		"deleted here (delete it in the mail client if it is not wanted)",
 }
 
+// pushHoldNote erklärt, warum der Push einen Entwurf des Menschen
+// zurückhält (drafts.push_hold, A-F3).
+func pushHoldNote(reason string) string {
+	return "not pushed: an API key changed this draft last and is no longer valid (" + reason + "); " +
+		"check the text, then change it (draft edit) or submit it yourself (draft request) to store it again"
+}
+
 // remoteNote erklärt den Stand der Serverkopie.
 func remoteNote(d store.Draft) string {
 	if d.PushNote == drafts.PushNotePushedAfterClose {
@@ -134,6 +141,9 @@ func remoteNote(d store.Draft) string {
 	case drafts.RemotePending:
 		if drafts.Status(d.Status).Closed() {
 			return ""
+		}
+		if d.PushHold != "" {
+			return pushHoldNote(d.PushHold)
 		}
 		if n := pushNotes[d.PushNote]; n != "" && d.PushNote != drafts.PushNoteApprovalStale {
 			return n
@@ -1182,6 +1192,10 @@ type DraftDetail struct {
 	// und seine Erklärung.
 	PushNote     string `json:"push_note,omitempty"`
 	PushNoteText string `json:"push_note_text,omitempty"`
+	// UpdatedBy: wer den Inhalt zuletzt geändert hat (A-F3); PushHold:
+	// Grund, warum der Push den Entwurf zurückhält (Schlüssel ungültig).
+	UpdatedBy string `json:"updated_by,omitempty"`
+	PushHold  string `json:"push_hold,omitempty"`
 	// OlderCopies: ältere Kopien desselben Entwurfs (gleiche Message-ID,
 	// ältere UID) im Entwürfe-Ordner laut Spiegel (Entscheid 43, S2.7);
 	// OlderCopyUIDs nennt sie. Die Warnung steht zusätzlich in warnings.
@@ -1328,6 +1342,7 @@ func DraftsGet(d Deps) Operation {
 				out.RemotePreviousUIDs = append(out.RemotePreviousUIDs, c.UID)
 			}
 			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
+			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
 			if dr.ApprovalID > 0 {
 				if a, err := o.svc.Store.Approval(ctx, dr.ApprovalID); err == nil {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)
