@@ -359,12 +359,19 @@ func load(st secrets.Store, ref, raw string) (Saved, error) {
 // secrets.ErrNotFound (Teile ohne Generation werden trotzdem gelöscht).
 // Scheitert das Löschen eines Teils (außer "fehlt"), bleibt der
 // Haupteintrag stehen und Delete meldet den Fehler (B-M1; sonst meldete
-// account remove secret_deleted, und die Teile lägen unauffindbar).
+// account remove secret_deleted, und die Teile lägen unauffindbar). Lässt
+// sich der Haupteintrag nicht lesen (außer "fehlt"), löscht Delete nichts.
 func Delete(st secrets.Store, ref string) error {
 	st = secrets.Stored(st)
 	// B-M1: Erst alle Teile; scheitert einer (außer "fehlt"), bleibt der
 	// Haupteintrag stehen, damit die Teile auffindbar bleiben und ein
 	// zweiter Versuch sie findet.
+	// Nachprüfung B-M1: Scheitert schon das Lesen des Haupteintrags (außer
+	// "fehlt", z. B. Zeitüberschreitung), sind die Teile unbekannt: nichts
+	// löschen, den Fehler melden.
+	if _, err := st.Get(ref); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+		return fmt.Errorf("oauth: token main entry %s could not be read, nothing deleted: %w", ref, err)
+	}
 	var errs []error
 	if _, rec, ok := readMain(st, ref); ok {
 		if rec.Gen != "" {

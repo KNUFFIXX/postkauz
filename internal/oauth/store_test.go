@@ -34,8 +34,10 @@ type memStore struct {
 	// (die Goroutine des Schlüsselbunds läuft weiter).
 	lateMain bool
 	late     func()
-	// failDelete: Delete dieses Eintrags scheitert (B-M1).
+	// failDelete: Delete dieses Eintrags scheitert (B-M1); failGet: Get
+	// dieses Eintrags scheitert mit einer Zeitüberschreitung.
 	failDelete string
+	failGet    string
 }
 
 func newMemStore() *memStore { return &memStore{m: map[string]string{}, max: 2560} }
@@ -46,6 +48,9 @@ func (s *memStore) Get(ref string) (secrets.Secret, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if ref == s.failGet {
+		return "", fmt.Errorf("%w (keyring did not answer within 10s)", secrets.ErrTimeout)
+	}
 	v, ok := s.m[ref]
 	if !ok {
 		return "", secrets.ErrNotFound
@@ -548,6 +553,30 @@ func TestDeleteKeepsMainEntryWhenAPartFails(t *testing.T) {
 		t.Fatal("failing part vanished")
 	}
 	st.failDelete = ""
+	if err := Delete(st, testRef); err != nil || len(st.keys()) != 0 {
+		t.Fatalf("second delete: %v %v", err, st.keys())
+	}
+}
+
+// Nachprüfung B-M1: Lässt sich der Haupteintrag nicht lesen (Zeitüberschreitung),
+// löscht Delete nichts und meldet den Fehler; danach räumt ein zweiter
+// Versuch alles ab.
+func TestDeleteKeepsEverythingWhenTheMainEntryIsUnreadable(t *testing.T) {
+	st := newMemStore()
+	big := "CANARY-big-" + strings.Repeat("Ab9_-", 4096/5)
+	if err := Save(st, testRef, Token{RefreshToken: secrets.Secret(big)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	before := len(st.keys())
+	st.failGet = testRef
+	err := Delete(st, testRef)
+	if err == nil || !errors.Is(err, secrets.ErrTimeout) || strings.Contains(err.Error(), "CANARY") {
+		t.Fatalf("delete with an unreadable main entry = %v", err)
+	}
+	if len(st.keys()) != before {
+		t.Fatalf("entries deleted although the main entry was unreadable: %v", st.keys())
+	}
+	st.failGet = ""
 	if err := Delete(st, testRef); err != nil || len(st.keys()) != 0 {
 		t.Fatalf("second delete: %v %v", err, st.keys())
 	}
