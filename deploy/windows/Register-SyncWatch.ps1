@@ -137,13 +137,13 @@ function Get-TrimmedPath {
     return $Value.TrimEnd('\')
 }
 
-# Get-NewLogPart liest den Teil des Logs ab Byte From (nach einer Rotation
-# ist die Datei kuerzer: dann alles). Das Log ist UTF-8; Run-SyncWatch.ps1
-# schreibt und rotiert weiter, deshalb FileShare ReadWrite und Delete. Geht
+# Read-LogFrom liest eine Logdatei ab Byte From (UTF-8; mit Max hoechstens
+# so viele Bytes). Run-SyncWatch.ps1
+# schreibt und rotiert weiter, deshalb FileShare ReadWrite und Delete; geht
 # das Lesen einmal nicht, gilt der Teil als leer (naechster Versuch 1 s
 # spaeter).
-function Get-NewLogPart {
-    param([string]$Path, [long]$From)
+function Read-LogFrom {
+    param([string]$Path, [long]$From, [int]$Max = 0)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return ""
     }
@@ -158,11 +158,54 @@ function Get-NewLogPart {
             $From = 0
         }
         [void]$stream.Seek($From, [System.IO.SeekOrigin]::Begin)
+        if ($Max -gt 0) {
+            $buf = New-Object byte[] $Max
+            $n = $stream.Read($buf, 0, $Max)
+            return [System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
+        }
         $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false)))
         return $reader.ReadToEnd()
     } finally {
         $stream.Dispose()
     }
+}
+
+# Get-LogHead liefert den Anfang einer Logdatei (erste Zeile, hoechstens
+# 200 Zeichen; "" ohne Datei). Daran erkennt Get-NewLogPart eine Rotation
+# (das Erstelldatum taugt nicht: NTFS uebernimmt es bei Neuanlage unter
+# gleichem Namen).
+function Get-LogHead {
+    param([string]$Path)
+    $text = Read-LogFrom -Path $Path -From 0 -Max 4096
+    $line = ($text -split "`r?`n")[0]
+    if ($line.Length -gt 200) {
+        $line = $line.Substring(0, 200)
+    }
+    return $line
+}
+
+# Get-NewLogPart liefert, was seit der Messung (Groesse From, Anfang Head)
+# ins Log kam, auch ueber eine Rotation hinweg (Nachpruefung zu fd70f19,
+# Punkt 5): Hat die Datei einen anderen Anfang als bei der Messung, liegt
+# der alte Inhalt jetzt in sync-watch.1.log; der neue Teil ist dann dessen
+# Rest ab From plus die ganze neue Datei.
+function Get-NewLogPart {
+    param([string]$Path, [long]$From, [string]$Head)
+    $current = Get-LogHead -Path $Path
+    if ($Head -ne "" -and $current -eq "") {
+        # Kopf gerade nicht lesbar oder neue Datei noch leer: in dieser
+        # Sekunde nichts Neues (sonst zaehlten alte Zeilen mit).
+        return ""
+    }
+    if ($Head -ne "" -and $current -ne $Head) {
+        $rotated = Join-Path (Split-Path -Parent $Path) ([System.IO.Path]::GetFileNameWithoutExtension($Path) + ".1.log")
+        $part = ""
+        if ((Get-LogHead -Path $rotated) -eq $Head) {
+            $part = Read-LogFrom -Path $rotated -From $From
+        }
+        return $part + (Read-LogFrom -Path $Path -From 0)
+    }
+    return (Read-LogFrom -Path $Path -From $From)
 }
 
 function Get-DoctorReport {
@@ -365,17 +408,17 @@ $before = 0
 if (Test-Path -LiteralPath $logPath -PathType Leaf) {
     $before = (Get-Item -LiteralPath $logPath).Length
 }
+$beforeHead = Get-LogHead -Path $logPath
 Start-ScheduledTask -TaskName $TaskName
 $deadline = (Get-Date).AddSeconds(30)
 $ok = $false
 do {
     Start-Sleep -Seconds 2
     $state = (Get-ScheduledTask -TaskName $TaskName).State
-    if ((Test-Path -LiteralPath $logPath -PathType Leaf) -and (Get-Item -LiteralPath $logPath).Length -gt $before) {
-        $tail = Get-Content -LiteralPath $logPath -Tail 20
-        if ($null -ne ($tail | Select-String -SimpleMatch "starting:")) {
-            $ok = ($state -eq "Running")
-        }
+    # Nur der neue Teil des Logs zaehlt (rotationsfest; eine alte
+    # "starting:"-Zeile frueherer Laeufe zaehlt nicht).
+    if ((Get-NewLogPart -Path $logPath -From $before -Head $beforeHead).Contains("starting:")) {
+        $ok = ($state -eq "Running")
     }
 } while (-not $ok -and (Get-Date) -lt $deadline)
 # V6 (Nachbesserung T2): "starting:" schreibt Run-SyncWatch.ps1 vor dem
@@ -389,7 +432,7 @@ if ($ok) {
     $settle = (Get-Date).AddSeconds(15)
     do {
         Start-Sleep -Seconds 1
-        $ended = (Get-NewLogPart -Path $logPath -From $before).Contains("ended with exit code")
+        $ended = (Get-NewLogPart -Path $logPath -From $before -Head $beforeHead).Contains("ended with exit code")
     } while (-not $ended -and (Get-Date) -lt $settle)
     $running = $null -ne (Get-Process -Name "postkauz" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ExePath })
 }
@@ -406,7 +449,7 @@ if ($ok) {
         Write-Warning "The task is running, but no postkauz.exe from this path is running."
     }
     Write-Warning "Last lines of the log:"
-    (Get-NewLogPart -Path $logPath -From $before) -split "`r?`n" | Where-Object { $_ -ne "" } | Select-Object -Last 10 | ForEach-Object { Write-Warning ("  " + $_) }
+    (Get-NewLogPart -Path $logPath -From $before -Head $beforeHead) -split "`r?`n" | Where-Object { $_ -ne "" } | Select-Object -Last 10 | ForEach-Object { Write-Warning ("  " + $_) }
 } else {
     Write-Warning ("The task did not start as expected (state " + (Get-ScheduledTask -TaskName $TaskName).State + ", last result " + $info.LastTaskResult + ").")
 }
