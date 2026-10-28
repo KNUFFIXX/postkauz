@@ -1,15 +1,22 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // S3.7: Microsoft-Konto per OAuth2 über die CLI, gegen den Fake-AS aus
@@ -133,4 +140,89 @@ func TestOAuth2AccountCLI(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// Nachbesserung T1b, B-M4 und B-M3: doctor meldet einen gescheiterten
+// Token-Refresh aus dem Audit (oauth.refresh), bis ein späteres ok oder
+// eine neue Anmeldung ihn aufhebt; ein Lesefehler des Schlüsselbunds
+// bleibt nicht still (doctor: Warnung; doctor --secrets: Skipped mit
+// Grund).
+func TestDoctorTokenRefreshAndKeyringErrors(t *testing.T) {
+	dataDir, kr := setupEnv(t)
+	if code, out, errs := run(t, "account", "add", "ms", "--imap", "127.0.0.1:1", "--user", "ms@example.org", "--auth", "oauth2",
+		"--client-id", oauthtest.ClientID); code != ExitOK {
+		t.Fatalf("add: %s %s", out, errs)
+	}
+	code, out, errs := run(t, "account", "login", "ms", "--json")
+	var lo map[string]any
+	if code != ExitOK || json.Unmarshal([]byte(out), &lo) != nil {
+		t.Fatalf("login: %d %s %s", code, out, errs)
+	}
+	ref, _ := lo["credential_ref"].(string)
+	appendRefresh := func(ts time.Time, res audit.Result, reason string) {
+		t.Helper()
+		st, err := store.Open(filepath.Join(dataDir, "postkauz.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if err := st.AuditWriter().Append(context.Background(), audit.Event{TS: ts, ActorType: audit.ActorSystem, KeyID: "system",
+			Scope: "mail:sync", Operation: ops.OpOAuthRefresh, ParamsRedacted: []byte(`{"account":"ms"}`), Targets: []string{"account:ms"},
+			Result: res, Reason: reason}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doctor := func() DoctorReport {
+		t.Helper()
+		_, out, _ := run(t, "doctor", "--json")
+		var r DoctorReport
+		if err := json.Unmarshal([]byte(out), &r); err != nil || len(r.Accounts) != 1 {
+			t.Fatalf("doctor: %v\n%s", err, out)
+		}
+		return r
+	}
+	warned := func(r DoctorReport, s string) bool {
+		for _, w := range r.Warnings {
+			if strings.Contains(w, s) {
+				return true
+			}
+		}
+		return false
+	}
+	if r := doctor(); r.Accounts[0].TokenRefresh != nil || warned(r, "token refresh") {
+		t.Fatalf("doctor without refresh: %+v", r)
+	}
+	appendRefresh(time.Now().Add(time.Second), audit.ResultError, "invalid_grant")
+	r := doctor()
+	if tr := r.Accounts[0].TokenRefresh; tr == nil || !tr.Failed || tr.Reason != "invalid_grant" ||
+		!warned(r, "account ms: last token refresh failed (invalid_grant, ") || !warned(r, "sign in again with: postkauz account login ms") {
+		t.Fatalf("doctor after a failed refresh: %+v %+v", r.Accounts[0].TokenRefresh, r.Warnings)
+	}
+	_, text, _ := run(t, "doctor")
+	if !strings.Contains(text, "last token refresh failed") {
+		t.Fatalf("doctor text: %s", text)
+	}
+	// Ein späteres ok hebt die Warnung auf.
+	appendRefresh(time.Now().Add(2*time.Second), audit.ResultOK, "")
+	if r := doctor(); r.Accounts[0].TokenRefresh == nil || r.Accounts[0].TokenRefresh.Failed || warned(r, "token refresh failed") {
+		t.Fatalf("doctor after ok: %+v", r.Warnings)
+	}
+	// Ein Fehler, der älter ist als das gespeicherte Token (danach neu
+	// angemeldet), warnt nicht.
+	appendRefresh(time.Now().Add(-time.Hour), audit.ResultError, "invalid_grant")
+	if r := doctor(); r.Accounts[0].TokenRefresh == nil || r.Accounts[0].TokenRefresh.Failed || warned(r, "token refresh failed") {
+		t.Fatalf("doctor with an error older than the token: %+v", r.Warnings)
+	}
+
+	// B-M3/B-M4: Zeitüberschreitung des Schlüsselbunds.
+	kr.mu.Lock()
+	kr.failGet = map[string]error{ref: fmt.Errorf("%w (keyring did not answer within 10s)", secrets.ErrTimeout)}
+	kr.mu.Unlock()
+	if r := doctor(); !warned(r, "account ms: the OAuth2 token in the keyring") || !warned(r, "could not be read") {
+		t.Fatalf("doctor with a keyring timeout: %+v", r.Warnings)
+	}
+	_, sec, _ := run(t, "doctor", "--secrets", "--json")
+	if !strings.Contains(sec, "search for OAuth2 refresh token of account ms") || !strings.Contains(sec, "keyring: ") {
+		t.Fatalf("doctor --secrets with a keyring timeout: %s", sec)
+	}
 }

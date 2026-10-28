@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
@@ -102,12 +103,26 @@ type DoctorAccount struct {
 	Token          string `json:"token,omitempty"`
 	TokenExpiry    string `json:"token_expiry,omitempty"`
 	TokenUpdatedAt string `json:"token_updated_at,omitempty"`
+	// TokenRefresh: letzter Refresh-Versuch laut Audit (oauth.refresh;
+	// B-M4, E11), nil = keiner.
+	TokenRefresh *DoctorTokenRefresh `json:"token_refresh,omitempty"`
 	// IncompleteAnswers: leere oder unvollständige Serverantworten bisher
 	// (LIST ohne INBOX, UID-Liste passt nicht zu EXISTS; K2), Last und
 	// LastAt die des letzten Laufs mit solchen Antworten.
 	IncompleteAnswers     int        `json:"incomplete_answers"`
 	IncompleteAnswersLast int        `json:"incomplete_answers_last,omitempty"`
 	IncompleteAnswersAt   *time.Time `json:"incomplete_answers_at,omitempty"`
+}
+
+// DoctorTokenRefresh ist der letzte Refresh-Versuch eines OAuth2-Kontos:
+// Ergebnis ok | error, Code (nie Text des Anbieters), Zeit (RFC 3339, UTC).
+// Failed: Der Fehler ist jünger als das gespeicherte Token (kein späteres
+// ok, keine neue Anmeldung); dann warnt doctor.
+type DoctorTokenRefresh struct {
+	Result string `json:"result"`
+	Reason string `json:"reason,omitempty"`
+	At     string `json:"at"`
+	Failed bool   `json:"failed"`
 }
 
 func doctorCmd(a *app) *cobra.Command {
@@ -271,7 +286,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 			}
 		}
 		if acc.AuthType == ops.AuthOAuth2 {
-			doctorOAuthAccount(sec, acc, &da, &rep)
+			doctorOAuthAccount(ctx, db, sec, acc, &da, &rep)
 			rep.Accounts = append(rep.Accounts, da)
 			continue
 		}
@@ -294,9 +309,12 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 
 // doctorOAuthAccount meldet den Token-Stand eines OAuth2-Kontos (S3.7):
 // gespeichert oder nicht, Ablauf des letzten Access-Tokens, letzte
-// Erneuerung. Liest nur; nie ein Token in der Ausgabe.
-func doctorOAuthAccount(sec secrets.Store, acc store.AccountRef, da *DoctorAccount, rep *DoctorReport) {
+// Erneuerung, seit B-M4 der letzte Refresh-Versuch aus dem Audit. Liest
+// nur; nie ein Token in der Ausgabe.
+func doctorOAuthAccount(ctx context.Context, db *store.SQLite, sec secrets.Store, acc store.AccountRef, da *DoctorAccount, rep *DoctorReport) {
 	da.Auth, da.Password, da.EnvVar, da.Token = ops.AuthOAuth2, ops.AuthOAuth2, "", "unknown"
+	var saved oauth.Saved
+	defer func() { doctorTokenRefresh(ctx, db, acc, saved, da, rep) }()
 	if sec == nil {
 		return
 	}
@@ -316,7 +334,42 @@ func doctorOAuthAccount(sec secrets.Store, acc store.AccountRef, da *DoctorAccou
 	case errors.Is(err, oauth.ErrTokenCorrupt):
 		da.Token = "unreadable"
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: the OAuth2 token in the keyring (%s) is unreadable; sign in again with: account login %s", acc.Name, acc.CredentialRef, acc.Name))
+	default:
+		// B-M4: z. B. Zeitüberschreitung des Schlüsselbunds; nicht still
+		// "unknown" lassen.
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: the OAuth2 token in the keyring (%s) could not be read: %v", acc.Name, acc.CredentialRef, err))
 	}
+}
+
+// doctorTokenRefresh liest das letzte Systemereignis oauth.refresh des
+// Kontos (B-M4, E11 "Hinweis in doctor"). Ist es ein Fehler und nicht älter
+// als das gespeicherte Token, warnt doctor; ein späteres ok oder eine neue
+// Anmeldung (neueres Token) hebt die Warnung auf.
+func doctorTokenRefresh(ctx context.Context, db *store.SQLite, acc store.AccountRef, saved oauth.Saved, da *DoctorAccount, rep *DoctorReport) {
+	if db == nil {
+		return
+	}
+	last, ok, err := db.LastAuditEvent(ctx, ops.OpOAuthRefresh, "account:"+acc.Name)
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: last token refresh unknown (audit: %v)", acc.Name, err))
+		return
+	}
+	if !ok {
+		return
+	}
+	at := last.TS.UTC().Format(time.RFC3339)
+	tr := &DoctorTokenRefresh{Result: string(last.Result), Reason: last.Reason, At: at}
+	da.TokenRefresh = tr
+	if last.Result != audit.ResultError || (!saved.UpdatedAt.IsZero() && last.TS.Before(saved.UpdatedAt)) {
+		return
+	}
+	tr.Failed = true
+	code := last.Reason
+	if code == "" {
+		code = "error"
+	}
+	rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: last token refresh failed (%s, %s); sign in again with: %s account login %s",
+		acc.Name, code, at, brand.Name, acc.Name))
 }
 
 // doctorPolicy lädt die Policy-Datei nur lesend (doctor trägt nichts ein).

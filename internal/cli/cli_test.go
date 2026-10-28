@@ -64,10 +64,16 @@ var fakeAS *oauthtest.AS
 type memKeyring struct {
 	mu sync.Mutex
 	m  map[string]secrets.Secret
+	// failGet: Get dieses Eintrags scheitert mit diesem Fehler (B-M3, B-M4).
+	failGet map[string]error
 }
 
 func (k *memKeyring) Get(ref string) (secrets.Secret, error) {
 	k.mu.Lock()
+	if err := k.failGet[ref]; err != nil {
+		k.mu.Unlock()
+		return "", err
+	}
 	defer k.mu.Unlock()
 	if v, ok := k.m[ref]; ok {
 		return v, nil

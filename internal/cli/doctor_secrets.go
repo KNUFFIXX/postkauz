@@ -102,7 +102,15 @@ func doctorSecrets(ctx context.Context, a *app, rep DoctorReport) *DoctorSecrets
 					add(secretscan.Finding{Check: "search for " + name, Status: secretscan.Skipped, Detail: "keyring unavailable"})
 					continue
 				}
-				if saved, err := oauth.Load(sec, acc.CredentialRef); err == nil {
+				// B-M3: Ein Lesefehler (außer "fehlt") wird nicht still
+				// übergangen, sondern wie im Passwort-Zweig gemeldet.
+				saved, err := oauth.Load(sec, acc.CredentialRef)
+				switch {
+				case errors.Is(err, secrets.ErrNotFound):
+					// kein Token hinterlegt: nichts zu suchen
+				case err != nil:
+					add(secretscan.Finding{Check: "search for " + name, Status: secretscan.Skipped, Detail: "keyring: " + err.Error()})
+				default:
 					addNeedle(name, []byte(saved.RefreshToken.Reveal()))
 				}
 				continue

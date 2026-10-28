@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -261,6 +263,19 @@ func (s *SQLite) CloseDeadStarts(ctx context.Context, account string, exceptID i
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// LastAuditEvent liefert den letzten Eintrag (größte ID) der Operation op
+// mit dem Ziel target (z. B. oauth.refresh, account:<name>; doctor, B-M4).
+// ok = false, wenn es keinen gibt.
+func (s *SQLite) LastAuditEvent(ctx context.Context, op, target string) (r AuditRecord, ok bool, err error) {
+	r, err = scanAudit(s.db.QueryRowContext(ctx, `SELECT `+auditCols+` FROM audit_events a WHERE a.operation = ?
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END) t WHERE t.value = ?)
+		ORDER BY a.id DESC LIMIT 1`, op, target))
+	if errors.Is(err, sql.ErrNoRows) {
+		return AuditRecord{}, false, nil
+	}
+	return r, err == nil, err
 }
 
 // AuditCountUpTo zählt die Einträge mit ID bis einschließlich id (audit
