@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,4 +134,21 @@ func TestIDsAreNotReusedAfterDelete(t *testing.T) {
 	if second["Neu"] <= first["Alt"] {
 		t.Fatalf("mailbox id of Neu = %d, Alt had %d: reused", second["Neu"], first["Alt"])
 	}
+}
+
+// Laufzeit der Migration 0022 (Höchststand der IDs, Quellpfad je Ziel,
+// Archive der Audit-Rotation) an der synthetischen Datenbank, ausgehend
+// von Schema 21; nur mit POSTKAUZ_MEASURE_MIGRATION=1 (Rahmen 4).
+func TestMeasureMigration0022(t *testing.T) {
+	if os.Getenv("POSTKAUZ_MEASURE_MIGRATION") == "" {
+		t.Skip("set POSTKAUZ_MEASURE_MIGRATION=1 to measure migration 0022")
+	}
+	s, path := measureDB(t, 21)
+	defer s.Close()
+	took, links := measureFillAndMigrate(t, s, 22)
+	fi, _ := os.Stat(path)
+	var floor string
+	_ = s.db.QueryRow(`SELECT value FROM meta WHERE key = 'id_floor_messages'`).Scan(&floor)
+	t.Logf("migration 0022 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; id_floor_messages %s; snapshot %s",
+		took, links, fi.Size(), floor, filepath.Base(s.LastSnapshot))
 }
