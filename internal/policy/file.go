@@ -51,7 +51,7 @@ const (
 	DefaultCheckHookTimeout = 30 * time.Second
 	// MaxCheckHookTimeout: länger wartet keine Vorlage.
 	MaxCheckHookTimeout = 10 * time.Minute
-	// DefaultBulkConfirmThreshold: ab so vielen Zielen verlangt eine
+	// DefaultBulkConfirmThreshold: bei mehr als so vielen Zielen (über, `>`) verlangt eine
 	// Massenaktion confirm_count (S3).
 	DefaultBulkConfirmThreshold = 50
 )
@@ -97,7 +97,7 @@ type DeleteRules struct {
 type MoveRules struct {
 	// AgentMay: none | archive_only | within_account.
 	AgentMay string `toml:"agent_may" json:"agent_may"`
-	// BulkConfirmThreshold: ab so vielen Zielen confirm_count.
+	// BulkConfirmThreshold: bei mehr als so vielen Zielen (über, `>`) confirm_count.
 	BulkConfirmThreshold int `toml:"bulk_confirm_threshold" json:"bulk_confirm_threshold"`
 }
 
