@@ -139,13 +139,20 @@ function Get-TrimmedPath {
 
 # Get-NewLogPart liest den Teil des Logs ab Byte From (nach einer Rotation
 # ist die Datei kuerzer: dann alles). Das Log ist UTF-8; Run-SyncWatch.ps1
-# schreibt weiter, deshalb FileShare ReadWrite.
+# schreibt und rotiert weiter, deshalb FileShare ReadWrite und Delete. Geht
+# das Lesen einmal nicht, gilt der Teil als leer (naechster Versuch 1 s
+# spaeter).
 function Get-NewLogPart {
     param([string]$Path, [long]$From)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return ""
     }
-    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    } catch {
+        return ""
+    }
     try {
         if ($stream.Length -lt $From) {
             $From = 0
@@ -346,15 +353,17 @@ if ($NoStart) {
 # Startzeile von postkauz.exe.
 Write-Step "Starting the task to check it ..."
 $logPath = Join-Path $LogDir "sync-watch.log"
-$before = 0
-if (Test-Path -LiteralPath $logPath -PathType Leaf) {
-    $before = (Get-Item -LiteralPath $logPath).Length
-}
 $existing = Get-ScheduledTask -TaskName $TaskName
 if ($existing.State -eq "Running") {
     Write-Step "The task was already running; restarting it with the new settings."
     Stop-ScheduledTask -TaskName $TaskName
     Start-Sleep -Seconds 2
+}
+# Erst nach dem Stoppen messen: Endzeilen der alten Instanz gehoeren nicht
+# zum neuen Teil des Logs.
+$before = 0
+if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+    $before = (Get-Item -LiteralPath $logPath).Length
 }
 Start-ScheduledTask -TaskName $TaskName
 $deadline = (Get-Date).AddSeconds(30)
