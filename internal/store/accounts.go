@@ -289,6 +289,19 @@ func (s *SQLite) SetAccountStatus(ctx context.Context, id int64, status, lastErr
 	return err
 }
 
+// ClearAccountError setzt ein Konto mit Status error auf ok und löscht den
+// letzten Fehler (sync --watch --all nach einer erfolgreichen Runde; auch
+// ein Fehler aus einem früheren Prozess, Nachprüfung zu fd70f19 Punkt 3).
+// Andere Status bleiben. changed: Es gab etwas zu löschen.
+func (s *SQLite) ClearAccountError(ctx context.Context, id int64) (changed bool, err error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET status = 'ok', last_error = NULL WHERE id = ? AND status = 'error'`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // aliasesJSON speichert die Aliasse als JSON-Liste (nil = []).
 func aliasesJSON(as []string) (string, error) {
 	if as == nil {

@@ -282,7 +282,11 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		da := DoctorAccount{Name: acc.Name, EnvVar: secrets.EnvName(acc.CredentialRef), Status: acc.Status, Password: "unknown"}
 		if acc.Status == "error" {
 			da.LastError = acc.LastError
-			if strings.HasPrefix(acc.LastError, "sync --watch --all:") {
+			switch {
+			case strings.HasPrefix(acc.LastError, "sync --watch --all: stopped"):
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: %s (this account is not mirrored until then; the reason is in the log)",
+					acc.Name, acc.LastError))
+			case strings.HasPrefix(acc.LastError, "sync --watch --all:"):
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: %s (fix the password with account set %s --password-stdin, or account login %s for OAuth2)",
 					acc.Name, acc.LastError, acc.Name, acc.Name))
 			}

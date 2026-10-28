@@ -89,11 +89,13 @@ func watchAllAccounts(ctx context.Context, repo AccountRepo, creds Credentials, 
 			call.progress(p)
 		}
 		status := func(msg string) {
-			st, le := "ok", ""
-			if msg != "" {
-				st, le = "error", msg
+			var err error
+			if msg == "" {
+				_, err = repo.ClearAccountError(context.WithoutCancel(ctx), a.ID)
+			} else {
+				err = repo.SetAccountStatus(context.WithoutCancel(ctx), a.ID, "error", msg)
 			}
-			if err := repo.SetAccountStatus(context.WithoutCancel(ctx), a.ID, st, le); err != nil {
+			if err != nil {
 				progress(Progress{Event: "account", Message: "could not record the account status: " + ErrorKinds(err)})
 			}
 		}
@@ -155,14 +157,20 @@ func watchAllAccounts(ctx context.Context, repo AccountRepo, creds Credentials, 
 // watchAccount ist der Dauerläufer eines Kontos unter --all: Er wiederholt
 // bei belegter Sperre und Verbindungsfehlern mit wachsender Wartezeit, nach
 // einem Anmeldefehler oder ohne Zugangsdaten nach allRetryMax (V10; status
-// vermerkt es am Konto, die erste Runde danach löscht den Vermerk), und
-// endet bei jedem anderen Fehler und mit ctx. Fehlertexte sind vom Passwort
-// bereinigt (scrub); der Vermerk nennt nur die Art des Fehlers.
+// vermerkt es am Konto), und endet bei jedem anderen Fehler (auch das steht
+// am Konto, Nachprüfung zu fd70f19 Punkt 4) und mit ctx. Die erste
+// erfolgreiche Runde nach dem Start und nach jedem Vermerk löscht einen
+// gespeicherten Fehler des Kontos, auch einen aus einem früheren Prozess
+// (Punkt 3). Fehlertexte sind vom Passwort bereinigt (scrub); der Vermerk
+// nennt nur die Art des Fehlers.
 func watchAccount(ctx context.Context, name string, credFor func() (provider.Credential, error),
 	run func(provider.Credential, func(Progress)) (SyncOutput, error), dryRun bool, progress func(Progress), status func(string)) (SyncOutput, error) {
 	var total SyncOutput
 	wait := allRetryFirst
+	// marked: Die nächste erfolgreiche Runde löscht den Fehler am Konto;
+	// beim Start immer (ein früherer Prozess kann ihn hinterlassen haben).
 	var marked atomic.Bool
+	marked.Store(true)
 	runProgress := func(p Progress) {
 		if p.Event == "round" && marked.CompareAndSwap(true, false) {
 			status("")
@@ -210,6 +218,8 @@ func watchAccount(ctx context.Context, name string, credFor func() (provider.Cre
 				progress(Progress{Event: "account", Message: fmt.Sprintf("%s; retrying in %s (login errors are not retried sooner, to avoid locking the account; the other accounts go on)",
 					err.Error(), shortDur(thisWait))})
 			default:
+				status(fmt.Sprintf("sync --watch --all: stopped (%s) at %s; it runs again after a restart of the task", stopKind(err),
+					time.Now().UTC().Format("2006-01-02 15:04 UTC")))
 				progress(Progress{Event: "account", Message: "stopped: " + err.Error() + "; the other accounts go on"})
 				return total, err
 			}
@@ -245,6 +255,19 @@ func credKind(err error) string {
 		return "no password stored"
 	}
 	return "credentials not readable"
+}
+
+// stopKind ist die Art eines Fehlers, an dem ein Konto unter --all endet,
+// für den Vermerk am Konto (nie Server- oder Fehlertext; Einzelheiten im
+// Log).
+func stopKind(err error) string {
+	switch {
+	case errors.Is(err, provider.ErrIncomplete):
+		return "incomplete server answer"
+	case errors.Is(err, provider.ErrUnsupported):
+		return "not supported by the server"
+	}
+	return "unexpected error, see the log"
 }
 
 // shortDur schreibt 30m statt 30m0s.

@@ -70,6 +70,9 @@ type AccountRepo interface {
 	// SetAccountStatus setzt Status und letzten Fehler ohne die Fähigkeiten
 	// (sync --watch --all nach einem Anmeldefehler, V10).
 	SetAccountStatus(ctx context.Context, id int64, status, lastError string) error
+	// ClearAccountError setzt Status error zurück auf ok (erste
+	// erfolgreiche Runde unter --all; Nachprüfung zu fd70f19, Punkt 3).
+	ClearAccountError(ctx context.Context, id int64) (bool, error)
 	// DataDirID ist die Kennung des Datenverzeichnisses im
 	// Schlüsselbund-Verweis (S2.0/A2).
 	DataDirID(ctx context.Context) (string, error)

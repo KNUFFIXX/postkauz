@@ -82,4 +82,18 @@ func TestDoctorShowsAuthRetryOfWatchAll(t *testing.T) {
 	if code != ExitOK || !strings.Contains(out, "    last error: "+msg) {
 		t.Fatalf("doctor text: %d %s %s", code, out, errs)
 	}
+	// Punkt 4 der Nachprüfung zu fd70f19: ein Konto, das unter --all endete.
+	st, err = store.Open(filepath.Join(dataDir, "postkauz.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := "sync --watch --all: stopped (unexpected error, see the log) at 2026-10-28 14:05 UTC; it runs again after a restart of the task"
+	if err := st.SetAccountStatus(t.Context(), id, "error", stopped); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	rep = doctorJSON(t)
+	if rep.Accounts[0].LastError != stopped || !hasWarning(rep, "account demo: "+stopped+" (this account is not mirrored until then") {
+		t.Fatalf("doctor after stop: %+v", rep)
+	}
 }

@@ -19,7 +19,8 @@ import (
 
 // allRunner spielt je Konto ein Verhalten: "watch" läuft bis ctx endet,
 // "busy" meldet zuerst sync_running, dann watch, "auth" scheitert an der
-// Anmeldung, "authonce" nur beim ersten Mal (dann watch).
+// Anmeldung, "authonce" nur beim ersten Mal (dann watch), "fail" endet mit
+// einem anderen Fehler.
 type allRunner struct {
 	mu       sync.Mutex
 	behavior map[string]string
@@ -41,6 +42,8 @@ func (r *allRunner) Sync(ctx context.Context, a store.Account, cred provider.Cre
 	switch {
 	case b == "auth":
 		return SyncOutput{Account: a.Name}, fmt.Errorf("%w: server said no to %s", provider.ErrAuth, cred.Password)
+	case b == "fail":
+		return SyncOutput{Account: a.Name}, errors.New("unexpected failure")
 	case b == "authonce" && n == 1:
 		return SyncOutput{Account: a.Name}, fmt.Errorf("%w: server said no to %s", provider.ErrAuth, cred.Password)
 	case b == "busy" && n == 1:
@@ -270,5 +273,64 @@ func TestSyncWatchAllRetriesAfterAuthFailure(t *testing.T) {
 	}
 	if r.calls["alpha"] != 2 {
 		t.Fatalf("calls = %v", r.calls)
+	}
+}
+
+// Nachprüfung zu fd70f19, Punkte 3 und 4: Ein Fehlervermerk aus einem
+// früheren Prozess (z. B. Anmeldefehler vor der Korrektur des Passworts)
+// verschwindet mit der ersten erfolgreichen Runde nach dem Neustart; ein
+// Konto, das an einem anderen Fehler endet, steht mit „stopped“ am Konto.
+// Status anderer Art (hier „new“) bleibt unberührt.
+func TestSyncWatchAllStatusAfterRestartAndStop(t *testing.T) {
+	e, r := newAllEnv(t, map[string]string{"alpha": "watch", "beta": "fail", "gamma": "watch"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	refs := func() map[string]store.AccountRef {
+		list, err := e.st.AccountRefs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]store.AccountRef{}
+		for _, a := range list {
+			out[a.Name] = a
+		}
+		return out
+	}
+	alpha, _ := e.st.AccountByName(ctx, "alpha")
+	if err := e.st.SetAccountStatus(ctx, alpha.ID, "error", "sync --watch --all: login rejected by the server at 2026-10-28 14:03 UTC; retrying every 30m"); err != nil {
+		t.Fatal(err)
+	}
+	gammaBefore := refs()["gamma"].Status
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.x.Execute(ctx, Request{Key: adminKey, Actor: audit.ActorHuman, Operation: "sync.run", Input: json.RawMessage(`{"watch":true,"all":true}`)})
+		done <- err
+	}()
+	got := map[string]bool{}
+	for len(got) < 2 {
+		select {
+		case n := <-r.started:
+			got[n] = true
+		case <-time.After(5 * time.Second):
+			t.Fatalf("watchers started: %v", got)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for refs()["beta"].Status != "error" && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	now := refs()
+	if now["alpha"].Status != "ok" || now["alpha"].LastError != "" {
+		t.Fatalf("alpha after restart = %+v", now["alpha"])
+	}
+	if now["beta"].Status != "error" || !strings.HasPrefix(now["beta"].LastError, "sync --watch --all: stopped (unexpected error, see the log) at ") {
+		t.Fatalf("beta = %+v", now["beta"])
+	}
+	if now["gamma"].Status != gammaBefore || now["gamma"].LastError != "" {
+		t.Fatalf("gamma = %+v (before %s)", now["gamma"], gammaBefore)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
