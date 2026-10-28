@@ -24,6 +24,11 @@ const (
 	ExitDenied        = 3 // Policy oder Scope verweigert
 	ExitNeedsApproval = 4 // Freigabe nötig
 	ExitConnection    = 5 // Verbindung zum Server fehlgeschlagen
+	// ExitAuth (seit T2): Der Server hat die Anmeldung abgelehnt bzw. das
+	// OAuth2-Token ließ sich nicht erneuern. Ein Wiederholen hilft nicht
+	// und kann das Konto beim Anbieter sperren; Dauerläufer
+	// (Run-SyncWatch.ps1) warten dann lange, statt neu zu starten.
+	ExitAuth = 6
 )
 
 // usageError markiert Eingabefehler.
@@ -107,13 +112,13 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, oauth.ErrTokenNotStored):
 		return ExitError, ErrorInfo{Code: "token_not_stored", Message: err.Error(), Hint: "the renewed OAuth2 token could not be written to the keyring; check it with doctor, then run the command again (sign in again with account login if that fails)"}
 	case errors.Is(err, oauth.ErrRefresh), errors.Is(err, oauth.ErrTokenCorrupt):
-		return ExitError, ErrorInfo{Code: "oauth_refresh", Message: err.Error(), Hint: "the OAuth2 token could not be renewed; sign in again with: account login <name> (no automatic retry)"}
+		return ExitAuth, ErrorInfo{Code: "oauth_refresh", Message: err.Error(), Hint: "the OAuth2 token could not be renewed; sign in again with: account login <name> (no automatic retry)"}
 	case errors.Is(err, oauth.ErrLoginTimeout), errors.Is(err, oauth.ErrLoginDenied):
 		return ExitError, ErrorInfo{Code: "login_failed", Message: err.Error(), Hint: "run account login again; without a browser on this computer use --device-code"}
 	case errors.Is(err, ops.ErrNoSecret):
 		return ExitError, ErrorInfo{Code: "no_secret", Message: err.Error(), Hint: "add the account again or set the environment variable"}
 	case errors.Is(err, provider.ErrAuth):
-		return ExitError, ErrorInfo{Code: "auth", Message: err.Error(), Hint: "check user name and password; the server rejected the login (no automatic retry)"}
+		return ExitAuth, ErrorInfo{Code: "auth", Message: err.Error(), Hint: "check user name and password; the server rejected the login (no automatic retry)"}
 	case errors.Is(err, provider.ErrConnection):
 		return ExitConnection, ErrorInfo{Code: "connection", Message: err.Error(), Hint: "check host, port, TLS mode and network"}
 	case errors.Is(err, ops.ErrSyncRunning):

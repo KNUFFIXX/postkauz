@@ -400,7 +400,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		got[m[2]] = int(m[1][0] - '0')
 	}
 	want := map[string]int{"ExitOK": ExitOK, "ExitError": ExitError, "ExitUsage": ExitUsage, "ExitDenied": ExitDenied,
-		"ExitNeedsApproval": ExitNeedsApproval, "ExitConnection": ExitConnection}
+		"ExitNeedsApproval": ExitNeedsApproval, "ExitConnection": ExitConnection, "ExitAuth": ExitAuth}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("docs/cli.md exit code table = %v, code = %v", got, want)
 	}
@@ -439,7 +439,7 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{store.ErrIdentityNotFound, ExitError, "not_found"},
 		{&ops.DeniedError{Reason: "approval_stale"}, ExitDenied, "denied"},
 		{&ops.PolicyError{Operation: "drafts.approve", Decision: policy.Decision{Outcome: policy.Deny, Reason: "human_only"}}, ExitDenied, "denied"},
-		{provider.ErrAuth, ExitError, "auth"},
+		{provider.ErrAuth, ExitAuth, "auth"},
 		{provider.ErrConnection, ExitConnection, "connection"},
 		{secrets.ErrUnavailable, ExitError, "secret_store_unavailable"},
 		{ops.ErrNoSecret, ExitError, "no_secret"},

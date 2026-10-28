@@ -410,7 +410,7 @@ func TestAccountTestErrors(t *testing.T) {
 	}
 	code, _, errs := run(t, "account", "test", "demo", "--json")
 	var e map[string]ErrorInfo
-	if code != ExitError || json.Unmarshal([]byte(errs), &e) != nil || e["error"].Code != "auth" || strings.Contains(errs, "wrong-password") {
+	if code != ExitAuth || json.Unmarshal([]byte(errs), &e) != nil || e["error"].Code != "auth" || strings.Contains(errs, "wrong-password") {
 		t.Fatalf("auth: code=%d %s", code, errs)
 	}
 
