@@ -240,6 +240,15 @@ postkauz sync -a mail && postkauz action show 3
 
 Details: `docs/cli.md` (section 2k), `docs/mcp.md`, `docs/sicherheit.md`.
 
+## Deleting from the local archive
+
+Slice 3, part T3. PostKauz keeps what was deleted on the server until you remove it yourself; only a human (no `--key`) can, agents never see these commands, and neither runs while a sync or import is running (`sync_running`). Try each with `--dry-run` first: it only counts.
+
+- `purge --older-than 180d` deletes messages that were deleted on the server more than 180 days ago, with their text, tags and search index. Imported archive messages and messages a draft refers to always stay. Default period: `[retention] deleted_remote_after` (none).
+- `blob gc` then deletes stored files (raw messages, attachments) nothing refers to any more and that are older than `[retention] blob_gc_min_age` (24 hours); draft attachments always stay.
+
+Step by step (German): `docs/betrieb.md`, section 5; details: `docs/cli.md`, section 2l.
+
 ## Set up MCP in Claude Code
 
 `postkauz mcp` is an MCP server over stdio. An agent gets its own API key; the tools it sees follow the key's scopes, every call lands in the audit log under the key's name, and every piece of mail content comes wrapped as untrusted data. A reader key only reads; a key of the role `assistant` can also create drafts and submit them for approval, tag messages locally and ask for a sync. Marking, moving and asking for the trash need the scopes `mail:mark`, `mail:move` and `mail:trash` (roles `operator`, `admin`); the sync job carries such actions out, a move to the trash only after a human approved it. Only a human approves drafts and sends them from the mail client; nothing is ever sent, and nothing is deleted for good.

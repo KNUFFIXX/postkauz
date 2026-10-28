@@ -221,6 +221,10 @@ var cliSamples = []cliSample{
 	{"actions.get", []string{"action", "show", "3"}, false},
 	{"actions.list", []string{"action", "list", "-a", "demo", "--state", "requested,rejected", "--limit", "5"}, false},
 	{"drafts.cleanup_copies", []string{"draft", "cleanup", "1"}, false},
+	// T3: Löschkonzept (E8); im Testbestand ist nichts alt genug, beide
+	// zählen nur.
+	{"retention.purge", []string{"purge", "--older-than", "30d", "-a", "demo"}, false},
+	{"blobs.gc", []string{"blob", "gc", "--dry-run"}, false},
 }
 
 // sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf

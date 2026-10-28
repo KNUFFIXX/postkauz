@@ -8,6 +8,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/retention"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
 
@@ -69,6 +70,10 @@ type Deps struct {
 	// TokenLockDir ist der Ordner der Sperrdateien beim Speichern eines
 	// OAuth2-Tokens (neben der Datenbank; leer = ohne Sperre).
 	TokenLockDir string
+	// Retention ist das Löschkonzept (T3, E8: purge, blob gc; nil nur ohne
+	// Handler-Aufrufe), RetentionConfig die Fristen aus der Konfiguration.
+	Retention       *retention.Service
+	RetentionConfig RetentionConfig
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -125,6 +130,8 @@ func Catalog(d Deps) []Operation {
 		ActionsGet(d),
 		ActionsList(d),
 		DraftsCleanupCopies(d),
+		RetentionPurge(d),
+		BlobsGC(d),
 	}
 }
 

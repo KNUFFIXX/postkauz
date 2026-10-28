@@ -40,9 +40,10 @@ type DoctorBlobs struct {
 	// RowsWithoutFile: Zeilen in blobs ohne Datei (alle Zeilen, nicht nur
 	// die Stichprobe). Ein Problem: Rohmail bzw. Anhang ist verloren.
 	RowsWithoutFile int `json:"rows_without_file"`
-	// FilesWithoutRow: Dateien ohne Zeile und ohne Verweis eines Entwurfs.
-	// Unschädlich (Abbruch zwischen Datei und Zeile), Kandidaten für das
-	// spätere blobs.gc; nur eine Warnung.
+	// FilesWithoutRow: Dateien ohne Verweis, d. h. ohne Zeile und ohne
+	// Verweis eines Entwurfs (Ausgabe „without reference“, T3; der
+	// JSON-Name bleibt). Unschädlich (Abbruch zwischen Datei und Zeile),
+	// Kandidaten für blobs.gc; nur ein Hinweis.
 	FilesWithoutRow int `json:"files_without_row"`
 	// DraftAttachments: Dateien ohne Zeile, die ein Entwurf als Anhang
 	// verweist (Dateianhänge, A13.3); nicht verwaist.
@@ -260,7 +261,7 @@ func printDoctorBlobs(w io.Writer, b *DoctorBlobs) {
 		fmt.Fprintf(w, "  mode:    %s, %d of %s verified in %dms\n", mode, b.Checked, plural(b.Referenced, "referenced file", "referenced files"), b.DurationMS)
 		fmt.Fprintf(w, "  verify:  ok %d, corrupt %d, missing %d, unreadable %d\n", b.OK, b.Corrupt, b.Missing, b.Unreadable)
 		fmt.Fprintf(w, "  rows:    %s in table blobs, %d without file\n", plural(b.Rows, "row", "rows"), b.RowsWithoutFile)
-		fmt.Fprintf(w, "  files:   %s, %s (no row, referenced by drafts), %d without row (harmless, left for a later blob gc)\n",
+		fmt.Fprintf(w, "  files:   %s, %s (no row, referenced by drafts), %d without reference (harmless; blob gc removes them)\n",
 			plural(b.Files, "blob file", "blob files"), plural(b.DraftAttachments, "draft attachment", "draft attachments"), b.FilesWithoutRow)
 		if b.DraftAttachmentsWithoutFile > 0 {
 			fmt.Fprintf(w, "  drafts:  %s without file\n", plural(b.DraftAttachmentsWithoutFile, "draft attachment", "draft attachments"))
@@ -268,7 +269,11 @@ func printDoctorBlobs(w io.Writer, b *DoctorBlobs) {
 		fmt.Fprintf(w, "  other:   %s, %s in tmp/ (left as they are)\n", plural(b.UnknownFiles, "unknown file", "unknown files"), plural(b.TempFiles, "temp file", "temp files"))
 		for _, kind := range []string{"corrupt", "missing", "unreadable", "rows_without_file", "draft_attachments_without_file", "files_without_row"} {
 			if list := b.Examples[kind]; len(list) > 0 {
-				fmt.Fprintf(w, "  %s: %s\n", strings.ReplaceAll(kind, "_", " "), strings.Join(list, ", "))
+				label := strings.ReplaceAll(kind, "_", " ")
+				if kind == "files_without_row" {
+					label = "files without reference"
+				}
+				fmt.Fprintf(w, "  %s: %s\n", label, strings.Join(list, ", "))
 			}
 		}
 	}

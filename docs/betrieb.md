@@ -256,3 +256,55 @@ Folgt beim Zusammenführen von Teil T4. Bis dahin: [betrieb_microsoft.md](betrie
 ## 4. Betrieb auf einem VPS
 
 Folgt mit Teil T5 (Linux-Server, systemd, Fernzugriff über HTTP-MCP).
+
+## 5. Löschkonzept
+
+PostKauz löscht nie von selbst. Was auf dem Server gelöscht wurde, bleibt im lokalen Archiv, bis du es ausdrücklich entfernst (ADR-003). Dafür gibt es zwei Kommandos; sie laufen nur ohne `--key` (ein Agent kann sie nie aufrufen) und nie, während ein Sync oder Import läuft. Probiere jedes zuerst mit `--dry-run`: Dann zählt es nur und ändert nichts.
+
+### 5.1 Was auf dem Server gelöscht wurde: `purge`
+
+1. Zählen, was älter als 180 Tage gelöscht ist:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml purge --older-than 180d --dry-run
+   ```
+
+   Erwartet (Zahlen je nach Postfach):
+
+   ```
+   all accounts, deleted on the server before 2026-05-01T10:00:00Z (older than 180d):
+     gone from the server: 120
+     kept (imported archive): 100
+     kept (a draft refers to them): 1
+   dry run: 19 messages would be deleted from the local archive; nothing changed
+   ```
+
+   `kept (imported archive)` sind Nachrichten aus `import` (z. B. dein Thunderbird-Archiv): Die bleiben immer. `kept (a draft refers to them)` sind Nachrichten, auf die ein Entwurf antwortet: Die bleiben ebenfalls.
+2. Wirklich löschen: dasselbe Kommando ohne `--dry-run`. Erwartet zum Schluss:
+
+   ```
+   deleted: 19 messages, 7 attachment entries, 12 threads that became empty
+   the stored files stay until: blob gc
+   ```
+
+   Nur ein Konto: `-a privat` anhängen. Statt `--older-than` kannst du die Frist auch fest in die Konfiguration schreiben (`[retention] deleted_remote_after = "180d"`), dann genügt `purge`.
+3. Meldet es `sync_running`, läuft gerade ein Sync (z. B. die Aufgabe `sync --watch`). Warte, bis er fertig ist, oder stoppe die Aufgabe kurz (Abschnitt 1.6), und versuche es noch einmal.
+
+### 5.2 Gespeicherte Dateien ohne Verweis: `blob gc`
+
+Rohmails und Anhänge liegen als Dateien unter `blobs\`. Nach `purge` verweist auf manche nichts mehr. `blob gc` löscht solche Dateien, aber nur, wenn sie älter als 24 Stunden sind (`[retention] blob_gc_min_age`); Anhänge von Entwürfen bleiben immer.
+
+```powershell
+C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml blob gc --dry-run
+```
+
+Erwartet (Zahlen je nach Bestand):
+
+```
+blob store: 52000 files, 51990 rows in table blobs, 51975 referenced
+  without reference: 30, of these younger than 1d (kept): 2
+would delete: 28 files (12.3 MB), 26 rows
+dry run: nothing changed
+```
+
+Ohne `--dry-run` steht statt `would delete` die Zeile `deleted: …`. Danach meldet `doctor --blobs` bei `without reference` nur noch die frischen Dateien.

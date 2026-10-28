@@ -370,6 +370,9 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 			end.Result, end.Reason = audit.ResultDenied, de.Reason
 		}
 	}
+	if herr == nil && op.AuditCounts != nil {
+		end.ParamsRedacted = withCounts(end.ParamsRedacted, op.AuditCounts(out))
+	}
 	endAt := now()
 	end.TS = endAt.UTC()
 	end.Duration = endAt.Sub(start)
@@ -392,4 +395,28 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		return res, herr
 	}
 	return Result{Output: out, Decision: dec, AuditID: auditID}, nil
+}
+
+// withCounts ergänzt die Audit-Parameter (ein JSON-Objekt) um "counts"
+// (Operation.AuditCounts). Sind die Parameter kein Objekt, bleiben sie.
+func withCounts(params json.RawMessage, counts map[string]int64) json.RawMessage {
+	if len(counts) == 0 {
+		return params
+	}
+	obj := map[string]json.RawMessage{}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &obj); err != nil {
+			return params
+		}
+	}
+	c, err := json.Marshal(counts)
+	if err != nil {
+		return params
+	}
+	obj["counts"] = c
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return params
+	}
+	return b
 }

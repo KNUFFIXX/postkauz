@@ -273,6 +273,10 @@ var contractInputs = map[string]struct {
 	"actions.get":           {input: `{"action_id":1}`},
 	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
 	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
+	// Löschkonzept (T3, E8): Umgebung aus seedRetention (eine auf dem Server
+	// gelöschte Nachricht, eine Blob-Zeile ohne Verweis).
+	"retention.purge": {input: `{"older_than":"30d","account":"demo"}`},
+	"blobs.gc":        {input: `{}`},
 }
 
 // seedActions legt für die Aktionen Ordner und einen Antrag an: Archiv
@@ -473,6 +477,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
+	seedRetention(t, e)
 	return e
 }
 

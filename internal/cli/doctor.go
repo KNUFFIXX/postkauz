@@ -175,7 +175,7 @@ func doctorCmd(a *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("secrets", false, "also check file permissions and search log, audit, audit exports and configuration for stored passwords and API keys")
-	cmd.Flags().String("blobs", "", "also verify the blob store against the database: a 1% sample of the files (hash and size), or every file with --blobs=all; counts rows without file and files without row, never shows content")
+	cmd.Flags().String("blobs", "", "also verify the blob store against the database: a 1% sample of the files (hash and size), or every file with --blobs=all; counts rows without file and files without reference, never shows content")
 	cmd.Flags().Lookup("blobs").NoOptDefVal = "sample"
 	return cmd
 }

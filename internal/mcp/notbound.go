@@ -32,6 +32,9 @@ var notOverMCP = map[string]string{
 	"actions.approve":       "human only (E3): an agent may request moving to the trash but never approve it; CLI action approve",
 	"actions.reject":        "human only (E3): the decision on a request is the human's; CLI action reject",
 	"drafts.cleanup_copies": "human only: moves earlier draft copies to the trash at once; CLI draft cleanup",
+	// Löschkonzept (T3, E8): nur für Menschen, Agenten sehen es nicht.
+	"retention.purge": "human only (E8): deletes messages from the local archive; CLI purge",
+	"blobs.gc":        "human only (E8): deletes stored files without reference; CLI blob gc",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
 	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
