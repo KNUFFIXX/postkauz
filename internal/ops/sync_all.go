@@ -26,9 +26,10 @@ import (
 // erneut (V10 der Nachbesserung T2; vorher endete es bis zum nächsten
 // Neustart, auch bei einem kurzen NO [UNAVAILABLE] des Servers) und steht
 // solange mit Status error in der Datenbank (doctor zeigt es). Keines
-// beendet die anderen. Im Audit steht ein einziger Aufruf sync.run mit allen Konten als
-// Ziel (redactSyncRun); store.CloseDeadStarts schließt ihn deshalb nur ab,
-// wenn keines seiner anderen Konten von einem Prozess gesperrt ist.
+// beendet die anderen. Im Audit steht ein einziger Aufruf sync.run mit
+// allen Konten als Ziel (redactSyncRun); store.CloseDeadStarts schließt ihn
+// deshalb nur ab, wenn keines seiner anderen Konten von einem Prozess
+// gesperrt ist.
 
 // Wartezeiten zwischen zwei Versuchen eines Kontos (Sperre belegt,
 // Verbindung). In Tests ersetzbar.

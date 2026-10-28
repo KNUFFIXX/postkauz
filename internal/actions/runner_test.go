@@ -353,7 +353,7 @@ func TestRunnerRefusesTargetRoleChange(t *testing.T) {
 	}
 }
 
-// V5: Ein MOVE mit mehreren UIDs aus einem Ordner legt die neuen
+// V7: Ein MOVE mit mehreren UIDs aus einem Ordner legt die neuen
 // Verknüpfungen mit content_loaded = 0 an (die Zuordnung alt → neu ist
 // unsicher); die nächste Aktion prüft deshalb erst den Kopf. Ein MOVE mit
 // einer UID behält den Stand.

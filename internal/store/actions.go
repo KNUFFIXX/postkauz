@@ -764,7 +764,7 @@ func (s *SQLite) SaveTargetResults(ctx context.Context, id int64, results []Targ
 // (Kopf von FinishAction); touchedBoxes sammelt die Ordner, deren Zähler
 // neu berechnet werden.
 func applyResults(ctx context.Context, tx *sql.Tx, id int64, kind string, results []TargetResult, ms int64, touchedBoxes map[int64]bool) error {
-	// V5: Ein MOVE je Quellordner; mit mehr als einer UID ist die
+	// V7: Ein MOVE je Quellordner; mit mehr als einer UID ist die
 	// Zuordnung alter zu neuer UID unsicher (go-imap sortiert die UID-Mengen,
 	// die Reihenfolge der COPYUID-Antwort geht verloren). Die neue
 	// Verknüpfung gilt dann als nie selbst geladen: Vor der nächsten Aktion
@@ -838,7 +838,7 @@ func settlePending(ctx context.Context, tx *sql.Tx, actionID, messageID, mailbox
 }
 
 // moveLink trägt eine verschobene Kopie im Spiegel um. unsure: Sie kam mit
-// weiteren UIDs in einem MOVE (V5); die neue Verknüpfung bekommt dann
+// weiteren UIDs in einem MOVE (V7); die neue Verknüpfung bekommt dann
 // content_loaded = 0.
 func moveLink(ctx context.Context, tx *sql.Tx, actionID int64, r TargetResult, unsure bool, now int64) error {
 	var uid int64

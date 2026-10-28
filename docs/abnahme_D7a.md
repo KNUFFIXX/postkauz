@@ -96,7 +96,8 @@ Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.5`),
 
 **Abweichungen vom Wortlaut von D7** (A03, Teil D), mit Grund:
 
-- D7.1 „`mark <id> --seen` → `pending` in `show`“ und D7.2 „`trash` → `needs_approval`, `action approve <n>` → `queued`“ gehen offline nicht: Importierte Mails haben keine Serverkopie, und ohne Sync gibt es keinen Papierkorb. Teil A prüft die Ablehnungen, Teil B den ganzen Ablauf.
+- D7.1 „`mark <id> --seen` → `pending` in `show`“ und D7.2 „`trash` → `needs_approval`, `action approve <n>` → `queued`“ gehen offline nicht: Importierte Mails haben keine Serverkopie, und ohne Sync gibt es keinen Papierkorb. Teil A prüft die Ablehnungen, Teil B den ganzen Ablauf. **Folge (Nachbesserung T2, V5):** Der Offline-Teil allein weist D7.1 (Markieren mit `pending`) und D7.2 (Antrag, Freigabe, Ausführung des Papierkorbs) **nicht** nach. Wird Teil B übersprungen (kein Konto, keine Zustimmung, `SKIP B`), sind D7.1 und D7.2 offen; nachgewiesen sind sie dann nur durch die Integrationstests im Container (`TestIntegrationMailboxActions` gegen Dovecot, Stalwart und GreenMail) und den Python-Nachbau von Teil B. Das Urteil der Prüfsitzung nennt das ausdrücklich.
+- D7.3 seit der Nachbesserung T2 (V20): Die Rolle assistant hat auch `mail:mark` nicht mehr; A3.1 prüft, dass `messages.mark` fehlt, A3.2, dass operator es hat.
 - D7.3 „`policy show --key test-assistant` zeigt `messages.trash: needs_approval`“: Die Rolle assistant hat seit T2 weder `mail:move` noch `mail:trash` (MCP-Teil von D7.3: „assistant sieht kein `mail_trash`“). `messages.trash … needs_approval` zeigt deshalb `policy show --key test-operator` (A3.2); A3.1 prüft, dass assistant es **nicht** hat.
 - `action approve <n> --key test-agent` prüft Teil A mit einer nicht vorhandenen Aktion (999): Die Policy lehnt `human_only` vor dem Handler ab. Mit einer echten Aktion prüft es Teil B (B6.3).
 

@@ -1,5 +1,7 @@
 # T2: Stand, Festlegungen, Prüfläufe (28.10.2026)
 
+> **Nachtrag:** Nachbesserung nach der Gegenprüfung (V1 bis V22) und Merge mit `main`: [T2_nachbesserung.md](T2_nachbesserung.md). Build dort `0.3.0-alpha.5`; die Punkte unter „Offen“ (Integration gegen Stalwart, GreenMail, Dovecot 2.4.5) sind dort erledigt.
+
 Für: Prüfsitzung DRACO-PK09 und Betreiber. Auftrag: [A03_teile.md](../../auftraege/A03_teile.md) Teil T2 mit den Abschnitten aus [A03_s3.md](../../auftraege/A03_s3.md) (S3.1, S3.2, E1–E5, A5.1, A13.1, A14) und den Zusätzen der Prüfsitzung vom 28.10.2026 (Build `0.3.0-alpha.4`; tote Starts erst nach zehn Minuten abschließen; `make vuln` in der Cloud gesperrt). Ausgangsstand `main` `8d47497`, Zweig `claude/jolly-franklin-sa5rse`. Das Arbeitspaket WP-A (Dauerbetrieb, `mail_sync_now`, kleine Punkte aus T2 Punkt 7) lief parallel in einem eigenen Worktree und ist zusammengeführt; sein Protokoll: [T2_wpa.md](T2_wpa.md).
 
 ## 1. Was gebaut ist
