@@ -81,7 +81,13 @@ func (e *Engine) runActions(ctx context.Context, ensure bool) (*ops.SyncActions,
 		e.emit(Event{Kind: "error", Mailbox: "actions", Message: err.Error()})
 	}
 	if rep.Actions > 0 {
-		e.emit(Event{Kind: "actions", Done: rep.OK, Total: rep.OK + rep.Failed + rep.Stale})
+		e.emit(Event{Kind: "actions", Done: rep.OK, Total: rep.OK + rep.Failed + rep.Stale, Message: actionsLine(rep)})
 	}
 	return out, err
+}
+
+// actionsLine fasst einen Lauf der Aktionen zusammen (Zahlen je Ziel; V6
+// der Nachbesserung T2: die Watch-Zeile).
+func actionsLine(rep actions.Report) string {
+	return fmt.Sprintf("%d done, %d failed, %d stale (%d actions; see action list)", rep.OK, rep.Failed, rep.Stale, rep.Actions)
 }

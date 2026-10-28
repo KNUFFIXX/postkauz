@@ -132,6 +132,13 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 			if watching, _ := cmd.Flags().GetBool("watch"); watching {
 				fmt.Fprintf(a.stdout, "%s  %s%d drafts put into %s\n", time.Now().UTC().Format(time.RFC3339), who, p.Done, termLine(p.Mailbox))
 			}
+		case "actions":
+			// Postfach-Aktionen (V6 der Nachbesserung T2): im Dauerbetrieb
+			// je Takt mit Ergebnis eine Zeile; der einmalige Lauf nennt sie
+			// in der Zusammenfassung.
+			if watching, _ := cmd.Flags().GetBool("watch"); watching {
+				fmt.Fprintf(a.stdout, "%s  %sactions: %s\n", time.Now().UTC().Format(time.RFC3339), who, termLine(p.Message))
+			}
 		case "sync_request":
 			// Angeforderter Sync (Job sync, T2): nur im Dauerbetrieb.
 			fmt.Fprintf(a.stdout, "%s  %srequested sync (job %d): %s\n", time.Now().UTC().Format(time.RFC3339), who, p.Done, termLine(p.Message))
@@ -214,6 +221,13 @@ func renderSync(w io.Writer, out any) error {
 	// die Skripte auswerten.
 	renderSyncDrafts(w, o.Drafts)
 	renderDraftCheck(w, o.DraftCheck)
+	if x := o.Actions; x != nil {
+		line := fmt.Sprintf("actions: %d done, %d failed, %d stale (%d actions; see action list)", x.OK, x.Failed, x.Stale, x.Actions)
+		if x.Error != "" {
+			line += "; stopped: " + termLine(x.Error) + " (the next sync goes on)"
+		}
+		fmt.Fprintln(w, line)
+	}
 	if o.AlreadyKnownDownloaded > 0 {
 		// Messbarkeit (C2): Inhalt geladen, obwohl lokal schon vorhanden.
 		fmt.Fprintf(w, "already known, downloaded anyway: %d messages (%s)\n", o.AlreadyKnownDownloaded, humanBytes(o.AlreadyKnownDownloadedBytes))

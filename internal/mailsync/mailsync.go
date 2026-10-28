@@ -122,7 +122,7 @@ type Options struct {
 
 // Event ist eine Fortschrittsmeldung.
 type Event struct {
-	Kind    string // mailbox_start | window | mailbox_done | error | backlog | extract | index | drafts
+	Kind    string // mailbox_start | window | mailbox_done | error | backlog | extract | index | drafts | actions
 	Mailbox string
 	Done    int // im Ordner bisher gespiegelt
 	Total   int // Nachrichten laut Server

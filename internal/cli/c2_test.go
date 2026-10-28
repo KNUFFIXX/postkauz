@@ -3,8 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
@@ -50,5 +54,34 @@ func TestRenderSyncAlreadyKnownDownloaded(t *testing.T) {
 	j, _ = json.Marshal(ops.SyncOutput{})
 	if bytes.Contains(j, []byte("already_known")) || bytes.Contains(j, []byte("linked_despite")) {
 		t.Fatalf("json without downloads = %s", j)
+	}
+}
+
+// V6 der Nachbesserung T2: Postfach-Aktionen bekommen im Dauerbetrieb eine
+// Zeile je Takt mit Ergebnis und im einmaligen Lauf eine in der
+// Zusammenfassung.
+func TestSyncShowsActionCounts(t *testing.T) {
+	var b bytes.Buffer
+	o := ops.SyncOutput{Account: "demo", Mode: "incremental", Actions: &ops.SyncActions{Actions: 2, OK: 3, Failed: 1, Stale: 1}}
+	if err := renderSync(&b, o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "actions: 3 done, 1 failed, 1 stale (2 actions; see action list)\n") {
+		t.Fatalf("render: %s", b.String())
+	}
+	b.Reset()
+	if err := renderSync(&b, ops.SyncOutput{Account: "demo", Mode: "incremental"}); err != nil || strings.Contains(b.String(), "actions:") {
+		t.Fatalf("render without actions: %s %v", b.String(), err)
+	}
+	for _, watch := range []bool{true, false} {
+		var out bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.Flags().Bool("watch", watch, "")
+		cmd.Flags().Bool("json", false, "")
+		p := syncProgress(cmd, &app{stdout: &out, stderr: io.Discard, log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		p(ops.Progress{Event: "actions", Account: "privat", Done: 3, Total: 5, Message: "3 done, 1 failed, 1 stale (2 actions; see action list)"})
+		if got := strings.Contains(out.String(), "  [privat] actions: 3 done, 1 failed, 1 stale (2 actions; see action list)\n"); got != watch {
+			t.Fatalf("watch=%v: %q", watch, out.String())
+		}
 	}
 }
