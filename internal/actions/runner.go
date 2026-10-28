@@ -24,7 +24,9 @@ import (
 //     Kommando an den Server. Hat ein Mensch einen Antrag freigegeben, hält
 //     ein inzwischen abgelaufener (nicht widerrufener) Schlüssel ihn nicht
 //     auf (wie T2 Punkt 7 für Entwürfe).
-//  2. Ziele prüfen: Die Serverkopie muss im Spiegel noch unter Ordner, UID
+//  2. Ziele prüfen: Der Zielordner von move und trash muss unter seiner ID
+//     noch denselben Pfad und dieselbe Rolle haben, ein move endet nie im
+//     Papierkorb (sonst alle Ziele stale, target_changed). Die Serverkopie muss im Spiegel noch unter Ordner, UID
 //     und UIDVALIDITY liegen (sonst stale). Hat PostKauz den Inhalt dieser
 //     Kopie nie selbst geladen (nur per Message-ID und Größe verknüpft, T2
 //     Punkt 3), holt der Job ihren Kopf (BODY.PEEK[HEADER]) und vergleicht
@@ -199,6 +201,18 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 		return results, "target_not_found", nil
 	}
+	// V1: Die ID allein bindet das Ziel nicht (mailboxes.id ohne
+	// AUTOINCREMENT wird nach zwei Ordnerabgleichen neu vergeben, und ein
+	// Ordner kann die Rolle wechseln). Pfad und Rolle müssen noch passen,
+	// und move landet nie im Papierkorb; sonst geht kein Kommando an den
+	// Server.
+	if (a.Kind == store.ActionMove || a.Kind == store.ActionTrash) && targetChanged(a, dest) {
+		r.log().Warn("target mailbox changed since the action was created; nothing done (stale)", "action_id", a.ID)
+		for _, t := range open {
+			results = append(results, store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetStale})
+		}
+		return results, "target_changed", nil
+	}
 	// Ziele je Quellordner, nach der Prüfung von Spiegel und Kopf.
 	groups := map[int64][]store.ActionTarget{}
 	var order []int64
@@ -230,6 +244,21 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		results = append(results, res...)
 	}
 	return results, "", nil
+}
+
+// targetChanged meldet, ob der Zielordner unter der gespeicherten ID nicht
+// mehr der beim Anlegen ist (Pfad oder Rolle anders) oder ob ein move im
+// Papierkorb enden würde.
+func targetChanged(a store.Action, dest store.Mailbox) bool {
+	switch {
+	case dest.Path != a.Params.TargetMailbox:
+		return true
+	case a.Params.TargetRole != "" && dest.Role != a.Params.TargetRole:
+		return true
+	case a.Kind == store.ActionMove && dest.Role == string(provider.RoleTrash):
+		return true
+	}
+	return false
 }
 
 // check prüft ein Ziel vor der Ausführung: Kopie im Spiegel unverändert,

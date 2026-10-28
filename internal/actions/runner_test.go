@@ -243,7 +243,7 @@ func TestRunnerUnsupportedAndConnectionError(t *testing.T) {
 	dest := Target{MailboxID: ids["Archiv"], Path: "Archiv"}
 	plan, _ := svc.PlanMove(ctx, []int64{1}, "", dest)
 	a, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1}, Plan: plan, RequestedBy: "cli",
-		Params: store.ActionParams{TargetMailboxID: dest.MailboxID}})
+		Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,5 +265,84 @@ func TestRunnerUnsupportedAndConnectionError(t *testing.T) {
 	}
 	if cs, _ := st.ServerCopies(ctx, 1); len(cs) != 1 || cs[0].Mailbox != "INBOX" {
 		t.Fatalf("mirror changed: %+v", cs)
+	}
+}
+
+// V1: Wird die ID des Zielordners nach zwei Ordnerabgleichen an einen
+// anderen Ordner (hier den Papierkorb) vergeben, geht kein MOVE an den
+// Server; alle Ziele sind stale (target_changed).
+func TestRunnerRefusesReusedTargetID(t *testing.T) {
+	st, acct, ids := env(t)
+	ctx := context.Background()
+	svc := &Service{Store: st}
+	dest := Target{MailboxID: ids["Archiv"], Path: "Archiv", Role: "archive"}
+	plan, err := svc.PlanMove(ctx, []int64{1}, "", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1}, Plan: plan, RequestedBy: "cli",
+		Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path, TargetRole: dest.Role}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+		{Path: "Papierkorb", Name: "Papierkorb", Role: "trash"}}); err != nil {
+		t.Fatal(err)
+	}
+	boxes, _ := st.Mailboxes(ctx, acct)
+	reused := false
+	for _, b := range boxes {
+		reused = reused || (b.ID == dest.MailboxID && b.Path == "Papierkorb")
+	}
+	if !reused {
+		t.Fatalf("test setup: id %d not reused: %+v", dest.MailboxID, boxes)
+	}
+	f := &fakeRemote{nextUID: 40}
+	if _, err := (&Runner{Store: st, Blobs: blobs()}).Run(ctx, acct, f); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.Action(ctx, a.ID)
+	if len(f.calls) != 0 || got.Error != "target_changed" || got.Targets[0].Result != store.TargetStale {
+		t.Fatalf("calls %v, action %+v", f.calls, got)
+	}
+	if cs, _ := st.ServerCopies(ctx, 1); len(cs) != 1 || cs[0].Mailbox != "INBOX" {
+		t.Fatalf("mirror changed: %+v", cs)
+	}
+}
+
+// V1: Wechselt der Zielordner die Rolle (hier zu trash), geht kein MOVE an
+// den Server, auch wenn die Aktion den Ordner nur per Pfad nannte.
+func TestRunnerRefusesTargetRoleChange(t *testing.T) {
+	for _, role := range []string{"archive", ""} {
+		t.Run("role="+role, func(t *testing.T) {
+			st, acct, ids := env(t)
+			ctx := context.Background()
+			svc := &Service{Store: st}
+			dest := Target{MailboxID: ids["Archiv"], Path: "Archiv", Role: "archive"}
+			plan, err := svc.PlanMove(ctx, []int64{1}, "", dest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1}, Plan: plan, RequestedBy: "cli",
+				Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path, TargetRole: role}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+				{Path: "Archiv", Name: "Archiv", Role: "trash"}}); err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeRemote{nextUID: 40}
+			if _, err := (&Runner{Store: st, Blobs: blobs()}).Run(ctx, acct, f); err != nil {
+				t.Fatal(err)
+			}
+			got, _ := st.Action(ctx, a.ID)
+			if len(f.calls) != 0 || got.Error != "target_changed" || got.Targets[0].Result != store.TargetStale {
+				t.Fatalf("calls %v, action %+v", f.calls, got)
+			}
+		})
 	}
 }

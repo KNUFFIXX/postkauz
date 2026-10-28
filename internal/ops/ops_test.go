@@ -308,7 +308,7 @@ func seedActions(t *testing.T, st *store.SQLite, acct int64) {
 	}
 	now := time.Now()
 	if _, err := st.CreateAction(ctx, store.NewAction{AccountID: acct, Kind: store.ActionTrash, State: store.ActionRequested, IDsHash: "h",
-		RequestedBy: "key:agent", Params: store.ActionParams{TargetMailboxID: ids["Papierkorb"], TargetRole: "trash"}, Now: now,
+		RequestedBy: "key:agent", Params: store.ActionParams{TargetMailboxID: ids["Papierkorb"], TargetMailbox: "Papierkorb", TargetRole: "trash"}, Now: now,
 		Targets:  []store.ActionTarget{{MessageID: 1, MailboxID: ids["INBOX"], UID: 5, UIDValidity: 3}},
 		Approval: &store.Approval{Description: "trash", RequestedBy: "key:agent", RequestedAt: now, PreviewHash: "h", ExpiresAt: now.Add(time.Hour)}}); err != nil {
 		t.Fatal(err)
