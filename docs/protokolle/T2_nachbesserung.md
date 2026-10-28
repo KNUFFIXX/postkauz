@@ -91,3 +91,20 @@ Die Prüfsitzung bestätigte alle acht Punkte und V4/V6 am Quelltext (Regression
 
 **Prüfläufe und Build nach der Nachprüfung:** siehe Abschnitt 8.
 
+## 8. Prüfläufe und Build nach der Nachprüfung (Stand `2f5da97`)
+
+- **`make check`** vor jedem Commit grün (einmal `internal/drafts` unter Last, siehe Abschnitt 7, Wiederholung grün). Nie parallel zu `make race`.
+- **`make race`** allein an `11568ef`: alle 31 Pakete grün in 13:39 min (`internal/cli` 788 s, `internal/importer` 777 s, `internal/mailsync` 677 s, `internal/ops` 462 s).
+- **`make integration`** gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14 (Images über `mirror.gcr.io`): **41 PASS, 0 SKIP, 0 FAIL** in 3:37 min.
+- **Ende-zu-Ende zu Punkt 1 (Upgrade von alpha.4):** Programm aus `da5386b` gebaut; damit gegen Dovecot ein Datenverzeichnis angelegt und gesynct (INBOX und „[Gmail]/Wichtig“ mit derselben Mail; `doctor`: Schema 20). Danach mit dem neuen Stand (Entwicklungsbuild und Release-Programm): `sync` Exit 0 (Migration 0021), `trash 1 --yes` ohne `--from` Exit 0, `sync` → `actions: 1 done, 0 failed, 0 stale`, `doctor --json` Schema 21, Datenbank `ok`.
+- **Probelauf D7a B6** mit dem Release-Programm wiederholt: unverändert grün (Server INBOX 0, Trash 1, Alle 1, Wichtig 1).
+- **`make cross`:** grün (im eigenen Worktree, damit `dist/` mit dem Release nicht überschrieben wird).
+- **`make vuln`:** weiter gesperrt (403); `go.mod`/`go.sum` unverändert seit `da5386b`.
+- **Build neu:** `make release VERSION=0.3.0-alpha.5` an `2f5da97` (ersetzt den Build an `ab94add`). SHA-256:
+  - `postkauz-windows-amd64.exe` `5ba7e4fa8bae2d947b63b24e0a13f96789395ac2e2c0f0c7c3cf92da9a4388a4`
+  - `postkauz-linux-amd64` `218fe40ac4ac96f6b3c1362f30e00c7171d31d5dc806ffc3052e5149625f3c45`
+  - `postkauz-darwin-arm64` `fb09ddafbc1072d8c97bac75a4f2808aa9190cb2e08bdc0eef263dd024d71946`
+  - `Register-SyncWatch.ps1` `8a50ee74c064cc731446ed6f224d1d3ba8247d7abcea6cb9da834f2e40ec91c1`, `Run-SyncWatch.ps1` `6973c8473a8a244172530c9e926d4d2b854b2bbee05bc013bde1c700bcdf3de3`
+
+  Bytegleich nur am Build-Commit `2f5da97` (Go stempelt den Commit ein); danach ändern sich nur Protokoll und Roadmap.
+
