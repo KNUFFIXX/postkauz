@@ -87,14 +87,7 @@ type accountsEnv struct {
 
 func newAccountsEnv(t *testing.T) *accountsEnv {
 	t.Helper()
-	st, err := store.Open(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	if err := st.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	st := openTestStore(t)
 	e := &accountsEnv{st: st, sec: newMemSecrets(), prober: &fakeProber{}, au: &audit.Memory{}}
 	reg := NewRegistry()
 	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec, oauth.Microsoft{}), AccountsRemove(st, e.sec), AccountsTest(st, Credentials{Secrets: e.sec}, e.prober)} {
