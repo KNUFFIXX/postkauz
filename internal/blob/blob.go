@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -138,7 +139,7 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 
 // Put liest r vollständig, schreibt den Inhalt atomar und liefert Hash und
 // Größe. Ist der Inhalt schon vorhanden, bleibt die vorhandene Datei
-// unverändert (Existed=true).
+// inhaltlich unverändert (Existed=true); nur ihr Dateidatum wird erneuert.
 func (s *Store) Put(r io.Reader) (Info, error) {
 	tmp, err := os.CreateTemp(filepath.Join(s.root, "tmp"), "put-*")
 	if err != nil {
@@ -180,8 +181,15 @@ func (s *Store) Put(r io.Reader) (Info, error) {
 	}
 	info := Info{SHA256: hex.EncodeToString(h.Sum(nil)), Size: lw.n, Compressed: s.opts.Compress}
 
-	// Schon vorhanden (in einer der beiden Formen)? Dann nichts ersetzen.
-	if _, compressed, err := s.Path(info.SHA256); err == nil {
+	// Schon vorhanden (in einer der beiden Formen)? Dann nichts ersetzen,
+	// aber das Dateidatum erneuern (A14): blobs.gc löscht nur Dateien ohne
+	// Verweis, die älter als ein Mindestalter sind; ein eben wieder
+	// abgelegter Inhalt, dessen Verweis gleich entsteht, gilt so als frisch.
+	// Scheitert das (etwa fehlende Rechte), bleibt es beim alten Datum; die
+	// Ablage selbst ist trotzdem gelungen.
+	if p, compressed, err := s.Path(info.SHA256); err == nil {
+		now := timeNow()
+		_ = os.Chtimes(p, now, now)
 		info.Compressed, info.Existed = compressed, true
 		return info, nil
 	}
@@ -206,6 +214,9 @@ func (s *Store) Put(r io.Reader) (Info, error) {
 	syncDir(dir)
 	return info, nil
 }
+
+// timeNow ist in Tests ersetzbar.
+var timeNow = time.Now
 
 // syncDir schreibt den Verzeichniseintrag fest (Linux/macOS). Windows kennt
 // kein fsync auf Verzeichnissen; dort genügt das rename.
