@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"unicode"
 )
 
 // Result ist der Vergleich von Angabe und Inhalt.
@@ -59,7 +60,47 @@ var riskyExt = map[string]bool{
 	".hta": true, ".msi": true, ".msp": true, ".lnk": true, ".reg": true, ".jar": true, ".sh": true, ".app": true,
 	".pif": true, ".scf": true, ".url": true, ".iso": true, ".img": true, ".vhd": true, ".vhdx": true, ".docm": true,
 	".xlsm": true, ".pptm": true, ".apk": true, ".appx": true, ".msix": true, ".chm": true, ".gadget": true,
+	// Seit S3.3 (A14): weitere Endungen, die Windows oder macOS ausführen
+	// oder die Office mit Makros öffnet.
+	".msc": true, ".inf": true, ".ws": true, ".wsc": true, ".sct": true, ".shb": true, ".ps1xml": true, ".psd1": true,
+	".xll": true, ".xlam": true, ".ppam": true, ".dotm": true, ".xltm": true, ".potm": true, ".ppsm": true,
+	".command": true, ".appref-ms": true, ".settingcontent-ms": true,
 }
+
+// EffectiveExt liefert die Dateiendung, nach der Windows einen Namen
+// ausführt (klein geschrieben, mit Punkt; "" ohne Endung). Vorher fällt
+// weg, was Windows beim Anlegen der Datei selbst entfernt oder was nur
+// täuscht (A14, S3.3):
+//
+//   - alles bis zum letzten Pfadtrenner ("/" oder "\"),
+//   - ein NTFS-Datenstrom ab dem ersten ":" ("x.bat::$DATA" und
+//     "x.bat:strom" sind beide x.bat),
+//   - Steuer- und Formatzeichen (etwa U+202E, das die Schreibrichtung
+//     umkehrt und "rechnung\u202Efdp.exe" als „rechnungexe.pdf“ zeigt),
+//   - Punkte und Leerzeichen am Ende ("x.bat." und "x.bat " sind x.bat).
+//
+// Maßgeblich ist die letzte Endung: "rechnung.pdf.exe" ist .exe.
+func EffectiveExt(name string) string {
+	name = strings.ReplaceAll(name, `\`, "/")
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimRight(name, ". \t")
+	return strings.ToLower(path.Ext(name))
+}
+
+// ExecutableName meldet, ob ein Dateiname nach seiner wirksamen Endung
+// (EffectiveExt) ein Programm oder Skript ist.
+func ExecutableName(name string) bool { return riskyExt[EffectiveExt(name)] }
 
 // family ordnet verwandte Typen zusammen (ein Wert je Familie).
 func family(t string) string {
@@ -121,7 +162,7 @@ func Normalize(ct string) string {
 func Check(declared, filename string, d Type) Result {
 	r := Result{Detected: d, Executable: d.Executable}
 	decl := Normalize(declared)
-	ext := strings.ToLower(path.Ext(strings.TrimSpace(strings.ReplaceAll(filename, `\`, "/"))))
+	ext := EffectiveExt(filename)
 	if riskyExt[ext] || decl == EXE || decl == Script || decl == Shortcut || decl == JAR {
 		r.Executable = true
 	}
