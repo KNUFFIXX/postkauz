@@ -1,0 +1,45 @@
+{
+  "format": 2,
+  "program": "postkauz",
+  "chain": "each line {\"event\":E,\"prev\":P,\"chain\":C} with C = hex(SHA-256(P + \"\\n\" + E)); P of the first line = chain of the last line of the previous day, at the very start the genesis value = hex(SHA-256(\"audit-chain-v1\"))",
+  "genesis": "21e7b058db30e7184f83f122651300436b715b1d6ec613586e398ba4d4a06bb2",
+  "head": "b36839bc3272584681551e13567ce52ed14fd721a497106f1206658636e0eccf",
+  "days": [
+    {
+      "day": "2026-10-01",
+      "file": "postkauz-audit-2026-10-01.jsonl",
+      "events": 8,
+      "first_event_id": 1,
+      "last_event_id": 8,
+      "sha256": "ceb6b40905d506a689a11fd6b0c84abff9306c88a10a25b370d908b553ded50b",
+      "chain_head": "314d98b9cd870cd701b8fe44fe7307eb36881c9715151b8654e0f804c5d23e42"
+    },
+    {
+      "day": "2026-10-02",
+      "file": "postkauz-audit-2026-10-02.jsonl",
+      "events": 13,
+      "first_event_id": 9,
+      "last_event_id": 32,
+      "sha256": "57c89b32984a78d41e3a8d011ef26cd6a717d3cb8dd6586ee47b97955b69c1a6",
+      "chain_head": "099365abbe5eb3576f5be11151e68b80e9d51f90822d220ac4a4a9febe6a454e"
+    },
+    {
+      "day": "2026-10-03",
+      "file": "postkauz-audit-2026-10-03.jsonl",
+      "events": 10,
+      "first_event_id": 21,
+      "last_event_id": 30,
+      "sha256": "b9dd75692a86a544e22c8d47ee13c9a2800257a2874aa56814573c403166f70e",
+      "chain_head": "d3420ef032c39fc82b80ad8aac5d6365eab25a7b38a6ec8330760b0767c97ada"
+    },
+    {
+      "day": "2026-10-04",
+      "file": "postkauz-audit-2026-10-04.jsonl",
+      "events": 2,
+      "first_event_id": 31,
+      "last_event_id": 33,
+      "sha256": "230406cda6647612c383b5ea6a897dea5f09ec4b9bb782c9306bd79a71b08917",
+      "chain_head": "b36839bc3272584681551e13567ce52ed14fd721a497106f1206658636e0eccf"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +26,15 @@ import (
 // ein frisches Verzeichnis und biegt den Exportort auf die Kopie um.
 func fixture17(t *testing.T) (dbPath, exportDir string) {
 	t.Helper()
+	return fixtureDB(t, "t1b_schema17")
+}
+
+// fixtureDB legt Datenbank und Export aus testdata/<name> (5 Dateien im
+// Export: drei bzw. vier Tage und Manifest) in ein frisches Verzeichnis.
+func fixtureDB(t *testing.T, name string) (dbPath, exportDir string) {
+	t.Helper()
 	dir := t.TempDir()
-	src := filepath.Join("testdata", "t1b_schema17")
+	src := filepath.Join("testdata", name)
 	f, err := os.Open(filepath.Join(src, "postkauz.db.gz"))
 	if err != nil {
 		t.Fatal(err)
@@ -199,6 +207,87 @@ func TestMigration0018AuditVerify(t *testing.T) {
 	if len(evs) != 2 || evs[0].Result != "ok" || evs[0].EndID != 0 || evs[1].Result != "ok" || evs[1].EndID == 0 {
 		// evs[0]: Export des alten Stands (ein Eintrag), evs[1]: neuer Export.
 		t.Fatalf("merged list = %+v", evs)
+	}
+}
+
+// Nachbesserung T1b, A-F5: zweiter Pflichttest A1 mit Testdaten des Stands
+// rc8 (99a7cc0, Schema 16; Dauerbetrieb des Betreibers, Generator in
+// testdata/t1b_schema16/gen): ein verspäteter Eintrag, den rc8 in den alten
+// Tag 2. Oktober neu exportiert hat, und ein offener Tag. Migration 16 → 19,
+// audit verify ok, ein neuer Export lässt die alten Tage Byte für Byte
+// stehen und schreibt den offenen Tag, verify wieder ok.
+func TestMigration16AuditVerify(t *testing.T) {
+	ctx := context.Background()
+	dbPath, exportDir := fixtureDB(t, "t1b_schema16")
+	before, seqBefore := auditRows(t, rawDB(t, dbPath))
+	if len(before) != 37 { // 30 + 2 Exporte + verspäteter Eintrag + Prüfung + 3 offene
+		t.Fatalf("fixture has %d audit rows, want 37", len(before))
+	}
+	old := map[string][]byte{}
+	for _, d := range []string{"2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04"} {
+		b, err := os.ReadFile(filepath.Join(exportDir, auditFileName(d)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		old[d] = b
+	}
+	if !bytes.Contains(old["2026-10-02"], []byte(`"sync.run"`)) {
+		t.Fatal("fixture: the late entry is not in the re-exported old day")
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if v, _ := st.SchemaVersion(ctx); v != 16 {
+		t.Fatalf("fixture schema = %d, want 16", v)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := st.SchemaVersion(ctx); v != store.KnownSchemaVersion() || st.LastSnapshot == "" {
+		t.Fatalf("schema = %d, snapshot %q", v, st.LastSnapshot)
+	}
+	after, seqAfter := auditRows(t, rawDB(t, dbPath))
+	if strings.Join(after, "\n") != strings.Join(before, "\n") || seqAfter < seqBefore {
+		t.Fatalf("audit rows changed by the migrations (seq %d -> %d)", seqBefore, seqAfter)
+	}
+	reg := NewRegistry()
+	for _, op := range []Operation{AuditExport(st, exportDir), AuditVerify(st)} {
+		if err := reg.Register(op); err != nil {
+			t.Fatal(err)
+		}
+	}
+	x := &Executor{Registry: reg, Audit: st.AuditWriter()}
+	human := policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}
+	run := func(op string) Result {
+		t.Helper()
+		res, err := x.Execute(ctx, Request{Key: human, Actor: audit.ActorHuman, Operation: op, Input: json.RawMessage(`{}`)})
+		if err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		return res
+	}
+	v := run("audit.verify").Output.(AuditVerifyOutput)
+	if v.Status != "ok" || len(v.Problems) != 0 || v.DaysChecked != 4 || !slices.Contains(v.NotExported, "2026-10-05") {
+		t.Fatalf("verify after migration = %+v", v)
+	}
+	ex := run("audit.export").Output.(AuditExportOutput)
+	states := map[string]string{}
+	for _, f := range ex.Files {
+		states[f.Day] = f.State
+	}
+	for d, b := range old {
+		got, _ := os.ReadFile(filepath.Join(exportDir, auditFileName(d)))
+		if states[d] != "unchanged" || !bytes.Equal(got, b) {
+			t.Fatalf("day %s after the new export: state %q, bytes equal %v", d, states[d], bytes.Equal(got, b))
+		}
+	}
+	if states["2026-10-05"] == "" {
+		t.Fatalf("open day not exported: %v", states)
+	}
+	if v := run("audit.verify").Output.(AuditVerifyOutput); v.Status != "ok" || len(v.Problems) != 0 {
+		t.Fatalf("verify after a new export = %+v", v)
 	}
 }
 
