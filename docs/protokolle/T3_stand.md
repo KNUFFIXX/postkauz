@@ -100,7 +100,47 @@ Die Hauptsitzung legte die gemeinsame Basis selbst an (Migration 0022 mit Höchs
 
 ## 5. Prüfläufe
 
-*(wird nach den Läufen ergänzt)*
+Am zusammengeführten Stand im Container (4 Kerne), jeder Lauf allein (Zusatz f: nie `make check` neben `make race`):
+
+- **`make check`** grün: nach dem Merge aller Pakete (`bbfff2c`) 306 s (`internal/ops` 271 s, `internal/cli` 196 s), am Endstand (`411edfd`) erneut grün. Unter der Last von vier parallelen Paketen lag `internal/ops` bei 491–600 s und riss einmal die Grenze von 10 min; allein bleibt viel Luft. Die Pakete liefen ihre `make check` je Commit selbst (Berichte in Abschnitt 1).
+- **`make race`** grün in 24:22 min (`411edfd` bis auf Doku): `internal/cli` 1.391 s, `internal/importer` 922 s, `internal/mailsync` 756 s, `internal/ops` 605 s. **Hinweis:** `internal/cli` liegt bei 23 von 30 min Zeitgrenze; mit weiteren Tests (T5) wird es knapp (Vorschlag: Grenze im Ziel `race` auf 45 min oder Tests teilen; nicht in diesem Teil geändert).
+- **`make integration`** gegen Dovecot 2.4.5, Stalwart 0.11.8 und GreenMail 2.1.14 (Images über `mirror.gcr.io`, auf die Namen aus `docker-compose.yml` umbenannt): **41 PASS, 0 SKIP, 0 FAIL** in 230 s.
+- **Abnahme D7, Probelauf:** Python-Nachbau von Teil A mit dem Linux-Programm (gleiche Kommandos und Muster wie `abnahme_D7.ps1`): 35 OK, 0 FAIL; `abnahme_D7_restore.sh` auf dessen Paket: 7 OK, 0 FAIL. PowerShell selbst lief im Container nicht.
+- **Migration 0022:** 0,23 s an 50.000 Nachrichten, 80.000 Ordnerkopien, 20.000 Audit-Zeilen, mit Snapshot (`TestMeasureMigration0022`, `POSTKAUZ_MEASURE_MIGRATION=1`). `purge` an derselben Datenbank (15.000 von 50.000 Nachrichten gelöscht samt Index): 8,5 s, Zählen 0,09 s (`TestMeasurePurge`).
+- **`make cross`** grün (linux/amd64, windows/amd64, darwin/arm64).
+- **`make vuln`** in der Cloud gesperrt (`vuln.go.dev`: 403 Forbidden); `go.mod`/`go.sum` unverändert seit `a2c016c`, also derselbe Abhängigkeitsstand wie beim letzten geprüften Lauf. Nachzuholen in der Prüfsitzung bzw. im CI-Job.
+- **Release (Zusatz e):** `make release VERSION=0.3.0-alpha.6` an `411edfd` aus sauberem Arbeitsbaum (`git status --porcelain` leer; die Worktrees der Pakete liegen unter `.claude/worktrees/` und sind nur lokal in `.git/info/exclude` ausgeschlossen). Nachbau in einem frischen Klon an demselben Commit: alle drei Programme **bytegleich**.
+
+  ```
+  2d2307e38b7f438757c0e396255717693547ec42ae9e73640c717394e29352ea  postkauz-windows-amd64.exe
+  57e9a0edc7f0c3ecfa99fb04d94f08176d04da1ebad32c4fbf1eba4e9d7ef9f0  postkauz-linux-amd64
+  8b7a676561e5cbbbe5c35b640beca2e7f8401522f16b6a2ba2f8e95b4d11f0a3  postkauz-darwin-arm64
+  ```
+
+  `go version -m dist/postkauz-windows-amd64.exe` (Abhängigkeiten gekürzt auf die Kopfzeilen; vollständig identisch mit `go.sum`):
+
+  ```
+  dist/postkauz-windows-amd64.exe: go1.27.3
+  	path	github.com/KNUFFIXX/postkauz/cmd/postkauz
+  	mod	github.com/KNUFFIXX/postkauz	v0.0.0-20261028200342-411edfde16cd
+  	dep	github.com/emersion/go-imap/v2	v2.0.0-beta.8	h1:5IXZK1E33DyeP526320J3RS7eFlCYGFgtbrfapqDPug=
+  	dep	github.com/modelcontextprotocol/go-sdk	v1.8.0	h1:KIvahhYqwtbeniWVPs3TcXEA7b8jEtwfBpOTAI+Urx4=
+  	dep	golang.org/x/net	v0.62.0	h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
+  	dep	modernc.org/sqlite	v1.60.1	h1:/blz53O951KWFOso4QQvEs/Fq6cDBKLtMVrYNSeJVKw=
+  	build	-buildmode=exe
+  	build	-compiler=gc
+  	build	-trimpath=true
+  	build	CGO_ENABLED=0
+  	build	GOARCH=amd64
+  	build	GOOS=windows
+  	build	GOAMD64=v1
+  	build	vcs=git
+  	build	vcs.revision=411edfde16cd3833e8f7edaeb88bd3b6f9020d3e
+  	build	vcs.time=2026-10-28T20:03:42Z
+  	build	vcs.modified=false
+  ```
+
+  Ein Nachbau ist bytegleich nur bei sauberem Arbeitsbaum **und** gleicher Commit-Zeit: `vcs.time` und die Pseudoversion des Moduls (`mod … v0.0.0-<Commit-Zeit>-<Hash>`) stehen in der Datei. Frühere Cloud-Builds aus einem Baum mit lokalen Änderungen tragen `vcs.modified=true` und lassen sich deshalb nicht nachbauen.
 
 ## 6. Offen
 
