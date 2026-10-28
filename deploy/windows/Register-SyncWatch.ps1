@@ -11,9 +11,11 @@
         postkauz.exe sync --watch --all --data-dir <DataDir> [--config <ConfigFile>]
 
     one process for all accounts, restarts it after a crash or an end (wait 60
-    seconds, doubled up to 30 minutes; after a login error always the longest
-    wait) and writes its output to <DataDir>\logs\sync-watch.log (rotated at
-    10 MB, 5 old files).
+    seconds, doubled up to 30 minutes; after exit code 6, a rejected login,
+    always the longest wait) and writes its output to
+    <DataDir>\logs\sync-watch.log (rotated at 10 MB, 5 old files). With
+    --all a rejected login does not end the program: it tries that account
+    again every 30 minutes, and the other accounts go on.
 
     No password is stored in the task or in the scripts: postkauz.exe reads
     the passwords (or OAuth2 tokens) from the Windows Credential Manager, as

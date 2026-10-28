@@ -22,6 +22,10 @@
       the longest time and writes a log line: trying again and again could
       lock the account at the provider. Fix the password (postkauz.exe account
       set <name> --password-stdin) or sign in again (account login <name>).
+      With --all (as this script runs it) a rejected login does not end
+      postkauz.exe: the program tries that account again every 30 minutes
+      itself and the other accounts go on; exit code 6 then only comes from
+      a run that watches a single account.
 
     Log: <DataDir>\logs\sync-watch.log (UTF-8). When it is larger than
     -MaxLogBytes (10 MB), it is renamed to sync-watch.1.log, older files move

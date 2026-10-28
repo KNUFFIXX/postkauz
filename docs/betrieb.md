@@ -28,8 +28,9 @@ Nur der Dauer-Sync spricht mit dem Mailserver. Er spiegelt neue Mails, legt Entw
 `Run-SyncWatch.ps1` passt auf den Dauer-Sync auf:
 
 - Endet `postkauz.exe` (Absturz, Netz weg beim Start, Update), startet es ihn neu: erst nach 60 Sekunden, dann nach 2, 4, 8 … Minuten, höchstens alle 30 Minuten. Lief er mindestens 30 Minuten, beginnt die Wartezeit wieder bei 60 Sekunden.
-- Lehnt der Mailserver die Anmeldung ab (falsches Passwort, Exit-Code 6), wartet es immer 30 Minuten und schreibt das ins Log. So sperrt der Anbieter dein Konto nicht wegen vieler Fehlversuche.
-- Ein Konto mit Problem (Anmeldung, fehlendes Passwort) hält die anderen Konten nicht an.
+- Lehnt der Mailserver die Anmeldung ab oder fehlt ein Passwort, versucht `postkauz.exe` (mit `--all`, wie die Aufgabe es startet) **dieses Konto** alle 30 Minuten erneut und schreibt das ins Log; das Programm selbst läuft weiter (seit der Nachbesserung T2). So sperrt der Anbieter dein Konto nicht wegen vieler Fehlversuche. `doctor` zeigt das Konto solange mit `status error` und Grund.
+- Endet `postkauz.exe` doch mit Exit-Code 6 (Anmeldung abgelehnt; das kommt nur noch aus Läufen mit einem einzelnen Konto), wartet `Run-SyncWatch.ps1` immer 30 Minuten.
+- Ein Konto mit Problem (Anmeldung, fehlendes Passwort, anderer Fehler) hält die anderen Konten nicht an.
 
 ### 1.2 Voraussetzungen prüfen
 
