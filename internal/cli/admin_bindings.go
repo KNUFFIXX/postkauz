@@ -286,6 +286,8 @@ func renderAuditVerify(w io.Writer, out any) error {
 	if o.Status == "ok" {
 		if o.DaysChecked == 0 {
 			fmt.Fprintln(w, "ok: nothing exported yet (run: audit export --to <dir>)")
+		} else if o.OriginDays == o.DaysChecked {
+			fmt.Fprintf(w, "ok: %s checked; the database matches the recorded checksums\n", plural(o.DaysChecked, "exported day", "exported days"))
 		} else {
 			fmt.Fprintf(w, "ok: %s checked; the export files match their checksums, the hash chain, the manifest and the database\n", plural(o.DaysChecked, "exported day", "exported days"))
 		}
@@ -305,6 +307,10 @@ func renderAuditVerify(w io.Writer, out any) error {
 			}
 			fmt.Fprintf(w, "  %s: %s: %s\n", day, msg, termLine(p.File))
 		}
+	}
+	if o.OriginDays > 0 {
+		fmt.Fprintf(w, "%s exported by the data directory this one was restored from: only the database was checked against the recorded checksums; the files are with the original\n",
+			plural(o.OriginDays, "day was", "days were"))
 	}
 	if o.LegacyDays > 0 {
 		fmt.Fprintf(w, "%s without hash chain (exported before 0.1.0); the next audit export rewrites them\n", plural(o.LegacyDays, "day", "days"))

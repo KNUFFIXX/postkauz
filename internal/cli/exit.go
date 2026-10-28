@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -97,6 +98,15 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "mismatch", Message: err.Error(), Hint: "the audit log or its export was changed; see audit verify"}
 	case errors.Is(err, policy.ErrInvalidFile):
 		return ExitError, ErrorInfo{Code: "policy_invalid", Message: err.Error(), Hint: "fix the policy file (see docs/sicherheit.md, section 5) or check it with: doctor"}
+	case errors.Is(err, backup.ErrTarget):
+		return ExitError, ErrorInfo{Code: "backup_target", Message: err.Error(),
+			Hint: "nothing was written; choose a new or empty folder outside the data directory (see docs/betrieb.md, backup and restore)"}
+	case errors.Is(err, backup.ErrManifest):
+		return ExitError, ErrorInfo{Code: "backup_invalid", Message: err.Error(),
+			Hint: "the backup is incomplete or was changed; nothing was restored; use another backup or run backup create again"}
+	case errors.Is(err, backup.ErrCorruptSource):
+		return ExitError, ErrorInfo{Code: "blob_corrupt", Message: err.Error(),
+			Hint: "a file in the blob store does not match its hash; check the data directory with: doctor --blobs=all"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, store.ErrMigrationBlocked):

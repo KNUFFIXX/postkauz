@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
@@ -273,6 +274,21 @@ var contractInputs = map[string]struct {
 	"actions.get":           {input: `{"action_id":1}`},
 	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
 	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
+	// Sicherung (S3.4): der Runner ist ein Fake (contractBackup), der Pfad
+	// wird nie angefasst.
+	"backup.create": {input: `{"to":"/nonexistent/backup-target"}`},
+}
+
+// contractBackup meldet Sicherungen, die schreiben dürften (DryRun=false).
+type contractBackup struct {
+	called bool
+	got    backup.Options
+}
+
+func (c *contractBackup) Create(_ context.Context, o backup.Options) (backup.Result, error) {
+	c.called, c.got = true, o
+	return backup.Result{Mode: "folder", Target: o.To, Manifest: "manifest.json", Database: "db", EncryptNote: "ENCRYPT-ME.txt",
+		Warning: backup.Warning, DryRun: o.DryRun}, nil
 }
 
 // seedActions legt für die Aktionen Ordner und einen Antrag an: Archiv
@@ -429,6 +445,7 @@ type contractEnv struct {
 	*mirrorEnv
 	runner   *contractRunner
 	importer *contractImporter
+	backup   *contractBackup
 	blobs    *memBlobs
 	deps     Deps
 }
@@ -466,8 +483,9 @@ func newContractEnv(t *testing.T) *contractEnv {
 	as := oauthtest.New(t)
 	r := &contractRunner{}
 	imp := &contractImporter{}
+	bk := &contractBackup{}
 	blobs := newMemBlobs()
-	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, blobs: blobs, deps: Deps{Accounts: m.st, Secrets: m.sec, Prober: m.prober,
+	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, backup: bk, blobs: blobs, deps: Deps{Backup: bk, Accounts: m.st, Secrets: m.sec, Prober: m.prober,
 		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
 		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st,
@@ -523,6 +541,9 @@ func (e *contractEnv) fingerprint(t *testing.T) string {
 	}
 	if e.importer.acct != "" && !e.importer.got.DryRun {
 		b.WriteString("import wrote\n")
+	}
+	if e.backup.called && !e.backup.got.DryRun {
+		b.WriteString("backup wrote\n")
 	}
 	fmt.Fprintf(&b, "blob puts %d\n", e.blobs.puts)
 	return b.String()

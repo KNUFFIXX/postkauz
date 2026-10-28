@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/actions"
+	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
@@ -171,7 +172,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
 		DraftCheck: newDraftChecker(a), OAuth: newOAuth(), SystemAudit: st.AuditWriter(), Log: a.log,
-		Actions: st, SyncKeywords: a.cfg.Tags.SyncKeywords}
+		Actions: st, SyncKeywords: a.cfg.Tags.SyncKeywords,
+		// backup.create (S3.4): Schnappschuss, Blobs, Audit-Archive; der
+		// Tar-Strom geht auf die Standardausgabe.
+		Backup:       &backup.Runner{Store: st, Blobs: blobs, DataDir: a.paths.DataDir, Version: a.version},
+		BackupStdout: a.stdout}
 	// E4 (T2): Standard für key create ohne --dry-run-default.
 	dryDefault := a.policy.DryRunDefault()
 	deps.KeyDryRunDefault = &dryDefault

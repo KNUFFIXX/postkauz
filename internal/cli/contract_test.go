@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -221,6 +222,10 @@ var cliSamples = []cliSample{
 	{"actions.get", []string{"action", "show", "3"}, false},
 	{"actions.list", []string{"action", "list", "-a", "demo", "--state", "requested,rejected", "--limit", "5"}, false},
 	{"drafts.cleanup_copies", []string{"draft", "cleanup", "1"}, false},
+	// S3.4: Sicherung in einen Ordner; Tar-Strom nur als Trockenlauf (die
+	// Ausgabe geht dann auf stderr, stdout gehört dem Strom).
+	{"backup.create", []string{"backup", "create", "--to", "{backupdir}"}, false},
+	{"backup.create", []string{"backup", "create", "--tar", "-", "--dry-run"}, false},
 }
 
 // sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf
@@ -279,7 +284,8 @@ func seedS16(t *testing.T) map[string]string {
 		t.Fatal(err)
 	}
 	return map[string]string{"mbox": mbox, "labels": labels, "html": fmt.Sprint(html.ID), "answer": fmt.Sprint(answer.ID), "thread": fmt.Sprint(answer.ThreadID),
-		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "mailbox": fmt.Sprint(boxes.Mailboxes[0].ID), "exportdir": filepath.Join(t.TempDir(), "audit")}
+		"att": fmt.Sprint(html.Attachments[0].ID), "cursor": hit.Cursor, "mailbox": fmt.Sprint(boxes.Mailboxes[0].ID), "exportdir": filepath.Join(t.TempDir(), "audit"),
+		"backupdir": filepath.Join(t.TempDir(), "backup")}
 }
 
 var errCaptureOnly = errors.New("captured")
@@ -472,6 +478,9 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{fmt.Errorf("%w: x", policy.ErrInvalidFile), ExitError, "policy_invalid"},
 		{ops.ErrSyncRunning, ExitError, "sync_running"},
 		{errAuditMismatch, ExitError, "mismatch"},
+		{fmt.Errorf("%w: x", backup.ErrTarget), ExitError, "backup_target"},
+		{fmt.Errorf("%w: x", backup.ErrManifest), ExitError, "backup_invalid"},
+		{fmt.Errorf("%w: x", backup.ErrCorruptSource), ExitError, "blob_corrupt"},
 		{errors.New("boom"), ExitError, "error"},
 	}
 	for _, c := range cases {

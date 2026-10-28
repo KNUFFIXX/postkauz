@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"io"
 	"log/slog"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
@@ -66,6 +67,11 @@ type Deps struct {
 	// Policy-Datei: Standard für keys.create ohne dry_run_default (T2,
 	// E4; nil = true).
 	KeyDryRunDefault *bool
+	// Backup sichert das Datenverzeichnis (backup.create, S3.4; nil nur
+	// ohne Handler-Aufrufe), BackupStdout ist das Ziel des Tar-Stroms
+	// (CLI: die Standardausgabe; nil = kein Tar-Strom möglich).
+	Backup       BackupRunner
+	BackupStdout io.Writer
 	// TokenLockDir ist der Ordner der Sperrdateien beim Speichern eines
 	// OAuth2-Tokens (neben der Datenbank; leer = ohne Sperre).
 	TokenLockDir string
@@ -125,6 +131,7 @@ func Catalog(d Deps) []Operation {
 		ActionsGet(d),
 		ActionsList(d),
 		DraftsCleanupCopies(d),
+		BackupCreate(d.Backup, d.BackupStdout),
 	}
 }
 

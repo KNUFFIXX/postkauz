@@ -1,0 +1,348 @@
+package backup
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"maps"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// OpRestore ist das Systemereignis in der wiederhergestellten Datenbank
+// (E7, A10): Quelle als Ausweis (PathHash), Prüfsumme des Manifests,
+// Zähler und was die neue Instanz geschlossen hat.
+const OpRestore = "backup.restore"
+
+// RestoreOptions steuert eine Wiederherstellung.
+type RestoreOptions struct {
+	// From ist der Sicherungsordner (bei einem Tar-Strom: der Ordner, in
+	// den er entpackt wurde).
+	From string
+	// DataDir ist das neue Datenverzeichnis: Es darf nicht existieren oder
+	// muss leer sein.
+	DataDir string
+	// Refuse sind Datenverzeichnisse, die nie Ziel sein dürfen (das
+	// Standard-Datenverzeichnis und das aus Konfiguration und Umgebung),
+	// auch wenn sie leer sind; ebenso kein Ordner darin (etwa ein Profil).
+	Refuse []string
+	// DryRun prüft nur: Manifest, Ziel und jede Datei (SHA-256, komprimierte
+	// Blobs auch gegen ihren Namen); nichts wird angelegt.
+	DryRun bool
+	// KeepIdentity behält die Kennung des Originals (meta.datadir_id) und
+	// damit die Schlüsselbund-Verweise der Konten (A10: Standard ist eine
+	// neue Kennung).
+	KeepIdentity bool
+	// DBName ist der Dateiname der Datenbank im Datenverzeichnis.
+	DBName string
+	// Now ist in Tests ersetzbar.
+	Now func() time.Time
+}
+
+// RestoreResult ist das Ergebnis einer Wiederherstellung.
+type RestoreResult struct {
+	Source               string             `json:"source"`
+	DataDir              string             `json:"data_dir"`
+	ManifestSHA256       string             `json:"manifest_sha256"`
+	BackupCreatedAt      string             `json:"backup_created_at"`
+	BackupProgramVersion string             `json:"backup_program_version"`
+	BackupSchemaVersion  int                `json:"backup_schema_version"`
+	SchemaVersion        int                `json:"schema_version"`
+	Files                int                `json:"files"`
+	Bytes                int64              `json:"bytes"`
+	Blobs                int                `json:"blobs"`
+	AuditArchives        int                `json:"audit_archives"`
+	MigrationSnapshot    string             `json:"migration_snapshot,omitempty"`
+	DryRun               bool               `json:"dry_run"`
+	Fixes                store.RestoreFixes `json:"fixes"`
+}
+
+// Restore prüft eine Sicherung und stellt sie in ein neues
+// Datenverzeichnis her:
+//
+//  1. Manifest lesen und streng prüfen (Aufbau, Pfade, Zähler, Schema
+//     höchstens bekannt); jede Datei vorhanden, gewöhnliche Datei, Größe
+//     passt. Bis hier wird nichts geschrieben.
+//  2. Datenverzeichnis anlegen (0700) und jede Datei kopieren (0600),
+//     dabei SHA-256 prüfen; komprimierte Blobs zusätzlich gegen ihren
+//     Namen (blob.Store.Verify).
+//  3. Datenbank öffnen und migrieren (Schnappschuss vor einer Migration
+//     wie immer), dann eine eigene Instanz daraus machen
+//     (store.PrepareRestored, A10) mit dem Systemereignis backup.restore.
+//
+// Jeder Fehler ab Schritt 2 entfernt, was restore angelegt hat.
+func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err error) {
+	now := time.Now
+	if o.Now != nil {
+		now = o.Now
+	}
+	from, err := filepath.Abs(o.From)
+	if err != nil {
+		return res, targetErr("invalid backup folder")
+	}
+	to, err := filepath.Abs(o.DataDir)
+	if err != nil {
+		return res, targetErr("invalid data directory")
+	}
+	from, to = filepath.Clean(from), filepath.Clean(to)
+	res.Source, res.DataDir, res.DryRun = from, to, o.DryRun
+	if o.DBName == "" {
+		o.DBName = brand.Name + ".db"
+	}
+
+	// 1. Manifest und Dateien prüfen, ohne zu schreiben.
+	mpath := filepath.Join(from, ManifestName)
+	if _, err := regularFile(mpath); err != nil {
+		return res, manifestErr("no %s in %s", ManifestName, from)
+	}
+	mb, err := readLimited(mpath, maxManifestBytes)
+	if err != nil {
+		return res, err
+	}
+	sum := sha256.Sum256(mb)
+	res.ManifestSHA256 = hex.EncodeToString(sum[:])
+	m, err := parseManifest(mb, store.KnownSchemaVersion())
+	if err != nil {
+		return res, err
+	}
+	res.BackupCreatedAt, res.BackupProgramVersion, res.BackupSchemaVersion = m.CreatedAt, m.ProgramVersion, m.SchemaVersion
+	res.Files, res.Bytes, res.Blobs, res.AuditArchives = m.Counts.Files, m.Counts.Bytes, m.Counts.Blobs, m.Counts.AuditArchives
+	if err := checkRestoreTarget(from, to, o.Refuse); err != nil {
+		return res, err
+	}
+	for _, f := range m.Files {
+		size, err := regularFile(filepath.Join(from, filepath.FromSlash(f.Path)))
+		switch {
+		case isNotExist(err):
+			return res, manifestErr("%s is listed in the manifest but missing", f.Path)
+		case err != nil:
+			return res, manifestErr("%s: %v", f.Path, err)
+		case size != f.Size:
+			return res, manifestErr("%s has %d bytes, the manifest says %d", f.Path, size, f.Size)
+		}
+	}
+	if o.DryRun {
+		return res, verifyFiles(ctx, from, m)
+	}
+
+	// 2. Anlegen und kopieren; bei jedem Fehler wieder entfernen.
+	created, err := makeTarget(to)
+	if err != nil {
+		return res, err
+	}
+	defer func() {
+		if err != nil {
+			removeTarget(to, created)
+		}
+	}()
+	for _, f := range m.Files {
+		if err = ctx.Err(); err != nil {
+			return res, err
+		}
+		dst := filepath.Join(to, filepath.FromSlash(f.Path))
+		if f.Kind == KindDatabase {
+			dst = filepath.Join(to, o.DBName)
+		}
+		want := f
+		if _, _, err = copyAtomic(filepath.Join(from, filepath.FromSlash(f.Path)), dst, func(got string, n int64) error {
+			if got != want.SHA256 || n != want.Size {
+				return manifestErr("%s does not match the manifest (sha256 or size); nothing was restored", want.Path)
+			}
+			return nil
+		}); err != nil {
+			return res, err
+		}
+	}
+	if m.Counts.Blobs > 0 {
+		bs, berr := blob.OpenExisting(filepath.Join(to, "blobs"), blob.Options{})
+		if berr != nil {
+			err = berr
+			return res, err
+		}
+		for _, f := range m.Files {
+			if f.Kind != KindBlob || !strings.HasSuffix(f.Path, ".zst") {
+				continue
+			}
+			name := strings.TrimSuffix(filepath.Base(f.Path), ".zst")
+			if verr := bs.Verify(name, 0); verr != nil {
+				err = manifestErr("blob %s does not match its name; nothing was restored", f.Path)
+				return res, err
+			}
+		}
+	}
+
+	// 3. Datenbank: Schema wie im Manifest, migrieren, eigene Instanz.
+	st, err := store.Open(filepath.Join(to, o.DBName))
+	if err != nil {
+		return res, err
+	}
+	defer func() {
+		if cerr := st.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	v, err := st.SchemaVersion(ctx)
+	if err != nil {
+		return res, err
+	}
+	if v != m.SchemaVersion {
+		err = manifestErr("the database has schema %d, the manifest says %d; nothing was restored", v, m.SchemaVersion)
+		return res, err
+	}
+	if err = st.Migrate(ctx); err != nil {
+		return res, err
+	}
+	res.MigrationSnapshot = st.LastSnapshot
+	if res.SchemaVersion, err = st.SchemaVersion(ctx); err != nil {
+		return res, err
+	}
+	prep := store.RestorePrep{Now: now(), Event: func(fx store.RestoreFixes) audit.Event {
+		return restoreEvent(res, fx, now())
+	}}
+	if !o.KeepIdentity {
+		if prep.DataDirID, err = randHex(16); err != nil {
+			return res, err
+		}
+		prep.CredentialRef = secrets.AccountRef
+	}
+	res.Fixes, err = st.PrepareRestored(ctx, prep)
+	return res, err
+}
+
+// verifyFiles liest jede Datei der Sicherung und vergleicht sie mit dem
+// Manifest (restore --dry-run), ohne etwas zu schreiben.
+func verifyFiles(ctx context.Context, from string, m Manifest) error {
+	var bs *blob.Store
+	for _, f := range m.Files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		sum, n, err := hashFile(filepath.Join(from, filepath.FromSlash(f.Path)))
+		if err != nil {
+			return manifestErr("%s: %v", f.Path, err)
+		}
+		if sum != f.SHA256 || n != f.Size {
+			return manifestErr("%s does not match the manifest (sha256 or size)", f.Path)
+		}
+		if f.Kind != KindBlob || !strings.HasSuffix(f.Path, ".zst") {
+			continue
+		}
+		if bs == nil {
+			if bs, err = blob.OpenExisting(filepath.Join(from, "blobs"), blob.Options{}); err != nil {
+				return err
+			}
+		}
+		if bs.Verify(strings.TrimSuffix(filepath.Base(f.Path), ".zst"), 0) != nil {
+			return manifestErr("blob %s does not match its name", f.Path)
+		}
+	}
+	return nil
+}
+
+// restoreEvent baut das Systemereignis backup.restore: nur Ausweise,
+// Prüfsumme und Zähler.
+func restoreEvent(res RestoreResult, fx store.RestoreFixes, now time.Time) audit.Event {
+	p := map[string]any{"source_hash": PathHash(res.Source), "manifest_sha256": res.ManifestSHA256,
+		"backup_created_at": res.BackupCreatedAt, "backup_program_version": res.BackupProgramVersion,
+		"backup_schema_version": res.BackupSchemaVersion, "schema_version": res.SchemaVersion,
+		"files": res.Files, "bytes": res.Bytes, "blobs": res.Blobs, "audit_archives": res.AuditArchives}
+	var fixes map[string]any
+	if b, err := json.Marshal(fx); err == nil && json.Unmarshal(b, &fixes) == nil {
+		maps.Copy(p, fixes)
+	}
+	b, _ := json.Marshal(p)
+	return audit.Event{TS: now.UTC(), ActorType: audit.ActorSystem, KeyID: "system", Operation: OpRestore,
+		Result: audit.ResultOK, ParamsRedacted: b}
+}
+
+// readLimited liest höchstens max Bytes (mehr ist ErrManifest).
+func readLimited(path string, max int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, manifestErr("%s is larger than %d bytes", ManifestName, max)
+	}
+	return b, nil
+}
+
+// checkRestoreTarget: Das Ziel ist kein geschütztes Datenverzeichnis,
+// liegt nicht in der Sicherung und existiert nicht oder ist leer.
+func checkRestoreTarget(from, to string, refuse []string) error {
+	real := realPath(to)
+	for _, r := range refuse {
+		if r == "" {
+			continue
+		}
+		if samePath(real, realPath(r)) || samePath(to, r) || within(real, realPath(r)) {
+			return targetErr("%s is (or lies inside) the default or configured data directory; restore never writes there: "+
+				"restore into a new folder, then point --data-dir or data_dir in the configuration to it", to)
+		}
+	}
+	if within(real, realPath(from)) {
+		return targetErr("the new data directory %s lies inside the backup folder; choose a folder outside it", to)
+	}
+	fi, err := os.Stat(to)
+	switch {
+	case isNotExist(err):
+		return nil
+	case err != nil:
+		return err
+	case !fi.IsDir():
+		return targetErr("%s exists and is not a folder", to)
+	}
+	entries, err := os.ReadDir(to)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return targetErr("%s is not empty; restore only into a new or empty folder", to)
+	}
+	return nil
+}
+
+// makeTarget legt das Datenverzeichnis an (0700) und meldet, ob es neu ist.
+func makeTarget(to string) (bool, error) {
+	_, err := os.Stat(to)
+	created := isNotExist(err)
+	if err := os.MkdirAll(to, dirMode); err != nil {
+		return false, err
+	}
+	if err := os.Chmod(to, dirMode); err != nil && !created {
+		return false, fmt.Errorf("restore: cannot restrict the permissions of %s: %w", to, err)
+	}
+	return created, nil
+}
+
+// removeTarget entfernt nach einem Fehler, was restore angelegt hat: das
+// ganze Verzeichnis, wenn es neu war, sonst seinen Inhalt (es war leer).
+func removeTarget(to string, created bool) {
+	if created {
+		_ = os.RemoveAll(to)
+		return
+	}
+	entries, err := os.ReadDir(to)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		_ = os.RemoveAll(filepath.Join(to, e.Name()))
+	}
+}

@@ -87,7 +87,7 @@ func newRoot(version string, stdin io.Reader, stdout, stderr io.Writer) (*cobra.
 		return nil
 	}
 
-	root.AddCommand(versionCmd(version, stdout), doctorCmd(a), mcpCmd(a), internalCmd(a))
+	root.AddCommand(versionCmd(version, stdout), doctorCmd(a), restoreCmd(a), mcpCmd(a), internalCmd(a))
 	if err := bindOperations(root, reg, a); err != nil {
 		return nil, nil, err
 	}

@@ -611,7 +611,11 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				head = d.head
 				f := AuditExportFile{Day: day, File: filepath.Join(dir, auditFileName(day)), Events: d.events, FirstEventID: d.first,
 					LastEventID: d.last, SHA256: sha256Hex(d.content), ChainHead: d.head, State: "written"}
-				if recorded {
+				if recorded && p.Location == "" {
+					// Nachweis aus dem Original einer Wiederherstellung (A10,
+					// Ort geleert): Dessen Datei gehört nicht hierher.
+					f.State = "updated"
+				} else if recorded {
 					// Die frühere Datei muss unverändert sein, bevor sie ersetzt wird.
 					old := filepath.Join(p.Location, auditFileName(day))
 					got, err := fileSHA256(old)
@@ -767,6 +771,10 @@ type AuditVerifyOutput struct {
 	// LegacyDays sind Tage im Format 1 (ohne Kette); der nächste Export
 	// schreibt sie neu.
 	LegacyDays int `json:"legacy_days,omitempty"`
+	// OriginDays sind Tage, die das Original vor einer Wiederherstellung
+	// exportiert hat (A10, Ort geleert): Nur die Datenbank wird gegen die
+	// Prüfsumme des Nachweises geprüft; die Dateien liegen beim Original.
+	OriginDays int `json:"origin_days,omitempty"`
 }
 
 // AuditVerify vergleicht die exportierten Dateien mit ihren Prüfsummen, mit
@@ -796,7 +804,8 @@ func AuditVerify(repo AuditRepo) Operation {
       "required": ["day", "file", "problem"]}},
     "not_exported": {"type": "array", "items": {"type": "string"}},
     "chain_head": {"type": "string"},
-    "legacy_days": {"type": "integer"}
+    "legacy_days": {"type": "integer"},
+    "origin_days": {"type": "integer"}
   },
   "required": ["status", "days_checked", "problems", "not_exported"]
 }`),
@@ -822,10 +831,52 @@ func AuditVerify(repo AuditRepo) Operation {
 			chained := map[string]bool{}
 			var locations []string
 			head := auditChainGenesis
-			closedRows := 0 // Einträge der abgeschlossenen Tage (Zählabgleich, A-F4)
+			closedRows := 0       // Einträge der abgeschlossenen Tage (Zählabgleich, A-F4)
+			originBroken := false // ein Tag des Originals passt nicht mehr (A10)
 			for _, e := range done {
 				exported[e.Day] = e
 				out.DaysChecked++
+				if e.Location == "" {
+					// Wiederhergestellt (A10): Der Export gehört zum Original,
+					// sein Ort ist hier unbekannt. Geprüft werden nur die
+					// Zeilen der Datenbank gegen die Prüfsumme des Nachweises.
+					evs, err := loadAuditDay(ctx, repo, plan.asg, e)
+					if err != nil {
+						return nil, err
+					}
+					if _, ok := plan.asg.closed(e.Day); ok {
+						closedRows += len(evs)
+					}
+					d2, err := auditDayContent(evs, e.LastEventID, 2, head)
+					if err != nil {
+						return nil, err
+					}
+					switch {
+					case sha256Hex(d2.content) == e.SHA256:
+						head = d2.head
+						out.ChainHead = head
+					default:
+						d1, err := auditDayContent(evs, e.LastEventID, 1, "")
+						if err != nil {
+							return nil, err
+						}
+						switch {
+						case sha256Hex(d1.content) == e.SHA256:
+							out.LegacyDays++
+						case originBroken:
+							// Ohne Datei ist das Kettenende des Vortags nur aus der
+							// Datenbank bekannt; nach einer veränderten Zeile lässt
+							// sich dieser Tag nicht mehr prüfen.
+							add(e.Day, "", AuditChainBroken, 0)
+						default:
+							add(e.Day, "", AuditDatabaseChanged, 0)
+							originBroken = true
+						}
+						head = d2.head
+					}
+					out.OriginDays++
+					continue
+				}
 				if _, ok := manifests[e.Location]; !ok {
 					locations = append(locations, e.Location)
 					manifests[e.Location] = nil

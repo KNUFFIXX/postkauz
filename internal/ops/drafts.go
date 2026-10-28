@@ -124,6 +124,11 @@ var pushNotes = map[string]string{
 // pushHoldNote erklärt, warum der Push einen Entwurf des Menschen
 // zurückhält (drafts.push_hold, A-F3).
 func pushHoldNote(reason string) string {
+	if reason == store.RestoreReason {
+		// A10: Eine Wiederherstellung legt nichts still ab.
+		return "not pushed: this data directory was restored from a backup, and the original may have stored this draft already; " +
+			"check it, then change it (draft edit) or submit it yourself (draft request) to store it from here"
+	}
 	return "not pushed: an API key changed this draft last and is no longer valid (" + reason + "); " +
 		"check the text, then change it (draft edit) or submit it yourself (draft request) to store it again"
 }

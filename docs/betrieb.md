@@ -1,6 +1,6 @@
 # Betrieb von PostKauz
 
-Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: T2 (0.3.0-alpha.3, 28.10.2026).
+Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: T2 (0.3.0-alpha.3, 28.10.2026); Abschnitt 2 seit T3.
 
 Die Beispiele nehmen an:
 
@@ -247,7 +247,117 @@ In Claude genügt ein Satz wie „Synchronisiere bitte mein Postfach privat jetz
 
 ## 2. Sicherung und Wiederherstellung
 
-Folgt mit Teil T3 (`backup`, `restore`, Löschkonzept).
+**Wichtig vorab: Eine Sicherung ist dein ganzes Mailarchiv, unverschlüsselt.** PostKauz verschlüsselt sie nicht selbst. Lege sie deshalb nur auf ein **verschlüsseltes** Laufwerk (unter Windows BitLocker bzw. „BitLocker To Go“ für USB-Sticks, unter Linux LUKS, sonst ein VeraCrypt-Container) oder verschlüssele den Strom mit `age` oder `restic` (Schritt 2.4). Jede Sicherung legt dazu die Datei `ENCRYPT-ME.txt` in den Zielordner und warnt am Ende.
+
+Die Beispiele nehmen an: Der verschlüsselte USB-Stick ist entsperrt und heißt `E:`.
+
+### 2.1 Was in einer Sicherung steckt
+
+- die Datenbank als Schnappschuss (`postkauz-<Zeit>.db`); der Dauer-Sync darf dabei weiterlaufen,
+- alle Mails und Anhänge (Ordner `blobs`), auch die Anhänge deiner Entwürfe,
+- die Audit-Archive (`audit-archive-….db`), falls es welche gibt,
+- `manifest.json`: Liste aller Dateien mit Größe und Prüfsumme (SHA-256),
+- `ENCRYPT-ME.txt`: der Hinweis auf die Verschlüsselung.
+
+**Nicht** darin: deine Passwörter (sie liegen im Schlüsselbund von Windows), das Log, `config.toml` und `policy.toml` (kopiere sie selbst dazu) und der Ordner des Audit-Exports (der ist schon dein zweiter Ort).
+
+### 2.2 Erste Sicherung
+
+```powershell
+C:\PostKauz\postkauz.exe backup create --to E:\PostKauz-Sicherung --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+```
+
+Erwartet (Zahlen und Zeit bei dir anders):
+
+```
+backup written to E:\PostKauz-Sicherung
+  database:  postkauz-20261028T101500Z.db (schema 22)
+  blobs:     52311 (copied 52311, already there 0; 3.1 GB copied)
+  manifest:  E:\PostKauz-Sicherung\manifest.json, 52312 files (4.5 GB), sha256 4f0c…
+  restore:   restore --from <backup folder> --data-dir <new folder>
+warning: the backup is not encrypted; keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or encrypt it (age, restic); see ENCRYPT-ME.txt
+```
+
+Die Warnung kommt bei **jeder** Sicherung, auch wenn der Stick verschlüsselt ist: PostKauz kann das nicht prüfen. Der Zielordner muss neu, leer oder eine frühere Sicherung sein; einen Ordner im Datenverzeichnis lehnt das Programm ab (`error: backup: target not allowed: …`, nichts wird geschrieben).
+
+### 2.3 Weitere Sicherungen in denselben Ordner
+
+Dasselbe Kommando wie in 2.2. Kopiert werden nur Mails und Anhänge, die neu dazugekommen sind; die Datenbank wird jedes Mal neu gesichert und der alte Schnappschuss danach gelöscht. Erwartet zum Beispiel:
+
+```
+  blobs:     52340 (copied 29, already there 52311; 2.3 MB copied)
+  replaced:  1 database snapshot of the earlier backup
+```
+
+Ohne neue Mails steht dort `copied 0`. Wer mehrere Stände aufheben will, nimmt mehrere Ordner (z. B. einen je Monat).
+
+Ab und zu prüfen, ob die Sicherung noch vollständig und unverändert ist (liest alles, schreibt nichts):
+
+```powershell
+C:\PostKauz\postkauz.exe restore --from E:\PostKauz-Sicherung --data-dir C:\PostKauz\pruefung --dry-run
+```
+
+Erwartet: `dry run: the backup of … is complete and unchanged (…); … would be created; nothing was written`. Der Ordner `pruefung` entsteht dabei nicht.
+
+### 2.4 Sicherung als verschlüsselter Strom (age, restic)
+
+Statt eines Ordners schreibt `--tar -` einen Tar-Strom auf die Standardausgabe; die Zusammenfassung und die Warnung stehen dann auf dem Bildschirm (stderr). Das ist der Weg für Linux und macOS:
+
+```sh
+postkauz backup create --tar - | age -r age1… > postkauz-2026-10-28.tar.age
+postkauz backup create --tar - | restic backup --stdin --stdin-filename postkauz.tar
+```
+
+Erwartet: `backup written as a tar stream to standard output` und die Warnung. Während des Laufs liegt der Datenbank-Schnappschuss kurz im Datenverzeichnis (Ordner `backup-tmp`, braucht so viel freien Platz wie die Datenbank) und wird danach gelöscht. **Unter Windows** in der alten PowerShell 5 nicht pipen (sie verändert Binärdaten); dort ist `--to` auf ein BitLocker-Laufwerk der einfache Weg.
+
+### 2.5 Wiederherstellen
+
+Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverzeichnis, das gerade benutzt wird (aus `config.toml`, der Umgebung oder dem Standardort), schreibt `restore` nie.
+
+1. Aus einem Tar-Strom erst entpacken, z. B. `mkdir wieder && age -d -i schluessel.txt postkauz-2026-10-28.tar.age | tar -x -C wieder`. Ein Sicherungsordner aus 2.2 braucht das nicht.
+2. Wiederherstellen:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe restore --from E:\PostKauz-Sicherung --data-dir C:\PostKauz\data-neu --config C:\PostKauz\config.toml
+   ```
+
+   Erwartet (Auszug):
+
+   ```
+   restored:  backup of 2026-10-28T10:15:00Z (program 0.3.0-…, schema 22) from E:\PostKauz-Sicherung
+   into:      C:\PostKauz\data-neu (schema 22)
+   manifest:  sha256 4f0c…; 52312 files (4.5 GB) checked: database, 52311 blobs, 0 audit archives
+   identity:  new data directory id; the keyring entries of the original are not used here
+   …
+   blobs:
+     …
+     result:  ok
+   ```
+
+   Vorher prüft `restore` jede Datei gegen das Manifest. Fehlt eine Datei oder wurde eine verändert, bricht es ab (`error: backup: invalid backup: …`) und entfernt, was es angelegt hatte. Ist der Zielordner nicht leer: `error: backup: target not allowed: … is not empty`.
+3. **Passwörter neu hinterlegen.** Die Kopie benutzt die gespeicherten Passwörter des Originals absichtlich nicht (`doctor` meldet `account privat has no password`):
+   `C:\PostKauz\postkauz.exe account set privat --password-stdin --data-dir C:\PostKauz\data-neu` (bei Microsoft-Konten `account login privat`).
+4. Prüfen: `C:\PostKauz\postkauz.exe doctor --blobs=all --data-dir C:\PostKauz\data-neu` — erwartet `result:  ok`; eine Suche, die du kennst, liefert dieselben Treffer wie vorher.
+5. Soll die Kopie ab jetzt dein Datenverzeichnis sein: alles anhalten wie in 1.7 (Schritte 1 bis 3), dann die Aufgaben mit `-DataDir C:\PostKauz\data-neu` neu registrieren (1.3, 1.8) und in der Claude-Konfiguration `--data-dir` anpassen. Das alte Verzeichnis erst löschen, wenn alles läuft.
+
+### 2.6 Was die Kopie absichtlich anders macht
+
+Eine Wiederherstellung ist eine **neue Instanz** (A10). Nichts darin schreibt von selbst auf einen Mailserver:
+
+- **Neue Kennung:** Die Kopie sucht ihre Passwörter unter eigenen Namen im Schlüsselbund; die Einträge des Originals liest, verschiebt und löscht sie nie. Mit `--keep-identity` behält sie die Kennung des Originals und benutzt dessen Passwörter. Das ist nur gedacht, wenn das Original verloren ist und du auf demselben Rechner weiterarbeiten willst; Original und Kopie dürfen dann nicht beide laufen.
+- **Offene Aufträge sind geschlossen:** Entwürfe ablegen, markieren, verschieben, angeforderte Syncs (`failed`, Grund `restored`); offene Anträge auf den Papierkorb sind abgelehnt. Entwürfe, die noch in den Entwürfe-Ordner sollten, hält die Kopie zurück: `draft show <id>` sagt warum; `draft edit` oder `draft request` gibt sie frei (vorher prüfen, ob das Original sie schon abgelegt hat).
+- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …`), nie den des Originals.
+
+### 2.7 Original und Kopie auf demselben Rechner
+
+Beide dürfen nebeneinander liegen. Danach zeigt `audit verify` in beiden `ok` (ohne `changed`):
+
+```powershell
+C:\PostKauz\postkauz.exe audit verify --data-dir C:\PostKauz\data
+C:\PostKauz\postkauz.exe audit verify --data-dir C:\PostKauz\data-neu
+```
+
+Erwartet jeweils eine Zeile, die mit `ok:` beginnt.
 
 ## 3. Microsoft-Postfächer
 

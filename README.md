@@ -174,6 +174,7 @@ make build                       # builds bin/postkauz (and the alias bin/pk)
 ./bin/postkauz policy show --key assistant-1                # what that key may do
 ./bin/postkauz audit --since 1h                             # who called what, never message content
 ./bin/postkauz audit export --to /mnt/backup/audit && ./bin/postkauz audit verify
+./bin/postkauz backup create --to /media/usb/postkauz-backup  # unencrypted: use an encrypted drive (see Backup)
 ```
 
 Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and use `account add --password-from-env`. Configuration and paths: `docs/cli.md`, section 5; query language: `docs/cli.md`, section 2d. `sync` also extracts attachment text and builds the search index; `search` reads the local mirror only.
@@ -328,6 +329,21 @@ The service expects the program at `~/.local/bin/postkauz`; change `ExecStart` w
 `postkauz doctor` shows the last export (line `audit:`) and warns when days older than two days were not exported.
 
 Test servers (Dovecot, Stalwart, GreenMail) for development: `make testmail-up`. Never develop against a real mailbox.
+
+## Backup
+
+A backup is your whole mail archive, **unencrypted**: PostKauz does not encrypt it. Keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or pipe it into `age` or `restic`. Step by step (German): `docs/betrieb.md`, section 2.
+
+```sh
+postkauz backup create --to /media/usb/postkauz-backup     # database snapshot, all blobs, manifest.json with SHA-256, ENCRYPT-ME.txt
+postkauz backup create --to /media/usb/postkauz-backup     # again: copies only new blobs ("copied 0" without new mail)
+postkauz backup create --tar - | age -r age1... > postkauz.tar.age   # same content as a tar stream
+postkauz restore --from /media/usb/postkauz-backup --data-dir ~/postkauz-restored
+```
+
+- `backup create` runs next to `sync --watch` (consistent snapshot via `VACUUM INTO`), is for humans only (no API key, no MCP tool), refuses targets inside the data directory and warns after every run that the backup is not encrypted.
+- `restore` writes only into a new or empty folder, never into the configured or default data directory. It checks every file against the manifest first and stops on any difference, leaving nothing behind; then it migrates the database and runs `doctor --blobs=all`.
+- A restored copy is a **new instance**: new data directory id, so it never reads or moves the keyring entries of the original (store passwords again with `account set <name> --password-stdin`); open server jobs, mailbox actions and requests are closed and queued drafts are held, so nothing writes to a mail server on its own. `--keep-identity` keeps the id (only to replace a lost data directory). Give the copy its own audit export folder.
 
 ## Security
 

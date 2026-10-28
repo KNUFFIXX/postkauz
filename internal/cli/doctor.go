@@ -626,7 +626,11 @@ func printDoctor(w io.Writer, r DoctorReport) {
 			dir = "not set"
 		}
 		if r.AuditLastExport != "" {
-			fmt.Fprintf(w, "audit:     last export %s to %s; %s not exported yet [audit.export_dir = %s]\n", r.AuditLastExport, r.AuditExportLocation, plural(r.AuditDaysNotExported, "day", "days"), dir)
+			loc := r.AuditExportLocation
+			if loc == "" {
+				loc = "the location of the data directory this one was restored from"
+			}
+			fmt.Fprintf(w, "audit:     last export %s to %s; %s not exported yet [audit.export_dir = %s]\n", r.AuditLastExport, loc, plural(r.AuditDaysNotExported, "day", "days"), dir)
 		} else {
 			fmt.Fprintf(w, "audit:     never exported; %s not exported yet [audit.export_dir = %s]\n", plural(r.AuditDaysNotExported, "day", "days"), dir)
 		}

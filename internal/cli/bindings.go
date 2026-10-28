@@ -63,6 +63,13 @@ type binding struct {
 	// mit demselben Schlüssel und wird mit der Bindung dieser Operation
 	// ausgegeben (mit --json als zweite Zeile).
 	then func(cmd *cobra.Command, out any) (op string, input json.RawMessage, ok bool)
+	// stdoutBusy: stdout trägt in diesem Aufruf schon Daten (backup create
+	// --tar -: den Tar-Strom); die Ausgabe der Operation (Text oder JSON)
+	// geht dann auf stderr.
+	stdoutBusy func(cmd *cobra.Command) bool
+	// warn liefert Warnungen, die nach Erfolg immer auf stderr gehen, auch
+	// mit --json (backup create: die Sicherung ist unverschlüsselt, E7).
+	warn func(out any) []string
 }
 
 var bindings = []binding{
@@ -118,6 +125,9 @@ var bindings = []binding{
 	{op: "audit.verify", path: []string{"audit", "verify"}, args: cobra.NoArgs, human: renderAuditVerify,
 		check: checkAuditVerify},
 	{op: "policy.get", path: []string{"policy", "show"}, args: cobra.NoArgs, human: renderPolicy},
+	{op: "backup.create", path: []string{"backup", "create"}, use: "--to <folder> | --tar -", args: cobra.NoArgs, flags: backupCreateFlags,
+		input: backupCreateInput, human: renderBackupCreate, stdoutBusy: backupToStdout, warn: backupWarnings,
+		covers: []string{"to", "tar"}},
 }
 
 // humanKey ist der Schlüssel, unter dem die CLI ohne --key handelt: der
@@ -224,22 +234,31 @@ func (a *app) runBinding(cmd *cobra.Command, args []string, b binding, op ops.Op
 		}
 		return err
 	}
+	stdout := a.stdout
+	if b.stdoutBusy != nil && b.stdoutBusy(cmd) {
+		stdout = a.stderr
+	}
 	a.log.Info("operation", "op", b.op, "dry_run", res.Decision.DryRun)
 	if os.Getenv(ops.EnvTestPanic) == "cli:"+b.op {
 		panic(fmt.Sprintf("injected test panic with output %+v", res.Output))
 	}
 	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 		if b.jsonOut != nil {
-			err = b.jsonOut(cmd, a.stdout, res.Output)
+			err = b.jsonOut(cmd, stdout, res.Output)
 		} else {
-			err = json.NewEncoder(a.stdout).Encode(res.Output)
+			err = json.NewEncoder(stdout).Encode(res.Output)
 		}
 	} else {
-		err = b.human(a.stdout, res.Output)
+		err = b.human(stdout, res.Output)
 		if err == nil && b.notes != nil {
 			for _, n := range b.notes(res.Output) {
 				fmt.Fprintf(a.stderr, "note: %s\n", termLine(n))
 			}
+		}
+	}
+	if err == nil && b.warn != nil {
+		for _, w := range b.warn(res.Output) {
+			fmt.Fprintf(a.stderr, "warning: %s\n", termLine(w))
 		}
 	}
 	if err == nil && b.check != nil {
