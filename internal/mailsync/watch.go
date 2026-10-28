@@ -50,6 +50,11 @@ type WatchOptions struct {
 	// OnDrafts bekommt das Ergebnis jeder Ablage zwischen zwei Läufen
 	// (die zu Beginn eines Laufs steht in dessen Report).
 	OnDrafts func(d ops.SyncDrafts, err error)
+	// BeforeFullRound läuft vor jedem Lauf über alle Ordner außer dem
+	// ersten (T2 Punkt 7): Der Runner schließt dort erneut tote Audit-Starts
+	// des Kontos ab, die beim Holen der Sperre noch zu jung waren
+	// (store.DeadStartAge); ein sync --watch hält die Sperre stundenlang.
+	BeforeFullRound func(ctx context.Context)
 }
 
 // Watch synct sofort, danach alle Interval und zusätzlich bei jeder
@@ -97,8 +102,13 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 	}
 
 	var lastFull time.Time // Beginn des letzten erfolgreichen vollen Abgleichs
+	firstRound := true
 	round := func(only []string) error {
 		ro := o.Options
+		if only == nil && !firstRound && o.BeforeFullRound != nil {
+			o.BeforeFullRound(ctx)
+		}
+		firstRound = false
 		start := time.Now()
 		if only != nil {
 			ro.Mailboxes = only

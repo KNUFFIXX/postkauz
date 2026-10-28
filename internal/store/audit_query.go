@@ -230,11 +230,16 @@ func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, busy ...
 	return n, err
 }
 
-// deadStartMinAge: Ein offener Start eines anderen Laufs wird erst
-// abgeschlossen, wenn er so alt ist (ein gleichzeitig startender Lauf
-// desselben Kontos, der an der Sperre scheitert, schreibt seinen Abschluss
-// selbst).
-const deadStartMinAge = time.Minute
+// DeadStartAge: So alt muss ein offener Start sein, bevor ein anderer
+// Lauf desselben Kontos ihn als tot abschließt (CloseDeadStarts), und ab
+// diesem Alter zählt doctor einen offenen Start als abgebrochenen Aufruf.
+// Bis T1b galt für das Abschließen eine Minute: Ein sync.run oder
+// import.run, der vor dem Holen der Kontosperre länger brauchte (langsamer
+// Schlüsselbund, Discover über eine große Quelle), wurde von einem später
+// gestarteten Lauf als process_ended abgeschlossen, und sein echter
+// Abschluss scheiterte am UNIQUE-Index audit_events_ref (T2 Punkt 7,
+// Prüfsitzung DRACO-PK09). Beide Werte sind seit T2 dieselbe Konstante.
+const DeadStartAge = 10 * time.Minute
 
 // CloseDeadStarts schließt die offenen Starts von Sync und Import
 // (LongRunOps) des Kontos account ab (A-F9). Aufrufen nur, während man die
@@ -244,25 +249,78 @@ const deadStartMinAge = time.Minute
 // mit ref_id, Zeitstempel now, ohne Dauer; Akteur, Schlüssel, Scope,
 // Operation, Parameter und Ziele wie der Start (Festlegung 1). Nur
 // anhängen. exceptID ist der eigene Start (0 = keiner); geschlossen werden
-// nur ältere Starts, die mindestens deadStartMinAge alt sind. Liefert die
+// nur ältere Starts, die mindestens DeadStartAge alt sind. Liefert die
 // Zahl der Abschlüsse.
-func (s *SQLite) CloseDeadStarts(ctx context.Context, account string, exceptID int64, now time.Time) (int, error) {
-	q := `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation, params_redacted, targets, result, reason,
-		dry_run, duration_ms, policy_version, ref_id)
-		SELECT ?, a.actor_type, a.api_key_id, a.scope, a.operation, a.params_redacted, a.targets, 'error', 'process_ended',
-		a.dry_run, NULL, a.policy_version, a.id FROM audit_events a
+//
+// Ein Start mit mehreren Konten (sync --watch --all, T2) gehört einem
+// Prozess, der mehrere Kontosperren hält. Er wird nur abgeschlossen, wenn
+// busy für keines seiner anderen Konten true meldet (busy prüft die Sperre
+// des Kontos; nil = keines gilt als belegt). So schließt ein Lauf für
+// Konto a nicht den Start eines --all-Prozesses, der für Konto b noch
+// läuft.
+func (s *SQLite) CloseDeadStarts(ctx context.Context, account string, exceptID int64, now time.Time, busy func(account string) bool) (int, error) {
+	q := `SELECT a.id, a.targets FROM audit_events a
 		WHERE ` + openStart + ` AND ` + longRunIn() + ` AND ` + startOfAccount + ` AND a.ts <= ?`
-	args := []any{now.UnixMilli(), account, now.Add(-deadStartMinAge).UnixMilli()}
+	args := []any{account, now.Add(-DeadStartAge).UnixMilli()}
 	if exceptID > 0 {
 		q += ` AND a.id < ?`
 		args = append(args, exceptID)
 	}
-	res, err := s.db.ExecContext(ctx, q+` ORDER BY a.id`, args...)
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY a.id`, args...)
 	if err != nil {
 		return 0, fmt.Errorf("store: close dead starts: %w", err)
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		var targets string
+		if err := rows.Scan(&id, &targets); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("store: close dead starts: %w", err)
+		}
+		if busy != nil && otherAccountBusy(targets, account, busy) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("store: close dead starts: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("store: close dead starts: %w", err)
+	}
+	n := 0
+	for _, id := range ids {
+		// Je Start eine Anweisung; NOT EXISTS hält sie wiederholbar, wenn ein
+		// anderer Prozess denselben Start (mehrere Konten) gleichzeitig
+		// abschließt.
+		res, err := s.db.ExecContext(ctx, `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation, params_redacted,
+			targets, result, reason, dry_run, duration_ms, policy_version, ref_id)
+			SELECT ?, a.actor_type, a.api_key_id, a.scope, a.operation, a.params_redacted, a.targets, 'error', 'process_ended',
+			a.dry_run, NULL, a.policy_version, a.id FROM audit_events a
+			WHERE a.id = ? AND NOT EXISTS (SELECT 1 FROM audit_events c WHERE c.ref_id = a.id)`, now.UnixMilli(), id)
+		if err != nil {
+			return n, fmt.Errorf("store: close dead starts: %w", err)
+		}
+		k, _ := res.RowsAffected()
+		n += int(k)
+	}
+	return n, nil
+}
+
+// otherAccountBusy meldet, ob ein Ziel account:<x> mit x != account belegt
+// ist (busy).
+func otherAccountBusy(targets, account string, busy func(string) bool) bool {
+	var ts []string
+	if json.Unmarshal([]byte(targets), &ts) != nil {
+		return false
+	}
+	for _, t := range ts {
+		if name, ok := strings.CutPrefix(t, "account:"); ok && name != account && busy(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // LastAuditEvent liefert den letzten Eintrag (größte ID) der Operation op

@@ -145,6 +145,14 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 		return out, err
 	}
 	err = eng.Watch(ctx, WatchOptions{Options: so, Interval: o.Interval, FullCheckInterval: o.FullCheckInterval, JobsInterval: o.JobsInterval,
+		// Tote Starts, die beim Holen der Sperre noch jünger als
+		// store.DeadStartAge waren, später erneut prüfen (T2 Punkt 7); den
+		// eigenen Start nie.
+		BeforeFullRound: func(ctx context.Context) {
+			if locked {
+				r.closeDeadStarts(ctx, a, o.AuditID)
+			}
+		},
 		// Fortschritt der Ablage meldet die Engine selbst (Event drafts).
 		OnDrafts: func(d ops.SyncDrafts, _ error) { addDrafts(&out, &d) },
 		OnRound: func(rep Report, err error) {
@@ -173,7 +181,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 // hart beendeter Läufe des Kontos ab (A-F9; store.CloseDeadStarts). Ein
 // Fehler hält den Lauf nicht auf (doctor zählt den Start dann weiter).
 func (r *Runner) closeDeadStarts(ctx context.Context, a store.Account, auditID int64) {
-	n, err := r.Store.CloseDeadStarts(ctx, a.Name, auditID, time.Now())
+	n, err := r.Store.CloseDeadStarts(ctx, a.Name, auditID, time.Now(), r.otherBusy(ctx))
 	switch {
 	case err != nil:
 		r.log().Warn("could not close audit entries of earlier runs", "account", a.Name, "error", ops.ErrorKinds(err))
@@ -184,11 +192,40 @@ func (r *Runner) closeDeadStarts(ctx context.Context, a store.Account, auditID i
 
 func (r *Runner) log() *slog.Logger { return (&Engine{Log: r.Log}).log() }
 
-func (r *Runner) lock(a store.Account) (*accountLock, error) {
+// lockDir ist der Ordner der Sperrdateien ("" = ohne Sperre, :memory:).
+func (r *Runner) lockDir() string {
 	dir := r.LockDir
 	if dir == "" && r.Store != nil && r.Store.Path() != "" {
 		dir = filepath.Dir(r.Store.Path())
 	}
+	return dir
+}
+
+// otherBusy liefert für store.CloseDeadStarts die Prüfung, ob ein anderes
+// Konto eines Starts mit mehreren Konten (sync --watch --all) gerade von
+// einem anderen Prozess gesperrt ist. Sperren dieses Prozesses zählen
+// nicht (ein neu gestarteter --all-Prozess schließt den Start seines
+// abgestürzten Vorgängers ab); ein unbekanntes Konto (gelöscht) auch
+// nicht; jeder andere Fehler zählt als belegt (im Zweifel nicht schließen).
+func (r *Runner) otherBusy(ctx context.Context) func(string) bool {
+	dir := r.lockDir()
+	return func(name string) bool {
+		if dir == "" {
+			return false
+		}
+		acc, err := r.Store.AccountByName(ctx, name)
+		if errors.Is(err, store.ErrAccountNotFound) {
+			return false
+		}
+		if err != nil {
+			return true
+		}
+		return lockedElsewhere(dir, acc.ID)
+	}
+}
+
+func (r *Runner) lock(a store.Account) (*accountLock, error) {
+	dir := r.lockDir()
 	if dir == "" {
 		return nil, nil
 	}

@@ -482,8 +482,10 @@ const auditExportStale = 48 * time.Hour
 // auditUnfinishedAge: Ein Start-Eintrag ohne Abschluss, der älter ist,
 // zählt als abgebrochener Aufruf (A1). Ausnahme sind Sync und Import eines
 // Kontos, dessen Sperre gerade gehalten wird: Ein sync --watch ist ein
-// einziger Aufruf über Stunden (store.AuditOpenStarts).
-const auditUnfinishedAge = 10 * time.Minute
+// einziger Aufruf über Stunden (store.AuditOpenStarts). Seit T2 derselbe
+// Wert, ab dem ein Lauf tote Starts seines Kontos abschließt
+// (store.DeadStartAge).
+const auditUnfinishedAge = store.DeadStartAge
 
 // doctorAudit meldet den Stand des Audit-Exports und abgebrochene Aufrufe.
 func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now time.Time) {
