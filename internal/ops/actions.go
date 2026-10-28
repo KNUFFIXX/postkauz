@@ -31,6 +31,7 @@ type ActionStore interface {
 	MessageTags(ctx context.Context, ids []int64) (map[int64][]string, error)
 	ListTags(ctx context.Context, accountID int64) ([]store.TagCount, error)
 	CopyAt(ctx context.Context, mailboxID int64, uid uint32) (store.ServerCopy, string, bool, error)
+	Approval(ctx context.Context, id int64) (store.Approval, error)
 }
 
 // actionOps bündelt die Abhängigkeiten der Aktions-Operationen.
@@ -264,7 +265,7 @@ func (o *actionOps) create(ctx context.Context, call Call, r actions.Request, ou
 		out.ApprovalID = act.ApprovalID
 		out.NextStep = nextApproval(act.ID)
 		if act.ApprovalID > 0 {
-			if ap, err := o.drafts.Store.Approval(ctx, act.ApprovalID); err == nil {
+			if ap, err := o.st.Approval(ctx, act.ApprovalID); err == nil {
 				out.ExpiresAt = rfc3339(ap.ExpiresAt)
 			}
 		}
@@ -930,6 +931,9 @@ func DraftsCleanupCopies(d Deps) Operation {
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
+			}
+			if o.drafts == nil {
+				return nil, errors.New("drafts are not configured")
 			}
 			dr, err := o.drafts.Store.Draft(ctx, in.DraftID)
 			if err != nil {

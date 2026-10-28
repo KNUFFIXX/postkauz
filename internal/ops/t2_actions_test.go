@@ -150,6 +150,21 @@ func TestMessagesTrashNeedsHuman(t *testing.T) {
 	}
 }
 
+// Ohne Entwurfsdienst (Deps.Drafts nil) stellt trash den Antrag trotzdem
+// und nennt die Frist (vorher nil-Zeiger, gefunden im Integrationstest).
+func TestMessagesTrashWithoutDrafts(t *testing.T) {
+	e := newContractEnv(t)
+	e.deps.Drafts = nil
+	x, _ := actionExec(t, e)
+	res, err := execJSON(t, x, operatorKey, "messages.trash", `{"account":"demo","ids":[1]}`, false)
+	if err != nil || res.Output.(ActionOutput).ExpiresAt == "" {
+		t.Fatalf("trash = %+v %v", res.Output, err)
+	}
+	if _, err := execJSON(t, x, humanKey, "drafts.cleanup_copies", `{"draft_id":1}`, false); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("cleanup without drafts = %v", err)
+	}
+}
+
 // A14: Auch mit dry_run_default bekommt der Agent needs_approval, ohne
 // dass ein Antrag entsteht.
 func TestMessagesTrashDryRunDefault(t *testing.T) {
