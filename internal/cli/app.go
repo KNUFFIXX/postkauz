@@ -187,7 +187,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if r, ok := deps.Runner.(*mailsync.Runner); ok {
 		r.Pusher, r.DraftMailbox = ops.NewDraftPusher(deps), a.cfg.Draft.Mailbox
 		// mailbox_action (T2, E1): ebenso nur der Sync.
-		r.Actions = &actions.Runner{Store: st, Blobs: blobs, Origin: ops.ActionOriginCheck(st), Log: a.log}
+		// V3: Vor der Ausführung gelten die Regeln der Policy, die dieser
+		// Prozess geladen hat (ein Dauerläufer sieht eine geänderte
+		// policy.toml erst nach seinem Neustart).
+		runRules := a.policy.Rules()
+		r.Actions = &actions.Runner{Store: st, Blobs: blobs, Origin: ops.ActionOriginCheck(st, &runRules), Log: a.log}
 		// Job sync (T2, sync.request/mail_sync_now): Der Sync führt
 		// angeforderte Läufe aus bzw. erledigt sie mit.
 		if sj := ops.NewSyncJobs(deps); sj != nil {

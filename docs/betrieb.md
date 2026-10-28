@@ -210,6 +210,17 @@ Was sich für vorhandene API-Schlüssel ändert (Nachbesserung T2, V20):
 3. **Soll ein Agent markieren dürfen**, bekommt er einen eigenen Schlüssel der Rolle `operator` (der kann dann auch verschieben und den Papierkorb beantragen; mit `--scopes` verengen, z. B. `key create --name markierer --role operator --scopes mail:read,mail:search,mail:mark`). Ein `operator`- oder `admin`-Schlüssel, der vor diesem Stand angelegt wurde, hat `mail:mark` nicht (die Scopes stehen je Schlüssel in der Datenbank); neu anlegen.
 4. Prüfen: `postkauz policy show --key <name>` zeigt `messages.mark  mail:mark` nur bei Schlüsseln, die es dürfen.
 
+### 1.7b `policy.toml` ändern (seit T3)
+
+Eine geänderte `policy.toml` (z. B. `[move] agent_may = "none"` oder ein neuer Abschnitt `[keys.<name>]`) gilt
+
+- **für neue Anfragen sofort:** Jedes Kommando und jeder MCP-Server, der danach startet, liest sie neu (die Claude-App startet den MCP-Server je Sitzung; im Zweifel die App neu starten);
+- **für schon eingereihte Aktionen erst nach einem Neustart des Dauer-Syncs:** `sync --watch` liest die Datei nur beim Start und prüft jede wartende Aktion eines Schlüssels vor der Ausführung gegen die Regeln, die er geladen hat (V3). Was die neue Datei verbietet, scheitert dann mit dem Grund (z. B. `policy_forbids`, in `action show <nr>`), ohne den Server zu berühren.
+
+Also nach jeder Änderung: Dauer-Sync neu starten (1.6, `Stop-ScheduledTask …` und `Start-ScheduledTask …`). Prüfen: `C:\PostKauz\postkauz.exe doctor --data-dir C:\PostKauz\data` zeigt die neue Policy-Version.
+
+Gut zu wissen (V8, Betreiber 28.10.2026): In Ordner mit Rolle Spam (`junk`), Entwürfe (`drafts`) oder Gesendet (`sent`) verschiebt nur der Mensch an der Kommandozeile ohne `--key`. Ein Agent bekommt `denied (target_role_human_only)`, auch wenn er den Ordner per Namen nennt.
+
 ### 1.8 Zusammenspiel mit dem Audit-Export
 
 Beide Aufgaben vertragen sich: Der Audit-Export liest nur das Audit und schreibt Dateien an den zweiten Ort; der Dauer-Sync hält nur die Sperren der Konten. Richte den Export ein, wie im README („Daily audit export“) beschrieben, mit **denselben** Pfaden:

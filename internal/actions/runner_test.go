@@ -220,9 +220,9 @@ func TestRunnerRefusesRevokedOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := &fakeRemote{}
-	r := &Runner{Store: st, Blobs: blobs(), Origin: func(_ context.Context, key string, scope policy.Scope, approved bool) (string, error) {
-		if key != "key:weg" || scope != policy.ScopeMailMark || approved {
-			t.Errorf("origin check got %s %s %v", key, scope, approved)
+	r := &Runner{Store: st, Blobs: blobs(), Origin: func(_ context.Context, o Origin) (string, error) {
+		if o.KeyID != "key:weg" || o.Scope != policy.ScopeMailMark || o.Approved || o.Facts.Action != policy.ActionMark || o.Facts.Targets != 1 {
+			t.Errorf("origin check got %+v", o)
 		}
 		return "key_revoked", nil
 	}}

@@ -318,7 +318,10 @@ func MessagesMark(d Deps) Operation {
 }
 
 // moveRoles sind die Rollen, die messages.move als Ziel nennt (ohne
-// trash: der Papierkorb geht nur über messages.trash).
+// trash: der Papierkorb geht nur über messages.trash). junk, sent und
+// drafts nur für den Menschen ohne Schlüssel (policy.HumanOnlyMoveRoles,
+// V8); das Schema ist für alle Oberflächen gleich, deshalb lehnt die
+// Policy ab (target_role_human_only), nicht das Schema.
 var moveRoles = []string{"inbox", "archive", "all", "junk", "sent", "drafts"}
 
 // MessagesMove verschiebt Nachrichten (S3.2, R2, Scope mail:move; nur mit
@@ -333,7 +336,7 @@ func MessagesMove(d Deps) Operation {
   "type": "object",
   "properties": {` + accountProp + `, ` + idsSchema + `,
     "mailbox": {"type": "string", "minLength": 1, "maxLength": 1000, "description": "target mailbox path"},
-    "role": {"type": "string", "enum": ["inbox", "archive", "all", "junk", "sent", "drafts"], "description": "target mailbox by role (archive, or all = Gmail All Mail)"},
+    "role": {"type": "string", "enum": ["inbox", "archive", "all", "junk", "sent", "drafts"], "description": "target mailbox by role (archive, or all = Gmail All Mail); junk, sent and drafts only for a human without a key"},
     ` + fromProp + `, ` + confirmProp + `},
   "required": ["ids"],
   "additionalProperties": false
@@ -1002,9 +1005,17 @@ func DraftsCleanupCopies(d Deps) Operation {
 // abgelaufener Schlüssel hält eine Aktion auf, außer ein Mensch hat sie
 // freigegeben (T2 Punkt 7, wie bei Entwürfen). "cli" und "system" sind
 // keine Schlüssel.
-func ActionOriginCheck(keys KeyRepo) actions.OriginCheck {
-	return func(ctx context.Context, keyID string, scope policy.Scope, approved bool) (string, error) {
-		name, ok := strings.CutPrefix(keyID, "key:")
+//
+// V3 der Nachbesserung T2: Danach prüft sie die Aktion noch einmal mit
+// policy.CheckInput gegen rules, die Regeln der Policy-Datei, die der
+// ausführende Prozess (sync, sync --watch) beim Start geladen hat. Wurde
+// [move] agent_may, [delete] agent_may oder [keys.<name>] seit dem Antrag
+// verengt, scheitert die Aktion mit dem Grund der Policy, auch nach einer
+// Freigabe (fail closed). Ohne Regeln (nil) läuft keine Aktion eines
+// Schlüssels (policy_rules_missing).
+func ActionOriginCheck(keys KeyRepo, rules *policy.Rules) actions.OriginCheck {
+	return func(ctx context.Context, o actions.Origin) (string, error) {
+		name, ok := strings.CutPrefix(o.KeyID, "key:")
 		if !ok {
 			return "", nil
 		}
@@ -1019,11 +1030,18 @@ func ActionOriginCheck(keys KeyRepo) actions.OriginCheck {
 		case "revoked":
 			return "key_revoked", nil
 		case "expired":
-			if !approved {
+			if !o.Approved {
 				return "key_expired", nil
 			}
 		}
-		if dec := policy.Check(PolicyKey(k), policy.Requirement{Name: "actions.run", Scope: scope, Risk: policy.R2}, false); !dec.Allowed() {
+		pk := PolicyKey(k)
+		if dec := policy.Check(pk, policy.Requirement{Name: "actions.run", Scope: o.Scope, Risk: policy.R2}, false); !dec.Allowed() {
+			return dec.Reason, nil
+		}
+		if rules == nil {
+			return "policy_rules_missing", nil
+		}
+		if dec := policy.CheckInput(pk, o.Facts, *rules); !dec.Allowed() {
 			return dec.Reason, nil
 		}
 		return "", nil

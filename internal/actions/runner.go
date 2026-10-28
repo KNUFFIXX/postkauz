@@ -20,10 +20,12 @@ import (
 // sync --watch zusätzlich alle --jobs-interval). Je Aktion, älteste zuerst:
 //
 //  1. Herkunft prüfen (A8): Gilt der Schlüssel, der sie angelegt hat, noch
-//     (Widerruf, Ablauf, Scope)? Sonst scheitert sie mit dem Grund, ohne
-//     Kommando an den Server. Hat ein Mensch einen Antrag freigegeben, hält
-//     ein inzwischen abgelaufener (nicht widerrufener) Schlüssel ihn nicht
-//     auf (wie T2 Punkt 7 für Entwürfe).
+//     (Widerruf, Ablauf, Scope)? Lassen die Regeln der Policy, die dieser
+//     Prozess geladen hat ([move], [delete], [keys.<name>]), sie noch zu
+//     (V3)? Sonst scheitert sie mit dem Grund, ohne Kommando an den
+//     Server. Hat ein Mensch einen Antrag freigegeben, hält ein inzwischen
+//     abgelaufener (nicht widerrufener) Schlüssel ihn nicht auf (wie T2
+//     Punkt 7 für Entwürfe); die Policy gilt trotzdem.
 //  2. Ziele prüfen: Der Zielordner von move und trash muss unter seiner ID
 //     noch denselben Pfad und dieselbe Rolle haben, ein move endet nie im
 //     Papierkorb (sonst alle Ziele stale, target_changed). Die Serverkopie muss im Spiegel noch unter Ordner, UID
@@ -64,10 +66,25 @@ type Blobs interface {
 	Get(sha256 string) (io.ReadCloser, error)
 }
 
-// OriginCheck prüft den Schlüssel hinter einer Aktion (A8): "" = gültig,
-// sonst der Grund (key_revoked, key_expired, key_invalid, missing_scope).
-// approved: Ein Mensch hat die Aktion freigegeben.
-type OriginCheck func(ctx context.Context, keyID string, scope policy.Scope, approved bool) (string, error)
+// Origin beschreibt eine Aktion für die Prüfung vor der Ausführung.
+type Origin struct {
+	// KeyID: wer sie angelegt hat ("cli" | "key:<name>" | "system").
+	KeyID string
+	// Scope: den braucht der Schlüssel für diese Art von Aktion.
+	Scope policy.Scope
+	// Approved: Ein Mensch hat die Aktion freigegeben.
+	Approved bool
+	// Facts: was die Aktion anrichtet, für die Eingabeprüfung der Policy
+	// (V3): Art, Zahl der Nachrichten, confirm_count, Rolle des Zielordners
+	// heute.
+	Facts policy.Facts
+}
+
+// OriginCheck prüft den Schlüssel hinter einer Aktion (A8) und die Regeln
+// der Policy des ausführenden Prozesses (V3): "" = gültig, sonst der Grund
+// (key_revoked, key_expired, key_invalid, missing_scope, policy_forbids,
+// target_role_human_only, …).
+type OriginCheck func(ctx context.Context, o Origin) (string, error)
 
 // Runner führt die Aktionen eines Kontos aus.
 type Runner struct {
@@ -120,6 +137,34 @@ func scopeOf(kind string) policy.Scope {
 		return policy.ScopeMailMark
 	}
 	return policy.ScopeMailTag // keywords (Tags als IMAP-Keywords)
+}
+
+// factsOf beschreibt eine gespeicherte Aktion für policy.CheckInput (V3),
+// so wie der Antrag sie beschrieb: Zahl der Nachrichten (target_count zählt
+// übersprungene nicht mit; confirm_count war beim Antrag gleich der Zahl
+// aller IDs, deshalb das größere von beiden), confirm_count und die Rolle,
+// die der Zielordner heute im Spiegel hat (sonst die beim Anlegen).
+// keywords ist für die Policy keine Postfach-Aktion (nur die Zahl zählt).
+func factsOf(a store.Action, boxes map[int64]store.Mailbox) policy.Facts {
+	f := policy.Facts{Targets: a.TargetCount, ConfirmCount: a.ConfirmCount}
+	if a.ConfirmCount != nil {
+		f.Targets = max(f.Targets, *a.ConfirmCount)
+	}
+	switch a.Kind {
+	case store.ActionMove:
+		f.Action = policy.ActionMove
+	case store.ActionTrash:
+		f.Action = policy.ActionTrash
+	case store.ActionMark:
+		f.Action = policy.ActionMark
+	}
+	if a.Kind == store.ActionMove {
+		f.TargetRole = a.Params.TargetRole
+		if d, ok := boxes[a.Params.TargetMailboxID]; ok {
+			f.TargetRole = d.Role
+		}
+	}
+	return f
 }
 
 // Run führt alle ausführbaren Aktionen des Kontos aus. Ein Fehler kommt
@@ -187,7 +232,7 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 	}
 	if r.Origin != nil {
-		reason, err := r.Origin(ctx, a.RequestedBy, scopeOf(a.Kind), a.ApprovalID > 0)
+		reason, err := r.Origin(ctx, Origin{KeyID: a.RequestedBy, Scope: scopeOf(a.Kind), Approved: a.ApprovalID > 0, Facts: factsOf(a, boxes)})
 		if err != nil {
 			return nil, nil, "", err
 		}

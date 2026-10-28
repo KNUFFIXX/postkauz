@@ -201,15 +201,16 @@ func TestMessagesMoveSource(t *testing.T) {
 			archiv = b.ID
 		}
 	}
-	// Nachricht 1 liegt zusätzlich im Archiv; Ziel Entwürfe-Ordner per Rolle.
+	// Nachricht 1 liegt zusätzlich im Archiv; Ziel Entwürfe-Ordner per Rolle
+	// (seit V8 nur für den Menschen).
 	if err := e.st.ExecForTest(`INSERT INTO message_mailboxes(message_id, mailbox_id, uid) VALUES (1, ?, 7)`, archiv); err != nil {
 		t.Fatal(err)
 	}
-	_, err := execJSON(t, x, operatorKey, "messages.move", `{"account":"demo","ids":[1],"role":"drafts"}`, false)
+	_, err := execJSON(t, x, humanKey, "messages.move", `{"account":"demo","ids":[1],"role":"drafts"}`, false)
 	if !errors.Is(err, ErrDenied) || !strings.Contains(err.Error(), "ambiguous_source") {
 		t.Fatalf("ambiguous = %v", err)
 	}
-	res, err := execJSON(t, x, operatorKey, "messages.move", `{"account":"demo","ids":[1],"role":"drafts","from":"Archiv"}`, false)
+	res, err := execJSON(t, x, humanKey, "messages.move", `{"account":"demo","ids":[1],"role":"drafts","from":"Archiv"}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
