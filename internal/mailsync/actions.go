@@ -14,8 +14,8 @@ import (
 // trash, keywords) auf dem Server an, und zwar wie draft_push
 //
 //   - postkauz sync zu Beginn jedes Laufs, vor dem Spiegeln (der Spiegel
-//     sieht das Ergebnis im selben Lauf; vorher gleicht runActions die
-//     Ordnerliste ab, wenn Aktionen warten), und
+//     sieht das Ergebnis im selben Lauf; vorher gleicht der Job die
+//     Ordnerliste ab, wenn Aktionen warten und er wirklich läuft), und
 //   - postkauz sync --watch zusätzlich alle WatchOptions.JobsInterval
 //     (Standard 10 s), auch zwischen zwei Läufen.
 //
@@ -64,19 +64,22 @@ func (e *Engine) runActions(ctx context.Context, ensure bool) (*ops.SyncActions,
 	if !ok {
 		return nil, nil // Verbindung ohne Schreibkommandos (Tests mit Lese-Fakes)
 	}
-	// Nachprüfung zu fd70f19, Punkt 2: Vor den Aktionen die Ordnerliste
-	// abgleichen, damit die Prüfung des Ziels (Pfad und Rolle unter der ID,
-	// V1) den Stand des Servers sieht und nicht den des letzten Laufs (im
-	// Jobs-Takt von sync --watch gleicht sonst niemand die Ordner ab). Nur
-	// wenn Aktionen warten; scheitert der Abgleich, wartet die Aktion auf
-	// den nächsten Versuch.
-	if pending {
-		if err := e.syncMailboxList(ctx); err != nil {
-			return nil, fmt.Errorf("actions: mailbox list: %w", err)
-		}
-	}
 	var rep actions.Report
 	_, err = a.Jobs.RunMailboxAction(ctx, e.AccountID, func(ctx context.Context) error {
+		// Nachprüfung zu fd70f19, Punkt 2: Vor den Aktionen die Ordnerliste
+		// abgleichen, damit die Prüfung des Ziels (Pfad und Rolle unter der
+		// ID, V1) den Stand des Servers sieht und nicht den des letzten
+		// Laufs (im Jobs-Takt von sync --watch gleicht sonst niemand die
+		// Ordner ab). Zusatz (c) der Prüfsitzung (T3): nur, wenn Aktionen
+		// warten und der Job wirklich läuft (fällig und übernommen); ein Job
+		// im Backoff schickt also kein LIST alle 10 s. Scheitert der
+		// Abgleich, scheitert der Job (Verbindung, Anmeldung: ohne Zählung
+		// zurück; sonst mit Wartezeit), die Aktionen warten.
+		if pending {
+			if err := e.syncMailboxList(ctx); err != nil {
+				return fmt.Errorf("mailbox list: %w", err)
+			}
+		}
 		// crash.Do (A02 A5): Ein Panic beendet den Job mit Fehler.
 		return crash.Do("mailbox actions", func() error {
 			var err error

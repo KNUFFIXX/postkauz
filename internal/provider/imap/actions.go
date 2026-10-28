@@ -115,6 +115,9 @@ func (p *Provider) Move(ctx context.Context, from string, uidValidity uint32, ui
 		for a, b := range r.UIDs {
 			res.UIDs[provider.UID(a)] = provider.UID(b)
 		}
+		for _, u := range r.Missing {
+			res.Missing = append(res.Missing, provider.UID(u))
+		}
 		return nil
 	})
 	return res, err

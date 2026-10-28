@@ -60,6 +60,56 @@ func mergeMailboxes(a, b []string) []string {
 	return out
 }
 
+// SyncRequestResult ist das Ergebnis von RequestSyncJob.
+type SyncRequestResult struct {
+	// ID: der offene Job (Created: neu) bzw. bei TooSoon der letzte Job
+	// des Kontos.
+	ID      int64
+	Created bool
+	// TooSoon: Die letzte Anforderung liegt weniger als den Mindestabstand
+	// zurück, und es gibt keinen noch wartenden Job, dem sie sich
+	// anschließen könnte; nichts wurde geändert (V18). RetryAt: ab dann
+	// wirkt eine neue Anforderung.
+	TooSoon bool
+	RetryAt time.Time
+	// State: Zustand des Jobs (queued, running, done, failed).
+	State string
+}
+
+// RequestSyncJob ist EnqueueSyncJob mit Mindestabstand (V18 der
+// Nachbesserung T2, mail_sync_now): Wartet schon ein Job des Kontos
+// (queued), nimmt er die Anforderung auf wie bisher (kein zusätzlicher
+// Lauf). Sonst gilt: Liegt die letzte Anforderung (requested_at des
+// jüngsten Jobs sync, gleich in welchem Zustand) weniger als minGap
+// zurück, ändert sich nichts (TooSoon); ein laufender Job bekäme sonst
+// einen Nachlauf, ein erledigter einen neuen Lauf, und ein Agent könnte
+// das Postfach im Takt von --jobs-interval abfragen lassen. minGap <= 0:
+// ohne Mindestabstand.
+func (s *SQLite) RequestSyncJob(ctx context.Context, accountID int64, mailboxes []string, now time.Time, origin JobOrigin,
+	minGap time.Duration) (SyncRequestResult, error) {
+	if minGap > 0 {
+		var id int64
+		var state, raw string
+		err := s.db.QueryRowContext(ctx, `SELECT id, state, payload FROM jobs WHERE type = ? AND json_extract(payload, '$.account_id') = ?
+			ORDER BY id DESC LIMIT 1`, JobSync, accountID).Scan(&id, &state, &raw)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return SyncRequestResult{}, err
+		case state != "queued":
+			var p syncPayload
+			if err := json.Unmarshal([]byte(raw), &p); err != nil {
+				return SyncRequestResult{}, fmt.Errorf("store: sync job %d: payload: %w", id, err)
+			}
+			if last := time.UnixMilli(p.RequestedAt); now.Sub(last) < minGap {
+				return SyncRequestResult{ID: id, TooSoon: true, RetryAt: last.Add(minGap), State: state}, nil
+			}
+		}
+	}
+	id, created, err := s.EnqueueSyncJob(ctx, accountID, mailboxes, now, origin)
+	return SyncRequestResult{ID: id, Created: created, State: "queued"}, err
+}
+
 // EnqueueSyncJob reiht den Job sync für ein Konto ein (höchstens einer
 // offen je Konto, Index jobs_open). Ist schon einer offen, nimmt er diese
 // Anforderung auf: Ordner vereinigt (ohne Ordner = alle), requested_at

@@ -65,6 +65,10 @@ type ActionTarget struct {
 	// Ordner inzwischen fehlt).
 	Mailbox string
 	Role    string
+	// SourcePath: Pfad des Quellordners beim Anlegen des Ziels
+	// (action_targets.source_path, Migration 0022; "" bei Altbestand). Der
+	// Runner führt nur aus, wenn mailbox_id noch diesen Pfad hat.
+	SourcePath string
 	// Result ist das Ergebnis als Code ("" = noch offen).
 	Result string
 	// NewUID ist die UID im Zielordner nach MOVE (0 = unbekannt).
@@ -176,8 +180,12 @@ func (s *SQLite) CreateAction(ctx context.Context, n NewAction) (a Action, err e
 		return a, fmt.Errorf("store: insert action: %w", err)
 	}
 	for _, t := range n.Targets {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO action_targets(action_id, message_id, mailbox_id, uid, uidvalidity)
-			VALUES (?,?,?,?,?)`, id, t.MessageID, t.MailboxID, int64(t.UID), int64(t.UIDValidity)); err != nil {
+		// Quellpfad je Ziel (Nachprüfung zu fd70f19): der Pfad aus dem Plan
+		// (t.Mailbox, so wie der Aufrufer die Kopie sah), sonst der heutige
+		// Pfad unter mailbox_id.
+		if _, err = tx.ExecContext(ctx, `INSERT INTO action_targets(action_id, message_id, mailbox_id, uid, uidvalidity, source_path)
+			VALUES (?,?,?,?,?, COALESCE(NULLIF(?, ''), (SELECT path FROM mailboxes WHERE id = ?)))`,
+			id, t.MessageID, t.MailboxID, int64(t.UID), int64(t.UIDValidity), t.Mailbox, t.MailboxID); err != nil {
 			return a, fmt.Errorf("store: insert action target: %w", err)
 		}
 	}
@@ -350,7 +358,7 @@ func (s *SQLite) Action(ctx context.Context, id int64) (Action, error) {
 
 func actionTargets(ctx context.Context, q querier, id int64) ([]ActionTarget, error) {
 	rows, err := q.QueryContext(ctx, `SELECT t.message_id, t.mailbox_id, t.uid, t.uidvalidity, COALESCE(b.path, ''), COALESCE(b.role, ''),
-		COALESCE(t.result, ''), COALESCE(t.new_uid, 0)
+		COALESCE(t.source_path, ''), COALESCE(t.result, ''), COALESCE(t.new_uid, 0)
 		FROM action_targets t LEFT JOIN mailboxes b ON b.id = t.mailbox_id WHERE t.action_id = ? ORDER BY t.message_id, t.mailbox_id`, id)
 	if err != nil {
 		return nil, err
@@ -360,7 +368,7 @@ func actionTargets(ctx context.Context, q querier, id int64) ([]ActionTarget, er
 	for rows.Next() {
 		var t ActionTarget
 		var uid, uv, nu int64
-		if err := rows.Scan(&t.MessageID, &t.MailboxID, &uid, &uv, &t.Mailbox, &t.Role, &t.Result, &nu); err != nil {
+		if err := rows.Scan(&t.MessageID, &t.MailboxID, &uid, &uv, &t.Mailbox, &t.Role, &t.SourcePath, &t.Result, &nu); err != nil {
 			return nil, err
 		}
 		t.UID, t.UIDValidity, t.NewUID = uint32(uid), uint32(uv), uint32(nu)
@@ -499,12 +507,14 @@ func (s *SQLite) DecideAction(ctx context.Context, d ActionDecision) (a Action, 
 }
 
 // markStaleTargets setzt Ziele ohne passende Serverkopie im Spiegel auf
-// stale (Ordner, UID oder UIDVALIDITY anders als beim Antrag).
+// stale (Ordner, UID oder UIDVALIDITY anders als beim Antrag, oder der
+// Ordner hat unter seiner ID einen anderen Pfad als beim Antrag).
 func markStaleTargets(ctx context.Context, tx execQuerier, actionID int64) (stale, live int, err error) {
 	res, err := tx.ExecContext(ctx, `UPDATE action_targets SET result = 'stale' WHERE action_id = ? AND result IS NULL AND NOT EXISTS (
 		SELECT 1 FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id
 		WHERE mm.message_id = action_targets.message_id AND mm.mailbox_id = action_targets.mailbox_id
-		  AND mm.uid = action_targets.uid AND b.uidvalidity = action_targets.uidvalidity)`, actionID)
+		  AND mm.uid = action_targets.uid AND b.uidvalidity = action_targets.uidvalidity
+		  AND (action_targets.source_path IS NULL OR b.path = action_targets.source_path))`, actionID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -610,11 +620,18 @@ func (s *SQLite) HasQueuedActions(ctx context.Context, accountID int64) (bool, e
 
 // EnsureActionJob reiht den Job mailbox_action ein, wenn ausführbare
 // Aktionen warten und keiner offen ist (etwa nach fünf Fehlern des alten).
+// V14 der Nachbesserung T2: Auch der Backoff eines endgültig gescheiterten
+// Jobs gilt (FailJob setzt run_at auf den nächsten Versuch, auch bei
+// failed); bis dahin entsteht kein neuer Job. Sonst legte der Jobs-Takt
+// von sync --watch nach dem fünften Fehler sofort einen neuen an, und der
+// Backoff wirkte nicht.
 func (s *SQLite) EnsureActionJob(ctx context.Context, accountID int64, now time.Time) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at, key_id)
 		SELECT ?, json_object('account_id', ?), ?, 'system'
-		WHERE EXISTS (SELECT 1 FROM actions WHERE account_id = ? AND state IN ('queued','running'))`,
-		JobMailboxAction, accountID, now.UnixMilli(), accountID)
+		WHERE EXISTS (SELECT 1 FROM actions WHERE account_id = ? AND state IN ('queued','running'))
+		  AND NOT EXISTS (SELECT 1 FROM jobs WHERE type = ? AND json_extract(payload, '$.account_id') = ?
+		                  AND (state IN ('queued','running') OR (state = 'failed' AND run_at > ?)))`,
+		JobMailboxAction, accountID, now.UnixMilli(), accountID, JobMailboxAction, accountID, now.UnixMilli())
 	if err != nil {
 		return false, fmt.Errorf("store: ensure mailbox_action job: %w", err)
 	}

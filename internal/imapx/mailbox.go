@@ -754,7 +754,10 @@ func (c *Client) unilateralHandler() *imapclient.UnilateralDataHandler {
 		}
 	}
 	return &imapclient.UnilateralDataHandler{
-		Expunge: func(uint32) { kick() },
+		Expunge: func(uint32) {
+			c.expunges.Add(1)
+			kick()
+		},
 		Mailbox: func(d *imapclient.UnilateralDataMailbox) {
 			if d.NumMessages != nil {
 				c.exists.Store(*d.NumMessages)
@@ -774,6 +777,12 @@ func (c *Client) unilateralHandler() *imapclient.UnilateralDataHandler {
 type MoveResult struct {
 	UIDValidity uint32
 	UIDs        map[uint32]uint32
+	// Missing: angefragte UIDs, die der Server nachweislich nicht
+	// verschoben hat, weil es sie im Quellordner nicht (mehr) gab (V11 der
+	// Nachbesserung T2). Nur gefüllt, wenn die Antwort es zeigt: COPYUID
+	// nennt die verschobenen UIDs, oder ohne COPYUID meldet der Server kein
+	// einziges EXPUNGE (nichts verschoben). Sonst leer (unbekannt).
+	Missing []uint32
 }
 
 // errNoMove: Der Server meldet kein MOVE.
@@ -799,12 +808,17 @@ func (c *Client) Move(uids []uint32, dest string) (MoveResult, error) {
 		return MoveResult{}, err
 	}
 	var data *imapclient.MoveData
+	var expunges uint64
 	err = c.run(func() error {
 		if !c.c.Caps().Has(imap.CapMove) {
 			return errNoMove
 		}
+		before := c.expunges.Load()
 		var err error
 		data, err = c.c.Move(set, dest).Wait()
+		// Die EXPUNGE-Antworten des MOVE kamen vor dem Abschluss des
+		// Kommandos (RFC 6851, Abschnitt 3.3) und sind damit gezählt.
+		expunges = c.expunges.Load() - before
 		return err
 	})
 	if errors.Is(err, errNoMove) {
@@ -816,15 +830,43 @@ func (c *Client) Move(uids []uint32, dest string) (MoveResult, error) {
 	res := MoveResult{UIDValidity: data.UIDValidity, UIDs: map[uint32]uint32{}}
 	src, ok1 := data.SourceUIDs.(imap.UIDSet)
 	dst, ok2 := data.DestUIDs.(imap.UIDSet)
-	if !ok1 || !ok2 || len(src) == 0 {
+	if data.SourceUIDs == nil {
+		// Kein COPYUID. Ohne ein einziges EXPUNGE hat der Server nichts
+		// verschoben (jede verschobene Nachricht verlässt den Quellordner
+		// mit EXPUNGE, RFC 6851): Die UIDs gibt es dort nicht mehr (V11;
+		// Dovecot antwortet so auf eine verschwundene UID). Sonst bleibt
+		// offen, welche fehlten.
+		if expunges == 0 {
+			res.Missing = slices.Clone(uids)
+		}
+		return res, nil
+	}
+	if !ok1 || !ok2 {
+		return res, nil
+	}
+	if len(src) == 0 {
+		res.Missing = slices.Clone(uids) // COPYUID ohne UIDs: nichts verschoben
 		return res, nil
 	}
 	// Empfangene Sets nur begrenzt auflösen (T1a): höchstens so viele UIDs,
 	// wie verschoben wurden.
 	limit := uint32(len(uids))
 	from, err1 := boundedUIDs(src, 1, limit)
+	if err1 != nil {
+		return res, nil
+	}
+	// V11: COPYUID nennt die verschobenen UIDs; was fehlt, gab es nicht.
+	moved := map[uint32]bool{}
+	for _, u := range from {
+		moved[u] = true
+	}
+	for _, u := range uids {
+		if !moved[u] {
+			res.Missing = append(res.Missing, u)
+		}
+	}
 	to, err2 := boundedUIDs(dst, 1, limit)
-	if err1 != nil || err2 != nil || len(from) != len(to) {
+	if err2 != nil || len(from) != len(to) {
 		return res, nil // ohne Zuordnung: der nächste Sync verknüpft per Message-ID
 	}
 	for i, u := range from {

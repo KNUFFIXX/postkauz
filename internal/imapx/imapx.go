@@ -127,6 +127,9 @@ type Client struct {
 	// Ordners (SELECT oder unaufgefordertes EXISTS); Obergrenze für
 	// empfangene UID-Sets (mailbox.go, receivedUIDs).
 	exists atomic.Uint32
+	// expunges zählt die EXPUNGE-Antworten des Servers (Move erkennt
+	// daran ohne COPYUID, ob er etwas verschoben hat; V11).
+	expunges atomic.Uint64
 }
 
 // activityConn merkt sich den Zeitpunkt des letzten gelesenen Bytes. Der

@@ -65,6 +65,10 @@ type AccountRepo interface {
 	AccountByName(ctx context.Context, name string) (store.Account, error)
 	CreateAccount(ctx context.Context, a store.Account) (int64, error)
 	DeleteAccount(ctx context.Context, id int64) error
+	// RemoveAccount und OpenWork: Entfernen mit Prüfung auf offene Entwürfe
+	// und Aktionen (A14).
+	RemoveAccount(ctx context.Context, id int64, force bool) error
+	OpenWork(ctx context.Context, accountID int64) (drafts, actions int, err error)
 	CountMessages(ctx context.Context, accountID int64) (int, error)
 	UpdateAccountProbe(ctx context.Context, id int64, capabilities, status, lastError string) error
 	// SetAccountStatus setzt Status und letzten Fehler ohne die Fähigkeiten
@@ -757,13 +761,27 @@ type AccountsRemoveOutput struct {
 // AccountsRemove entfernt ein Konto und sein Passwort. Solange Nachrichten
 // archiviert sind, verweigert sie das: Der Server löscht, das Archiv behält
 // (ADR-003); Archivlöschung ist eine eigene Operation (Löschkonzept, S3).
+//
+// A14 (T3): Offene Entwürfe (nicht sent_by_human, nicht abandoned) und
+// offene Postfach-Aktionen fielen per ON DELETE CASCADE still weg; ohne
+// force lehnt die Operation dann ab (open_drafts bzw. open_actions). force
+// darf nur der Mensch ohne Schlüssel (sonst human_only), auch im
+// Trockenlauf.
 func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 	return Operation{
-		Name:        "accounts.remove",
-		Scope:       policy.ScopeAdmin,
-		Risk:        policy.R1,
-		Summary:     "Remove an account without archived messages and delete its stored password.",
-		InputSchema: json.RawMessage(accountNameSchema),
+		Name:    "accounts.remove",
+		Scope:   policy.ScopeAdmin,
+		Risk:    policy.R1,
+		Summary: "Remove an account without archived messages and delete its stored password; open drafts or actions need force (only a human).",
+		InputSchema: json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "force": {"type": "boolean", "description": "remove even with open drafts or mailbox actions (they are lost); only a human without a key"}
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}`),
 		OutputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -777,7 +795,8 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 		Redact: redactAccountInput,
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
-				Name string `json:"name"`
+				Name  string `json:"name"`
+				Force bool   `json:"force"`
 			}
 			if err := decodeInput(call.Input, &in); err != nil {
 				return nil, err
@@ -785,9 +804,21 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			if err := validAccountName(in.Name); err != nil {
 				return nil, err
 			}
+			if in.Force && !call.Key.IsHuman() {
+				return nil, &DeniedError{Reason: "human_only", Msg: "force is for a human without a key"}
+			}
 			a, err := repo.AccountByName(ctx, in.Name)
 			if err != nil {
 				return nil, err
+			}
+			if !in.Force {
+				d, n, err := repo.OpenWork(ctx, a.ID)
+				if err != nil {
+					return nil, err
+				}
+				if err := openWorkDenied(a.Name, d, n); err != nil {
+					return nil, err
+				}
 			}
 			n, err := repo.CountMessages(ctx, a.ID)
 			if err != nil {
@@ -806,7 +837,17 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			// Atomar unter der Kontosperre (A12.4): Läuft ein Sync oder
 			// Import, oder kamen inzwischen Nachrichten dazu, bleibt das
 			// Konto.
-			switch err := repo.DeleteAccount(ctx, a.ID); {
+			switch err := repo.RemoveAccount(ctx, a.ID, in.Force); {
+			case errors.Is(err, store.ErrAccountHasOpenWork):
+				// Seit der Prüfung oben dazugekommen: frisch zählen.
+				d, n, cerr := repo.OpenWork(ctx, a.ID)
+				if cerr != nil {
+					return nil, err
+				}
+				if derr := openWorkDenied(a.Name, d, n); derr != nil {
+					return nil, derr
+				}
+				return nil, err
 			case errors.Is(err, store.ErrAccountBusy):
 				return nil, fmt.Errorf("%w: account %s", ErrSyncRunning, a.Name)
 			case errors.Is(err, store.ErrAccountHasMessages):
@@ -831,6 +872,20 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 			return out, nil
 		},
 	}
+}
+
+// openWorkDenied ist die Ablehnung von accounts.remove bei offenen
+// Entwürfen oder Aktionen (nil, wenn keine).
+func openWorkDenied(name string, drafts, actions int) error {
+	if drafts+actions == 0 {
+		return nil
+	}
+	reason := "open_drafts"
+	if drafts == 0 {
+		reason = "open_actions"
+	}
+	return &DeniedError{Reason: reason, Msg: fmt.Sprintf("account %s has %d open drafts and %d open mailbox actions; "+
+		"send, abandon or reject them first, or remove the account with --force (only a human; they are lost)", name, drafts, actions)}
 }
 
 // --- accounts.test ---------------------------------------------------------

@@ -28,6 +28,17 @@ import (
 const SyncRequestNote = "the sync is queued: a running sync --watch of this account runs it within its jobs interval (10 s by default); " +
 	"without one, the next postkauz sync of the account does it"
 
+// SyncRequestMinGap ist der Mindestabstand zweier Anforderungen eines
+// Kontos (V18 der Nachbesserung T2; Festlegung T3: 60 s). Eine Anforderung
+// innerhalb dieser Zeit nach der letzten reiht nichts Neues ein (Status
+// too_soon), außer ein Job wartet noch und nimmt sie ohne zusätzlichen Lauf
+// auf.
+const SyncRequestMinGap = 60 * time.Second
+
+// SyncRequestTooSoonNote steht im Ergebnis bei too_soon.
+const SyncRequestTooSoonNote = "a sync of this account was requested less than 60 s ago; nothing new was queued. " +
+	"The mirror shows the result of that sync; ask again after retry_after if you need a newer state"
+
 // SyncRequestInput ist die Eingabe von sync.request.
 type SyncRequestInput struct {
 	Account string `json:"account,omitempty"`
@@ -38,9 +49,13 @@ type SyncRequestInput struct {
 type SyncRequestOutput struct {
 	Account string `json:"account"`
 	Mailbox string `json:"mailbox,omitempty"`
-	// Status: queued (eingereiht oder einem offenen Job hinzugefügt) bzw.
-	// im Trockenlauf would_queue.
+	// Status: queued (eingereiht oder einem offenen Job hinzugefügt),
+	// too_soon (Mindestabstand, nichts geändert; V18) bzw. im Trockenlauf
+	// would_queue.
 	Status string `json:"status"`
+	// RetryAfter: bei too_soon der Zeitpunkt, ab dem eine neue Anforderung
+	// wirkt (RFC 3339).
+	RetryAfter string `json:"retry_after,omitempty"`
 	// JobID: der offene Job (fehlt im Trockenlauf).
 	JobID int64 `json:"job_id,omitempty"`
 	// Merged: Ein Job war schon offen; diese Anforderung ist ihm
@@ -52,7 +67,8 @@ type SyncRequestOutput struct {
 
 // syncJobStore ist der Teil des Stores, den Jobs sync brauchen.
 type syncJobStore interface {
-	EnqueueSyncJob(ctx context.Context, accountID int64, mailboxes []string, now time.Time, origin store.JobOrigin) (int64, bool, error)
+	RequestSyncJob(ctx context.Context, accountID int64, mailboxes []string, now time.Time, origin store.JobOrigin,
+		minGap time.Duration) (store.SyncRequestResult, error)
 	ClaimSyncJob(ctx context.Context, accountID int64, owner string, lease time.Duration, takeOver bool) (store.SyncJob, bool, error)
 	CompleteSyncJob(ctx context.Context, j store.SyncJob, owner string) (bool, error)
 	ReleaseJob(ctx context.Context, id int64, owner string, runAt time.Time) error
@@ -95,8 +111,9 @@ func SyncRequest(d Deps) Operation {
   "properties": {
     "account": {"type": "string"},
     "mailbox": {"type": "string"},
-    "status": {"type": "string", "enum": ["queued", "would_queue"]},
+    "status": {"type": "string", "enum": ["queued", "would_queue", "too_soon"], "description": "too_soon: a sync was requested less than 60 s ago; nothing new was queued"},
     "job_id": {"type": "integer"},
+    "retry_after": {"type": "string", "format": "date-time", "description": "with too_soon: from then on a new request queues a sync"},
     "merged": {"type": "boolean", "description": "a sync of this account was already queued; this request was added to it"},
     "note": {"type": "string"},
     "dry_run": {"type": "boolean"}
@@ -130,11 +147,15 @@ func SyncRequest(d Deps) Operation {
 			if in.Mailbox != "" {
 				boxes = []string{in.Mailbox}
 			}
-			id, created, err := st.EnqueueSyncJob(ctx, a.ID, boxes, time.Now(), store.JobOrigin{KeyID: call.Key.ID, AuditID: call.AuditID})
+			r, err := st.RequestSyncJob(ctx, a.ID, boxes, time.Now(), store.JobOrigin{KeyID: call.Key.ID, AuditID: call.AuditID}, SyncRequestMinGap)
 			if err != nil {
 				return nil, err
 			}
-			out.Status, out.JobID, out.Merged = "queued", id, !created
+			if r.TooSoon {
+				out.Status, out.JobID, out.RetryAfter, out.Note = "too_soon", r.ID, rfc3339(r.RetryAt), SyncRequestTooSoonNote
+				return out, nil
+			}
+			out.Status, out.JobID, out.Merged = "queued", r.ID, !r.Created
 			return out, nil
 		},
 	}

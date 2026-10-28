@@ -88,7 +88,7 @@ func newITActionEnv(t *testing.T, srv itServer, user string) *itActionEnv {
 	rules := policy.DefaultRules()
 	e.x = &ops.Executor{Registry: reg, Audit: st.AuditWriter(), Rules: &rules}
 	e.runner = &Runner{Store: st, Blobs: b, CommandTimeout: 15 * time.Second, Requests: ops.NewSyncJobs(deps),
-		Actions: &actions.Runner{Store: st, Blobs: b, Origin: ops.ActionOriginCheck(st)}}
+		Actions: &actions.Runner{Store: st, Blobs: b, Origin: ops.ActionOriginCheck(st, &rules)}}
 
 	// Ordner: Ziel des Verschiebens und der Papierkorb (Rolle trash).
 	e.c = itClient(t, srv, user)

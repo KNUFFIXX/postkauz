@@ -1,5 +1,7 @@
 package policy
 
+import "slices"
+
 // Zentrale Prüfung der Eingabe (A03 A9): Was eine Operation mit ihrer
 // Eingabe anrichten darf (Zahl der Ziele, Rolle des Zielordners, Konto),
 // entscheidet die Policy, nicht der Handler. Die Operation liefert dafür
@@ -20,6 +22,15 @@ const (
 
 // MaxTargets: höchstens so viele Ziele je Aufruf, für jeden Aufrufer (E4).
 const MaxTargets = 1000
+
+// HumanOnlyMoveRoles sind Rollen, in die nur der Mensch ohne Schlüssel
+// verschiebt (V8 der Nachbesserung T2, Betreiber 28.10.2026): Spam, Entwürfe
+// und Gesendet. Ein Schlüssel könnte sonst ohne Freigabe Mails in den
+// Spam-Ordner schieben (dort verschwinden sie für den Menschen, Filter des
+// Anbieters lernen daraus) oder Entwürfe und Gesendetes umsortieren, auf
+// die sich die Versanderkennung stützt. Gilt auch, wenn der Zielordner per
+// Pfad genannt ist (die Rolle kommt dann aus dem Spiegel).
+var HumanOnlyMoveRoles = []string{"junk", "drafts", "sent"}
 
 // Facts ist der für die Policy relevante Teil einer geprüften Eingabe.
 // Nie Inhalte: nur Zähler, Rollen, Wahrheitswerte.
@@ -111,6 +122,8 @@ func (r Rules) withDefaults() Rules {
 //   - move in einen Ordner mit Rolle trash: target_is_trash, für jeden
 //     (der Papierkorb geht nur über trash mit Freigabe, E3).
 //   - trash mit [delete] agent_may = none: policy_forbids.
+//   - move in einen Ordner mit Rolle junk, drafts oder sent
+//     (HumanOnlyMoveRoles): target_role_human_only (V8).
 //   - move mit [move] agent_may = none: policy_forbids; archive_only: nur
 //     Ziele mit Rolle archive oder all; within_account: kein Ziel in einem
 //     anderen Konto (cross_account).
@@ -131,6 +144,9 @@ func CheckInput(key Key, f Facts, r Rules) Decision {
 	}
 	if key.IsHuman() {
 		return Decision{Outcome: Allow, Reason: "ok"}
+	}
+	if f.Action == ActionMove && slices.Contains(HumanOnlyMoveRoles, f.TargetRole) {
+		return deny("target_role_human_only")
 	}
 	r = r.For(key).withDefaults()
 	switch f.Action {

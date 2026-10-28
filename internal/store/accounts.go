@@ -216,6 +216,25 @@ func (s *SQLite) CountMessages(ctx context.Context, accountID int64) (int, error
 // nicht entfernt (ADR-003, Löschkonzept S3).
 var ErrAccountHasMessages = errors.New("store: account has archived messages")
 
+// ErrAccountHasOpenWork: Das Konto hat offene Entwürfe (nicht
+// sent_by_human, nicht abandoned) oder offene Postfach-Aktionen
+// (requested, queued, running); entfernt wird es nur mit force (A14).
+var ErrAccountHasOpenWork = errors.New("store: account has open drafts or actions")
+
+// OpenWork zählt, was mit dem Konto per ON DELETE CASCADE verloren ginge,
+// aber noch nicht abgeschlossen ist: offene Entwürfe und offene Aktionen.
+func (s *SQLite) OpenWork(ctx context.Context, accountID int64) (drafts, actions int, err error) {
+	return openWork(ctx, s.db, accountID)
+}
+
+func openWork(ctx context.Context, q querier, accountID int64) (drafts, actions int, err error) {
+	err = q.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM drafts WHERE account_id = ? AND status NOT IN ('sent_by_human','abandoned')),
+		(SELECT count(*) FROM actions WHERE account_id = ? AND state IN ('requested','queued','running'))`,
+		accountID, accountID).Scan(&drafts, &actions)
+	return drafts, actions, err
+}
+
 // ErrAccountBusy: Ein Sync oder Import des Kontos läuft (Kontosperre).
 var ErrAccountBusy = errors.New("store: a sync or import of this account is running")
 
@@ -225,8 +244,16 @@ var ErrAccountBusy = errors.New("store: a sync or import of this account is runn
 // in einer Transaktion, unter der Kontosperre (internal/flock), damit kein
 // Sync oder Import dazwischen Nachrichten einträgt. Hält ein anderer
 // Prozess die Sperre, kommt ErrAccountBusy; hat das Konto Nachrichten,
-// ErrAccountHasMessages (mit Anzahl).
+// ErrAccountHasMessages (mit Anzahl). Offene Entwürfe und Aktionen prüft
+// es nicht (wie RemoveAccount mit force).
 func (s *SQLite) DeleteAccount(ctx context.Context, id int64) (err error) {
+	return s.RemoveAccount(ctx, id, true)
+}
+
+// RemoveAccount ist DeleteAccount mit der Prüfung auf offene Arbeit (A14):
+// Ohne force bricht es mit ErrAccountHasOpenWork ab, wenn offene Entwürfe
+// oder Aktionen am Konto hängen (in derselben Transaktion geprüft).
+func (s *SQLite) RemoveAccount(ctx context.Context, id int64, force bool) (err error) {
 	if s.path != "" {
 		l, err := flock.TryLock(filepath.Join(filepath.Dir(s.path), flock.AccountLockName(id)))
 		if errors.Is(err, flock.ErrLocked) {
@@ -252,6 +279,15 @@ func (s *SQLite) DeleteAccount(ctx context.Context, id int64) (err error) {
 	}
 	if n > 0 {
 		return fmt.Errorf("%w: %d", ErrAccountHasMessages, n)
+	}
+	if !force {
+		d, a, err := openWork(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if d+a > 0 {
+			return fmt.Errorf("%w: %d drafts, %d actions", ErrAccountHasOpenWork, d, a)
+		}
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id)
 	if err != nil {

@@ -377,6 +377,9 @@ func renderSyncRequest(w io.Writer, out any) error {
 	switch {
 	case o.DryRun:
 		fmt.Fprintf(w, "dry run: would queue a sync of account %s (%s); nothing was queued\n", o.Account, what)
+	case o.Status == "too_soon":
+		fmt.Fprintf(w, "sync of account %s (%s) not queued: the last request (job %d) is less than 60 s old; ask again after %s\n",
+			o.Account, what, o.JobID, o.RetryAfter)
 	case o.Merged:
 		fmt.Fprintf(w, "sync of account %s (%s) added to queued job %d\n", o.Account, what, o.JobID)
 	default:
