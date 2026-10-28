@@ -40,14 +40,16 @@ func NewKeyring() *Keyring {
 
 // call ruft die Bibliothek in einer eigenen Goroutine mit Zeitgrenze auf;
 // ein Panic darin (crash.Go, S2.0/A5) kommt als Fehler zurück statt den
-// Prozess zu beenden.
+// Prozess zu beenden. Nach der Zeitgrenze läuft die Goroutine weiter (sie
+// lässt sich nicht abbrechen); deshalb ErrTimeout: Ein Set kann danach
+// noch ankommen (Gegenprüfung T4, W).
 func (k *Keyring) call(f func() error) error {
 	done := crash.Go("keyring call", f)
 	select {
 	case err := <-done:
 		return err
 	case <-time.After(k.timeout):
-		return fmt.Errorf("%w: keyring did not answer within %s", ErrUnavailable, k.timeout)
+		return fmt.Errorf("%w (keyring did not answer within %s)", ErrTimeout, k.timeout)
 	}
 }
 

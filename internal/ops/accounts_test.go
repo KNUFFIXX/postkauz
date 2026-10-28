@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -22,6 +24,10 @@ type memSecrets struct {
 	mu   sync.Mutex
 	m    map[string]secrets.Secret
 	down bool
+	// insecure: meldet sich wie der Testspeicher insecure-file.
+	insecure bool
+	// failSet: Schreiben scheitert, obwohl der Speicher erreichbar ist.
+	failSet bool
 }
 
 func newMemSecrets() *memSecrets { return &memSecrets{m: map[string]secrets.Secret{}} }
@@ -38,7 +44,7 @@ func (s *memSecrets) Get(ref string) (secrets.Secret, error) {
 func (s *memSecrets) Set(ref string, v secrets.Secret) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.down {
+	if s.down || s.failSet {
 		return fmt.Errorf("%w: test", secrets.ErrUnavailable)
 	}
 	s.m[ref] = v
@@ -54,6 +60,9 @@ func (s *memSecrets) Delete(ref string) error {
 	return nil
 }
 func (s *memSecrets) Status() secrets.Status {
+	if s.insecure {
+		return secrets.Status{Backend: "insecure-file", Available: !s.down, Insecure: true}
+	}
 	return secrets.Status{Backend: "keyring", Available: !s.down}
 }
 
@@ -63,8 +72,8 @@ type fakeProber struct {
 	seen secrets.Secret
 }
 
-func (f *fakeProber) Probe(_ context.Context, _ store.Account, pw secrets.Secret) (ProbeResult, error) {
-	f.seen = pw
+func (f *fakeProber) Probe(_ context.Context, _ store.Account, cred provider.Credential) (ProbeResult, error) {
+	f.seen = cred.Password
 	return f.res, f.err
 }
 
@@ -88,7 +97,7 @@ func newAccountsEnv(t *testing.T) *accountsEnv {
 	}
 	e := &accountsEnv{st: st, sec: newMemSecrets(), prober: &fakeProber{}, au: &audit.Memory{}}
 	reg := NewRegistry()
-	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec), AccountsRemove(st, e.sec), AccountsTest(st, e.sec, e.prober)} {
+	for _, op := range []Operation{AccountsList(st), AccountsAdd(st, e.sec, oauth.Microsoft{}), AccountsRemove(st, e.sec), AccountsTest(st, Credentials{Secrets: e.sec}, e.prober)} {
 		if err := reg.Register(op); err != nil {
 			t.Fatal(err)
 		}
@@ -240,7 +249,7 @@ func TestAccountsAddPasswordFromEnv(t *testing.T) {
 	// Umgebung über den Speicher legen wie im CLI (secrets.WithEnv).
 	reg := NewRegistry()
 	sec := secrets.WithEnv(e.sec)
-	_ = reg.Register(AccountsAdd(e.st, sec))
+	_ = reg.Register(AccountsAdd(e.st, sec, oauth.Microsoft{}))
 	x := &Executor{Registry: reg, Audit: e.au}
 	t.Setenv(secrets.EnvName(e.ref(t, "demo")), canary)
 	in := demoInput()

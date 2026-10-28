@@ -40,6 +40,27 @@ type Account struct {
 	// Aliases sind weitere eigene Adressen (klein, ohne Namen; seit
 	// Migration 0008, S2.0/A6).
 	Aliases []string
+	// OAuth ist der öffentliche OAuth2-Client eines Kontos mit auth_type
+	// oauth2 (S3.7): Client-ID und Mandant, kein Geheimnis. Gespeichert
+	// ohne Migration im JSON der Spalte sync_policy unter "oauth2"
+	// (Festlegung T4; die Spalte war bis dahin unbenutzt, '{}').
+	OAuth *OAuthClient
+}
+
+// OAuthClient ist der öffentliche Client eines OAuth2-Kontos.
+type OAuthClient struct {
+	ClientID string `json:"client_id"`
+	Tenant   string `json:"tenant"`
+}
+
+// syncPolicy ist das JSON der Spalte accounts.sync_policy.
+type syncPolicy struct {
+	OAuth2 *OAuthClient `json:"oauth2,omitempty"`
+}
+
+func syncPolicyJSON(a Account) (string, error) {
+	b, err := json.Marshal(syncPolicy{OAuth2: a.OAuth})
+	return string(b), err
 }
 
 // AccountSummary ergänzt ein Konto um Zähler aus Ordnern und Nachrichten.
@@ -50,20 +71,25 @@ type AccountSummary struct {
 }
 
 const accountCols = `id, name, email, provider_type, host, port, tls, username, auth_type, credential_ref,
-	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at, aliases`
+	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at, aliases, sync_policy`
 
 func scanAccount(sc interface{ Scan(...any) error }, a *Account, extra ...any) error {
 	var created int64
 	var insecure int
-	var aliases string
+	var aliases, policy string
 	dest := append([]any{&a.ID, &a.Name, &a.Email, &a.Provider, &a.Host, &a.Port, &a.TLS, &a.Username,
-		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created, &aliases}, extra...)
+		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created, &aliases, &policy}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return err
 	}
 	if err := json.Unmarshal([]byte(aliases), &a.Aliases); err != nil {
 		return fmt.Errorf("store: account %s: aliases are corrupt", a.Name)
 	}
+	var sp syncPolicy
+	if err := json.Unmarshal([]byte(policy), &sp); err != nil {
+		return fmt.Errorf("store: account %s: sync_policy is corrupt", a.Name)
+	}
+	a.OAuth = sp.OAuth2
 	a.InsecureTestServer = insecure == 1
 	a.CreatedAt = time.UnixMilli(created).UTC()
 	return nil
@@ -87,11 +113,15 @@ func (s *SQLite) CreateAccount(ctx context.Context, a Account) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	policy, err := syncPolicyJSON(a)
+	if err != nil {
+		return 0, err
+	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO accounts(name, email, provider_type, host, port, tls, username,
-		auth_type, credential_ref, insecure_test_server, capabilities, status, created_at, aliases)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		auth_type, credential_ref, insecure_test_server, capabilities, status, created_at, aliases, sync_policy)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		a.Name, a.Email, a.Provider, a.Host, a.Port, a.TLS, a.Username, a.AuthType, a.CredentialRef,
-		boolInt(a.InsecureTestServer), a.Capabilities, a.Status, a.CreatedAt.UnixMilli(), aliases)
+		boolInt(a.InsecureTestServer), a.Capabilities, a.Status, a.CreatedAt.UnixMilli(), aliases, policy)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: accounts.name") {
 			return 0, fmt.Errorf("%w: %s", ErrAccountExists, a.Name)
@@ -143,6 +173,8 @@ type AccountRef struct {
 	Name          string
 	CredentialRef string
 	Status        string
+	// AuthType: password | app_password | oauth2 (Spalte seit 0001).
+	AuthType string
 }
 
 // AccountRefs liefert Name, Verweis und Status aller Konten, nach Namen
@@ -151,7 +183,7 @@ type AccountRef struct {
 // einen Bestand mit älterem Schema die Konten (vorher: „no such column:
 // aliases" bei Schema 7).
 func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status FROM accounts ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status, auth_type FROM accounts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +191,7 @@ func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
 	var out []AccountRef
 	for rows.Next() {
 		var a AccountRef
-		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status); err != nil {
+		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status, &a.AuthType); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

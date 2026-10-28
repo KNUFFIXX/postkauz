@@ -5,9 +5,12 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/prompt"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -50,6 +53,12 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitUsage, ErrorInfo{Code: "usage", Message: err.Error(), Hint: "see --help"}
 	case errors.As(err, &ie):
 		return ExitUsage, ErrorInfo{Code: "invalid_input", Message: err.Error(), Hint: "see --help"}
+	case errors.Is(err, prompt.ErrTimeout):
+		// A3: Die verdeckte Abfrage nahm in 120 s nichts an (Befund D5).
+		// Der Hinweis gilt für jede Abfrage (account add, account set) und
+		// jedes System; die Einzelheiten stehen im README (K7).
+		return ExitError, ErrorInfo{Code: "prompt_timeout", Message: fmt.Sprintf("no input at the hidden prompt within %s", prompt.DefaultTimeout),
+			Hint: "if the prompt takes no input, pass the password on standard input with --password-stdin; see README, Troubleshooting (prompt_timeout)"}
 	case errors.Is(err, store.ErrAccountExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "choose another name or remove the account first"}
 	case errors.Is(err, store.ErrAccountNotFound):
@@ -93,6 +102,14 @@ func classify(err error) (int, ErrorInfo) {
 			Hint: "this database belongs to another build of the program; use that build or restore the snapshot taken before its migration"}
 	case errors.Is(err, secrets.ErrUnavailable):
 		return ExitError, ErrorInfo{Code: "secret_store_unavailable", Message: err.Error(), Hint: "run doctor"}
+	case errors.Is(err, ops.ErrNoToken):
+		return ExitError, ErrorInfo{Code: "no_token", Message: err.Error(), Hint: "sign in with: account login <name>"}
+	case errors.Is(err, oauth.ErrTokenNotStored):
+		return ExitError, ErrorInfo{Code: "token_not_stored", Message: err.Error(), Hint: "the renewed OAuth2 token could not be written to the keyring; check it with doctor, then run the command again (sign in again with account login if that fails)"}
+	case errors.Is(err, oauth.ErrRefresh), errors.Is(err, oauth.ErrTokenCorrupt):
+		return ExitError, ErrorInfo{Code: "oauth_refresh", Message: err.Error(), Hint: "the OAuth2 token could not be renewed; sign in again with: account login <name> (no automatic retry)"}
+	case errors.Is(err, oauth.ErrLoginTimeout), errors.Is(err, oauth.ErrLoginDenied):
+		return ExitError, ErrorInfo{Code: "login_failed", Message: err.Error(), Hint: "run account login again; without a browser on this computer use --device-code"}
 	case errors.Is(err, ops.ErrNoSecret):
 		return ExitError, ErrorInfo{Code: "no_secret", Message: err.Error(), Hint: "add the account again or set the environment variable"}
 	case errors.Is(err, provider.ErrAuth):

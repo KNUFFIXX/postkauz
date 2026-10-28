@@ -889,7 +889,7 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var calls atomic.Int32
-	blocking := func(ctx context.Context, _ store.Account, _ secrets.Secret, _ time.Duration) (RemoteCloser, error) {
+	blocking := func(ctx context.Context, _ store.Account, _ provider.Credential, _ time.Duration) (RemoteCloser, error) {
 		if calls.Add(1) == 1 {
 			close(entered)
 			<-release
@@ -899,7 +899,7 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 	first := &Runner{Store: e.st, Blobs: e.blobs, Connect: blocking}
 	done := make(chan error, 1)
 	go func() {
-		_, err := first.Sync(context.Background(), a, testPass, ops.SyncOptions{}, nil)
+		_, err := first.Sync(context.Background(), a, provider.PasswordCredential(testPass), ops.SyncOptions{}, nil)
 		done <- err
 	}()
 	<-entered
@@ -910,7 +910,7 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 	}
 	defer st2.Close()
 	second := &Runner{Store: st2, Blobs: e.blobs, Connect: blocking}
-	_, err = second.Sync(context.Background(), a, testPass, ops.SyncOptions{Full: true}, nil)
+	_, err = second.Sync(context.Background(), a, provider.PasswordCredential(testPass), ops.SyncOptions{Full: true}, nil)
 	if !errors.Is(err, ops.ErrSyncRunning) || !strings.Contains(err.Error(), "demo") {
 		t.Fatalf("second sync: err = %v, want ErrSyncRunning", err)
 	}
@@ -918,7 +918,7 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 		t.Fatalf("second sync connected to the server (%d connects)", n)
 	}
 	// Trockenlauf schreibt nichts und braucht keine Sperre.
-	if _, err := second.Sync(context.Background(), a, testPass, ops.SyncOptions{DryRun: true}, nil); errors.Is(err, ops.ErrSyncRunning) {
+	if _, err := second.Sync(context.Background(), a, provider.PasswordCredential(testPass), ops.SyncOptions{DryRun: true}, nil); errors.Is(err, ops.ErrSyncRunning) {
 		t.Fatalf("dry run was blocked by the lock: %v", err)
 	}
 
@@ -927,7 +927,7 @@ func TestRunnerRefusesSecondSyncOfSameAccount(t *testing.T) {
 		t.Fatalf("first sync: %v", err)
 	}
 	// Nach dem Ende des ersten Laufs ist das Konto wieder frei.
-	if _, err := second.Sync(context.Background(), a, testPass, ops.SyncOptions{}, nil); errors.Is(err, ops.ErrSyncRunning) {
+	if _, err := second.Sync(context.Background(), a, provider.PasswordCredential(testPass), ops.SyncOptions{}, nil); errors.Is(err, ops.ErrSyncRunning) {
 		t.Fatalf("lock not released: %v", err)
 	}
 }

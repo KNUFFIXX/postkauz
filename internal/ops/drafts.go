@@ -572,14 +572,10 @@ func (o *draftOps) original(ctx context.Context, acc *store.Account, id int64, m
 		if acc == nil {
 			return store.Message{}, nil, nil, inputErr("give the account of the original message (or its local id)")
 		}
-		ids, err := o.msgs.MessageIDsByHeader(ctx, acc.ID, strings.Trim(strings.TrimSpace(mid), "<>"))
-		if err != nil {
+		var err error
+		if id, err = messageByHeader(ctx, o.msgs, acc.ID, mid); err != nil {
 			return store.Message{}, nil, nil, err
 		}
-		if len(ids) == 0 {
-			return store.Message{}, nil, nil, store.ErrMessageNotFound
-		}
-		id = ids[0]
 	}
 	m, err := o.msgs.MessageByID(ctx, id)
 	if err != nil {

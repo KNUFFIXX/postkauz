@@ -15,8 +15,8 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/imapx"
 	"github.com/KNUFFIXX/postkauz/internal/jobs"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -40,7 +40,7 @@ type Runner struct {
 	// vorhanden, eigener Kindprozess für DOCX).
 	Extractor *extract.Extractor
 	// Connect ersetzt den Verbindungsaufbau (Tests); nil = IMAP-Provider.
-	Connect func(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error)
+	Connect func(ctx context.Context, a store.Account, cred provider.Credential, idleRestart time.Duration) (RemoteCloser, error)
 	// Pusher legt wartende Entwürfe im Entwürfe-Ordner ab (Job draft_push,
 	// S2.5; ops.NewDraftPusher); nil = kein Push.
 	Pusher DraftPusher
@@ -64,10 +64,10 @@ type imapRemote struct{ *imapprov.Provider }
 
 func (r imapRemote) Strategy() string { return string(r.Provider.Strategy()) }
 
-func (r *Runner) connectIMAP(ctx context.Context, a store.Account, pw secrets.Secret, idleRestart time.Duration) (RemoteCloser, error) {
-	p, err := imapprov.Connect(ctx, imapprov.Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
+func (r *Runner) connectIMAP(ctx context.Context, a store.Account, cred provider.Credential, idleRestart time.Duration) (RemoteCloser, error) {
+	p, err := imapprov.ConnectWith(ctx, imapprov.Config{Host: a.Host, Port: a.Port, TLS: a.TLS, Username: a.Username,
 		InsecureTestServer: a.InsecureTestServer, IdleRestart: idleRestart,
-		CommandTimeout: r.CommandTimeout, CommandMaxDuration: r.CommandMaxDuration, MaxMessageBytes: r.MaxMessageBytes}, pw)
+		CommandTimeout: r.CommandTimeout, CommandMaxDuration: r.CommandMaxDuration, MaxMessageBytes: r.MaxMessageBytes}, cred)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (r *Runner) connectIMAP(ctx context.Context, a store.Account, pw secrets.Se
 }
 
 // Sync führt sync.run aus.
-func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o ops.SyncOptions, progress func(ops.Progress)) (ops.SyncOutput, error) {
+func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Credential, o ops.SyncOptions, progress func(ops.Progress)) (ops.SyncOutput, error) {
 	out := ops.SyncOutput{Account: a.Name, Mode: "incremental", Mailboxes: []ops.SyncMailbox{}}
 	if o.Full {
 		out.Mode = "full"
@@ -106,7 +106,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		}
 	}
 	start := time.Now()
-	remote, err := connect(ctx, a, pw, idleRestart)
+	remote, err := connect(ctx, a, cred, idleRestart)
 	if err != nil {
 		return out, err
 	}
@@ -152,20 +152,7 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 			round := ops.SyncOutput{Account: a.Name, Mode: "watch", Strategy: out.Strategy, Mailboxes: []ops.SyncMailbox{}}
 			fill(&round, rep)
 			round.DurationMS = rep.Duration.Milliseconds()
-			out.New += round.New
-			out.Updated += round.Updated
-			out.Removed += round.Removed
-			out.Errors += round.Errors
-			out.MessagesMirrored = round.MessagesMirrored
-			out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
-			out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
-			out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
-			out.IncompleteAnswers += round.IncompleteAnswers
-			out.AttachmentsExtracted += round.AttachmentsExtracted
-			out.MessagesIndexed += round.MessagesIndexed
-			out.IndexPending = round.IndexPending
-			addDrafts(&out, round.Drafts)
-			addDraftCheck(&out, round.DraftCheck)
+			addRound(&out, &round)
 			if err != nil {
 				out.Errors++
 			}
@@ -221,6 +208,9 @@ func fill(out *ops.SyncOutput, rep Report) {
 	out.AlreadyKnownDownloaded, out.AlreadyKnownDownloadedBytes = rep.KnownDownloaded, rep.KnownDownloadedBytes
 	out.LinkedDespiteSizeDifference = rep.LinkedSizeDiff
 	out.IncompleteAnswers = rep.Incomplete
+	if rep.SkippedTooLarge > 0 {
+		out.SkippedTooLarge, out.MaxMessageBytes = rep.SkippedTooLarge, rep.MaxMessageBytes
+	}
 	out.AttachmentsExtracted = rep.Extracted
 	out.MessagesIndexed, out.IndexPending = rep.Indexed, rep.IndexPending
 	if rep.Drafts != nil {
@@ -231,6 +221,30 @@ func fill(out *ops.SyncOutput, rep Report) {
 		c := *rep.DraftCheck
 		out.DraftCheck = &c
 	}
+}
+
+// addRound zählt eine Runde von sync --watch in die Gesamtausgabe.
+func addRound(out, round *ops.SyncOutput) {
+	out.New += round.New
+	out.Updated += round.Updated
+	out.Removed += round.Removed
+	out.Errors += round.Errors
+	out.MessagesMirrored = round.MessagesMirrored
+	out.AlreadyKnownDownloaded += round.AlreadyKnownDownloaded
+	out.AlreadyKnownDownloadedBytes += round.AlreadyKnownDownloadedBytes
+	out.LinkedDespiteSizeDifference += round.LinkedDespiteSizeDifference
+	out.IncompleteAnswers += round.IncompleteAnswers
+	// Die Grenze steht nur neben übersprungenen Nachrichten (wie fill;
+	// Gegenprüfung K9), nicht nach einer Runde ohne solche.
+	if round.SkippedTooLarge > 0 {
+		out.SkippedTooLarge += round.SkippedTooLarge
+		out.MaxMessageBytes = round.MaxMessageBytes
+	}
+	out.AttachmentsExtracted += round.AttachmentsExtracted
+	out.MessagesIndexed += round.MessagesIndexed
+	out.IndexPending = round.IndexPending
+	addDrafts(out, round.Drafts)
+	addDraftCheck(out, round.DraftCheck)
 }
 
 // addDraftCheck zählt die Prüfung einer Runde zum Gesamtergebnis des

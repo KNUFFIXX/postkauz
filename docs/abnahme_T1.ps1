@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Abnahme T1 (PostKauz, Schnitt 3, Teile T1a und T1b): Update einer KOPIE
     der echten Datenbank von 0.2.0-rc8 auf 0.3.0-alpha.2.

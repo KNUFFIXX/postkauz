@@ -18,6 +18,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/flock"
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -81,17 +82,26 @@ type DoctorReport struct {
 	PolicyError   string `json:"policy_error,omitempty"`
 	// AttachDir: Ordner für Dateianhänge von Entwürfen ([paths] attach_dir).
 	AttachDir string `json:"attach_dir"`
-	// Secrets nur mit --secrets.
+	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
+	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
 	Warnings []string       `json:"warnings"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
 type DoctorAccount struct {
 	Name     string `json:"name"`
-	Password string `json:"password"` // stored | environment | missing | unknown
+	Password string `json:"password"` // stored | environment | missing | unknown | oauth2 (kein Passwort)
 	EnvVar   string `json:"env_var"`
 	Status   string `json:"status"`
+	// OAuth2-Konten (S3.7): Token stored | missing | unreadable | unknown;
+	// Ablauf des zuletzt ausgegebenen Access-Tokens (es bleibt im Speicher
+	// und wird erneuert) und Zeitpunkt der letzten Anmeldung bzw. des
+	// letzten Refresh (RFC 3339, UTC). Nie ein Token.
+	Auth           string `json:"auth,omitempty"`
+	Token          string `json:"token,omitempty"`
+	TokenExpiry    string `json:"token_expiry,omitempty"`
+	TokenUpdatedAt string `json:"token_updated_at,omitempty"`
 	// IncompleteAnswers: leere oder unvollständige Serverantworten bisher
 	// (LIST ohne INBOX, UID-Liste passt nicht zu EXISTS; K2), Last und
 	// LastAt die des letzten Laufs mit solchen Antworten.
@@ -106,9 +116,17 @@ func doctorCmd(a *app) *cobra.Command {
 		Short: "Check the installation: paths, keyring, database, schema version, audit export",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			flag, _ := cmd.Flags().GetString("blobs")
+			blobMode, err := parseBlobsFlag(flag)
+			if err != nil {
+				return err
+			}
 			rep := doctor(cmd.Context(), a)
 			if withSecrets, _ := cmd.Flags().GetBool("secrets"); withSecrets {
 				rep.Secrets = doctorSecrets(cmd.Context(), a, rep)
+			}
+			if blobMode != "" {
+				rep.Blobs = doctorBlobs(cmd.Context(), a, rep, blobMode)
 			}
 			if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
 				if err := json.NewEncoder(a.stdout).Encode(rep); err != nil {
@@ -118,6 +136,9 @@ func doctorCmd(a *app) *cobra.Command {
 				printDoctor(a.stdout, rep)
 				if rep.Secrets != nil {
 					printDoctorSecrets(a.stdout, rep.Secrets)
+				}
+				if rep.Blobs != nil {
+					printDoctorBlobs(a.stdout, rep.Blobs)
 				}
 			}
 			if rep.ConfigError != "" {
@@ -129,10 +150,15 @@ func doctorCmd(a *app) *cobra.Command {
 			if rep.Secrets != nil && rep.Secrets.Problems > 0 {
 				return fmt.Errorf("%w: %d problems (see the lines marked fail)", errSecretCheck, rep.Secrets.Problems)
 			}
+			if rep.Blobs != nil && rep.Blobs.Problems > 0 {
+				return fmt.Errorf("%w: %d problems (see the section blobs)", errBlobCheck, rep.Blobs.Problems)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().Bool("secrets", false, "also check file permissions and search log, audit, audit exports and configuration for stored passwords and API keys")
+	cmd.Flags().String("blobs", "", "also verify the blob store against the database: a 1% sample of the files (hash and size), or every file with --blobs=all; counts rows without file and files without row, never shows content")
+	cmd.Flags().Lookup("blobs").NoOptDefVal = "sample"
 	return cmd
 }
 
@@ -244,6 +270,11 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 					acc.Name, ia.Last, at.Format("2006-01-02 15:04 UTC"), ia.Total))
 			}
 		}
+		if acc.AuthType == ops.AuthOAuth2 {
+			doctorOAuthAccount(sec, acc, &da, &rep)
+			rep.Accounts = append(rep.Accounts, da)
+			continue
+		}
 		if v, ok := os.LookupEnv(da.EnvVar); ok && v != "" {
 			da.Password = "environment"
 		} else if sec != nil {
@@ -259,6 +290,33 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	doctorCredentialRefs(ctx, db, sec, list, &rep)
 	return rep
+}
+
+// doctorOAuthAccount meldet den Token-Stand eines OAuth2-Kontos (S3.7):
+// gespeichert oder nicht, Ablauf des letzten Access-Tokens, letzte
+// Erneuerung. Liest nur; nie ein Token in der Ausgabe.
+func doctorOAuthAccount(sec secrets.Store, acc store.AccountRef, da *DoctorAccount, rep *DoctorReport) {
+	da.Auth, da.Password, da.EnvVar, da.Token = ops.AuthOAuth2, ops.AuthOAuth2, "", "unknown"
+	if sec == nil {
+		return
+	}
+	saved, err := oauth.Load(sec, acc.CredentialRef)
+	switch {
+	case err == nil:
+		da.Token = "stored"
+		if !saved.Expiry.IsZero() {
+			da.TokenExpiry = saved.Expiry.UTC().Format(time.RFC3339)
+		}
+		if !saved.UpdatedAt.IsZero() {
+			da.TokenUpdatedAt = saved.UpdatedAt.UTC().Format(time.RFC3339)
+		}
+	case errors.Is(err, secrets.ErrNotFound):
+		da.Token = "missing"
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s has no OAuth2 token (keyring entry %s); sign in with: account login %s", acc.Name, acc.CredentialRef, acc.Name))
+	case errors.Is(err, oauth.ErrTokenCorrupt):
+		da.Token = "unreadable"
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: the OAuth2 token in the keyring (%s) is unreadable; sign in again with: account login %s", acc.Name, acc.CredentialRef, acc.Name))
+	}
 }
 
 // doctorPolicy lädt die Policy-Datei nur lesend (doctor trägt nichts ein).
@@ -510,7 +568,18 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if len(r.Accounts) > 0 {
 		fmt.Fprintln(w, "accounts:")
 		for _, a := range r.Accounts {
-			fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
+			if a.Auth == ops.AuthOAuth2 {
+				exp := ""
+				if a.TokenExpiry != "" {
+					exp = ", last access token valid until " + a.TokenExpiry + " (renewed automatically)"
+				}
+				if a.TokenUpdatedAt != "" {
+					exp += ", last renewed " + a.TokenUpdatedAt
+				}
+				fmt.Fprintf(w, "  %s: OAuth2 token %s%s, status %s\n", a.Name, a.Token, exp, a.Status)
+			} else {
+				fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
+			}
 			if a.IncompleteAnswersAt != nil {
 				fmt.Fprintf(w, "    incomplete server answers: %d (last: %d on %s)\n", a.IncompleteAnswers, a.IncompleteAnswersLast,
 					a.IncompleteAnswersAt.Format("2006-01-02 15:04 UTC"))

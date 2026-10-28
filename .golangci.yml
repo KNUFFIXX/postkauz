@@ -1,0 +1,98 @@
+# golangci-lint (A12.1). Version im Makefile gepinnt (GOLANGCI_LINT_VERSION),
+# Aufruf: make lint. Format v2 der Konfiguration.
+#
+# Läuft vorerst im Berichtsmodus (CI-Job lint mit continue-on-error). Die
+# Befunde des Erstlaufs stehen eingestuft in docs/protokolle/lint_erstlauf.md;
+# Pflicht-Job wird lint erst, wenn der Erstlauf abgearbeitet ist.
+version: "2"
+
+run:
+  # Pfade in den Ausschlüssen unten gelten relativ zu go.mod, egal wo
+  # golangci-lint gestartet wird.
+  relative-path-mode: gomod
+  # Ein voller Lauf über alle Pakete dauert ohne Cache einige Minuten.
+  timeout: 10m
+
+linters:
+  # Standardsatz von golangci-lint (errcheck, govet, ineffassign,
+  # staticcheck, unused): kostet nichts zusätzlich, govet läuft ohnehin in
+  # make check, ineffassign und unused finden toten Code.
+  default: standard
+  enable:
+    # Sicherheitsmuster (Dateirechte, Pfade aus Variablen, Unterprozesse,
+    # SQL-Verkettung, Integer-Überläufe, Bidi-Steuerzeichen). Passt zu einem
+    # Programm, das fremde Mails, Anhänge und Dateipfade verarbeitet.
+    - gosec
+    # Bekannte Fehler, veraltete APIs und vereinfachbarer Code; seit v2
+    # bündelt staticcheck auch gosimple und stylecheck (im Standardsatz,
+    # hier ausdrücklich, damit die Auswahl aus A12.1 vollständig dasteht).
+    - staticcheck
+    # Ungeprüfte Fehlerrückgaben: Die Fail-closed-Regeln (Audit, Executor)
+    # hängen daran, dass kein Fehler still verloren geht (im Standardsatz,
+    # hier ausdrücklich).
+    - errcheck
+    # Nicht geschlossene HTTP-Antworten (OAuth, MCP). Heute ohne Befund,
+    # schützt künftigen Code.
+    - bodyclose
+    # Breite Sammlung von Fehlermustern und Stilfragen; nur die
+    # Standardprüfungen, damit der Bericht lesbar bleibt.
+    - gocritic
+
+  exclusions:
+    # Meldet Ausschlüsse, die nichts mehr treffen (sonst veralten sie still).
+    warn-unused: true
+    rules:
+      # errcheck: `defer x.Close()` auf Lesepfaden (Dateien, Blobs, Zeilen
+      # aus SQLite, Verbindungen) ist Go-Idiom; der Fehler beim Schließen
+      # eines Lesers ist nicht handlungsfähig. Ein Close auf einem
+      # Schreibpfad wird im Code ausdrücklich geprüft (`if err :=
+      # f.Close()`), nicht verschoben; ein nicht verschobener, ungeprüfter
+      # Close bleibt gemeldet.
+      - linters: [errcheck]
+        source: '^\s*defer [\w.]+\.Close\(\)\s*(//.*)?$'
+      # errcheck: Aufräumen einer Temporärdatei per `defer os.Remove` nach
+      # einem Rename; schlägt es fehl, ist nichts mehr zu tun.
+      - linters: [errcheck]
+        source: '^\s*defer os\.Remove(All)?\('
+      # errcheck: Terminalausgabe des CLI-Adapters (und des Kindprozesses
+      # für die Textextraktion auf stderr). Ein Schreibfehler auf stdout/
+      # stderr ist nicht handlungsfähig; nur für diese Pfade, damit ein
+      # Fprintf in eine Datei anderswo gemeldet bleibt.
+      - linters: [errcheck]
+        path: '^internal/cli/|^internal/extract/child\.go$'
+        text: 'Error return value of `fmt\.Fprint(f|ln)?` is not checked'
+      # errcheck: Hilfsprozesse in Tests (gespielte Hooks und Kindprozesse)
+      # schreiben auf stdout/stderr; der Test prüft die Ausgabe selbst.
+      - linters: [errcheck]
+        path: '_test\.go$'
+        text: 'Error return value of `os\.(Stdout|Stderr)\.WriteString` is not checked'
+      # gosec G104 (ungeprüfte Fehler) doppelt errcheck; errcheck mit den
+      # gezielten Ausschlüssen oben ist dafür maßgeblich.
+      - linters: [gosec]
+        text: '^G104:'
+      # gosec in Tests: Pfade aus t.TempDir (G304, G703, G122), Testdateien
+      # mit 0644/0755 (G301, G302, G306), Unterprozesse aus dem eigenen
+      # Testbinary (G204, G702), Kanarienwerte statt Zugangsdaten (G101),
+      # deterministische Zufallszahlen (G404), Integer-Umwandlungen an
+      # Testdaten (G115) und Tabellennamen aus festen Listen (G202) sind dort
+      # gewollt. G116 (Bidi-Zeichen im Quelltext) bleibt auch in Tests an.
+      - linters: [gosec]
+        path: '_test\.go$'
+        text: '^G(101|115|122|202|204|301|302|304|306|404|702|703):'
+      # gosec im Korpus-Generator (internal/corpus, nur Entwicklung und
+      # Tests, nicht im Programm): synthetische Testdaten mit üblichen
+      # Rechten (G301, G306), deterministischer Zufall (G404) und gewolltes
+      # Abschneiden auf Bytes (G115).
+      - linters: [gosec]
+        path: '^internal/corpus/'
+        text: '^G(115|301|306|404):'
+
+issues:
+  # Vollständiger Bericht statt der Standardgrenzen (50 je Linter, 3 je
+  # gleichem Text): Der Erstlauf soll alle Befunde zeigen.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Alle Befunde einer Zeile zeigen: Sonst verdeckt ein Befund (etwa
+  # errcheck) einen zweiten Linter an derselben Stelle, der erst nach einem
+  # Ausschluss sichtbar würde.
+  uniq-by-line: false

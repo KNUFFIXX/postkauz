@@ -17,7 +17,6 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -47,7 +46,7 @@ func newPushEnv(t *testing.T, boxes ...string) *pushEnv {
 	e.svc = &drafts.Service{Store: e.st}
 	deps := ops.Deps{Accounts: e.st, Messages: e.st, Drafts: e.svc, DraftBlobs: e.blobs, Draft: ops.DraftConfig{AttachDir: t.TempDir()}}
 	e.runner = &Runner{Store: e.st, Blobs: e.blobs, Pusher: ops.NewDraftPusher(deps),
-		Connect: func(ctx context.Context, a store.Account, pw secrets.Secret, idle time.Duration) (RemoteCloser, error) {
+		Connect: func(ctx context.Context, a store.Account, cred provider.Credential, idle time.Duration) (RemoteCloser, error) {
 			if e.offline.Load() {
 				return nil, fmt.Errorf("%w: test server is offline", provider.ErrConnection)
 			}
@@ -81,7 +80,7 @@ func (e *pushEnv) newDraft(t *testing.T, subject string) store.Draft {
 
 func (e *pushEnv) sync(t *testing.T, o ops.SyncOptions) (ops.SyncOutput, error) {
 	t.Helper()
-	return e.runner.Sync(context.Background(), e.account(t), testPass, o, nil)
+	return e.runner.Sync(context.Background(), e.account(t), provider.PasswordCredential(testPass), o, nil)
 }
 
 func (e *pushEnv) draft(t *testing.T, id int64) store.Draft {
@@ -329,7 +328,7 @@ func TestWatchPushesBetweenRounds(t *testing.T) {
 	var pushed atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		out, err := e.runner.Sync(ctx, e.account(t), testPass, ops.SyncOptions{Watch: true, Interval: time.Hour,
+		out, err := e.runner.Sync(ctx, e.account(t), provider.PasswordCredential(testPass), ops.SyncOptions{Watch: true, Interval: time.Hour,
 			JobsInterval: 100 * time.Millisecond}, func(p ops.Progress) {
 			switch p.Event {
 			case "round":

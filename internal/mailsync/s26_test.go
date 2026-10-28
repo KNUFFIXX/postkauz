@@ -12,6 +12,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -207,7 +208,7 @@ func TestWatcherPushesChangedDraftAfterSettle(t *testing.T) {
 	var rounds atomic.Int32
 	done := make(chan error, 1)
 	go func() {
-		_, err := e.runner.Sync(ctx, e.account(t), testPass, ops.SyncOptions{Watch: true, Interval: time.Hour,
+		_, err := e.runner.Sync(ctx, e.account(t), provider.PasswordCredential(testPass), ops.SyncOptions{Watch: true, Interval: time.Hour,
 			JobsInterval: 50 * time.Millisecond}, func(p ops.Progress) {
 			if p.Event == "round" {
 				rounds.Add(1)

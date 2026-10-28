@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -145,6 +146,10 @@ var cliSamples = []cliSample{
 	{"accounts.set", []string{"account", "set", "demo", "--aliases", "Alias@example.org, zweit@example.net"}, false},
 	{"accounts.set", []string{"account", "set", "demo", "--password-stdin"}, false},
 	{"accounts.test", []string{"account", "test", "demo"}, false},
+	// S3.7: OAuth2-Konto anlegen und anmelden (Fake-AS, setupEnv).
+	{"accounts.add", []string{"account", "add", "ms", "--imap", "outlook.office365.com:993", "--user", "ms@example.org",
+		"--auth", "oauth2", "--client-id", oauthtest.ClientID, "--tenant", "consumers"}, false},
+	{"accounts.login", []string{"account", "login", "ms", "--device-code"}, false},
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m", "--full-check-interval", "30m", "--jobs-interval", "5s"}, true},
@@ -152,7 +157,7 @@ var cliSamples = []cliSample{
 	{"mailboxes.list", []string{"mailbox", "list", "-a", "demo"}, false},
 	{"mailboxes.overview", []string{"mailbox", "overview", "{mailbox}", "-a", "demo", "--since", "3650d", "--limit", "5"}, false},
 	{"messages.get", []string{"show", "{html}", "--strip-quotes", "--max-chars", "10"}, false},
-	{"messages.get", []string{"show", "html@example.org", "-a", "demo", "--headers"}, false},
+	{"messages.get", []string{"show", "antwort@example.org", "-a", "demo", "--headers"}, false},
 	{"messages.search", []string{"search", "Rechnung", "-a", "demo", "--mailbox", "INBOX", "--limit", "5", "--explain"}, false},
 	{"messages.search", []string{"search", "Heizung", "--cursor", "{cursor}"}, false},
 	{"threads.get", []string{"thread", "{thread}", "--strip-quotes", "--max-messages", "1", "--max-chars", "5"}, false},
@@ -230,7 +235,10 @@ func seedS16(t *testing.T) map[string]string {
 	if len(html.Attachments) != 1 || answer.ThreadID == 0 || hit.Cursor == "" {
 		t.Fatalf("seed: html=%+v answer=%+v hit=%+v", html.Attachments, answer.ThreadID, hit)
 	}
-	// mbox mit einer neuen und einer vorhandenen Nachricht; Label-Ordner.
+	// mbox mit einer neuen Nachricht und einer zweiten Fassung von
+	// html@example.org (gleiche Message-ID, anderer Inhalt; seit rc6 eine
+	// eigene Nachricht, seit T1c ist die Message-ID damit mehrdeutig, und
+	// show nimmt dafür antwort@example.org); Label-Ordner.
 	dir := t.TempDir()
 	mbox := filepath.Join(dir, "Archiv")
 	labels := filepath.Join(dir, "labels")

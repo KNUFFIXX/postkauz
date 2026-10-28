@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/secretscan"
@@ -93,6 +94,19 @@ func doctorSecrets(ctx context.Context, a *app, rep DoctorReport) *DoctorSecrets
 			add(secretscan.Finding{Check: "accounts", Status: secretscan.Warn, Detail: err.Error()})
 		}
 		for _, acc := range accounts {
+			if acc.AuthType == ops.AuthOAuth2 {
+				// Refresh-Token (S3.7): Es darf so wenig wie ein Passwort in
+				// Log, Konfiguration oder Datenbank stehen.
+				name := "OAuth2 refresh token of account " + acc.Name
+				if secErr != nil {
+					add(secretscan.Finding{Check: "search for " + name, Status: secretscan.Skipped, Detail: "keyring unavailable"})
+					continue
+				}
+				if saved, err := oauth.Load(sec, acc.CredentialRef); err == nil {
+					addNeedle(name, []byte(saved.RefreshToken.Reveal()))
+				}
+				continue
+			}
 			name := "password of account " + acc.Name
 			if v, ok := os.LookupEnv(secrets.EnvName(acc.CredentialRef)); ok && v != "" {
 				addNeedle(name, []byte(v))
@@ -116,7 +130,8 @@ func doctorSecrets(ctx context.Context, a *app, rep DoctorReport) *DoctorSecrets
 	if v := os.Getenv(EnvKey); v != "" {
 		addNeedle("API key in "+EnvKey, []byte(v))
 	}
-	patterns := map[string]*regexp.Regexp{"an API key (" + ops.KeyPrefix + "…)": keyPattern}
+	patterns := map[string]*regexp.Regexp{"an API key (" + ops.KeyPrefix + "…)": keyPattern,
+		"a JSON Web Token (eyJ….eyJ….…)": secretscan.JWTPattern}
 
 	report := func(where string, hits []secretscan.Hit, err error) {
 		check := "secrets in " + where

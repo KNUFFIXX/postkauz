@@ -29,6 +29,39 @@ type BlobReader interface {
 	Get(sha256 string) (io.ReadCloser, error)
 }
 
+// maxAmbiguousIDs begrenzt die IDs in der Meldung einer mehrdeutigen
+// Message-ID.
+const maxAmbiguousIDs = 20
+
+// messageByHeader löst eine Message-ID (mit oder ohne spitze Klammern) im
+// Konto zur lokalen ID auf. Führen mehrere Nachrichten dieselbe Message-ID
+// (Gmail: Fassung des Absenders und empfangene Fassung, Entscheid C2 rc6;
+// oder ein Absender verwendet sie wieder), ist das ein Eingabefehler mit den
+// lokalen IDs statt still der ersten Nachricht (A03 Nachtrag 26.10.2026):
+// Ein Agent soll nicht auf die falsche Fassung antworten.
+func messageByHeader(ctx context.Context, msgs interface {
+	MessageIDsByHeader(ctx context.Context, accountID int64, messageID string) ([]int64, error)
+}, accountID int64, messageID string) (int64, error) {
+	ids, err := msgs.MessageIDsByHeader(ctx, accountID, strings.Trim(strings.TrimSpace(messageID), "<>"))
+	switch {
+	case err != nil:
+		return 0, err
+	case len(ids) == 0:
+		return 0, store.ErrMessageNotFound
+	case len(ids) == 1:
+		return ids[0], nil
+	}
+	list := make([]string, 0, min(len(ids), maxAmbiguousIDs))
+	for _, id := range ids[:min(len(ids), maxAmbiguousIDs)] {
+		list = append(list, itoa(id))
+	}
+	more := ""
+	if len(ids) > maxAmbiguousIDs {
+		more = ", …"
+	}
+	return 0, inputErr("ambiguous message_id: %d messages share it (ids %s%s); give the local id instead", len(ids), strings.Join(list, ", "), more)
+}
+
 // MessageLocation ist eine Ordnerkopie in messages.get.
 type MessageLocation struct {
 	Mailbox string `json:"mailbox"`
@@ -168,14 +201,9 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 				if err != nil {
 					return nil, err
 				}
-				ids, err := msgs.MessageIDsByHeader(ctx, a.ID, strings.Trim(strings.TrimSpace(in.MessageID), "<>"))
-				if err != nil {
+				if id, err = messageByHeader(ctx, msgs, a.ID, in.MessageID); err != nil {
 					return nil, err
 				}
-				if len(ids) == 0 {
-					return nil, store.ErrMessageNotFound
-				}
-				id = ids[0]
 			}
 			m, err := msgs.MessageByID(ctx, id)
 			if err != nil {

@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
-	"github.com/KNUFFIXX/postkauz/internal/secrets"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -79,6 +78,11 @@ type SyncOutput struct {
 	// (T1a Punkt 3: LIST ohne Ordner bzw. INBOX, UID SEARCH ALL ungleich
 	// EXISTS); dabei wurde nichts gelöst oder entfernt. Fehlt bei 0.
 	IncompleteAnswers int `json:"incomplete_answers,omitempty"`
+	// SkippedTooLarge zählt die Nachrichten, die dieser Lauf nicht geladen
+	// hat, weil sie größer als [imap] max_message_bytes sind (MaxMessageBytes,
+	// nur mit SkippedTooLarge > 0); sie zählen auch unter Errors (A5.3).
+	SkippedTooLarge int   `json:"skipped_too_large,omitempty"`
+	MaxMessageBytes int64 `json:"max_message_bytes,omitempty"`
 	// AttachmentsExtracted zählt Anhänge, deren Text dieser Lauf
 	// extrahiert hat (S1.6).
 	AttachmentsExtracted int `json:"attachments_extracted,omitempty"`
@@ -116,7 +120,7 @@ const ReasonNoDraftsMailbox = "no_drafts_mailbox"
 // SyncRunner führt den Sync eines Kontos aus (internal/mailsync). Im
 // Trockenlauf meldet er nur Ordner und Stände, ohne zu schreiben.
 type SyncRunner interface {
-	Sync(ctx context.Context, a store.Account, password secrets.Secret, o SyncOptions, progress func(Progress)) (SyncOutput, error)
+	Sync(ctx context.Context, a store.Account, cred provider.Credential, o SyncOptions, progress func(Progress)) (SyncOutput, error)
 }
 
 // ErrSyncRunning: Für das Konto läuft schon ein schreibender Sync (anderer
@@ -183,7 +187,7 @@ type SyncRunInput struct {
 // (Job draft_push, A02 E1; die Entwürfe hat ein Mensch oder Agent über
 // drafts.create/drafts.update angelegt, die Freigabe-Regeln greifen dort).
 // Er sendet nie, löscht nie, verschiebt nie.
-func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
+func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
 	return Operation{
 		Name:  "sync.run",
 		Scope: policy.ScopeMailSync,
@@ -257,19 +261,17 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 			if err != nil {
 				return nil, err
 			}
-			pw, err := sec.Get(a.CredentialRef)
-			if errors.Is(err, secrets.ErrNotFound) {
-				return nil, fmt.Errorf("%w: %s (keyring entry %s or environment variable %s)", ErrNoSecret, a.Name, a.CredentialRef, secrets.EnvName(a.CredentialRef))
-			} else if err != nil {
+			cred, err := creds.For(a, call.DryRun)
+			if err != nil {
 				return nil, err
 			}
 			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
 				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
 				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second,
 				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second, AuditID: call.AuditID}
-			out, err := runner.Sync(ctx, a, pw, o, call.Progress)
+			out, err := runner.Sync(ctx, a, cred, o, call.Progress)
 			if err != nil {
-				return nil, scrub(err, pw)
+				return nil, scrub(err, cred.Password)
 			}
 			if out.Mailboxes == nil {
 				out.Mailboxes = []SyncMailbox{}
