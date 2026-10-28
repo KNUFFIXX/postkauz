@@ -52,6 +52,7 @@ type RunStore interface {
 	QueuedActions(ctx context.Context, accountID int64) ([]store.Action, error)
 	StartAction(ctx context.Context, id int64, now time.Time) error
 	FinishAction(ctx context.Context, id int64, results []store.TargetResult, errCode string, now time.Time) (string, error)
+	SaveTargetResults(ctx context.Context, id int64, results []store.TargetResult, now time.Time) error
 	ServerCopies(ctx context.Context, messageID int64) ([]store.ServerCopy, error)
 	Mailboxes(ctx context.Context, accountID int64) ([]store.Mailbox, error)
 	MessageHeaderBlob(ctx context.Context, messageID int64) (string, error)
@@ -145,7 +146,7 @@ func (r *Runner) Run(ctx context.Context, accountID int64, remote Remote) (Repor
 	}
 	for _, a := range queue {
 		rep.Actions++
-		results, code, err := r.runOne(ctx, a, byID, remote)
+		results, unsaved, code, err := r.runOne(ctx, a, byID, remote)
 		if err != nil {
 			return rep, err
 		}
@@ -159,7 +160,7 @@ func (r *Runner) Run(ctx context.Context, accountID int64, remote Remote) (Repor
 				rep.Failed++
 			}
 		}
-		st, err := r.Store.FinishAction(context.WithoutCancel(ctx), a.ID, results, code, r.now())
+		st, err := r.Store.FinishAction(context.WithoutCancel(ctx), a.ID, unsaved, code, r.now())
 		if err != nil {
 			return rep, err
 		}
@@ -173,8 +174,10 @@ func fatal(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, provider.ErrConnection) || errors.Is(err, provider.ErrAuth)
 }
 
-func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]store.Mailbox, remote Remote) ([]store.TargetResult, string, error) {
-	var results []store.TargetResult
+// runOne führt eine Aktion aus. results: alle Ergebnisse dieses Laufs;
+// unsaved: die davon, die noch nicht gespeichert sind (die Ergebnisse der
+// Kommandos speichert runOne je Quellordner sofort, V4).
+func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]store.Mailbox, remote Remote) (results, unsaved []store.TargetResult, code string, err error) {
 	open := []store.ActionTarget{}
 	for _, t := range a.Targets {
 		if t.Result == "" {
@@ -184,24 +187,24 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 	if r.Origin != nil {
 		reason, err := r.Origin(ctx, a.RequestedBy, scopeOf(a.Kind), a.ApprovalID > 0)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, "", err
 		}
 		if reason != "" {
 			for _, t := range open {
 				results = append(results, store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetFailed})
 			}
-			return results, reason, nil
+			return results, results, reason, nil
 		}
 	}
 	if err := r.Store.StartAction(ctx, a.ID, r.now()); err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	dest, hasDest := boxes[a.Params.TargetMailboxID]
 	if (a.Kind == store.ActionMove || a.Kind == store.ActionTrash) && !hasDest {
 		for _, t := range open {
 			results = append(results, store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetNotFound})
 		}
-		return results, "target_not_found", nil
+		return results, results, "target_not_found", nil
 	}
 	// V1: Die ID allein bindet das Ziel nicht (mailboxes.id ohne
 	// AUTOINCREMENT wird nach zwei Ordnerabgleichen neu vergeben, und ein
@@ -213,7 +216,7 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		for _, t := range open {
 			results = append(results, store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetStale})
 		}
-		return results, "target_changed", nil
+		return results, results, "target_changed", nil
 	}
 	// Ziele je Quellordner, nach der Prüfung von Spiegel und Kopf.
 	groups := map[int64][]store.ActionTarget{}
@@ -221,10 +224,11 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 	for _, t := range open {
 		res, ok, err := r.check(ctx, t, boxes, remote)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, "", err
 		}
 		if !ok {
 			results = append(results, res)
+			unsaved = append(unsaved, res)
 			continue
 		}
 		if _, seen := groups[t.MailboxID]; !seen {
@@ -241,11 +245,14 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 		res, err := r.apply(ctx, a, mb, dest, ts, uids, remote)
 		if err != nil && fatal(ctx, err) {
-			return nil, "", err
+			return nil, nil, "", err
+		}
+		if err := r.Store.SaveTargetResults(context.WithoutCancel(ctx), a.ID, res, r.now()); err != nil {
+			return nil, nil, "", err
 		}
 		results = append(results, res...)
 	}
-	return results, "", nil
+	return results, unsaved, "", nil
 }
 
 // targetChanged meldet, ob der Zielordner unter der gespeicherten ID nicht

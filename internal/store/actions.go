@@ -668,36 +668,8 @@ func (s *SQLite) FinishAction(ctx context.Context, id int64, results []TargetRes
 	}
 	ms := now.UnixMilli()
 	touchedBoxes := map[int64]bool{}
-	// V5: Ein MOVE je Quellordner; mit mehr als einer UID ist die
-	// Zuordnung alter zu neuer UID unsicher (go-imap sortiert die UID-Mengen,
-	// die Reihenfolge der COPYUID-Antwort geht verloren). Die neue
-	// Verknüpfung gilt dann als nie selbst geladen: Vor der nächsten Aktion
-	// prüft der Job ihren Kopf.
-	movedFrom := map[int64]int{}
-	for _, r := range results {
-		if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
-			movedFrom[r.MailboxID]++
-		}
-	}
-	for _, r := range results {
-		if _, err = tx.ExecContext(ctx, `UPDATE action_targets SET result = ?, new_uid = ? WHERE action_id = ? AND message_id = ? AND mailbox_id = ?`,
-			r.Result, nullID(int64(r.NewUID)), id, r.MessageID, r.MailboxID); err != nil {
-			return "", err
-		}
-		switch kind {
-		case ActionMark:
-			if err = settlePending(ctx, tx, id, r.MessageID, r.MailboxID, r.Result == TargetOK, ms); err != nil {
-				return "", err
-			}
-			touchedBoxes[r.MailboxID] = true
-		case ActionMove, ActionTrash:
-			if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
-				if err = moveLink(ctx, tx, id, r, movedFrom[r.MailboxID] > 1, ms); err != nil {
-					return "", err
-				}
-				touchedBoxes[r.MailboxID], touchedBoxes[r.DestMailboxID] = true, true
-			}
-		}
+	if err = applyResults(ctx, tx, id, kind, results, ms, touchedBoxes); err != nil {
+		return "", err
 	}
 	// Ziele ohne Ergebnis (Lauf vorher abgebrochen) zählen als gescheitert.
 	if kind == ActionMark {
@@ -747,6 +719,83 @@ func (s *SQLite) FinishAction(ctx context.Context, id int64, results []TargetRes
 		return "", err
 	}
 	return state, tx.Commit()
+}
+
+// SaveTargetResults schreibt die Ergebnisse einiger Ziele sofort (je
+// Quellordner nach seinem Kommando; V4 der Nachbesserung T2), ohne die
+// Aktion abzuschließen: Bricht der Lauf danach ab (Verbindung), bleibt die
+// Aktion running, aber der Spiegel kennt das Ergebnis der schon
+// ausgeführten Kommandos, und der nächste Lauf fasst diese Ziele nicht
+// wieder an. FinishAction bekommt danach nur noch die übrigen Ergebnisse.
+func (s *SQLite) SaveTargetResults(ctx context.Context, id int64, results []TargetResult, now time.Time) (err error) {
+	if len(results) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var kind string
+	if err = tx.QueryRowContext(ctx, `SELECT kind FROM actions WHERE id = ?`, id).Scan(&kind); err != nil {
+		return err
+	}
+	ms := now.UnixMilli()
+	touchedBoxes := map[int64]bool{}
+	if err = applyResults(ctx, tx, id, kind, results, ms, touchedBoxes); err != nil {
+		return err
+	}
+	for mb := range touchedBoxes {
+		if err = refreshUnread(ctx, tx, mb); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE actions SET updated_at = ? WHERE id = ?`, ms, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyResults schreibt Ergebnisse von Zielen und passt den Spiegel an
+// (Kopf von FinishAction); touchedBoxes sammelt die Ordner, deren Zähler
+// neu berechnet werden.
+func applyResults(ctx context.Context, tx *sql.Tx, id int64, kind string, results []TargetResult, ms int64, touchedBoxes map[int64]bool) error {
+	// V5: Ein MOVE je Quellordner; mit mehr als einer UID ist die
+	// Zuordnung alter zu neuer UID unsicher (go-imap sortiert die UID-Mengen,
+	// die Reihenfolge der COPYUID-Antwort geht verloren). Die neue
+	// Verknüpfung gilt dann als nie selbst geladen: Vor der nächsten Aktion
+	// prüft der Job ihren Kopf.
+	movedFrom := map[int64]int{}
+	for _, r := range results {
+		if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
+			movedFrom[r.MailboxID]++
+		}
+	}
+	for _, r := range results {
+		if _, err := tx.ExecContext(ctx, `UPDATE action_targets SET result = ?, new_uid = ? WHERE action_id = ? AND message_id = ? AND mailbox_id = ?`,
+			r.Result, nullID(int64(r.NewUID)), id, r.MessageID, r.MailboxID); err != nil {
+			return err
+		}
+		switch kind {
+		case ActionMark:
+			if err := settlePending(ctx, tx, id, r.MessageID, r.MailboxID, r.Result == TargetOK, ms); err != nil {
+				return err
+			}
+			touchedBoxes[r.MailboxID] = true
+		case ActionMove, ActionTrash:
+			if r.Result == TargetOK && r.DestMailboxID != r.MailboxID {
+				if err := moveLink(ctx, tx, id, r, movedFrom[r.MailboxID] > 1, ms); err != nil {
+					return err
+				}
+				touchedBoxes[r.MailboxID], touchedBoxes[r.DestMailboxID] = true, true
+			}
+		}
+	}
+	return nil
 }
 
 // settlePending löst die offene Änderung einer Kopie auf: angenommen

@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,8 +17,10 @@ type fakeRemote struct {
 	headers map[provider.UID]string
 	calls   []string
 	moveErr error
-	flagErr error
-	nextUID provider.UID
+	// moveErrFor: Fehler nur für MOVE aus diesem Quellordner.
+	moveErrFor map[string]error
+	flagErr    error
+	nextUID    provider.UID
 }
 
 func (f *fakeRemote) FetchHeaders(_ context.Context, mailbox string, _ uint32, uids []provider.UID) ([]provider.Header, error) {
@@ -40,6 +43,9 @@ func (f *fakeRemote) Move(_ context.Context, from string, _ uint32, uids []provi
 	f.calls = append(f.calls, "MOVE "+from+" -> "+to)
 	if f.moveErr != nil {
 		return provider.MoveResult{}, f.moveErr
+	}
+	if err := f.moveErrFor[from]; err != nil {
+		return provider.MoveResult{}, err
 	}
 	res := provider.MoveResult{UIDValidity: 8, UIDs: map[provider.UID]provider.UID{}}
 	for _, u := range uids {
@@ -402,5 +408,62 @@ func TestMoveOfSeveralUIDsNeedsHeaderCheckLater(t *testing.T) {
 	}
 	if cs, _ := st.ServerCopies(ctx, 1); len(cs) != 1 || !cs[0].ContentLoaded {
 		t.Fatalf("single move: %+v", cs)
+	}
+}
+
+// V4: Die Ergebnisse je Quellordner werden nach dessen MOVE sofort
+// gespeichert. Bricht danach die Verbindung ab (zweiter Ordner Archiv), kennt der
+// Spiegel das erste Ergebnis schon; die Aktion bleibt running, und der
+// nächste Lauf verschiebt nur noch den Rest.
+func TestRunnerSavesResultsPerMailbox(t *testing.T) {
+	st, acct, ids := envAll(t, []store.MailboxSpec{{Path: "Projekte", Name: "Projekte", Role: "custom"}}, nil)
+	ctx := context.Background()
+	svc := &Service{Store: st}
+	var plan Plan
+	for _, want := range []struct {
+		msg  int64
+		path string
+	}{{1, "INBOX"}, {2, "Archiv"}} {
+		cs, _ := st.ServerCopies(ctx, want.msg)
+		for _, c := range cs {
+			if c.Mailbox == want.path {
+				plan.Targets = append(plan.Targets, target(c))
+			}
+		}
+	}
+	if len(plan.Targets) != 2 {
+		t.Fatalf("targets = %+v", plan.Targets)
+	}
+	a, err := svc.Create(ctx, Request{AccountID: acct, Kind: store.ActionMove, IDs: []int64{1, 2}, Plan: plan, RequestedBy: "cli",
+		Params: store.ActionParams{TargetMailboxID: ids["Projekte"], TargetMailbox: "Projekte", TargetRole: "custom"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeRemote{nextUID: 40, moveErrFor: map[string]error{"Archiv": provider.ErrConnection}}
+	r := &Runner{Store: st, Blobs: blobs()}
+	if _, err := r.Run(ctx, acct, f); err == nil {
+		t.Fatal("connection error not returned")
+	}
+	got, _ := st.Action(ctx, a.ID)
+	res := map[int64]string{}
+	for _, tg := range got.Targets {
+		res[tg.MessageID] = tg.Result
+	}
+	if got.State != store.ActionRunning || res[1] != store.TargetOK || res[2] != "" {
+		t.Fatalf("after abort: state %s, results %v (calls %v)", got.State, res, f.calls)
+	}
+	// Die Kopie von 1 ist aus INBOX ausgetragen (eine neue UID trägt der
+	// Fake nicht ein: seine UIDVALIDITY passt nicht zu Projekte).
+	if cs, _ := st.ServerCopies(ctx, 1); slices.ContainsFunc(cs, func(c store.ServerCopy) bool { return c.Mailbox == "INBOX" }) {
+		t.Fatalf("mirror of 1 not updated: %+v", cs)
+	}
+	f.moveErrFor = nil
+	f.calls = nil
+	if _, err := r.Run(ctx, acct, f); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = st.Action(ctx, a.ID)
+	if got.State != store.ActionDone || strings.Join(f.calls, "|") != "MOVE Archiv -> Projekte" {
+		t.Fatalf("second run: state %s, calls %v", got.State, f.calls)
 	}
 }
