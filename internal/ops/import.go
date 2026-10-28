@@ -22,6 +22,8 @@ type ImportOptions struct {
 	// NoExtract: Textextraktion der Anhänge nicht bis zum Ende abarbeiten,
 	// nur mit dem Zeitbudget wie der Sync (rc6).
 	NoExtract bool
+	// AuditID: Start-Eintrag dieses Aufrufs (A-F9, wie SyncOptions).
+	AuditID int64
 }
 
 // ImportSource ist das Ergebnis einer Quelle (Datei bzw. Maildir-Ordner).
@@ -161,7 +163,8 @@ func ImportRun(repo AccountRepo, runner ImportRunner) Operation {
 				return nil, err
 			}
 			out, err := runner.Import(ctx, a, ImportOptions{Format: in.Format, Path: in.Path, Mailbox: in.Mailbox,
-				LabelsFrom: in.LabelsFrom, Rescan: in.Rescan, DryRun: call.DryRun, NoExtract: in.NoExtract}, call.Progress)
+				LabelsFrom: in.LabelsFrom, Rescan: in.Rescan, DryRun: call.DryRun, NoExtract: in.NoExtract,
+				AuditID: call.AuditID}, call.Progress)
 			if out.Sources == nil {
 				out.Sources = []ImportSource{}
 			}

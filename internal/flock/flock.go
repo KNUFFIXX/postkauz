@@ -67,6 +67,33 @@ func AccountLockName(accountID int64) string { return fmt.Sprintf("sync-%d.lock"
 // (filepath.Glob).
 const AccountLockPattern = "sync-*.lock"
 
+// BusyAccounts liefert die IDs der Konten in dir, deren Sperrdatei ein
+// anderer Prozess hält (ein Sync oder Import läuft). Jede Sperre wird nur
+// einen Augenblick lang und einzeln geholt (doctor, A-F9).
+func BusyAccounts(dir string) ([]int64, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, AccountLockPattern))
+	if err != nil {
+		return nil, err
+	}
+	var busy []int64
+	for _, p := range paths {
+		var id int64
+		if _, err := fmt.Sscanf(filepath.Base(p), "sync-%d.lock", &id); err != nil {
+			continue
+		}
+		l, err := TryLock(p)
+		if errors.Is(err, ErrLocked) {
+			busy = append(busy, id)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		l.Release()
+	}
+	return busy, nil
+}
+
 // AccountLocks sperrt alle vorhandenen Sperrdateien von Konten in dir.
 // Hält ein anderer Prozess eine davon (ein Sync oder Import läuft), gibt
 // sie die schon geholten frei und meldet ErrLocked. Der Aufrufer hält die

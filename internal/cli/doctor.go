@@ -369,8 +369,9 @@ func doctorCredentialRefs(ctx context.Context, db *store.SQLite, sec secrets.Sto
 const auditExportStale = 48 * time.Hour
 
 // auditUnfinishedAge: Ein Start-Eintrag ohne Abschluss, der älter ist,
-// zählt als abgebrochener Aufruf (A1). Lange Läufe (sync --watch) schreiben
-// je Runde eigene Einträge; ein einzelner Aufruf dauert selten länger.
+// zählt als abgebrochener Aufruf (A1). Ausnahme sind Sync und Import eines
+// Kontos, dessen Sperre gerade gehalten wird: Ein sync --watch ist ein
+// einziger Aufruf über Stunden (store.AuditOpenStarts).
 const auditUnfinishedAge = 10 * time.Minute
 
 // doctorAudit meldet den Stand des Audit-Exports und abgebrochene Aufrufe.
@@ -378,13 +379,25 @@ func doctorAudit(ctx context.Context, db *store.SQLite, rep *DoctorReport, now t
 	// Vor Migration 0018 gibt es keine Start-Einträge (Fehler = alte Tabelle).
 	// Läuft ein Sync oder Import (Kontosperre gehalten), ist dessen Start
 	// noch offen, ohne dass etwas abgestürzt ist.
-	var skip []string
-	if release, err := flock.AccountLocks(filepath.Dir(db.Path())); err != nil {
-		skip = []string{"sync.run", "import.run"}
-	} else {
-		release()
+	// A-F9: je Konto; der tote Start eines anderen Kontos zählt. Hart
+	// beendete Läufe schließt der nächste Lauf des Kontos ab.
+	var busy []string
+	ids, err := flock.BusyAccounts(filepath.Dir(db.Path()))
+	if err != nil {
+		rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
 	}
-	if n, err := db.AuditOpenStarts(ctx, now.Add(-auditUnfinishedAge), skip...); err == nil && n > 0 {
+	if len(ids) > 0 {
+		accs, err := db.ListAccounts(ctx)
+		if err != nil {
+			rep.Warnings = append(rep.Warnings, "audit: "+err.Error())
+		}
+		for _, a := range accs {
+			if slices.Contains(ids, a.ID) {
+				busy = append(busy, a.Name)
+			}
+		}
+	}
+	if n, err := db.AuditOpenStarts(ctx, now.Add(-auditUnfinishedAge), busy...); err == nil && n > 0 {
 		rep.AuditUnfinished = n
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf("audit: %s started more than 10 minutes ago without an end entry (crash or a failed audit write); see: audit --result started",
 			plural(n, "call", "calls")))

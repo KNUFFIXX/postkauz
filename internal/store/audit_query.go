@@ -182,26 +182,85 @@ type scanExtra struct {
 
 func (x scanExtra) Scan(dest ...any) error { return x.sc.Scan(append(dest, x.extra)...) }
 
-// AuditOpenStarts zählt Start-Einträge ohne Abschluss, die vor before
-// begannen (doctor, A1: abgestürzte oder abgebrochene Aufrufe). Nicht
-// gezählt werden Starts eines offenen Ablageversuchs (drafts.push_attempt:
-// Ausgang unbekannt, der nächste Push klärt ihn; A7) und Starts der
-// Operationen in skipOps (doctor: sync.run und import.run, solange ein Sync
-// oder Import läuft: ein sync --watch ist ein einziger Aufruf über Stunden).
-func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, skipOps ...string) (int, error) {
-	q := `SELECT count(*) FROM audit_events a WHERE a.result = 'started' AND a.ts < ?
+// LongRunOps sind die Operationen, die eine Kontosperre halten (Sync und
+// Import; ein sync --watch ist ein einziger Aufruf über Stunden). Ihre
+// offenen Starts zählt doctor nicht, solange die Sperre ihres Kontos
+// gehalten wird, und wer die Sperre holt, schließt die toten ab (A-F9).
+var LongRunOps = []string{"sync.run", "import.run"}
+
+// openStart ist die Bedingung für einen Start-Eintrag a ohne Abschluss,
+// der nicht zu einem offenen Ablageversuch gehört (drafts.push_attempt:
+// Ausgang unbekannt, der nächste Push klärt ihn; A7).
+const openStart = `a.result = 'started'
 		AND NOT EXISTS (SELECT 1 FROM audit_events c WHERE c.ref_id = a.id)
 		AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.push_attempt IS NOT NULL AND json_extract(d.push_attempt, '$.audit_id') = a.id)`
+
+// startOfAccount ist die Bedingung "Start gehört zum Konto ?": Ziel
+// account:<name>, oder ohne Ziel (sync ohne --account), solange es genau
+// ein Konto gibt (nur dann löst ResolveAccount ein leeres Konto auf).
+const startOfAccount = `(EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END) t WHERE t.value = 'account:' || ?)
+		OR (COALESCE(json_array_length(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END), 0) = 0
+			AND (SELECT count(*) FROM accounts) = 1))`
+
+func longRunIn() string {
+	return `a.operation IN ('` + strings.Join(LongRunOps, `','`) + `')`
+}
+
+// AuditOpenStarts zählt Start-Einträge ohne Abschluss, die vor before
+// begannen (doctor, A1: abgestürzte oder abgebrochene Aufrufe). Nicht
+// gezählt werden Starts eines offenen Ablageversuchs (A7) und Starts von
+// Sync und Import (LongRunOps) der Konten in busy, deren Kontosperre
+// gehalten wird (ein Lauf ist noch im Gang; A-F9: je Konto, nicht alle).
+// Ein Start ohne Ziel zählt nicht, solange irgendeine Sperre gehalten wird.
+func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, busy ...string) (int, error) {
+	q := `SELECT count(*) FROM audit_events a WHERE ` + openStart + ` AND a.ts < ?`
 	args := []any{before.UnixMilli()}
-	if len(skipOps) > 0 {
-		q += ` AND a.operation NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(skipOps)), ",") + `)`
-		for _, op := range skipOps {
-			args = append(args, op)
+	if len(busy) > 0 {
+		q += ` AND NOT (` + longRunIn() + ` AND (COALESCE(json_array_length(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END), 0) = 0
+			OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(a.targets) THEN a.targets ELSE '[]' END) t
+				WHERE t.value IN (` + strings.TrimSuffix(strings.Repeat("?,", len(busy)), ",") + `))))`
+		for _, b := range busy {
+			args = append(args, "account:"+b)
 		}
 	}
 	var n int
 	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
 	return n, err
+}
+
+// deadStartMinAge: Ein offener Start eines anderen Laufs wird erst
+// abgeschlossen, wenn er so alt ist (ein gleichzeitig startender Lauf
+// desselben Kontos, der an der Sperre scheitert, schreibt seinen Abschluss
+// selbst).
+const deadStartMinAge = time.Minute
+
+// CloseDeadStarts schließt die offenen Starts von Sync und Import
+// (LongRunOps) des Kontos account ab (A-F9). Aufrufen nur, während man die
+// Kontosperre hält: Dann läuft kein anderer Lauf des Kontos, ein offener
+// Start stammt von einem hart beendeten Prozess (z. B. sync --watch, von
+// der Aufgabenplanung beendet). Je Start ein Abschluss error/process_ended
+// mit ref_id, Zeitstempel now, ohne Dauer; Akteur, Schlüssel, Scope,
+// Operation, Parameter und Ziele wie der Start (Festlegung 1). Nur
+// anhängen. exceptID ist der eigene Start (0 = keiner); geschlossen werden
+// nur ältere Starts, die mindestens deadStartMinAge alt sind. Liefert die
+// Zahl der Abschlüsse.
+func (s *SQLite) CloseDeadStarts(ctx context.Context, account string, exceptID int64, now time.Time) (int, error) {
+	q := `INSERT INTO audit_events(ts, actor_type, api_key_id, scope, operation, params_redacted, targets, result, reason,
+		dry_run, duration_ms, policy_version, ref_id)
+		SELECT ?, a.actor_type, a.api_key_id, a.scope, a.operation, a.params_redacted, a.targets, 'error', 'process_ended',
+		a.dry_run, NULL, a.policy_version, a.id FROM audit_events a
+		WHERE ` + openStart + ` AND ` + longRunIn() + ` AND ` + startOfAccount + ` AND a.ts <= ?`
+	args := []any{now.UnixMilli(), account, now.Add(-deadStartMinAge).UnixMilli()}
+	if exceptID > 0 {
+		q += ` AND a.id < ?`
+		args = append(args, exceptID)
+	}
+	res, err := s.db.ExecContext(ctx, q+` ORDER BY a.id`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("store: close dead starts: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // AuditCountUpTo zählt die Einträge mit ID bis einschließlich id (audit

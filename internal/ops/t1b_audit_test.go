@@ -261,7 +261,7 @@ func TestAuditListMergesStartAndEnd(t *testing.T) {
 	}
 	// Während ein Sync läuft (doctor sieht die Kontosperre), zählt sein
 	// offener Start nicht.
-	if n, err := e.st.AuditOpenStarts(ctx, time.Now().Add(-10*time.Minute), "sync.run", "import.run"); err != nil || n != 0 {
+	if n, err := e.st.AuditOpenStarts(ctx, time.Now().Add(-10*time.Minute), "demo"); err != nil || n != 0 {
 		t.Fatalf("open starts while a sync runs = %d %v", n, err)
 	}
 }

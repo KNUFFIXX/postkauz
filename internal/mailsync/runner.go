@@ -101,6 +101,9 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 		}
 		defer lock.release()
 		locked = lock != nil
+		if locked {
+			r.closeDeadStarts(ctx, a, o.AuditID)
+		}
 	}
 	start := time.Now()
 	remote, err := connect(ctx, a, pw, idleRestart)
@@ -179,6 +182,21 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, pw secrets.Secret, o
 }
 
 // lock sperrt das Konto für einen schreibenden Sync (siehe lock.go).
+// closeDeadStarts schließt unter der Kontosperre die offenen Starts früherer,
+// hart beendeter Läufe des Kontos ab (A-F9; store.CloseDeadStarts). Ein
+// Fehler hält den Lauf nicht auf (doctor zählt den Start dann weiter).
+func (r *Runner) closeDeadStarts(ctx context.Context, a store.Account, auditID int64) {
+	n, err := r.Store.CloseDeadStarts(ctx, a.Name, auditID, time.Now())
+	switch {
+	case err != nil:
+		r.log().Warn("could not close audit entries of earlier runs", "account", a.Name, "error", ops.ErrorKinds(err))
+	case n > 0:
+		r.log().Info("audit: earlier runs of this account ended without an end entry; closed as process_ended", "account", a.Name, "count", n)
+	}
+}
+
+func (r *Runner) log() *slog.Logger { return (&Engine{Log: r.Log}).log() }
+
 func (r *Runner) lock(a store.Account) (*accountLock, error) {
 	dir := r.LockDir
 	if dir == "" && r.Store != nil && r.Store.Path() != "" {

@@ -54,7 +54,7 @@ func (r *Runner) Import(ctx context.Context, a store.Account, o ops.ImportOption
 	out.FilesIgnored = ignored
 	locked := false
 	if !o.DryRun {
-		release, l, err := mailsync.LockAccount(r.Store, r.LockDir, a)
+		release, l, err := mailsync.LockAccount(ctx, r.Store, r.LockDir, a, o.AuditID, r.Log)
 		if err != nil {
 			return out, err
 		}

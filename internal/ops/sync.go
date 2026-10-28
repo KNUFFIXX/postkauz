@@ -33,6 +33,10 @@ type SyncOptions struct {
 	JobsInterval time.Duration
 	Mailboxes    []string
 	DryRun       bool
+	// AuditID: Start-Eintrag dieses Aufrufs (A-F9). Mit der Kontosperre
+	// schließt der Lauf die offenen Starts früherer, hart beendeter Läufe
+	// des Kontos ab, nie diesen.
+	AuditID int64
 }
 
 // SyncMailbox ist das Ergebnis eines Ordners.
@@ -262,7 +266,7 @@ func SyncRun(repo AccountRepo, sec secrets.Store, runner SyncRunner) Operation {
 			o := SyncOptions{Full: in.Full, Watch: in.Watch, Window: in.Window, Mailboxes: in.Mailboxes, DryRun: call.DryRun,
 				Interval: time.Duration(in.IntervalSeconds) * time.Second, IdleRestart: time.Duration(in.IdleRestartSeconds) * time.Second,
 				FullCheckInterval: time.Duration(in.FullCheckIntervalSeconds) * time.Second,
-				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second}
+				JobsInterval:      time.Duration(in.JobsIntervalSeconds) * time.Second, AuditID: call.AuditID}
 			out, err := runner.Sync(ctx, a, pw, o, call.Progress)
 			if err != nil {
 				return nil, scrub(err, pw)

@@ -1,6 +1,8 @@
 package mailsync
 
 import (
+	"context"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/KNUFFIXX/postkauz/internal/flock"
@@ -19,11 +21,17 @@ import (
 // Import, S1.10) wie Runner.Sync: Sperrdatei in lockDir, sonst neben der
 // Datenbank (bei :memory: ohne Sperre, locked=false). Ist das Konto
 // gesperrt, kommt ops.ErrSyncRunning.
-func LockAccount(st *store.SQLite, lockDir string, a store.Account) (release func(), locked bool, err error) {
-	r := &Runner{Store: st, LockDir: lockDir}
+//
+// Mit der Sperre schließt LockAccount die offenen Starts früherer, hart
+// beendeter Läufe des Kontos ab (A-F9), außer auditID (der eigene Start).
+func LockAccount(ctx context.Context, st *store.SQLite, lockDir string, a store.Account, auditID int64, log *slog.Logger) (release func(), locked bool, err error) {
+	r := &Runner{Store: st, LockDir: lockDir, Log: log}
 	l, err := r.lock(a)
 	if err != nil {
 		return func() {}, false, err
+	}
+	if l != nil {
+		r.closeDeadStarts(ctx, a, auditID)
 	}
 	return l.release, l != nil, nil
 }
