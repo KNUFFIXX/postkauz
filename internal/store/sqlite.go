@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -318,6 +320,11 @@ func (s *SQLite) migrateTo(ctx context.Context, max int) (err error) {
 			return err
 		}
 	}
+	if s.LastSnapshot != "" {
+		// Erst nach Erfolg aufräumen: Scheitert eine Migration, bleiben alle
+		// Snapshots, auch die älteren (A14).
+		s.pruneSnapshots()
+	}
 	return nil
 }
 
@@ -362,13 +369,74 @@ func (s *SQLite) checkMigrationNames(ctx context.Context, ms []Migration) error 
 }
 
 // snapshot schreibt eine konsistente Kopie der Datenbank (VACUUM INTO).
+// Seit T3 (A14) entsteht die Datei gleich mit Rechten 0600: erst leer mit
+// O_EXCL (VACUUM INTO nimmt ein leeres Ziel an), dann gefüllt; vorher lag
+// sie bis zum chmod nach umask lesbar (meist 0644).
 func (s *SQLite) snapshot(ctx context.Context, next int) (string, error) {
-	name := fmt.Sprintf("%s.pre-%04d-%s.bak", s.path, next, time.Now().UTC().Format("20060102T150405.000Z"))
-	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, name); err != nil {
+	name := fmt.Sprintf("%s.pre-%04d-%s.bak", s.path, next, time.Now().UTC().Format(snapshotTimeFormat))
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
 		return "", fmt.Errorf("store: snapshot before migration %04d: %w", next, err)
 	}
-	_ = os.Chmod(name, 0o600)
+	_ = f.Close()
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, name); err != nil {
+		_ = os.Remove(name)
+		return "", fmt.Errorf("store: snapshot before migration %04d: %w", next, err)
+	}
+	if testHookSnapshotWritten != nil {
+		testHookSnapshotWritten(name)
+	}
 	return filepath.Clean(name), nil
+}
+
+// testHookSnapshotWritten läuft direkt nach VACUUM INTO (nur Tests: Rechte
+// der Datei, bevor irgendetwas sie nachträglich ändern könnte).
+var testHookSnapshotWritten func(name string)
+
+// snapshotTimeFormat ist die Zeit im Namen eines Snapshots (UTC).
+const snapshotTimeFormat = "20060102T150405.000Z"
+
+// SnapshotsKept: so viele Migrations-Snapshots behält das Aufräumen nach
+// einer erfolgreichen Migration (A14, A03_teile.md T3).
+const SnapshotsKept = 2
+
+// snapshotName erkennt einen Migrations-Snapshot neben der Datenbank:
+// <db>.pre-NNNN-<UTC-Zeit>.bak. Anderes wird nie angefasst.
+var snapshotName = regexp.MustCompile(`^\.pre-(\d{4})-(\d{8}T\d{6}\.\d{3}Z)\.bak$`)
+
+// pruneSnapshots löscht nach einer erfolgreichen Migration alle
+// Migrations-Snapshots dieser Datenbank bis auf die SnapshotsKept
+// neuesten (nach der Zeit im Namen, bei Gleichstand nach der Nummer).
+// Nur Dateien, deren Name genau dem Muster folgt, im Ordner der
+// Datenbank; ein Fehler beim Löschen hält nichts auf (die Datei bleibt).
+// Liefert die Zahl der gelöschten Dateien.
+func (s *SQLite) pruneSnapshots() int {
+	dir, base := filepath.Split(s.path)
+	entries, err := os.ReadDir(filepath.Clean(dir))
+	if err != nil {
+		return 0
+	}
+	type snap struct{ name, key string }
+	var list []snap
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), base)
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		m := snapshotName.FindStringSubmatch(rest)
+		if m == nil {
+			continue
+		}
+		list = append(list, snap{e.Name(), m[2] + m[1]})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].key > list[j].key })
+	n := 0
+	for i := SnapshotsKept; i < len(list); i++ {
+		if os.Remove(filepath.Join(dir, list[i].name)) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // migrationChecks prüft vor einer Migration, ob die Daten passen; ein

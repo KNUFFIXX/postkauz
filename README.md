@@ -142,7 +142,7 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 
 ### Updating
 
-A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
+A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`, readable only by you; after a successful update the two newest copies are kept, older ones are removed). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
 
 1. the `sync --watch` task (Windows: `Stop-ScheduledTask` and `Disable-ScheduledTask -TaskName "PostKauz sync watch"`, see [docs/betrieb.md](docs/betrieb.md) 1.7; Linux: `systemctl --user stop` of its unit),
 2. the audit export task ("PostKauz audit export": "Disable" until the update is done; Linux: `systemctl --user stop postkauz-audit-export.timer`),
