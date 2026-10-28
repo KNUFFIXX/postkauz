@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -63,6 +64,17 @@ type FileDoc struct {
 	Delete        DeleteRules   `toml:"delete" json:"delete"`
 	Move          MoveRules     `toml:"move" json:"move"`
 	AgentDefaults AgentDefaults `toml:"agent_defaults" json:"agent_defaults"`
+	// Keys verengt die Regeln je Schlüssel (E4, seit T2): Abschnitt
+	// [keys.<name>] mit move, delete und max_chars. Ein Wert, der weiter ist
+	// als der Standard, macht die Datei ungültig.
+	Keys map[string]KeyRules `toml:"keys" json:"keys,omitempty"`
+}
+
+// KeyRules: Abschnitt [keys.<name>] (leere Werte = wie der Standard).
+type KeyRules struct {
+	Move     MoveRules   `toml:"move" json:"move"`
+	Delete   DeleteRules `toml:"delete" json:"delete"`
+	MaxChars int         `toml:"max_chars" json:"max_chars,omitempty"`
 }
 
 // DraftRules: Abschnitt [draft] der Policy-Datei (nicht zu verwechseln mit
@@ -132,6 +144,24 @@ func (f File) Document() string {
 
 // MaxChars ist das Zeichenbudget für Agenten.
 func (f File) MaxChars() int { return f.Doc.AgentDefaults.MaxChars }
+
+// MaxCharsFor ist das Zeichenbudget für den Schlüssel name ([keys.<name>]
+// max_chars, sonst der Standard).
+func (f File) MaxCharsFor(name string) int {
+	if k, ok := f.Doc.Keys[name]; ok && k.MaxChars > 0 {
+		return k.MaxChars
+	}
+	return f.MaxChars()
+}
+
+// DryRunDefault ist [agent_defaults] dry_run_default: der Standard für
+// key create ohne --dry-run-default (seit T2; ohne Datei true).
+func (f File) DryRunDefault() bool {
+	if p := f.Doc.AgentDefaults.DryRunDefault; p != nil {
+		return *p
+	}
+	return true
+}
 
 // FilePath liefert den Pfad der Policy-Datei: POSTKAUZ_POLICY, sonst
 // policy.toml im Ordner der Konfigurationsdatei. explicit meldet, ob der
@@ -269,11 +299,66 @@ func (d FileDoc) validate() error {
 	default:
 		return errors.New("move.agent_may is invalid (expected none, archive_only or within_account)")
 	}
-	if v := d.Move.BulkConfirmThreshold; v < 1 || v > 100000 {
-		return errors.New("move.bulk_confirm_threshold is out of range (1 to 100000)")
+	// Höchstens MaxTargets (T2 Punkt 7): darüber lehnt CheckInput ohnehin
+	// jeden Aufruf ab (too_many_ids); ein größerer Wert hieße „nie
+	// confirm_count“.
+	if v := d.Move.BulkConfirmThreshold; v < 1 || v > MaxTargets {
+		return fmt.Errorf("move.bulk_confirm_threshold is out of range (1 to %d)", MaxTargets)
 	}
 	if v := d.AgentDefaults.MaxChars; v < MinMaxChars || v > MaxMaxChars {
 		return fmt.Errorf("agent_defaults.max_chars is out of range (%d to %d)", MinMaxChars, MaxMaxChars)
+	}
+	names := make([]string, 0, len(d.Keys))
+	for n := range d.Keys {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if err := d.validateKey(n, d.Keys[n]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Reihenfolge der Werte von agent_may, eng nach weit (E4: [keys.<name>]
+// darf nur verengen).
+var (
+	moveRank   = map[string]int{"none": 0, "archive_only": 1, "within_account": 2}
+	deleteRank = map[string]int{"none": 0, "trash_only": 1}
+	keyNameRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+)
+
+// validateKey prüft [keys.<name>]: gültige Werte, nie weiter als der
+// Standard. Meldungen nennen Schlüssel, nie Werte.
+func (d FileDoc) validateKey(name string, k KeyRules) error {
+	if !keyNameRE.MatchString(name) {
+		return errors.New("keys: a key name is invalid (lowercase letters, digits and '-')")
+	}
+	pre := "keys." + name + "."
+	if v := k.Move.AgentMay; v != "" {
+		r, ok := moveRank[v]
+		switch {
+		case !ok:
+			return errors.New(pre + "move.agent_may is invalid (expected none, archive_only or within_account)")
+		case r > moveRank[d.Move.AgentMay]:
+			return errors.New(pre + "move.agent_may is wider than [move] agent_may; a key can only narrow the policy")
+		}
+	}
+	if v := k.Delete.AgentMay; v != "" {
+		r, ok := deleteRank[v]
+		switch {
+		case !ok:
+			return errors.New(pre + "delete.agent_may is invalid (expected none or trash_only)")
+		case r > deleteRank[d.Delete.AgentMay]:
+			return errors.New(pre + "delete.agent_may is wider than [delete] agent_may; a key can only narrow the policy")
+		}
+	}
+	if v := k.Move.BulkConfirmThreshold; v != 0 && (v < 1 || v > d.Move.BulkConfirmThreshold) {
+		return errors.New(pre + "move.bulk_confirm_threshold must be between 1 and [move] bulk_confirm_threshold")
+	}
+	if v := k.MaxChars; v != 0 && (v < MinMaxChars || v > d.AgentDefaults.MaxChars) {
+		return fmt.Errorf("%smax_chars must be between %d and [agent_defaults] max_chars", pre, MinMaxChars)
 	}
 	return nil
 }

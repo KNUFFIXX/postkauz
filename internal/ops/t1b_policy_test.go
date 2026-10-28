@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 )
 
@@ -47,7 +49,8 @@ func TestContractPolicyInputCases(t *testing.T) {
 				e := newContractEnv(t)
 				ran := map[string]int{}
 				au := &audit.Memory{}
-				x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au}
+				rules := policy.DefaultRules()
+				x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au, Rules: &rules}
 				_, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: op.Name,
 					Input: json.RawMessage(c.input)})
 				checkPolicyInputResult(t, au.Events(), ran[op.Name], err, c.want)
@@ -101,6 +104,7 @@ func TestExecutorPolicyInput(t *testing.T) {
 	agent := policy.Key{ID: "key:op", Scopes: policy.Roles["operator"]}
 	human := policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}
 	archive := policy.Rules{MoveAgentMay: "archive_only", DeleteAgentMay: "trash_only", BulkConfirmThreshold: 50}
+	def := policy.DefaultRules()
 	for _, c := range []struct {
 		key   policy.Key
 		in    map[string]any
@@ -118,7 +122,11 @@ func TestExecutorPolicyInput(t *testing.T) {
 	} {
 		ran = 0
 		au := &audit.Memory{}
-		x := &Executor{Registry: reg, Audit: au, Rules: c.rules}
+		rules := c.rules
+		if rules == nil {
+			rules = &def
+		}
+		x := &Executor{Registry: reg, Audit: au, Rules: rules}
 		b, _ := json.Marshal(c.in)
 		dry := false
 		_, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: "t.move", Input: b, DryRun: &dry})
@@ -153,5 +161,90 @@ func TestRedactOnlyAfterSchemaCheck(t *testing.T) {
 	if _, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "key:r", Scopes: policy.Roles["reader"]}, Actor: audit.ActorAgent,
 		Operation: "t.redact", Input: json.RawMessage(`{"id":5}`)}); err != nil || redacted != 1 || ran != 1 {
 		t.Fatalf("valid input: err=%v redacted=%d ran=%d", err, redacted, ran)
+	}
+}
+
+// T2 Punkt 7: Ohne Regeln der Policy-Datei scheitert eine Operation mit
+// PolicyInput (fail closed, ein Eintrag error policy_rules_missing), und
+// ein Panic in PolicyInput ist ein bereinigter Fehler wie im Handler.
+func TestExecutorPolicyInputFailsClosed(t *testing.T) {
+	ran := 0
+	op := newTestOp("t.mark", policy.ScopeMailTag, policy.R2, func(context.Context, Call) (any, error) { ran++; return map[string]any{}, nil })
+	op.PolicyInput = func(context.Context, json.RawMessage) (policy.Facts, error) { return policy.Facts{Targets: 1}, nil }
+	boom := newTestOp("t.boom", policy.ScopeMailTag, policy.R2, func(context.Context, Call) (any, error) { ran++; return map[string]any{}, nil })
+	boom.PolicyInput = func(context.Context, json.RawMessage) (policy.Facts, error) { panic("KANARIE-Betreff in panic") }
+	reg := NewRegistry()
+	for _, o := range []Operation{op, boom} {
+		if err := reg.Register(o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := policy.Key{ID: "key:a", Scopes: policy.Roles["assistant"]}
+	au := &audit.Memory{}
+	x := &Executor{Registry: reg, Audit: au}
+	if _, err := x.Execute(context.Background(), Request{Key: key, Actor: audit.ActorAgent, Operation: "t.mark", Input: json.RawMessage(`{}`)}); err == nil ||
+		ran != 0 || len(au.Events()) != 1 || au.Events()[0].Reason != "policy_rules_missing" || au.Events()[0].Result != audit.ResultError {
+		t.Fatalf("without rules: err=%v ran=%d events=%+v", err, ran, au.Events())
+	}
+	rules := policy.DefaultRules()
+	au = &audit.Memory{}
+	panics := 0
+	x = &Executor{Registry: reg, Audit: au, Rules: &rules, OnPanic: func(string, crash.Report) { panics++ }}
+	_, err := x.Execute(context.Background(), Request{Key: key, Actor: audit.ActorAgent, Operation: "t.boom", Input: json.RawMessage(`{}`)})
+	if !errors.Is(err, ErrInternal) || ran != 0 || panics != 1 || len(au.Events()) != 1 || au.Events()[0].Reason != "panic" ||
+		strings.Contains(err.Error(), "KANARIE") {
+		t.Fatalf("panic: err=%v ran=%d panics=%d events=%+v", err, ran, panics, au.Events())
+	}
+}
+
+// E3, A14: Eine R3-Operation mit ApprovalRequest legt bei needs_approval
+// nur den Antrag an (der Handler läuft, Abschluss needs_approval, Ausgabe
+// ohne Fehler), auch für den Menschen; im Trockenlauf ebenso
+// needs_approval, der Handler bekommt DryRun. Ohne ApprovalRequest läuft
+// bei R3 kein Handler.
+func TestExecutorApprovalRequest(t *testing.T) {
+	var calls []bool
+	req := newTestOp("t.trash", policy.ScopeMailTrash, policy.R3, func(_ context.Context, c Call) (any, error) {
+		calls = append(calls, c.DryRun)
+		return map[string]any{"status": "needs_approval"}, nil
+	})
+	req.ApprovalRequest = true
+	plain := newTestOp("t.purge", policy.ScopeMailTrash, policy.R3, func(_ context.Context, c Call) (any, error) {
+		calls = append(calls, c.DryRun)
+		return map[string]any{}, nil
+	})
+	reg := NewRegistry()
+	for _, o := range []Operation{req, plain} {
+		if err := reg.Register(o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yes, no := true, false
+	for _, c := range []struct {
+		key policy.Key
+		dry *bool
+	}{
+		{policy.Key{ID: "key:op", Scopes: policy.Roles["operator"]}, &no},
+		{policy.Key{ID: "key:op", Scopes: policy.Roles["operator"], DryRunDefault: true}, nil},
+		{policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}, &no},
+		{policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}, &yes},
+	} {
+		calls = nil
+		au := &audit.Memory{}
+		x := &Executor{Registry: reg, Audit: au}
+		res, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: "t.trash", DryRun: c.dry})
+		wantDry := policy.EffectiveDryRun(c.key, c.dry)
+		evs := au.Events()
+		if err != nil || res.Decision.Outcome != policy.NeedsApproval || res.Output == nil || len(calls) != 1 || calls[0] != wantDry ||
+			len(evs) != 2 || evs[0].Result != audit.ResultStarted || evs[1].Result != audit.ResultNeedsApproval || evs[1].RefID != res.AuditID {
+			t.Fatalf("key %s dry %v: res=%+v err=%v calls=%v events=%+v", c.key.ID, c.dry, res, err, calls, evs)
+		}
+		calls = nil
+		au = &audit.Memory{}
+		x = &Executor{Registry: reg, Audit: au}
+		if _, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: "t.purge", DryRun: c.dry}); !errors.Is(err, ErrNeedsApproval) ||
+			len(calls) != 0 || len(au.Events()) != 1 {
+			t.Fatalf("plain R3 ran: err=%v calls=%v", err, calls)
+		}
 	}
 }

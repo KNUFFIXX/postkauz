@@ -143,6 +143,12 @@ type Operation struct {
 	// spielt für die Policy keine Rolle. Jede Operation damit braucht einen
 	// Policy-Testfall (TestContractPolicyInputCases).
 	PolicyInput func(ctx context.Context, input json.RawMessage) (policy.Facts, error)
+	// ApprovalRequest: Der Handler führt nichts aus, sondern legt den
+	// Antrag auf Freigabe selbst an (R3, E3: messages.trash). Bei
+	// needs_approval läuft er deshalb (außer im Trockenlauf beschreibt er
+	// nur); die Wirkung gibt erst eine Freigabe des Menschen frei. Der
+	// Abschluss-Eintrag im Audit lautet needs_approval.
+	ApprovalRequest bool
 
 	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
 	input *jsonschema.Resolved

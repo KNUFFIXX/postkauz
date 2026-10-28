@@ -1,6 +1,11 @@
 package policy
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
 
 // A9: CheckInput entscheidet über die Eingabe (E4). Mensch: nur die
 // Obergrenze; Schlüssel: [delete], [move], bulk_confirm_threshold mit
@@ -45,11 +50,74 @@ func TestCheckInput(t *testing.T) {
 
 func TestFileRules(t *testing.T) {
 	f := File{Doc: defaults(FileDoc{}, nil)}
-	if r := f.Rules(); r != DefaultRules() {
+	if r := f.Rules(); !reflect.DeepEqual(r, DefaultRules()) {
 		t.Fatalf("rules without file = %+v", r)
 	}
 	f.Doc.Move.AgentMay, f.Doc.Delete.AgentMay, f.Doc.Move.BulkConfirmThreshold = "archive_only", "none", 7
 	if r := f.Rules(); r.MoveAgentMay != "archive_only" || r.DeleteAgentMay != "none" || r.BulkConfirmThreshold != 7 {
 		t.Fatalf("rules = %+v", r)
+	}
+}
+
+// E4 (T2): [keys.<name>] verengt die Regeln für genau diesen Schlüssel;
+// weiter als der Standard ist ungültig.
+func TestKeyNarrowing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.toml")
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("[move]\nagent_may = \"archive_only\"\nbulk_confirm_threshold = 20\n[keys.nacht]\nmax_chars = 500\n[keys.nacht.move]\nagent_may = \"none\"\n" +
+		"bulk_confirm_threshold = 5\n[keys.nacht.delete]\nagent_may = \"none\"\n")
+	f, err := LoadFile(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := f.Rules()
+	nacht := Key{ID: "key:nacht", Name: "nacht", Scopes: Roles["operator"]}
+	other := Key{ID: "key:tag", Name: "tag", Scopes: Roles["operator"]}
+	if d := CheckInput(nacht, Facts{Action: ActionMove, Targets: 1, TargetRole: "archive"}, rules); d.Reason != "policy_forbids" {
+		t.Fatalf("nacht move = %+v", d)
+	}
+	if d := CheckInput(other, Facts{Action: ActionMove, Targets: 1, TargetRole: "archive"}, rules); !d.Allowed() {
+		t.Fatalf("other move = %+v", d)
+	}
+	if d := CheckInput(nacht, Facts{Action: ActionTrash, Targets: 1}, rules); d.Reason != "policy_forbids" {
+		t.Fatalf("nacht trash = %+v", d)
+	}
+	if d := CheckInput(nacht, Facts{Action: ActionMark, Targets: 6}, rules); d.Reason != "confirm_count_required" {
+		t.Fatalf("nacht mark 6 = %+v", d)
+	}
+	if d := CheckInput(other, Facts{Action: ActionMark, Targets: 6}, rules); !d.Allowed() {
+		t.Fatalf("other mark 6 = %+v", d)
+	}
+	if f.MaxCharsFor("nacht") != 500 || f.MaxCharsFor("tag") != DefaultMaxChars {
+		t.Fatalf("max chars %d %d", f.MaxCharsFor("nacht"), f.MaxCharsFor("tag"))
+	}
+	for name, doc := range map[string]string{
+		"wider move":      "[move]\nagent_may = \"archive_only\"\n[keys.x.move]\nagent_may = \"within_account\"\n",
+		"wider delete":    "[delete]\nagent_may = \"none\"\n[keys.x.delete]\nagent_may = \"trash_only\"\n",
+		"wider threshold": "[move]\nbulk_confirm_threshold = 20\n[keys.x.move]\nbulk_confirm_threshold = 21\n",
+		"wider max_chars": "[agent_defaults]\nmax_chars = 1000\n[keys.x]\nmax_chars = 1001\n",
+		"bad name":        "[keys.Gross]\nmax_chars = 500\n",
+		"unknown field":   "[keys.x]\nscopes = [\"admin\"]\n",
+	} {
+		write(doc)
+		if _, err := LoadFile(path, true); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestDryRunDefaultFromFile(t *testing.T) {
+	if !(File{Doc: defaults(FileDoc{}, nil)}).DryRunDefault() {
+		t.Fatal("default must be true")
+	}
+	no := false
+	f := File{Doc: defaults(FileDoc{AgentDefaults: AgentDefaults{DryRunDefault: &no}}, nil)}
+	if f.DryRunDefault() {
+		t.Fatal("dry_run_default = false ignored")
 	}
 }

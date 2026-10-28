@@ -565,7 +565,8 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					e := newContractEnv(t)
 					ran := map[string]int{}
 					au := &audit.Memory{}
-					x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au}
+					rules := policy.DefaultRules()
+					x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au, Rules: &rules}
 					key := policy.Key{ID: "key-" + role, Scopes: policy.Roles[role], DryRunDefault: mode.keyDefault}
 					human := role == "human"
 					if human {
@@ -585,9 +586,14 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 						want, wantReason = policy.Deny, "human_only"
 					case op.Scope != policy.ScopeAny && !slices.Contains(key.Scopes, op.Scope):
 						want = policy.Deny
-					case op.Risk == policy.R3 && !dry:
+					case op.Risk == policy.R3:
+						// A14: auch im Trockenlauf needs_approval.
 						want = policy.NeedsApproval
 					}
+					// E3: Eine Operation, die ihren Antrag selbst anlegt,
+					// läuft bei needs_approval (Abschluss needs_approval).
+					request := want == policy.NeedsApproval && op.ApprovalRequest
+					runs := want == policy.Allow || request
 
 					before := e.fingerprint(t)
 					res, err := x.Execute(context.Background(), Request{Key: key, Actor: audit.ActorAgent,
@@ -600,7 +606,11 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 							t.Fatalf("want denied, got err=%v", err)
 						}
 					case policy.NeedsApproval:
-						if !errors.Is(err, ErrNeedsApproval) {
+						if request {
+							if err != nil || res.Decision.Outcome != policy.NeedsApproval || res.Decision.DryRun != effDry {
+								t.Fatalf("want request with needs_approval, got %+v err=%v", res.Decision, err)
+							}
+						} else if !errors.Is(err, ErrNeedsApproval) {
 							t.Fatalf("want needs_approval, got err=%v", err)
 						}
 					default:
@@ -613,7 +623,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					}
 
 					// Handler nur bei Erlaubnis
-					if got, wantRan := ran[op.Name], want == policy.Allow; (got == 1) != wantRan || got > 1 {
+					if got, wantRan := ran[op.Name], runs; (got == 1) != wantRan || got > 1 {
 						t.Fatalf("handler ran %d times, want ran=%v", got, wantRan)
 					}
 
@@ -622,7 +632,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					// dann der Abschluss mit Verweis), ohne Geheimnis.
 					evs := au.Events()
 					wantEvents := 1
-					if want == policy.Allow {
+					if runs {
 						wantEvents = 2
 					}
 					if len(evs) != wantEvents {
@@ -631,6 +641,10 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					ev := evs[0]
 					wantResult := map[policy.Outcome]audit.Result{policy.Allow: audit.ResultStarted,
 						policy.Deny: audit.ResultDenied, policy.NeedsApproval: audit.ResultNeedsApproval}[want]
+					endResult := audit.ResultOK
+					if request {
+						wantResult, endResult = audit.ResultStarted, audit.ResultNeedsApproval
+					}
 					if ev.Operation != op.Name || ev.Scope != string(op.Scope) || ev.KeyID != key.ID ||
 						ev.ActorType != audit.ActorAgent || ev.Result != wantResult || ev.RefID != 0 {
 						t.Fatalf("audit event = %+v, want result %s", ev, wantResult)
@@ -638,10 +652,10 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					if wantReason != "" && ev.Reason != wantReason {
 						t.Fatalf("audit reason = %q, want %q", ev.Reason, wantReason)
 					}
-					if want == policy.Allow {
+					if runs {
 						end := evs[1]
 						if end.Operation != op.Name || end.KeyID != key.ID || end.RefID != res.AuditID || end.RefID == 0 ||
-							end.Result != audit.ResultOK || end.DryRun != effDry || end.TS.Before(ev.TS) {
+							end.Result != endResult || end.DryRun != effDry || end.TS.Before(ev.TS) {
 							t.Fatalf("closing audit event = %+v (start id %d)", end, res.AuditID)
 						}
 						if ev.DryRun != effDry {
@@ -660,7 +674,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					// eine erlaubte schreibende Operation muss wirken (sonst
 					// prüft die Beispiel-Eingabe den Trockenlauf nicht).
 					after := e.fingerprint(t)
-					writes := want == policy.Allow && !effDry && op.Risk > policy.R0
+					writes := runs && !effDry && op.Risk > policy.R0
 					if !writes && after != before {
 						t.Fatalf("state changed although nothing may be written (dry=%v, risk %s)", effDry, op.Risk)
 					}
@@ -669,7 +683,7 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					}
 
 					// Ausgabe: Pflichtfelder des OutputSchema, dry_run wie entschieden
-					if want != policy.Allow {
+					if !runs {
 						return
 					}
 					b, err := json.Marshal(res.Output)

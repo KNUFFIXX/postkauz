@@ -48,7 +48,7 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 
 **Grenze dieser Regel (bewusst, E2; Gegenprüfung S2.3, K6):** „Mensch" heißt technisch: ein Aufruf der CLI **ohne** `--key` unter dem Betriebssystem-Konto des Betreibers. PostKauz kann nicht unterscheiden, ob dort ein Mensch tippt oder ein Programm `postkauz approve <id>` aufruft. Ein Agent mit freier Shell auf dem Rechner, der das Datenverzeichnis und die Konfiguration lesen kann, kann deshalb alles, was der Mensch kann (Annahme 1 in Abschnitt 1: kein Schutz vor einem Angreifer mit denselben Rechten). **Empfehlung an Betreiber:** Agenten bekommen nur den MCP-Server (`postkauz mcp` mit `POSTKAUZ_KEY`) oder Kommandos mit `--key <name>`, **keine freie Shell** auf dem Rechner mit dem Datenverzeichnis (bei Claude Code, Cowork und ähnlichen Werkzeugen: Bash-Zugriff für diesen Rechner abschalten oder auf ein anderes Konto bzw. einen anderen Rechner ohne PostKauz-Datenverzeichnis beschränken). Wer Agenten eine Shell geben muss, betreibt sie unter einem eigenen Betriebssystem-Konto ohne Leserecht auf das Datenverzeichnis (0700, seit S2.0) und ohne Zugriff auf den Schlüsselbund des Betreibers. Das Audit zeigt jeden Aufruf mit Akteur `human` und Schlüssel `cli`; eine unerwartete Freigabe ist dort sichtbar, verhindert wird sie nicht.
 
-**Risikostufen:** R0 lesen · R1 lokal ändern · R2 serverseitig ändern, reversibel · R3 extern wirksam oder schwer umkehrbar. Ein höheres Risiko verlangt strengere Kontrolle: `policy.Check` liefert für R3 ohne Trockenlauf `needs_approval`.
+**Risikostufen:** R0 lesen · R1 lokal ändern · R2 serverseitig ändern, reversibel · R3 extern wirksam oder schwer umkehrbar. Ein höheres Risiko verlangt strengere Kontrolle: `policy.Check` liefert für R3 `needs_approval`, seit T2 auch im Trockenlauf (A14: vorher ging der Trockenlauf vor, und ein Schlüssel mit `dry_run_default` bekam „erlaubt im Trockenlauf“). Eine R3-Operation, die ihren Antrag selbst anlegt (`ApprovalRequest`, der Papierkorb, E3), läuft dabei bis zum Antrag (im Trockenlauf ohne ihn anzulegen); ausgeführt wird erst nach der Freigabe eines Menschen.
 
 ## 3. API-Schlüssel
 
@@ -149,14 +149,22 @@ agent_may = "trash_only"            # none | trash_only   (endgültiges Löschen
 
 [move]
 agent_may = "within_account"        # none | archive_only | within_account (S3)
-bulk_confirm_threshold = 50         # darüber: confirm_count mit exakter Anzahl (1 bis 100000; S3)
+bulk_confirm_threshold = 50         # darüber (>): confirm_count mit exakter Anzahl (1 bis 1000; seit T2, vorher bis 100000)
 
 [agent_defaults]
-dry_run_default = true              # gelesen und geprüft; ab S3 (heute gilt der Standard je Schlüssel aus key create)
+dry_run_default = true              # Standard für key create ohne --dry-run-default (seit T2); bestehende Schlüssel bleiben
 max_chars = 20000                   # Zeichenbudget je Text für Agenten (100 bis 1000000)
+
+[keys.nacht]                        # seit T2 (E4): Verengung für den Schlüssel "nacht"; nur enger als oben, sonst policy_invalid
+max_chars = 5000                    # höchstens [agent_defaults] max_chars
+[keys.nacht.move]
+agent_may = "none"                  # höchstens so weit wie [move] agent_may
+bulk_confirm_threshold = 10         # höchstens [move] bulk_confirm_threshold
+[keys.nacht.delete]
+agent_may = "none"                  # höchstens so weit wie [delete] agent_may
 ```
 
-Seit S2.1 **wirken** `[agent_defaults] max_chars` (ersetzt den festen Standard 20.000 in den MCP-Tools, Resources und `policy show`/`mail_get_policy`) und `require_approval_for_ready` (nur `true` erlaubt). Seit S2.4 wirken `check_hook` und `check_hook_timeout` (Prüf-Hook oben); `[delete]`, `[move]` und `dry_run_default` werden gelesen und geprüft, ausgewertet erst in S3. Bis S2.0 stand hier `check_hook = ""` (Text); A02 E4 macht daraus eine Liste, ein Text ist jetzt ein Fehler. Nicht in der Policy-Datei, sondern in der Konfiguration ([cli.md](cli.md), Abschnitt 5) stehen `[draft] approval_ttl`, `max_attachment_bytes`, `mailbox`, `quote_line`, `[paths] attach_dir` und `[operator] name` (A02 S2.1, „Konfiguration").
+Seit S2.1 **wirken** `[agent_defaults] max_chars` (ersetzt den festen Standard 20.000 in den MCP-Tools, Resources und `policy show`/`mail_get_policy`) und `require_approval_for_ready` (nur `true` erlaubt). Seit S2.4 wirken `check_hook` und `check_hook_timeout` (Prüf-Hook oben); `[delete]` und `[move]` wertet seit T1b `policy.CheckInput` aus, seit T2 mit den Operationen dazu. **Seit T2:** `dry_run_default` ist der Standard für `key create` ohne `--dry-run-default` (bestehende Schlüssel behalten ihren Wert); `[keys.<name>]` verengt `[move]`, `[delete]` und `max_chars` für einen Schlüssel (fehlende Werte gelten wie der Standard; ein weiterer Wert als der Standard, ein ungültiger Name oder ein unbekanntes Feld ist `policy_invalid`, `TestKeyNarrowing`); `bulk_confirm_threshold` höchstens 1.000 (= `too_many_ids`; ein größerer Wert hieße „nie `confirm_count`“). **Fail closed (T2):** Ein Prozess ohne geladene Regeln (`Executor.Rules` nil) lehnt jede Operation mit Eingabeprüfung ab (`error`/`policy_rules_missing`), statt still die Standards zu nehmen; ein Absturz beim Lesen der Eingabe für die Policy ist ein bereinigter Fehler `panic` wie im Handler. Bis S2.0 stand hier `check_hook = ""` (Text); A02 E4 macht daraus eine Liste, ein Text ist jetzt ein Fehler. Nicht in der Policy-Datei, sondern in der Konfiguration ([cli.md](cli.md), Abschnitt 5) stehen `[draft] approval_ttl`, `max_attachment_bytes`, `mailbox`, `quote_line`, `[paths] attach_dir` und `[operator] name` (A02 S2.1, „Konfiguration").
 
 Regeln werden von Agenten **nur vorgeschlagen** (deaktiviert angelegt, ab S4); aktivieren kann sie nur ein Mensch.
 

@@ -363,7 +363,11 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   [operator]                # seit S2.1
   name = ""                 # wer freigibt (approvals.decided_by); leer = Benutzername des Betriebssystems
   [draft]                   # seit S2.1 (gewirkt ab S2.2–S2.6); nicht zu verwechseln mit [draft] der Policy-Datei
-  approval_ttl = "168h"     # so lange gilt eine offene oder erteilte Freigabe (1m bis 8760h)
+  approval_ttl = "168h"     # so lange gilt eine offene oder erteilte Freigabe (1m bis 8760h); seit T2 heißt der Schlüssel [approval] ttl
+  [approval]                # seit T2 (E3): gilt für Entwürfe und Anträge auf Aktionen (Papierkorb)
+  ttl = "168h"              # neuer Name für [draft] approval_ttl (der alte bleibt gültig; beide verschieden gesetzt ist ein Fehler)
+  [tags]                    # seit T2 (E5)
+  sync_keywords = false     # true: Tags zusätzlich als IMAP-Keywords auf den Server (nur in Ordnern mit PERMANENTFLAGS \*)
   max_attachment_bytes = 26214400  # Summe der Anhänge eines Entwurfs (Standard 25 MiB, höchstens 256 MiB)
   mailbox = ""              # Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts
   quote_line = "On {date}, {from} wrote:"  # Einleitung des Zitats; nur {date}, {date_numeric} und {from}, eine Zeile

@@ -146,11 +146,16 @@ func EffectiveDryRun(k Key, explicit *bool) bool {
 //     vollständig ab S2.1).
 //   - fehlender Scope: Deny (ScopeAny fehlt nie).
 //   - R0: Allow (lesen; ein Trockenlauf ist bedeutungslos).
-//   - R1/R2/R3 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
+//   - R3: NeedsApproval, auch im Trockenlauf und auch für den Menschen
+//     (A14: der Trockenlauf geht R3 nicht vor; sonst bekäme ein Schlüssel
+//     mit dry_run_default „erlaubt im Trockenlauf“ statt needs_approval).
+//     DryRun sagt nur, ob ein Antrag entstehen darf: Eine Operation, die
+//     ihren Antrag selbst anlegt (ops.Operation.ApprovalRequest, der
+//     Papierkorb, E3), läuft dann; die Ausführung gibt erst die Freigabe
+//     eines Menschen frei. Es gibt keinen Weg, eine R3-Operation ohne
+//     Mensch auszuführen.
+//   - R1/R2 mit dryRun: Allow mit DryRun=true (Handler verändert nichts).
 //   - R1 (nur lokale Wirkung) und R2: Allow.
-//   - R3: NeedsApproval. Es gibt keinen Weg, eine R3-Operation ohne
-//     Mensch auszuführen; bis S2 hat keine Operation R3 (Entscheid 44), der
-//     Papierkorb mit Antrag und Freigabe folgt in T2 (E3).
 func Check(key Key, op Requirement, dryRun bool) Decision {
 	if op.HumanOnly && !key.IsHuman() {
 		return Decision{Outcome: Deny, Reason: "human_only"}
@@ -161,11 +166,11 @@ func Check(key Key, op Requirement, dryRun bool) Decision {
 	switch {
 	case op.Risk == R0:
 		return Decision{Outcome: Allow, Reason: "ok"}
+	case op.Risk >= R3:
+		return Decision{Outcome: NeedsApproval, DryRun: dryRun, Reason: "risk_r3"}
 	case dryRun:
 		return Decision{Outcome: Allow, DryRun: true, Reason: "dry_run"}
-	case op.Risk <= R2:
-		return Decision{Outcome: Allow, Reason: "ok"}
 	default:
-		return Decision{Outcome: NeedsApproval, Reason: "risk_r3"}
+		return Decision{Outcome: Allow, Reason: "ok"}
 	}
 }

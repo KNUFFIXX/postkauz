@@ -55,7 +55,8 @@ func mcpCmd(a *app) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			srv, err := mcp.New(mcp.Options{Executor: x, Key: key, Version: a.version, Log: a.log, MaxChars: a.policy.MaxChars()})
+			srv, err := mcp.New(mcp.Options{Executor: x, Key: key, Version: a.version, Log: a.log,
+				MaxChars: a.policy.MaxCharsFor(key.Name)})
 			if err != nil {
 				return err
 			}

@@ -53,6 +53,10 @@ type Deps struct {
 	// Log nimmt Warnungen außerhalb des Executors auf (B-M2: Audit-Eintrag
 	// oauth.refresh nicht geschrieben); nil = keine.
 	Log *slog.Logger
+	// KeyDryRunDefault ist [agent_defaults] dry_run_default der
+	// Policy-Datei: Standard für keys.create ohne dry_run_default (T2,
+	// E4; nil = true).
+	KeyDryRunDefault *bool
 	// TokenLockDir ist der Ordner der Sperrdateien beim Speichern eines
 	// OAuth2-Tokens (neben der Datenbank; leer = ohne Sperre).
 	TokenLockDir string
@@ -79,7 +83,7 @@ func Catalog(d Deps) []Operation {
 		ThreadsGet(d.Messages),
 		AttachmentsList(d.Messages),
 		AttachmentsText(d.Accounts, d.Messages, d.Blobs, d.Extractor),
-		KeysCreate(d.Keys),
+		KeysCreate(d.Keys, d.KeyDryRunDefault),
 		KeysList(d.Keys),
 		KeysRevoke(d.Keys),
 		AuditList(d.Audit),

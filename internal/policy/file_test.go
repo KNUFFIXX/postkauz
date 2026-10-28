@@ -103,6 +103,7 @@ func TestLoadFileRejects(t *testing.T) {
 		// Meldungen nennen nie den Wert.
 		"max_chars zero":         {"[agent_defaults]\nmax_chars = 0\n", "agent_defaults.max_chars is out of range"},
 		"threshold zero":         {"[move]\nbulk_confirm_threshold = 0\n", "move.bulk_confirm_threshold is out of range"},
+		"threshold above 1000":   {"[move]\nbulk_confirm_threshold = 1001\n", "move.bulk_confirm_threshold is out of range (1 to 1000)"},
 		"hook timeout zero":      {"[draft]\ncheck_hook_timeout = \"0s\"\n", "draft.check_hook_timeout is out of range"},
 		"delete empty":           {"[delete]\nagent_may = \"\"\n", "delete.agent_may is invalid"},
 		"delete with value":      {"[delete]\nagent_may = \"GEHEIMWERT\"\n", "delete.agent_may is invalid"},

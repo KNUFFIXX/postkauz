@@ -46,7 +46,7 @@ type Executor struct {
 	// Ergebnis geht trotzdem an den Aufrufer. nil = nur doctor zählt es.
 	OnAuditError func(op string, startID int64, err error)
 	// Rules sind die Regeln der Policy-Datei für policy.CheckInput (A9);
-	// nil = policy.DefaultRules.
+	// nil = Operationen mit PolicyInput scheitern (fail closed, T2 Punkt 7).
 	Rules *policy.Rules
 }
 
@@ -94,6 +94,22 @@ func (x *Executor) callHandler(ctx context.Context, op Operation, call Call) (ou
 		panic(fmt.Sprintf("injected test panic with output %+v", out))
 	}
 	return out, err
+}
+
+// callPolicyInput ruft Operation.PolicyInput wie den Handler mit
+// Panic-Schutz (T2 Punkt 7): Ein Absturz beim Lesen der Eingabe gibt weder
+// Inhalte aus noch beendet er einen langlebigen Prozess.
+func (x *Executor) callPolicyInput(ctx context.Context, op Operation, input json.RawMessage) (f policy.Facts, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			rep := crash.FromPanic(v, debug.Stack())
+			if x.OnPanic != nil {
+				x.OnPanic(op.Name, rep)
+			}
+			f, err = policy.Facts{}, &PanicError{Operation: op.Name, Report: rep}
+		}
+	}()
+	return op.PolicyInput(ctx, input)
 }
 
 // Request ist ein Aufruf einer Oberfläche.
@@ -198,6 +214,11 @@ const auditGrace = 5 * time.Second
 //     das Ergebnis trotzdem zurück; OnAuditError erfährt davon, und doctor
 //     zählt Start-Einträge ohne Abschluss.
 //
+// Ausnahme (E3): Eine Operation mit ApprovalRequest erreicht bei
+// needs_approval den Handler, der nur den Antrag anlegt; ihr Abschluss
+// lautet needs_approval, Output und Entscheidung gehen ohne Fehler an den
+// Aufrufer (Result.Decision.Outcome = NeedsApproval).
+//
 // Redact sieht nur Eingaben, die das Schema bestanden haben; eine
 // ungültige Eingabe steht mit leeren Parametern im Audit.
 func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
@@ -265,7 +286,10 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 
-	if !dec.Allowed() {
+	// Ein Antrag (ApprovalRequest, R3) läuft trotz needs_approval: Der
+	// Handler legt nur den Antrag an (E3).
+	request := dec.Outcome == policy.NeedsApproval && op.ApprovalRequest
+	if !dec.Allowed() && !request {
 		res := audit.ResultDenied
 		if dec.Outcome == policy.NeedsApproval {
 			res = audit.ResultNeedsApproval
@@ -289,20 +313,28 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	// A9: Was die Eingabe anrichten würde (Zahl der Ziele, Zielordner),
 	// prüft die Policy, nicht der Handler.
 	if op.PolicyInput != nil {
-		facts, ferr := op.PolicyInput(ctx, req.Input)
+		// Fail closed (T2 Punkt 7): Ohne Regeln der Policy-Datei entscheidet
+		// nichts über die Eingabe; kein stiller Rückfall auf die Standards.
+		if x.Rules == nil {
+			if _, err := single(audit.ResultError, "policy_rules_missing"); err != nil {
+				return Result{}, err
+			}
+			return Result{Decision: dec}, fmt.Errorf("ops: %s: the policy rules are not loaded", op.Name)
+		}
+		facts, ferr := x.callPolicyInput(ctx, op, req.Input)
 		if ferr != nil {
 			ev.Duration = now().Sub(start)
-			id, err := single(audit.ResultError, "policy_input")
+			reason := "policy_input"
+			if errors.Is(ferr, ErrInternal) {
+				reason = "panic"
+			}
+			id, err := single(audit.ResultError, reason)
 			if err != nil {
 				return Result{}, err
 			}
 			return Result{Decision: dec, AuditID: id}, ferr
 		}
-		rules := policy.DefaultRules()
-		if x.Rules != nil {
-			rules = *x.Rules
-		}
-		if in := policy.CheckInput(req.Key, facts, rules); !in.Allowed() {
+		if in := policy.CheckInput(req.Key, facts, *x.Rules); !in.Allowed() {
 			d := policy.Decision{Outcome: in.Outcome, Reason: in.Reason, DryRun: dec.DryRun}
 			id, err := single(audit.ResultDenied, in.Reason)
 			if err != nil {
@@ -324,6 +356,9 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	end := ev
 	end.RefID = auditID
 	end.Result = audit.ResultOK
+	if request {
+		end.Result = audit.ResultNeedsApproval
+	}
 	if herr != nil {
 		end.Result, end.Reason = audit.ResultError, "handler_error"
 		var de *DeniedError

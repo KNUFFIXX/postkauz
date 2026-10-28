@@ -23,7 +23,9 @@ func TestCheck(t *testing.T) {
 		{"R2 with scope", operator, Requirement{Name: "messages.move", Scope: ScopeMailMove, Risk: R2}, false, Allow, false},
 		{"R2 dry run", operator, Requirement{Name: "messages.move", Scope: ScopeMailMove, Risk: R2}, true, Allow, true},
 		{"R3 needs approval", operator, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, false, NeedsApproval, false},
-		{"R3 dry run is allowed", operator, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, true, Allow, true},
+		// A14: Der Trockenlauf geht R3 nicht vor (sonst „erlaubt im
+		// Trockenlauf“ statt needs_approval); DryRun bleibt als Angabe.
+		{"R3 dry run still needs approval", operator, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, true, NeedsApproval, true},
 		{"R3 without scope is denied, not approvable", reader, Requirement{Name: "messages.trash", Scope: ScopeMailTrash, Risk: R3}, false, Deny, false},
 		{"admin does not imply mail scopes", Key{Scopes: []Scope{ScopeAdmin}}, Requirement{Name: "messages.get", Scope: ScopeMailRead, Risk: R0}, false, Deny, false},
 	}

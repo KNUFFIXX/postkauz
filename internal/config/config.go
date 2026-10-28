@@ -55,6 +55,27 @@ type Config struct {
 	Paths    PathsConfig `toml:"paths"`
 	Operator Operator    `toml:"operator"`
 	Draft    Draft       `toml:"draft"`
+	// Approval: Abschnitt [approval] (seit T2, E3): ttl gilt für Anträge
+	// auf Entwürfe und Aktionen; neuer Name für [draft] approval_ttl, der
+	// alte Schlüssel bleibt gültig.
+	Approval Approval `toml:"approval"`
+	// Tags: Abschnitt [tags] (seit T2, E5).
+	Tags Tags `toml:"tags"`
+}
+
+// Approval: Abschnitt [approval] der Konfiguration.
+type Approval struct {
+	// TTL: so lange gilt ein offener Antrag bzw. eine erteilte Freigabe
+	// (0 = [draft] approval_ttl bzw. 168h). Nach dem Laden steht hier immer
+	// der wirksame Wert (wie Draft.ApprovalTTL).
+	TTL time.Duration `toml:"ttl"`
+}
+
+// Tags: Abschnitt [tags] der Konfiguration.
+type Tags struct {
+	// SyncKeywords: Tags zusätzlich als IMAP-Keywords auf den Server
+	// schreiben (nur in Ordnern mit PERMANENTFLAGS \*; Standard false).
+	SyncKeywords bool `toml:"sync_keywords"`
 }
 
 // PathsConfig: Abschnitt [paths] der Konfiguration.
@@ -310,9 +331,17 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	if v := cfg.IMAP.MaxMessageBytes; v != 0 && (v < MinMessageBytes || v > MaxMessageBytesLimit) {
 		return cfg, p, fmt.Errorf("config: imap.max_message_bytes %d is out of range (%d to %d; 0 = default)", v, MinMessageBytes, MaxMessageBytesLimit)
 	}
+	// [approval] ttl ist der neue Name für [draft] approval_ttl (E3); beide
+	// verschieden gesetzt ist mehrdeutig.
+	if a, d := cfg.Approval.TTL, cfg.Draft.ApprovalTTL; a != 0 && d != 0 && a != d {
+		return cfg, p, fmt.Errorf("config: approval.ttl and draft.approval_ttl are both set and differ; keep only approval.ttl")
+	} else if a != 0 {
+		cfg.Draft.ApprovalTTL = a
+	}
 	if err := checkDraft(&cfg.Draft); err != nil {
 		return cfg, p, err
 	}
+	cfg.Approval.TTL = cfg.Draft.ApprovalTTL
 	if cfg.DataDir == "" {
 		var err error
 		if cfg.DataDir, err = DefaultDataDir(); err != nil {

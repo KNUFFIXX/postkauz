@@ -46,6 +46,9 @@ type Rules struct {
 	// BulkConfirmThreshold: über so vielen Zielen verlangt ein Schlüssel
 	// confirm_count gleich der Zahl der Ziele.
 	BulkConfirmThreshold int
+	// Keys sind die verengten Regeln je Schlüsselname ([keys.<name>];
+	// fehlende Werte schon mit denen des Standards gefüllt).
+	Keys map[string]Rules
 }
 
 // DefaultRules sind die Regeln ohne Policy-Datei (wie defaults in file.go).
@@ -53,10 +56,37 @@ func DefaultRules() Rules {
 	return Rules{MoveAgentMay: "within_account", DeleteAgentMay: "trash_only", BulkConfirmThreshold: DefaultBulkConfirmThreshold}
 }
 
-// Rules liefert die Regeln der geladenen Policy-Datei.
+// Rules liefert die Regeln der geladenen Policy-Datei, mit den verengten
+// Regeln je Schlüssel ([keys.<name>]).
 func (f File) Rules() Rules {
-	return Rules{MoveAgentMay: f.Doc.Move.AgentMay, DeleteAgentMay: f.Doc.Delete.AgentMay,
+	base := Rules{MoveAgentMay: f.Doc.Move.AgentMay, DeleteAgentMay: f.Doc.Delete.AgentMay,
 		BulkConfirmThreshold: f.Doc.Move.BulkConfirmThreshold}.withDefaults()
+	if len(f.Doc.Keys) > 0 {
+		base.Keys = map[string]Rules{}
+		for n, k := range f.Doc.Keys {
+			r := Rules{MoveAgentMay: base.MoveAgentMay, DeleteAgentMay: base.DeleteAgentMay, BulkConfirmThreshold: base.BulkConfirmThreshold}
+			if k.Move.AgentMay != "" {
+				r.MoveAgentMay = k.Move.AgentMay
+			}
+			if k.Delete.AgentMay != "" {
+				r.DeleteAgentMay = k.Delete.AgentMay
+			}
+			if k.Move.BulkConfirmThreshold > 0 {
+				r.BulkConfirmThreshold = k.Move.BulkConfirmThreshold
+			}
+			base.Keys[n] = r
+		}
+	}
+	return base
+}
+
+// For liefert die Regeln für einen Schlüssel (verengt, falls [keys.<name>]).
+func (r Rules) For(key Key) Rules {
+	if k, ok := r.Keys[key.Name]; ok && key.Name != "" && !key.IsHuman() {
+		return k.withDefaults()
+	}
+	r.Keys = nil
+	return r
 }
 
 // withDefaults füllt leere Werte mit DefaultRules.
@@ -95,7 +125,7 @@ func CheckInput(key Key, f Facts, r Rules) Decision {
 	if key.IsHuman() {
 		return Decision{Outcome: Allow, Reason: "ok"}
 	}
-	r = r.withDefaults()
+	r = r.For(key).withDefaults()
 	switch f.Action {
 	case ActionTrash:
 		if r.DeleteAgentMay != "trash_only" {

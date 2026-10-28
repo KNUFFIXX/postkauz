@@ -170,6 +170,9 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
 		DraftCheck: newDraftChecker(a), OAuth: newOAuth(), SystemAudit: st.AuditWriter(), Log: a.log}
+	// E4 (T2): Standard für key create ohne --dry-run-default.
+	dryDefault := a.policy.DryRunDefault()
+	deps.KeyDryRunDefault = &dryDefault
 	// Sperrdateien beim Speichern eines OAuth2-Tokens neben der Datenbank,
 	// wie die Sperren je Konto (K2, zweite Nachbesserung T4).
 	if p := st.Path(); p != "" {

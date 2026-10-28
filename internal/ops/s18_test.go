@@ -36,7 +36,7 @@ func newAdminEnv(t *testing.T) *adminEnv {
 	}
 	e := &adminEnv{st: st, dir: filepath.Join(t.TempDir(), "export")}
 	reg := NewRegistry()
-	for _, op := range []Operation{KeysCreate(st), KeysList(st), KeysRevoke(st), AuditList(st), AuditExport(st, e.dir),
+	for _, op := range []Operation{KeysCreate(st, nil), KeysList(st), KeysRevoke(st), AuditList(st), AuditExport(st, e.dir),
 		AuditVerify(st), PolicyGet(0)} {
 		if err := reg.Register(op); err != nil {
 			t.Fatal(err)

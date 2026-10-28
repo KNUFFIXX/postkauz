@@ -71,12 +71,16 @@ func TestLoadRejectsUnknownKeysAndBadValues(t *testing.T) {
 		"max msg > cap": "[imap]\nmax_message_bytes = 268435457\n",
 		"max msg text":  "[imap]\nmax_message_bytes = \"256MiB\"\n",
 		// S2.1: [paths], [operator], [draft]
-		"unknown draft key":  "[draft]\nmailbx = \"Drafts\"\n",
-		"unknown paths key":  "[paths]\nattach = \"x\"\n",
-		"unknown op key":     "[operator]\nmail = \"x@example.org\"\n",
-		"ttl too short":      "[draft]\napproval_ttl = \"30s\"\n",
-		"ttl too long":       "[draft]\napproval_ttl = \"9000h\"\n",
-		"ttl negative":       "[draft]\napproval_ttl = \"-1h\"\n",
+		"unknown draft key": "[draft]\nmailbx = \"Drafts\"\n",
+		"unknown paths key": "[paths]\nattach = \"x\"\n",
+		"unknown op key":    "[operator]\nmail = \"x@example.org\"\n",
+		"ttl too short":     "[draft]\napproval_ttl = \"30s\"\n",
+		"ttl too long":      "[draft]\napproval_ttl = \"9000h\"\n",
+		"ttl negative":      "[draft]\napproval_ttl = \"-1h\"\n",
+		// T2: [approval] ttl ist der neue Name; beide verschieden ist mehrdeutig.
+		"ttl both differ":    "[approval]\nttl = \"2h\"\n[draft]\napproval_ttl = \"3h\"\n",
+		"approval ttl short": "[approval]\nttl = \"30s\"\n",
+		"unknown tags key":   "[tags]\nsync = true\n",
 		"attach bytes < 0":   "[draft]\nmax_attachment_bytes = -1\n",
 		"attach bytes > cap": "[draft]\nmax_attachment_bytes = 268435457\n",
 		"quote placeholder":  "[draft]\nquote_line = \"Am {datum} schrieb {from}:\"\n",
@@ -125,6 +129,13 @@ func TestLoadDraftPathsOperator(t *testing.T) {
 	if cfg.Draft.ApprovalTTL != 24*time.Hour || cfg.Draft.MaxAttachmentBytes != 1<<20 || cfg.Draft.Mailbox != "Entwürfe" ||
 		cfg.Draft.QuoteLine != "Am {date} schrieb {from}:" || cfg.Operator.Name != "Demo Operator" || p.AttachDir != filepath.Join(dir, "anhaenge") {
 		t.Fatalf("values: %+v %+v %+v", cfg.Draft, cfg.Operator, p)
+	}
+	// T2: [approval] ttl (neuer Name) und [tags] sync_keywords.
+	if err := os.WriteFile(f, []byte("[approval]\nttl = \"12h\"\n[tags]\nsync_keywords = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _, err = Load(); err != nil || cfg.Draft.ApprovalTTL != 12*time.Hour || cfg.Approval.TTL != 12*time.Hour || !cfg.Tags.SyncKeywords {
+		t.Fatalf("approval ttl: %+v %+v %v", cfg.Approval, cfg.Tags, err)
 	}
 	abs := filepath.Join(t.TempDir(), "attach")
 	if err := os.WriteFile(f, []byte("[paths]\nattach_dir = '"+abs+"'\n"), 0o600); err != nil {

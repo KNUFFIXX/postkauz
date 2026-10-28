@@ -228,7 +228,10 @@ func redactKeyName(raw json.RawMessage) (json.RawMessage, []string) {
 }
 
 // KeysCreate legt einen API-Schlüssel an (R1, admin).
-func KeysCreate(repo KeyRepo) Operation {
+//
+// dryDefault ist der Standard für dry_run_default ohne Angabe
+// ([agent_defaults] dry_run_default der Policy-Datei, seit T2; nil = true).
+func KeysCreate(repo KeyRepo, dryDefault *bool) Operation {
 	return Operation{
 		Name:    "keys.create",
 		Scope:   policy.ScopeAdmin,
@@ -241,7 +244,7 @@ func KeysCreate(repo KeyRepo) Operation {
     "role": {"type": "string", "enum": ["reader", "assistant", "operator", "admin"], "description": "default assistant"},
     "scopes": {"type": "array", "items": {"type": "string"}, "description": "narrow the role to these scopes (never widen)"},
     "expires_in_days": {"type": "integer", "minimum": 0, "maximum": 3650, "description": "default 90; 0 = never"},
-    "dry_run_default": {"type": "boolean", "description": "writing calls run as dry run unless dry_run=false (default true)"}
+    "dry_run_default": {"type": "boolean", "description": "writing calls run as dry run unless dry_run=false (default: [agent_defaults] dry_run_default of the policy file, true without it)"}
   },
   "required": ["name"],
   "additionalProperties": false
@@ -301,6 +304,9 @@ func KeysCreate(repo KeyRepo) Operation {
 				days = *in.ExpiresInDays
 			}
 			dry := true
+			if dryDefault != nil {
+				dry = *dryDefault
+			}
 			if in.DryRunDefault != nil {
 				dry = *in.DryRunDefault
 			}
