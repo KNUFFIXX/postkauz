@@ -35,7 +35,7 @@ Python 3.8 oder neuer für die MCP-Probe (Schritt A3.9): Das Skript nimmt `-Pyth
 1. **Kopie der Live-Daten** in einem eigenen Ordner, z. B. `C:\PK\d7a\konto-daten`, mit eigener Konfiguration `C:\PK\d7a\konto-config.toml`. Am einfachsten wie in [abnahme_T1.md](abnahme_T1.md) Schritte 0 und 1: Dauer-Sync, Audit-Export und Claude-App stoppen, `postkauz.db`, `postkauz.db-wal` und `postkauz.db-shm` **zusammen** kopieren, danach alles wieder starten (oder `abnahme_T1.ps1` mit neuem `-DataDir` laufen lassen und dessen Kopie nehmen). Konfiguration: Kopie der echten `config.toml`, darin `[audit] export_dir` auf einen Ordner unter `C:\PK\d7a` ändern; `[tags] sync_keywords` aus lassen (Standard). Das Skript migriert nur diese Kopie.
 2. **Label in Gmail anlegen** (Browser: links „Neues Label erstellen“), z. B. `D7a-Test`. Der Pfad, den `mailbox list` zeigt, ist `-Label` (das Skript holt ihn mit dem ersten Sync in den Spiegel).
 3. **Testmail:** Schick dir von deinem Gmail-Konto eine Mail an dieselbe Adresse, Betreff z. B. „D7a Test“. Lass sie ungelesen. Das Skript nimmt nur Mails, deren Absender die Adresse des Kontos (oder ein Alias) ist und die im Posteingang liegen.
-4. **Kein wartender Entwurf** in der Kopie (`remote: pending`): Sonst legte jeder `sync` ihn im echten Entwürfe-Ordner ab. Das Skript prüft das (B0.3) und überspringt Teil B dann.
+4. **Kein wartender Entwurf** in der Kopie (`remote: pending`): Sonst legte jeder `sync` ihn im echten Entwürfe-Ordner ab. Das Skript prüft das (B0.3) und überspringt Teil B dann. Ebenso **keine offene Aktion** (`queued`/`running`, etwa aus einem abgebrochenen früheren Lauf mit derselben Kopie): Der lesende Sync B0.4 führte sie sonst am echten Postfach aus (B0.3a, Nachbesserung T2).
 5. Gmail im Browser offen haben: An vier Stellen fragt das Skript, was du dort siehst.
 
 ## Aufruf
@@ -109,6 +109,7 @@ Vor jedem Schritt fragt das Skript: **„ja“** eingeben, sonst wird der Schrit
 | B0.1 | `accounts list --json` auf der Kopie (das erste Kommando migriert die Kopie auf das Schema dieses Builds) | Konto `-LiveAccount` vorhanden |
 | B0.2 | `doctor --json` | Datenbank `ok`; Konto mit Passwort (OAuth2 → `SKIP B`) |
 | B0.3 | `draft list` des Kontos | kein Entwurf mit `remote: pending` (sonst `SKIP B`); bei 500 Entwürfen (Obergrenze) ebenfalls `SKIP B` |
+| B0.3a | `action list --account <konto> --state queued --state running --json` | keine offene Aktion (sonst `SKIP B`: ein `sync` führte sie am echten Postfach aus; seit der Nachbesserung T2, V2) |
 | B0.4 | **[ja]** `sync -a <konto>` | Exit 0 (liest nur; holt die Testmail und das Label in den Spiegel) |
 | B0.5 | `mailbox list` | Posteingang vorhanden; dazu Rolle `all` („Alle Nachrichten“), Papierkorb und das Label (fehlt eins, werden B4/B5 bzw. B6 übersprungen) |
 | B1 | Du gibst die **lokale ID** der Testmail ein (finden mit `search "D7a Test" -a <konto>`); das Skript zeigt Datum, Absender, Empfänger, Betreff und Ordner auf dem Bildschirm; **[ja]** | nur eine Mail mit Absender = Adresse des Kontos (oder Alias), im Posteingang; sonst fragt es erneut (höchstens dreimal) |

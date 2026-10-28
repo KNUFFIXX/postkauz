@@ -788,6 +788,24 @@ if (-not $script:PartB) {
         }
     }
 
+    # V2 (Nachbesserung T2): Bei einer Wiederholung koennen aus dem letzten
+    # Lauf Aktionen offen sein (queued/running). Der "lesende" Sync B0.4 fuehrte
+    # sie am echten Postfach aus; dann Teil B mit Grund ueberspringen.
+    if ($bOk) {
+        $r = Invoke-PkB @('action', 'list', '--account', $acc, '--state', 'queued', '--state', 'running', '--limit', '500', '--json')
+        $al = Get-Json $r.Out
+        if ($r.Exit -ne 0 -or $null -eq $al) {
+            Add-Check 'B0.3a' 'action list lesbar' $false $r.Text
+            $bOk = $false
+        } elseif (@($al.actions).Count -gt 0) {
+            $openIds = (@($al.actions) | ForEach-Object { [string] $_.id + ' (' + $_.kind + ', ' + $_.state + ')' }) -join ', '
+            Add-Skip 'B' ('offene Aktionen aus einem frueheren Lauf: ' + $openIds + '; jeder sync wuerde sie am echten Postfach ausfuehren. Neue -AccountDataDir-Kopie nehmen oder die Aktionen erst ansehen (action show <n>)')
+            $bOk = $false
+        } else {
+            Add-Check 'B0.3a' 'keine offene Aktion (queued/running): sync fuehrt also nichts am Postfach aus' $true ''
+        }
+    }
+
     $boxRole = @{}
     $inboxPath = ''
     $haveAll = $false
