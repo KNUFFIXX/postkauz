@@ -77,8 +77,8 @@ var bindings = []binding{
 		flags: accountSetFlags, input: accountSetInput, human: renderAccountSet, covers: []string{"name", "aliases", "replace_password", "drafts_mailbox"}},
 	{op: "accounts.test", path: []string{"account", "test"}, use: "<name>", args: cobra.ExactArgs(1),
 		input: nameInput, human: renderAccountTest, covers: []string{"name"}},
-	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name>", args: cobra.ExactArgs(1),
-		input: nameInput, human: renderAccountRemove, covers: []string{"name"}},
+	{op: "accounts.remove", path: []string{"account", "remove"}, use: "<name> [--force]", args: cobra.ExactArgs(1),
+		flags: accountRemoveFlags, input: accountRemoveInput, human: renderAccountRemove, covers: []string{"name", "force"}},
 	{op: "sync.run", path: []string{"sync"}, args: cobra.NoArgs, flags: syncFlags, input: syncInput,
 		human: renderSync, progress: syncProgress,
 		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes", "all"}},
@@ -360,6 +360,21 @@ func (a *app) explain(cmd *cobra.Command, op ops.Operation, key policy.Key, res 
 
 func nameInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
 	b, err := json.Marshal(map[string]string{"name": args[0]})
+	return b, "", err
+}
+
+// --- account remove ---------------------------------------------------------
+
+func accountRemoveFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("force", false, "remove even with open drafts or mailbox actions (they are lost); not with --key")
+}
+
+func accountRemoveInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	in := map[string]any{"name": args[0]}
+	if force, _ := cmd.Flags().GetBool("force"); force {
+		in["force"] = true
+	}
+	b, err := json.Marshal(in)
 	return b, "", err
 }
 

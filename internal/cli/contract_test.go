@@ -152,6 +152,7 @@ var cliSamples = []cliSample{
 		"--auth", "oauth2", "--client-id", oauthtest.ClientID, "--tenant", "consumers"}, false},
 	{"accounts.login", []string{"account", "login", "ms", "--device-code"}, false},
 	{"accounts.remove", []string{"account", "remove", "leer", "--dry-run"}, false},
+	{"accounts.remove", []string{"account", "remove", "leer", "--force", "--dry-run"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--full", "--window", "50", "--mailbox", "INBOX"}, false},
 	{"sync.run", []string{"sync", "-a", "demo", "--watch", "--interval", "1m", "--idle-restart", "6m", "--full-check-interval", "30m", "--jobs-interval", "5s"}, true},
 	{"sync.run", []string{"sync", "--watch", "--all"}, true},
