@@ -61,7 +61,29 @@ Die Prüfsitzung meldete aus `make vuln` (govulncheck v1.9.0) auf `main` `bac9f1
 | `make integration` | exit 0: dieselben 9 Integrationstests PASS gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14; kein FAIL, kein SKIP | 3 min |
 | `make vuln` | **nicht gelaufen:** `vuln.go.dev` weiter gesperrt (`Forbidden`); die Prüfsitzung prüft nach | – |
 | `make cross` | exit 0: linux/amd64 28,3 MB, windows/amd64 28,1 MB, darwin/arm64 26,6 MB | 2 min |
-| `make release VERSION=0.3.0-alpha.3` | neu gebaut an `c17802e` ohne lokale Änderungen; **gültiger Build**; Windows-Programm `d14470ed2b20d349dca323ac0b68ca17b1d00646aa837b3076ba7e058d5d5cf9`; `go version -m` zeigt `golang.org/x/net v0.62.0` | < 1 min |
+| `make release VERSION=0.3.0-alpha.3` | neu gebaut an `c17802e` ohne lokale Änderungen; ersetzt durch den Build aus Nachtrag 2; Windows-Programm `d14470ed2b20d349dca323ac0b68ca17b1d00646aa837b3076ba7e058d5d5cf9`; `go version -m` zeigt `golang.org/x/net v0.62.0` | < 1 min |
+
+## Nachtrag 2: Nachprüfung der Nachbesserung (Blocker A-F4 und zwei Punkte)
+
+Die Gegenprüfung von `589bb8d` (Codex und Nachprüfung am Quelltext) fand einen Blocker und zwei kleinere Punkte; dazu zwei Punkte für T2.
+
+| Punkt | Commit | Inhalt | Regressionstest |
+|---|---|---|---|
+| (1) Blocker A-F4 | `ac7b567` | Der Zählabgleich zählte die Sollseite über alle abgeschlossenen Tage, die Istseite nur bis zur letzten ID des zeitlich letzten abgeschlossenen Tages. Mit rc8-Daten (verspäteter Eintrag in einem älteren Tag: 2. Oktober bis ID 32, 3. Oktober bis 30) und offenem letztem Exporttag meldete `verify` auf einer unveränderten Kopie `database_changed`, und ein Einschub mit ID −1 glich die Differenz aus. Jetzt beide Seiten bis zur größten letzten ID aller abgeschlossenen Tage | `TestAuditVerifyRc8OpenLastDay` (rc8-Testdaten `t1b_schema16`, `exported_at` des 4. Oktober am selben Tag): ohne Einschub `ok`, mit Einschub −1 `database_changed` am 2. Oktober. Vor dem Fix: `database_changed` am 3. Oktober ohne Einschub (FAIL) |
+| (2) B-M1-Rest | `4f6fbb6` | `oauth.Delete`: Scheitert das Lesen des Haupteintrags mit einem anderen Fehler als „fehlt“ (z. B. Zeitüberschreitung), wird nichts gelöscht und der Fehler gemeldet | `TestDeleteKeepsEverythingWhenTheMainEntryIsUnreadable` (vorher: Haupteintrag gelöscht, Teile übersprungen) |
+| (3) Abnahme T1 | `62d089c` | Schritt 3 `SKIP`, wenn die Kopie ein OAuth2-Konto hat (`doctor --json`, `auth: oauth2`) oder `doctor` nicht lesbar war: ein Token-Refresh speicherte unter dem Verweis des Dauerbetriebs im Schlüsselbund | Lesetest (kein PowerShell im Container); Guard „BOM + ASCII“ grün |
+| nach T2 | `c5ad16e` | Altentwürfe mit `updated_by` NULL nach 0019; tote Starts, die beim Start eines Laufs jünger als eine Minute sind, werden nicht später erneut geprüft (`A03_teile.md` T2 Punkt 7, Roadmap) | – |
+
+Volle Prüfläufe am Stand `c5ad16e`:
+
+| Befehl | Ergebnis | Laufzeit |
+|---|---|---|
+| `make check` | exit 0 (vor jedem Commit am genau zu committenden Stand) | rund 5 min |
+| `make race` | exit 0: 30 Pakete ok, kein Datenrennen (längste: ops 865 s, mailsync 651 s, cli 632 s) | 14 min 39 s |
+| `make integration` | exit 0: 9 Integrationstests PASS gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14; kein FAIL, kein SKIP | 2 min 41 s |
+| `make vuln` | **nicht gelaufen:** `vuln.go.dev` weiter gesperrt (`Forbidden`); die Prüfsitzung prüft nach | – |
+| `make cross` | exit 0: linux/amd64 28,3 MB, windows/amd64 28,1 MB, darwin/arm64 26,6 MB | 2 min |
+| `make release VERSION=0.3.0-alpha.3` | gebaut an `c5ad16e` ohne lokale Änderungen; **gültiger Build**; Windows-Programm `b49b6d600a650fdea391224a7208276e568d2445b801e69cc5ee3612dc7e8730`; enthält `golang.org/x/net v0.62.0` | < 1 min |
 
 ## Offen
 

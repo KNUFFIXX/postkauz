@@ -95,9 +95,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 ### Fixed
 
 - Nachbesserung T1b: Ein Entwurf des Menschen, den ein Agent geändert hat, wird nach dem Widerruf des Agenten-Schlüssels nicht mehr abgelegt (zurück auf `draft`, Freigabe `rejected`, zurückgehalten; A-F3).
-- Nachbesserung T1b: `audit verify` findet wieder eine nachträglich eingeschobene Zeile mit freier niedriger ID im Zeitraum eines abgeschlossenen Tages (`database_changed`; Regression aus T1b, A-F4).
+- Nachbesserung T1b: `audit verify` findet wieder eine nachträglich eingeschobene Zeile mit freier niedriger ID im Zeitraum eines abgeschlossenen Tages (`database_changed`; Regression aus T1b, A-F4); der Zählabgleich reicht bis zur größten letzten ID aller abgeschlossenen Tage, so meldet eine unveränderte rc8-Kopie mit offenem letztem Exporttag keinen falschen Alarm.
 - Nachbesserung T1b: Ein hart beendeter `sync --watch` lässt `doctor` nicht mehr dauerhaft warnen (A-F9).
-- Nachbesserung T1b: `account remove` meldet `secret_deleted` nicht mehr, wenn Teile eines OAuth2-Tokens nicht gelöscht werden konnten; der Haupteintrag bleibt dann stehen (B-M1).
+- Nachbesserung T1b: `account remove` meldet `secret_deleted` nicht mehr, wenn Teile eines OAuth2-Tokens nicht gelöscht werden konnten; der Haupteintrag bleibt dann stehen; lässt sich der Haupteintrag nicht lesen (z. B. Zeitüberschreitung), wird nichts gelöscht (B-M1).
 - T1b: Ein Entwurf, dessen API-Schlüssel nach der Freigabe widerrufen wurde, wird nicht mehr abgelegt (Freigabe `rejected`, Entwurf `abandoned`; A8).
 - T1b: Ein Absturz zwischen APPEND und Vermerk lässt keinen Ablageversuch ohne Audit zurück; auch für danach verworfene Entwürfe wird die Kopie übernommen oder der Versuch abgeschlossen (A7).
 - T1c: Fehlermeldungen, Hinweise und Stack-Zeilen auf stderr, `account test` (Ordnernamen, Fähigkeiten) und der Fehlertext von `--explain` werden wie Mailinhalt von Terminal-Steuerzeichen bereinigt; Folgezeilen einer Meldung oder eines Hinweises sind eingerückt, damit ein Zeilenumbruch in einer Serverantwort keine Zeile `hint:` vortäuschen kann.
