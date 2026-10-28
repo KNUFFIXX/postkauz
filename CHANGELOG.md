@@ -139,6 +139,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 - Gegenprüfung S2.4/S2.5: keine doppelte Entwurfskopie mehr nach einem Abbruch zwischen APPEND und Vermerk; ein vom Server abgelehnter Entwurf hält die übrigen nicht mehr auf; nach `approve` liegt im Entwürfe-Ordner die freigegebene Fassung; der Freigabe-Hash hängt nicht mehr von der Zeitzone des Rechners ab; Hook-Temp-Ordner werden nach einem harten Abbruch aufgeräumt; `lint.bat.` wird als Stapeldatei abgelehnt.
 - IMAP: Eine unlesbare Serverantwort, die mit dem Schreiben eines Kommandos zusammenfällt, gilt jetzt verlässlich als Protokollfehler (kein Wiederholen); vorher wurde sie gelegentlich als Verbindungsfehler wiederholt (wackliger Test, CI rot für `a93aa9c` und `31d7643`).
 
+### Security
+
+- `golang.org/x/net` v0.61.0 → v0.62.0: behebt GO-2026-6860 (`html.Parse` mit quadratischem Aufwand beim Zusammenfassen von Textknoten; erreichbar über `sanitize.HTML`, also über das HTML einer eingehenden Mail). Gefunden von `make vuln` in der Prüfsitzung (28.10.2026).
+
 ## [0.1.0-rc2] – 2026-10-22
 
 **Erstes veröffentlichtes Release: Schnitt 1, abgenommen (D0–D3), plus S2.0 und A7.** Entscheid 35 (21.10.2026): kein Tag `v0.1.0-rc1` auf den alten Stand; dieses Release ersetzt ihn. Gebaut mit Go 1.27.3 (`make release VERSION=0.1.0-rc2`, `dist/`, `SHA256SUMS`, `VERSION`). Datenbank-Schema 9; ein Bestand aus 0.1.0-rc1 (Schema 7) wird beim ersten Kommando migriert (Sicherungskopie neben der Datenbank). Weiter draft-only, kein Versand (ADR-002). Die Einträge unten gelten seit 0.1.0-rc1.
