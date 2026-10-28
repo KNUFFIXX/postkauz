@@ -66,7 +66,7 @@ Antworten und Weiterleiten setzen `In-Reply-To` und `References` korrekt und ver
 
 | Tool | Zweck | Eingabe | Ausgabe | Risiko | Scope |
 |---|---|---|---|---|---|
-| `mail_tag` ✓ | Etiketten setzen/entfernen | `ids`, `add?`, `remove?`, `account?`, `confirm_count?`, `dry_run?` | je ID die Tags danach, Zähler, `keywords` (`off`, `queued`) | R1 (lokal; mit `[tags] sync_keywords` zusätzlich eine Aktion `keywords` für den Server) | `mail:tag` |
+| `mail_tag` ✓ | Etiketten setzen/entfernen | `ids`, `add?`, `remove?`, `account?`, `confirm_count?`, `dry_run?` | je ID die Tags danach, Zähler, `keywords` (`off`, `queued`, `local_only`; `local_only` nennt Tags mit dem Namen eines System-Keywords wie `junk`, die nie auf den Server gehen, V16) | R1 (lokal; mit `[tags] sync_keywords` zusätzlich eine Aktion `keywords` für den Server) | `mail:tag` |
 | `mail_list_tags` ✓ | Tags eines Kontos | `account?` | Name, Zahl der Nachrichten | R0 | `mail:read` |
 | `mail_mark` ✓ | gelesen/ungelesen/markiert | `ids`, `seen?`, `flagged?`, `account?`, `confirm_count?`, `dry_run?` | `status: queued`, `action_id`, `remote: pending`, `next_step` | R2 | `mail:mark` (seit der Nachbesserung T2, V20; nur Rollen `operator`, `admin`) |
 | `mail_move` ✓ | Verschieben/Archivieren | `ids`, `mailbox` oder `role` (`archive`, `all`, `inbox`; `junk`, `sent`, `drafts` nur der Mensch, sonst `denied (target_role_human_only)`, V8), `from?`, `account?`, `confirm_count?`, `dry_run?` | wie `mail_mark`, dazu `target` | R2 | `mail:move` |

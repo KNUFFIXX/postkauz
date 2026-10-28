@@ -441,8 +441,11 @@ type TaggedMessage struct {
 // KeywordSyncState sagt, ob die Tags auch als IMAP-Keywords auf den Server
 // gehen ([tags] sync_keywords, E5).
 type KeywordSyncState struct {
-	Status   string `json:"status"` // off | queued | no_server_copy | dry_run
+	Status   string `json:"status"` // off | queued | no_server_copy | dry_run | local_only
 	ActionID int64  `json:"action_id,omitempty"`
+	// LocalOnly: Tags, deren Name ein System-Keyword ist (junk, nonjunk,
+	// notjunk …); sie bleiben lokal und gehen nie auf den Server (V16).
+	LocalOnly []string `json:"local_only,omitempty"`
 }
 
 // MessagesTag setzt und entfernt lokale Tags (S3.1, R1, Scope mail:tag,
@@ -468,8 +471,10 @@ func MessagesTag(d Deps) Operation {
     "messages": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"},
       "tags": {"type": "array", "items": {"type": "string"}}}, "required": ["id", "tags"]}},
     "added": {"type": "integer"}, "removed": {"type": "integer"},
-    "keywords": {"type": "object", "properties": {"status": {"type": "string", "enum": ["off", "queued", "no_server_copy", "dry_run"]},
-      "action_id": {"type": "integer"}}, "required": ["status"]}
+    "keywords": {"type": "object", "properties": {"status": {"type": "string", "enum": ["off", "queued", "no_server_copy", "dry_run", "local_only"]},
+      "action_id": {"type": "integer"},
+      "local_only": {"type": "array", "items": {"type": "string"}, "description": "tags named like a system keyword (junk, nonjunk, notjunk …): they stay local and never reach the server"}},
+      "required": ["status"]}
   },
   "required": ["dry_run", "account", "messages", "added", "removed", "keywords"]
 }`),
@@ -522,6 +527,9 @@ func MessagesTag(d Deps) Operation {
 				}
 				if o.keywords {
 					out.Keywords.Status = "dry_run"
+					_, l1 := tags.SplitReserved(add)
+					_, l2 := tags.SplitReserved(remove)
+					out.Keywords.LocalOnly = append(l1, l2...)
 				}
 			} else {
 				res, err := o.st.ChangeTags(ctx, store.TagChange{AccountID: a.ID, MessageIDs: ids, Add: add, Remove: remove, SetBy: call.Key.ID})
@@ -530,7 +538,7 @@ func MessagesTag(d Deps) Operation {
 				}
 				cur, out.Added, out.Removed = res.Tags, res.Added, res.Removed
 				if o.keywords {
-					if out.Keywords, err = o.queueKeywords(ctx, call, a, ids, add, remove); err != nil {
+					if out.Keywords, err = o.queueKeywords(ctx, call, a, ids, add, remove, in.ConfirmCount); err != nil {
 						return nil, err
 					}
 				}
@@ -546,7 +554,23 @@ func MessagesTag(d Deps) Operation {
 // queueKeywords reiht den Abgleich der Tags als IMAP-Keywords ein (E5),
 // für alle Serverkopien der Nachrichten; Nachrichten ohne Serverkopie
 // bleiben nur lokal getaggt.
-func (o *actionOps) queueKeywords(ctx context.Context, call Call, a store.Account, ids []int64, add, remove []string) (KeywordSyncState, error) {
+func (o *actionOps) queueKeywords(ctx context.Context, call Call, a store.Account, ids []int64, add, remove []string, confirm *int) (KeywordSyncState, error) {
+	// V16: Tags mit dem Namen eines System-Keywords bleiben lokal.
+	add, localAdd := tags.SplitReserved(add)
+	remove, localRemove := tags.SplitReserved(remove)
+	local := append(localAdd, localRemove...)
+	if len(add)+len(remove) == 0 {
+		return KeywordSyncState{Status: "local_only", LocalOnly: local}, nil
+	}
+	st, err := o.queueKeywordAction(ctx, call, a, ids, add, remove, confirm)
+	st.LocalOnly = local
+	return st, err
+}
+
+// queueKeywordAction reiht die Aktion keywords für die übrigen Tags ein.
+// confirm (confirm_count des Aufrufs) steht in der Aktion, damit die
+// Prüfung der Policy vor der Ausführung (V3) dieselbe Zahl sieht.
+func (o *actionOps) queueKeywordAction(ctx context.Context, call Call, a store.Account, ids []int64, add, remove []string, confirm *int) (KeywordSyncState, error) {
 	var plan actions.Plan
 	for _, id := range ids {
 		p, err := o.svc.PlanFlags(ctx, []int64{id})
@@ -563,7 +587,7 @@ func (o *actionOps) queueKeywords(ctx context.Context, call Call, a store.Accoun
 		return KeywordSyncState{Status: "no_server_copy"}, nil
 	}
 	act, err := o.svc.Create(ctx, actions.Request{AccountID: a.ID, AccountName: a.Name, Kind: store.ActionKeywords, IDs: ids, Plan: plan,
-		RequestedBy: call.Key.ID, AuditID: call.AuditID, Params: store.ActionParams{AddKeywords: add, RemoveKeywords: remove}})
+		ConfirmCount: confirm, RequestedBy: call.Key.ID, AuditID: call.AuditID, Params: store.ActionParams{AddKeywords: add, RemoveKeywords: remove}})
 	if err != nil {
 		return KeywordSyncState{}, err
 	}

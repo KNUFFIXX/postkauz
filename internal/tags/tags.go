@@ -47,3 +47,41 @@ func Normalize(in []string) ([]string, error) {
 // Tag-Name). Jeder gültige Tag-Name ist ein gültiges IMAP-Atom (keine
 // Sonderzeichen, kein führendes '\').
 func Keyword(name string) string { return name }
+
+// reservedKeywords sind System-Keywords von IMAP-Servern und Mailclients
+// (V16 der Nachbesserung T2, Festlegung T3), klein geschrieben: Spam-
+// Kennzeichen von Thunderbird, Apple Mail und Gmail (junk, nonjunk,
+// notjunk, auch mit '$'), die $-Keywords aus RFC 5788/9051 und der
+// IANA-Liste ($forwarded, $mdnsent, $phishing, $notphishing, $junk,
+// $notjunk, $submitpending, $submitted, $important) und Thunderbirds
+// Etiketten $label1 bis $label5. Ein Tag mit so einem Namen schriebe am
+// Server ein Kennzeichen, das Client oder Server als Spam-Urteil, Versand-
+// oder Lesebestätigung deuten. Gültige Tag-Namen enthalten kein '$'; die
+// Formen mit '$' stehen hier, damit die Liste vollständig bleibt, falls
+// sich die Namensregel einmal ändert.
+var reservedKeywords = map[string]bool{
+	"junk": true, "nonjunk": true, "notjunk": true,
+	"$junk": true, "$nonjunk": true, "$notjunk": true,
+	"$forwarded": true, "$mdnsent": true, "$phishing": true, "$notphishing": true,
+	"$submitpending": true, "$submitted": true, "$important": true,
+	"$label1": true, "$label2": true, "$label3": true, "$label4": true, "$label5": true,
+}
+
+// Reserved meldet, ob ein Tag-Name einem System-Keyword entspricht (ohne
+// Rücksicht auf Groß- und Kleinschreibung, wie IMAP Keywords vergleicht).
+// Solche Tags bleiben lokal: [tags] sync_keywords schreibt sie nie auf den
+// Server (V16).
+func Reserved(name string) bool { return reservedKeywords[strings.ToLower(name)] }
+
+// SplitReserved teilt Tag-Namen in die, die als Keyword auf den Server
+// dürfen, und die reservierten (bleiben lokal).
+func SplitReserved(names []string) (sync, local []string) {
+	for _, n := range names {
+		if Reserved(n) {
+			local = append(local, n)
+		} else {
+			sync = append(sync, n)
+		}
+	}
+	return sync, local
+}

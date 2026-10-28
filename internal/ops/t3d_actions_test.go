@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/actions"
@@ -11,25 +12,25 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
-// countingRemote zählt Kommandos an den Server (actions.Remote).
-type countingRemote struct{ calls int }
+// v3Remote zählt Kommandos an den Server (actions.Remote).
+type v3Remote struct{ calls int }
 
-func (c *countingRemote) FetchHeaders(context.Context, string, uint32, []provider.UID) ([]provider.Header, error) {
+func (c *v3Remote) FetchHeaders(context.Context, string, uint32, []provider.UID) ([]provider.Header, error) {
 	c.calls++
 	return nil, nil
 }
 
-func (c *countingRemote) SetFlags(context.Context, string, uint32, []provider.UID, provider.FlagPatch) error {
+func (c *v3Remote) SetFlags(context.Context, string, uint32, []provider.UID, provider.FlagPatch) error {
 	c.calls++
 	return nil
 }
 
-func (c *countingRemote) Move(context.Context, string, uint32, []provider.UID, string) (provider.MoveResult, error) {
+func (c *v3Remote) Move(context.Context, string, uint32, []provider.UID, string) (provider.MoveResult, error) {
 	c.calls++
 	return provider.MoveResult{}, nil
 }
 
-func scopeStrings(ss []policy.Scope) []string {
+func v3Scopes(ss []policy.Scope) []string {
 	out := make([]string, len(ss))
 	for i, s := range ss {
 		out[i] = string(s)
@@ -78,7 +79,7 @@ func TestActionOriginCheckAppliesCurrentPolicy(t *testing.T) {
 	e := newContractEnv(t)
 	ctx := context.Background()
 	if _, err := e.st.CreateAPIKey(ctx, store.APIKey{Name: "agent", KeyHash: HashKey("y"), Role: "operator",
-		Scopes: scopeStrings(policy.Roles["operator"])}); err != nil {
+		Scopes: v3Scopes(policy.Roles["operator"])}); err != nil {
 		t.Fatal(err)
 	}
 	move := actions.Origin{KeyID: "key:agent", Scope: policy.ScopeMailMove,
@@ -122,7 +123,7 @@ func TestRunnerRefusesActionAfterPolicyNarrowed(t *testing.T) {
 	x, _ := actionExec(t, e)
 	ctx := context.Background()
 	if _, err := e.st.CreateAPIKey(ctx, store.APIKey{Name: "op", KeyHash: HashKey("z"), Role: "operator",
-		Scopes: scopeStrings(policy.Roles["operator"])}); err != nil {
+		Scopes: v3Scopes(policy.Roles["operator"])}); err != nil {
 		t.Fatal(err)
 	}
 	res, err := execJSON(t, x, operatorKey, "messages.move", `{"account":"demo","ids":[1],"role":"archive"}`, false)
@@ -134,7 +135,7 @@ func TestRunnerRefusesActionAfterPolicyNarrowed(t *testing.T) {
 	// hier nicht: Sie wartet auf die Freigabe.
 	narrow := policy.DefaultRules()
 	narrow.Keys = map[string]policy.Rules{"op": {MoveAgentMay: "none"}}
-	remote := &countingRemote{}
+	remote := &v3Remote{}
 	acct, _ := e.st.AccountByName(ctx, "demo")
 	r := &actions.Runner{Store: e.st, Origin: ActionOriginCheck(e.st, &narrow)}
 	if _, err := r.Run(ctx, acct.ID, remote); err != nil {
@@ -146,5 +147,43 @@ func TestRunnerRefusesActionAfterPolicyNarrowed(t *testing.T) {
 	}
 	if a.Targets[0].Result != store.TargetFailed {
 		t.Fatalf("targets = %+v", a.Targets)
+	}
+}
+
+// V16 der Nachbesserung T2: Mit [tags] sync_keywords = true gehen Tags,
+// deren Name ein System-Keyword ist (junk, nonjunk, notjunk …), nie als
+// Keyword auf den Server; sie bleiben lokal, die Ausgabe nennt sie.
+func TestReservedTagsStayLocal(t *testing.T) {
+	e := newContractEnv(t)
+	e.deps.SyncKeywords = true
+	x, _ := actionExec(t, e)
+	ctx := context.Background()
+	res, err := execJSON(t, x, assistantKey, "messages.tag", `{"account":"demo","ids":[1],"add":["Junk","rechnung"],"remove":["notjunk"]}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kw := res.Output.(TagOutput).Keywords
+	if kw.Status != "queued" || kw.ActionID == 0 || !slices.Equal(kw.LocalOnly, []string{"junk", "notjunk"}) {
+		t.Fatalf("keywords = %+v", kw)
+	}
+	a, _ := e.st.Action(ctx, kw.ActionID)
+	if !slices.Equal(a.Params.AddKeywords, []string{"rechnung"}) || len(a.Params.RemoveKeywords) != 0 {
+		t.Fatalf("keyword action = %+v", a.Params)
+	}
+	before, _ := e.st.QueryIntForTest(`SELECT count(*) FROM actions`)
+	res, err = execJSON(t, x, assistantKey, "messages.tag", `{"account":"demo","ids":[1],"add":["nonjunk"]}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := res.Output.(TagOutput)
+	if out.Keywords.Status != "local_only" || out.Keywords.ActionID != 0 || out.Added != 1 {
+		t.Fatalf("only reserved = %+v", out)
+	}
+	if after, _ := e.st.QueryIntForTest(`SELECT count(*) FROM actions`); after != before {
+		t.Fatalf("an action was queued for a reserved tag: %d -> %d", before, after)
+	}
+	res, err = execJSON(t, x, assistantKey, "messages.tag", `{"account":"demo","ids":[1],"add":["junk"]}`, true)
+	if err != nil || !slices.Equal(res.Output.(TagOutput).Keywords.LocalOnly, []string{"junk"}) {
+		t.Fatalf("dry run = %+v %v", res.Output, err)
 	}
 }
