@@ -458,8 +458,20 @@ foreach ($d in @($DataDir, $WorkDir)) {
 
 # Protokoll erst nach den Pruefungen der Pfade anlegen.
 if (-not (Test-Path -LiteralPath $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
-$script:Log = Join-Path $WorkDir 'T1_windows.txt'
-[System.IO.File]::WriteAllText($script:Log, '', $script:Utf8)
+$logPath = Join-Path $WorkDir 'T1_windows.txt'
+# Codex-Runde auf 589bb8d: nie eine vorhandene Datei leeren (ein Datei-
+# Symlink auf eine Live-Datei wuerde sonst geleert). -WorkDir darf kein
+# Reparse Point sein, das Protokoll wird exklusiv neu angelegt.
+if ((Get-Item -LiteralPath $WorkDir -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+    Stop-Run ('-WorkDir ist ein Reparse Point (Symlink oder Junction): ' + $WorkDir)
+}
+try {
+    $fs = New-Object System.IO.FileStream($logPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+    $fs.Close()
+} catch {
+    Stop-Run ('Protokolldatei existiert schon (oder ist ein Link): ' + $logPath + '. Bitte umbenennen oder ein neues -WorkDir nehmen.')
+}
+$script:Log = $logPath
 $script:Data = [System.IO.Path]::GetFullPath($DataDir)
 $script:Cfg = [System.IO.Path]::GetFullPath($Config)
 # C-F17: Pfade mit dem Windows-Benutzernamen nie im Klartext (vor dem

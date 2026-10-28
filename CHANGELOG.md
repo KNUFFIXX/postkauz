@@ -113,6 +113,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- T2 (Nachtrag der Prüfsitzung): Ein schreibender Sync oder Import schließt den Start eines parallel laufenden Trockenlaufs desselben Kontos nicht mehr als `process_ended` ab (dessen echter Abschluss scheiterte sonst am eindeutigen `ref_id`); `doctor` zählt offene Trockenlauf-Starts nicht.
+- T2 (Nachtrag der Prüfsitzung): `abnahme_T1.ps1` leert keine vorhandene Protokolldatei mehr (ein Datei-Symlink auf eine Live-Datei wäre geleert worden); das Protokoll wird exklusiv neu angelegt, ein Reparse Point als `-WorkDir` wird abgelehnt.
 - T2 (A13.1): `move` nutzt nur IMAP `MOVE`; ohne die Fähigkeit passiert nichts (`unsupported`) statt des stillen Rückfalls von go-imap auf COPY, `\Deleted` und EXPUNGE. `make guard` verbietet Expunge und `\Deleted` außerhalb der zwei erlaubten Stellen.
 - T2: Vor einer Aktion an einer Serverkopie, deren Inhalt PostKauz nie selbst geladen hat, vergleicht der Job den Kopf; weicht er ab, passiert nichts (`stale`).
 - T2: Die Stildatei eines Entwurfs öffnet nicht mehr blockierend (eine untergeschobene FIFO hielt den Aufruf an).

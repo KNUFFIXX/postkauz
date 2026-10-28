@@ -36,6 +36,9 @@ Für: Prüfsitzung DRACO-PK09 und Betreiber. Auftrag: [A03_teile.md](../../auftr
 17. **Server ohne MOVE:** Ziel `unsupported`, nichts passiert, kein Ersatz.
 18. **Build** heißt `0.3.0-alpha.4` (Zusatz (a); `0.3.0-alpha.3` ist vergeben).
 
+19. **Nachtrag der Prüfsitzung (Codex-Runde auf `589bb8d`), Punkt 1:** `CloseDeadStarts` schließt Starts im Trockenlauf nie ab, `doctor` zählt sie nicht (sie halten keine Kontosperre und laufen womöglich parallel; dass ihr Prozess tot ist, lässt sich nicht nachweisen). Ein hart beendeter Trockenlauf bleibt als offener Start stehen. Regressionstest `TestDryRunStartIsNotClosedByParallelRun` (schlägt ohne den Fix fehl).
+20. **Nachtrag, Punkt 2:** `abnahme_T1.ps1` und `abnahme_D7a.ps1` legen das Protokoll exklusiv neu an (`FileMode.CreateNew`); vorhandene Datei, Link oder `-WorkDir` als Reparse Point → Abbruch statt Leeren. Wiederholungslauf: altes Protokoll umbenennen oder neues `-WorkDir`.
+
 Festlegungen von WP-A: [T2_wpa.md](T2_wpa.md), „Festlegungen“ 1–16.
 
 ## 3. Prüfläufe
