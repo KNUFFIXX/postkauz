@@ -1,6 +1,6 @@
 # Abnahme D7a: Tags, Markieren, Verschieben, Papierkorb
 
-Stand: 28.10.2026 (A03 Teil T2, Build `0.3.0-alpha.4`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
+Stand: 28.10.2026 (A03 Teil T2, Build `0.3.0-alpha.5` nach der Nachbesserung T2). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
 
 ## Zweck
 
@@ -57,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d7a\abnahme_D7a.ps
   -AccountDataDir C:\PK\d7a\konto-daten -AccountConfig C:\PK\d7a\konto-config.toml -Label D7a-Test
 ```
 
-Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.4`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
+Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.5`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
 
 ## Teil A: offline (immer)
 
@@ -78,15 +78,15 @@ Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.4`),
 | A2.3 | `action reject 999 --key test-operator` | **Exit 3**, `denied (human_only)`: auch die Rolle operator darf nicht entscheiden |
 | A2.4 | `action approve 999` (Mensch) | `error: action not found`, Exit 1 (Code `not_found`; Befund D7a-1, behoben) |
 | A2.5 | `action list` | `no actions` |
-| A3.1 | `policy show --key test-assistant` (D7.3) | `messages.tag`, `messages.mark`, `sync.request` erlaubt; **keine** Zeile `messages.move`/`messages.trash`; `actions.approve: human_only` |
-| A3.2 | `policy show --key test-operator` | `messages.trash  mail:trash  R3  needs_approval`, `messages.move`, `actions.approve: human_only` |
+| A3.1 | `policy show --key test-assistant` (D7.3) | `messages.tag`, `sync.request` erlaubt; **keine** Zeile `messages.mark`/`messages.move`/`messages.trash` (`mark` braucht seit der Nachbesserung T2 den Scope `mail:mark`, V20); `actions.approve: human_only` |
+| A3.2 | `policy show --key test-operator` | `messages.trash  mail:trash  R3  needs_approval`, `messages.move`, `messages.mark  mail:mark`, `actions.approve: human_only` |
 | A3.3 | `policy show --key test-triage` (Nacht-Triage, Vorgang 5) | `scopes: mail:draft, mail:read, mail:search, mail:tag`; `messages.tag`, `drafts.create` ja; kein `messages.move`, `messages.trash`, `sync.*` |
 | A3.4 | `move <id> --role archive --key test-triage`, `trash <id> --key test-triage` | beide **Exit 3**, `denied (missing_scope)` |
 | A3.5 | `tag add rechnung <id2> --key test-triage` | erlaubt, Exit 0, als Trockenlauf (`dry run: 1 tags added …`; Schlüssel laufen standardmäßig trocken) |
 | A3.6 | `trash 1,2,…,51 --key test-operator` (ohne `--confirm-count`) | **Exit 3**, `denied (confirm_count_required)` (Schwelle 50) |
 | A3.7 | `sync request -a demo` mit `--key test-triage` bzw. `--key test-assistant` | triage: Exit 3 `denied (missing_scope)`; assistant: `dry run: would queue a sync of account demo …` |
 | A3.8 | `sync request -a demo` (Mensch) | `sync of account demo (all mailboxes) queued as job <n>`; der Job bleibt ohne Server liegen (erwartet) |
-| A3.9–A3.12 | MCP-Probe (`abnahme_D7a_mcp.py`, spricht mit `postkauz mcp` wie Claude) | A3.10: `test-assistant` sieht `mail_tag`, `mail_mark`, `mail_sync_now`, aber weder `mail_move` noch `mail_trash`; A3.11: `test-operator` sieht `mail_move` und `mail_trash`; A3.12: `mail_trash` mit 51 IDs ohne `confirm_count` → `status: denied`, `reason: confirm_count_required`, keine Aktion angelegt; A3.9: Probe vollständig (3 Prüfungen, Exit 0) |
+| A3.9–A3.12 | MCP-Probe (`abnahme_D7a_mcp.py`, spricht mit `postkauz mcp` wie Claude) | A3.10: `test-assistant` sieht `mail_tag`, `mail_sync_now`, aber weder `mail_mark` noch `mail_move` noch `mail_trash`; A3.11: `test-operator` sieht `mail_mark`, `mail_move` und `mail_trash`; A3.12: `mail_trash` mit 51 IDs ohne `confirm_count` → `status: denied`, `reason: confirm_count_required`, keine Aktion angelegt; A3.9: Probe vollständig (3 Prüfungen, Exit 0) |
 | A6.1 | `audit --since 10m` (D7.6) | Exit 0, zeigt die Aufrufe dieses Laufs (u. a. `messages.tag`, `denied (human_only)`) |
 | A6.2 | `audit --since 10m --json` | je Aufruf **eine** Zeile mit Endergebnis; außer dem gerade laufenden `audit.list` keine Zeile `started` |
 | A6.3 | `audit --since 10m --raw --json` | je erlaubtem Aufruf ein Start `started` und ein Abschluss mit `ref_id` (jeder Abschluss hat seinen Start); die Policy-Ablehnung `human_only` ist **ein** Eintrag ohne Start |

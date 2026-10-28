@@ -48,9 +48,14 @@ func Instructions(key policy.Key) string {
 		cannot = append(cannot, "draft")
 	}
 	if key.Has(policy.ScopeMailTag) {
-		can = append(can, "tag messages and mark them read or flagged (mail_tag, mail_mark)")
+		can = append(can, "tag messages in the local archive (mail_tag)")
 	} else {
-		cannot = append(cannot, "tag or mark")
+		cannot = append(cannot, "tag")
+	}
+	if key.Has(policy.ScopeMailMark) {
+		can = append(can, "mark messages read or flagged on the server (mail_mark)")
+	} else {
+		cannot = append(cannot, "mark")
 	}
 	if key.Has(policy.ScopeMailMove) {
 		can = append(can, "move messages to another mailbox of the same account (mail_move)")

@@ -199,6 +199,15 @@ Zwei Versionen dürfen nie gleichzeitig auf dieselbe Datenbank zugreifen (README
 6. Aufgabe neu registrieren (übernimmt neue Einstellungen der Skripte) und starten: das Kommando aus 1.3. Erwartet: `== OK: the task is running, postkauz.exe runs …`.
 7. Audit-Export wieder einschalten: `Enable-ScheduledTask -TaskName "PostKauz audit export"`; Claude-App wieder starten.
 
+### 1.7a Nach dem Update auf T2 (0.3.0-alpha.5 und später)
+
+Was sich für vorhandene API-Schlüssel ändert (Nachbesserung T2, V20):
+
+1. **`assistant`-Schlüssel ändern am Server weiterhin nichts.** Sie sehen neu die Tools `mail_tag` (lokale Tags), `mail_list_tags`, `mail_get_action`, `mail_list_actions` und `mail_sync_now`, aber nicht `mail_mark`, `mail_move` und `mail_trash`. Markieren (gelesen, markiert) braucht den neuen Scope `mail:mark`, den nur die Rollen `operator` und `admin` haben. Grund: Markieren wirkt auf alle Kopien am Server ohne Freigabe; eine Mail, die per Prompt-Injection „alles als gelesen markieren“ verlangt, versteckte sonst neue Mails in einem geteilten Posteingang.
+2. **Tags erreichen den Server nur mit `[tags] sync_keywords = true`** (Standard aus). Dann schreibt auch ein `assistant`-Schlüssel IMAP-Keywords; das bleibt eine bewusste Entscheidung in `config.toml`.
+3. **Soll ein Agent markieren dürfen**, bekommt er einen eigenen Schlüssel der Rolle `operator` (der kann dann auch verschieben und den Papierkorb beantragen; mit `--scopes` verengen, z. B. `key create --name markierer --role operator --scopes mail:read,mail:search,mail:mark`). Ein `operator`- oder `admin`-Schlüssel, der vor diesem Stand angelegt wurde, hat `mail:mark` nicht (die Scopes stehen je Schlüssel in der Datenbank); neu anlegen.
+4. Prüfen: `postkauz policy show --key <name>` zeigt `messages.mark  mail:mark` nur bei Schlüsseln, die es dürfen.
+
 ### 1.8 Zusammenspiel mit dem Audit-Export
 
 Beide Aufgaben vertragen sich: Der Audit-Export liest nur das Audit und schreibt Dateien an den zweiten Ort; der Dauer-Sync hält nur die Sperren der Konten. Richte den Export ein, wie im README („Daily audit export“) beschrieben, mit **denselben** Pfaden:

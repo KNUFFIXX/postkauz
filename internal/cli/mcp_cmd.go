@@ -25,17 +25,25 @@ var (
 	EnvKeyFile = brand.EnvPrefix + "_KEY_FILE"
 )
 
+// mcpScopesText beschreibt, was ein Schlüssel über MCP darf (V15 der
+// Nachbesserung T2: seit T2 kann ein Schlüssel mit den passenden Scopes
+// markieren, verschieben und den Papierkorb beantragen; TestMCPLongTextFollowsT2).
+const mcpScopesText = "The tools follow the scopes of the key: a reader key only reads; a key of the role assistant can also " +
+	"create drafts and submit them for approval, tag messages locally (mail:tag) and ask for a sync (mail:sync). " +
+	"Marking on the server needs mail:mark, moving mail:move and asking for the trash mail:trash (roles operator and admin); " +
+	"changes on the server are made by the sync job, a move to the trash only after a human approved it. " +
+	"Only a human approves and sends drafts; nothing is ever sent, and nothing is deleted for good."
+
 // mcpCmd startet den MCP-Server über stdio (S1.9). Er ist kein
 // Registerbefehl: Jeder Tool-Aufruf läuft einzeln durch den Executor.
 func mcpCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
-		Short: "Run the MCP server over stdio for an agent: read mail, write drafts; never sends (key from " + EnvKey + ")",
+		Short: "Run the MCP server over stdio for an agent: read mail, write drafts, more as the key's scopes allow; never sends (key from " + EnvKey + ")",
 		Long: "Run the MCP server over standard input/output, for Claude Code and other MCP clients.\n" +
 			"The API key comes from the environment variable " + EnvKey + " (or a file named in " + EnvKeyFile +
 			", readable only by you), never from the command line. Create a key with: key create --name <name> --role reader.\n" +
-			"The tools follow the scopes of the key: a reader key only reads; a key with mail:draft (role assistant) can also " +
-			"create drafts and submit them for approval. Only a human approves and sends; nothing is ever sent, deleted or moved.",
+			mcpScopesText,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name, _ := cmd.Flags().GetString("key"); name != "" {

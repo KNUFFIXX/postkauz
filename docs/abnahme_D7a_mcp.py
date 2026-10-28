@@ -9,9 +9,10 @@ Jede Pruefung ist eine Zeile `OK <Nr> <Beschreibung>` bzw.
 Exit 0 nur ohne FAIL.
 
 Pruefungen (A03 Teil D, D7 Schritt 3):
-  A3.10 assistant sieht mail_tag, mail_mark, mail_sync_now, aber weder
+  A3.10 assistant sieht mail_tag, mail_sync_now, aber weder mail_mark (Scope
+        mail:mark seit der Nachbesserung T2, V20) noch
         mail_move noch mail_trash.
-  A3.11 operator sieht mail_move und mail_trash (und die drei oben).
+  A3.11 operator sieht mail_mark, mail_move und mail_trash (und die zwei oben).
   A3.12 mail_trash mit 51 IDs ohne confirm_count (Schluessel operator)
         -> status denied, Grund confirm_count_required; nichts angelegt
         (mail_list_actions bzw. die Zahl der Aktionen bleibt gleich).
@@ -166,15 +167,15 @@ def action_count(sess):
 
 
 def run(args):
-    want = ["mail_tag", "mail_mark", "mail_sync_now"]
+    want = ["mail_tag", "mail_sync_now"]
     s = Session(args, {"POSTKAUZ_KEY_FILE": args.assistant_key_file})
     try:
         init = s.initialize()
         names = tool_names(s)
         missing = [n for n in want if n not in names]
-        extra = [n for n in ("mail_move", "mail_trash") if n in names]
+        extra = [n for n in ("mail_mark", "mail_move", "mail_trash") if n in names]
         si = init.get("serverInfo") or {}
-        check("A3.10", "MCP assistant: mail_tag, mail_mark, mail_sync_now ja; mail_move, mail_trash nein",
+        check("A3.10", "MCP assistant: mail_tag, mail_sync_now ja; mail_mark, mail_move, mail_trash nein",
               not missing and not extra,
               "server " + str(si.get("name")) + " " + str(si.get("version")) + "\n"
               + "tools: " + str(len(names)) + ": " + ", ".join(names)
@@ -186,8 +187,8 @@ def run(args):
     try:
         s.initialize()
         names = tool_names(s)
-        missing = [n for n in want + ["mail_move", "mail_trash"] if n not in names]
-        check("A3.11", "MCP operator: mail_move und mail_trash vorhanden (dazu mail_tag, mail_mark, mail_sync_now)",
+        missing = [n for n in want + ["mail_mark", "mail_move", "mail_trash"] if n not in names]
+        check("A3.11", "MCP operator: mail_mark, mail_move und mail_trash vorhanden (dazu mail_tag, mail_sync_now)",
               not missing,
               "tools: " + str(len(names)) + ": " + ", ".join(names) + "\nfehlend: " + str(missing))
 

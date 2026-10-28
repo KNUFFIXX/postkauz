@@ -24,6 +24,13 @@ const (
 	ScopeMailSearch Scope = "mail:search"
 	ScopeMailDraft  Scope = "mail:draft"
 	ScopeMailTag    Scope = "mail:tag"
+	// ScopeMailMark: Flags am Server setzen (messages.mark: gelesen,
+	// markiert, auf allen Kopien). Eigener Scope seit der Nachbesserung T2
+	// (V20), nicht in assistant und triage: Ein vorhandener assistant-
+	// Schlüssel bekommt so nach dem Update kein Schreibrecht am Server
+	// (per Prompt-Injection „alles gelesen“ verschwänden neue Mails in einem
+	// geteilten Posteingang). Lokale Tags bleiben mail:tag.
+	ScopeMailMark   Scope = "mail:mark"
 	ScopeMailMove   Scope = "mail:move"
 	ScopeMailTrash  Scope = "mail:trash"
 	ScopeMailSync   Scope = "mail:sync"
@@ -124,13 +131,13 @@ var Roles = map[string][]Scope{
 	"reader":    {ScopeMailRead, ScopeMailSearch, ScopeAuditRead},
 	"assistant": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync},
 	// triage: der Scope-Satz der unbeaufsichtigten Nacht-Triage (Lastenheft
-	// Vorgang 5, T2 Punkt 5): lesen, suchen, Entwürfe, Tags und Markieren;
-	// kein Verschieben, kein Papierkorb, kein Sync, kein Audit-Lesen
-	// (TestTriageRoleCanDoNothingElse).
+	// Vorgang 5, T2 Punkt 5): lesen, suchen, Entwürfe, lokale Tags; kein
+	// Markieren am Server (V20), kein Verschieben, kein Papierkorb, kein
+	// Sync, kein Audit-Lesen (TestTriageRoleCanDoNothingElse).
 	"triage": {ScopeMailRead, ScopeMailSearch, ScopeMailDraft, ScopeMailTag},
-	"operator": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,
+	"operator": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailMark, ScopeMailSync,
 		ScopeMailMove, ScopeMailTrash, ScopeMailExport},
-	"admin": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailSync,
+	"admin": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailMark, ScopeMailSync,
 		ScopeMailMove, ScopeMailTrash, ScopeMailExport, ScopeAdmin},
 }
 

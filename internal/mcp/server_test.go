@@ -222,10 +222,11 @@ func TestToolListFollowsScopes(t *testing.T) {
 
 	// S2.8: assistant (mit mail:draft) sieht dazu die sechs Entwurfs-Tools,
 	// die Resources für Entwurf und Stil und den Prompt draft_reply.
-	// T2: dazu mail_tag und mail_mark (Scope mail:tag); mail_move und
-	// mail_trash erst mit mail:move bzw. mail:trash (operator, admin).
+	// T2: dazu mail_tag (Scope mail:tag); mail_mark, mail_move und
+	// mail_trash erst mit mail:mark, mail:move bzw. mail:trash (operator,
+	// admin; V20 der Nachbesserung T2: mark nicht mehr unter mail:tag).
 	drafting := []string{"mail_create_draft", "mail_get_approval", "mail_get_draft", "mail_list_drafts", "mail_request_ready",
-		"mail_update_draft", "mail_tag", "mail_mark", "mail_sync_now"} // mail_sync_now: Scope mail:sync (T2)
+		"mail_update_draft", "mail_tag", "mail_sync_now"} // mail_sync_now: Scope mail:sync (T2)
 	wantAssistant := slices.Sorted(slices.Values(append(slices.Clone(want), drafting...)))
 	tl, res, pr = listTools(t, policy.Key{ID: "key:as", Scopes: policy.Roles["assistant"]})
 	if !slices.Equal(tl, wantAssistant) {
@@ -235,10 +236,18 @@ func TestToolListFollowsScopes(t *testing.T) {
 		len(pr) != 5 || !slices.Contains(pr, "draft_reply") {
 		t.Fatalf("assistant resources = %v, prompts = %v", res, pr)
 	}
+	// V20: triage sieht wie assistant kein mail_mark (und kein Sync, kein
+	// Audit).
+	tl, _, _ = listTools(t, policy.Key{ID: "key:nacht", Scopes: policy.Roles["triage"]})
+	if slices.Contains(tl, "mail_mark") || slices.Contains(tl, "mail_move") || slices.Contains(tl, "mail_trash") ||
+		slices.Contains(tl, "mail_sync_now") || !slices.Contains(tl, "mail_tag") {
+		t.Fatalf("triage tools = %v", tl)
+	}
 	// Auch admin (alle Scopes) bekommt kein Tool, das freigibt, ablehnt,
-	// sendet, endgültig löscht oder verwaltet; Verschieben und den Antrag
-	// auf Papierkorb ja (mail:move, mail:trash).
-	wantAdmin := slices.Sorted(slices.Values(append(slices.Clone(wantAssistant), "mail_move", "mail_trash")))
+	// sendet, endgültig löscht oder verwaltet; Markieren am Server,
+	// Verschieben und den Antrag auf Papierkorb ja (mail:mark, mail:move,
+	// mail:trash).
+	wantAdmin := slices.Sorted(slices.Values(append(slices.Clone(wantAssistant), "mail_mark", "mail_move", "mail_trash")))
 	tl, _, _ = listTools(t, policy.Key{ID: "key:a", Scopes: policy.Roles["admin"]})
 	if !slices.Equal(tl, wantAdmin) {
 		t.Fatalf("admin tools = %v", tl)
@@ -263,12 +272,12 @@ func TestInstructionsFollowScopes(t *testing.T) {
 	}
 	d := Instructions(policy.Key{Scopes: policy.Roles["assistant"]})
 	if !strings.Contains(d, "can create drafts in the Drafts folder") || !strings.Contains(d, "a human approves and sends") ||
-		!strings.Contains(d, "cannot move, delete") || !strings.Contains(d, "postkauz approve <approval_id>") ||
-		!strings.Contains(d, "mail_tag") || strings.Contains(d, "mail_move") {
+		!strings.Contains(d, "cannot mark, move, delete") || !strings.Contains(d, "postkauz approve <approval_id>") ||
+		!strings.Contains(d, "mail_tag") || strings.Contains(d, "mail_move") || strings.Contains(d, "mail_mark") {
 		t.Fatalf("assistant instructions: %s", d)
 	}
 	o := Instructions(policy.Key{Scopes: policy.Roles["operator"]})
-	if !strings.Contains(o, "mail_move") || !strings.Contains(o, "only a human can approve") || strings.Contains(o, "cannot move") ||
+	if !strings.Contains(o, "mail_move") || !strings.Contains(o, "mail_mark") || !strings.Contains(o, "only a human can approve") || strings.Contains(o, "cannot move") ||
 		strings.Contains(o, "moved by this server") || !strings.Contains(o, "nothing is deleted for good") {
 		t.Fatalf("operator instructions: %s", o)
 	}

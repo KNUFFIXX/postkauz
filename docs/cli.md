@@ -60,7 +60,7 @@ Der Alias `pk` ist eine Kopie oder Verknüpfung der Binärdatei (`make install` 
 | S2.3 ✓ | `identity add`, `identity list`, `identity set-default <id>`, `identity remove <id>` | `identities.add`, `identities.list`, `identities.set_default`, `identities.remove` (`admin`, nur Mensch; nicht über MCP) |
 | S2.8 ✓ | `draft style [<identität>]` | `drafts.style` (R0, `mail:draft`; über MCP als Resource `mail://style/{identity}`) |
 | T2 ✓ | `tag add <tag>[,…] <id>…`, `tag remove <tag>[,…] <id>…`, `tag list` (Abschnitt 2k) | `messages.tag` (R1, `mail:tag`), `tags.list` (R0, `mail:read`) |
-| T2 ✓ | `mark <id>… --seen\|--unseen\|--flagged\|--unflagged` | `messages.mark` (R2, `mail:tag`) |
+| T2 ✓ | `mark <id>… --seen\|--unseen\|--flagged\|--unflagged` | `messages.mark` (R2, `mail:mark`, seit der Nachbesserung T2; Rollen `operator`, `admin`) |
 | T2 ✓ | `move <id>… --to <ordner>\|--role archive\|all\|inbox\|junk\|sent\|drafts [--from <ordner>]` | `messages.move` (R2, `mail:move`) |
 | T2 ✓ | `trash <id>… [--from <ordner>] [--yes]` | `messages.trash` (R3, `mail:trash`; legt nur den Antrag an, Exit 4; mit `--yes` gibt der Mensch ihn im selben Zug frei) |
 | T2 ✓ | `action approve <id>`, `action reject <id> [--reason]`, `action show <id>`, `action list` | `actions.approve` (R2), `actions.reject` (R1), beide `mail:trash`, nur Mensch; `actions.get`, `actions.list` (R0, `mail:read`) |

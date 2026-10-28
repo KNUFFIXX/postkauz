@@ -115,8 +115,10 @@ func scopeOf(kind string) policy.Scope {
 		return policy.ScopeMailMove
 	case store.ActionTrash:
 		return policy.ScopeMailTrash
+	case store.ActionMark:
+		return policy.ScopeMailMark
 	}
-	return policy.ScopeMailTag
+	return policy.ScopeMailTag // keywords (Tags als IMAP-Keywords)
 }
 
 // Run führt alle ausführbaren Aktionen des Kontos aus. Ein Fehler kommt

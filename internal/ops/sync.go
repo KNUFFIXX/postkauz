@@ -226,7 +226,7 @@ func SyncRun(repo AccountRepo, creds Credentials, runner SyncRunner) Operation {
 		// APPEND im Entwürfe-Ordner ab, ändert also den Server (reversibel).
 		Risk:       policy.R2,
 		Idempotent: true,
-		Summary:    "Mirror an account: resumable first sync in windows, then incremental; on the server it only puts queued drafts into the Drafts folder, it never sends, deletes or moves.",
+		Summary:    "Mirror an account: resumable first sync in windows, then incremental; on the server it only puts queued drafts into the Drafts folder and carries out queued mailbox actions (mark, move, trash after approval); it never sends and never deletes for good.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {

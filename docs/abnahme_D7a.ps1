@@ -74,7 +74,7 @@
     durch Komma getrennt. Fuer Teil B Pflicht.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.4).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.5).
 
 .PARAMETER Python
     python.exe fuer die MCP-Probe. Ohne Angabe sucht das Skript python.exe
@@ -112,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.4',
+    [string] $ExpectVersion = '0.3.0-alpha.5',
     [string] $Python = '',
     [string] $Probe = '',
     [string] $LiveAccount = '',
@@ -633,11 +633,11 @@ Add-Check 'A2.5' 'action list -> "no actions" (offline entsteht keine Aktion)' (
 Write-Log ''
 Write-Log '===== Teil A, Schritt 3 (D7.3): policy show je Rolle, Grenzen mit Schluessel, MCP'
 $r = Invoke-Pk @('policy', 'show', '--key', 'test-assistant')
-$ok = $r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^\s*actions\.approve: human_only\s*$') -and (Test-Has $r.Out '(?m)^\s*messages\.tag\s+mail:tag\s') -and (Test-Has $r.Out '(?m)^\s*messages\.mark\s+mail:tag\s') -and (Test-Has $r.Out '(?m)^\s*sync\.request\s+mail:sync\s') -and -not (Test-Has $r.Out '(?m)^\s*messages\.(move|trash)\s')
-Add-Check 'A3.1' 'policy show --key test-assistant: tag, mark, sync.request ja; messages.move/messages.trash nein; actions.approve: human_only' $ok $r.Text
+$ok = $r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^\s*actions\.approve: human_only\s*$') -and (Test-Has $r.Out '(?m)^\s*messages\.tag\s+mail:tag\s') -and (Test-Has $r.Out '(?m)^\s*sync\.request\s+mail:sync\s') -and -not (Test-Has $r.Out '(?m)^\s*messages\.(mark|move|trash)\s')
+Add-Check 'A3.1' 'policy show --key test-assistant: tag, sync.request ja; messages.mark/move/trash nein (mark braucht mail:mark, V20); actions.approve: human_only' $ok $r.Text
 $r = Invoke-Pk @('policy', 'show', '--key', 'test-operator')
-$ok = $r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^\s*messages\.trash\s+mail:trash\s+R3\s+needs_approval\s*$') -and (Test-Has $r.Out '(?m)^\s*messages\.move\s+mail:move\s') -and (Test-Has $r.Out '(?m)^\s*actions\.approve: human_only\s*$')
-Add-Check 'A3.2' 'policy show --key test-operator: messages.trash R3 needs_approval, messages.move, actions.approve: human_only' $ok $r.Text
+$ok = $r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^\s*messages\.trash\s+mail:trash\s+R3\s+needs_approval\s*$') -and (Test-Has $r.Out '(?m)^\s*messages\.move\s+mail:move\s') -and (Test-Has $r.Out '(?m)^\s*messages\.mark\s+mail:mark\s') -and (Test-Has $r.Out '(?m)^\s*actions\.approve: human_only\s*$')
+Add-Check 'A3.2' 'policy show --key test-operator: messages.trash R3 needs_approval, messages.move, messages.mark (mail:mark), actions.approve: human_only' $ok $r.Text
 $r = Invoke-Pk @('policy', 'show', '--key', 'test-triage')
 $ok = $r.Exit -eq 0 -and (Test-Has $r.Out '(?m)^scopes:\s+mail:draft, mail:read, mail:search, mail:tag\s*$') -and (Test-Has $r.Out '(?m)^\s*messages\.tag\s') -and (Test-Has $r.Out '(?m)^\s*drafts\.create\s') -and -not (Test-Has $r.Out '(?m)^\s*(messages\.move|messages\.trash|sync\.request|sync\.run)\s')
 Add-Check 'A3.3' 'policy show --key test-triage (Nacht-Triage): lesen + Entwurf + Tag, kein move/trash/sync' $ok $r.Text

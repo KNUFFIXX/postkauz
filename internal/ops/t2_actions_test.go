@@ -80,15 +80,21 @@ func TestMessagesTag(t *testing.T) {
 }
 
 // E1: mark wirkt sofort im Spiegel (pending) und reiht den Job ein; der
-// Trockenlauf ändert nichts.
+// Trockenlauf ändert nichts. V20: mark braucht mail:mark, den assistant
+// nicht hat.
 func TestMessagesMarkQueues(t *testing.T) {
 	e := newContractEnv(t)
 	x, _ := actionExec(t, e)
-	res, err := execJSON(t, x, assistantKey, "messages.mark", `{"account":"demo","ids":[1],"seen":false}`, true)
+	var pe *PolicyError
+	if _, err := execJSON(t, x, assistantKey, "messages.mark", `{"account":"demo","ids":[1],"seen":false}`, false); !errors.As(err, &pe) ||
+		pe.Decision.Reason != "missing_scope" {
+		t.Fatalf("assistant may mark: %v", err)
+	}
+	res, err := execJSON(t, x, operatorKey, "messages.mark", `{"account":"demo","ids":[1],"seen":false}`, true)
 	if err != nil || res.Output.(ActionOutput).ActionID != 0 {
 		t.Fatalf("dry run = %+v %v", res.Output, err)
 	}
-	res, err = execJSON(t, x, assistantKey, "messages.mark", `{"account":"demo","ids":[1],"seen":false}`, false)
+	res, err = execJSON(t, x, operatorKey, "messages.mark", `{"account":"demo","ids":[1],"seen":false}`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +105,7 @@ func TestMessagesMarkQueues(t *testing.T) {
 	if n, _ := e.st.PendingFlagCopies(context.Background(), 1); n != 1 {
 		t.Fatalf("pending copies = %d", n)
 	}
-	n, _ := e.st.QueryIntForTest(`SELECT count(*) FROM jobs WHERE type = 'mailbox_action' AND key_id = 'key:assi' AND audit_id = ?`, res.AuditID)
+	n, _ := e.st.QueryIntForTest(`SELECT count(*) FROM jobs WHERE type = 'mailbox_action' AND key_id = 'key:op' AND audit_id = ?`, res.AuditID)
 	if n != 1 {
 		t.Fatalf("job = %d", n)
 	}
@@ -260,13 +266,13 @@ func TestTriageRoleCanDoNothingElse(t *testing.T) {
 	sort.Strings(allowed)
 	want := []string{"accounts.list", "approvals.get", "attachments.list", "attachments.text", "actions.get", "actions.list",
 		"drafts.create", "drafts.get", "drafts.list", "drafts.request_ready", "drafts.style", "drafts.update",
-		"mailboxes.list", "mailboxes.overview", "messages.get", "messages.mark", "messages.search", "messages.tag",
+		"mailboxes.list", "mailboxes.overview", "messages.get", "messages.search", "messages.tag",
 		"policy.get", "tags.list", "threads.get"}
 	sort.Strings(want)
 	if !slices.Equal(allowed, want) {
 		t.Fatalf("triage may run\n%v\nwant\n%v", allowed, want)
 	}
-	for _, s := range []policy.Scope{policy.ScopeMailMove, policy.ScopeMailTrash, policy.ScopeMailSync, policy.ScopeAdmin, policy.ScopeMailExport} {
+	for _, s := range []policy.Scope{policy.ScopeMailMark, policy.ScopeMailMove, policy.ScopeMailTrash, policy.ScopeMailSync, policy.ScopeAdmin, policy.ScopeMailExport} {
 		if key.Has(s) {
 			t.Fatalf("triage has %s", s)
 		}

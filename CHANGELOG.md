@@ -80,6 +80,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- Nachbesserung T2 (V20): **Markieren am Server hat einen eigenen Scope `mail:mark`**, nur in den Rollen `operator` und `admin`; `messages.mark`/`mail_mark` brauchen ihn (vorher `mail:tag`). Vorhandene `assistant`-Schlüssel sehen nach dem Update auf T2 damit `mail_tag`, `mail_list_tags`, `mail_get_action`, `mail_list_actions`, `mail_sync_now`, aber kein Tool, das den Server ändert (20 statt 21 Tools); `triage` ebenso ohne `mail_mark`. `operator`-/`admin`-Schlüssel aus der Zeit vor diesem Stand haben `mail:mark` nicht und werden bei Bedarf neu angelegt. Hinweise in `docs/betrieb.md` 1.7a, `docs/sicherheit.md` Abschnitt 2. Dazu (V15) berichtigte Texte: `mcp --help`, `sync --help` und README sagten noch „nothing is ever … moved“ bzw. „six MCP tools“.
 - T2: Risiko R3 geht dem Trockenlauf vor (A14): Ein R3-Aufruf liefert auch im Trockenlauf `needs_approval`. Ohne Regeln endet eine Operation mit Eingabeprüfung fail closed (`policy_rules_missing`); ein Panic in der Eingabeprüfung wird wie im Handler abgefangen.
 - T2: `[move] bulk_confirm_threshold` höchstens 1.000 (vorher 100.000).
 - T2: Die MCP-Anleitung beschreibt die Schreibrechte nach den Scopes des Schlüssels („never … moves mail“ nur ohne `mail:move`); `mail_get_policy` nennt je Operation `needs_approval` und die Grenzen.

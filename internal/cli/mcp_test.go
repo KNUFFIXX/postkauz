@@ -400,3 +400,27 @@ func TestMCPStdioSmoke(t *testing.T) {
 		t.Fatalf("tools/call result: %s", text)
 	}
 }
+
+// V15 der Nachbesserung T2: Hilfetexte und README sagen nicht mehr, dass
+// nie etwas verschoben wird; sie nennen die Scopes, die den Server ändern.
+func TestMCPLongTextFollowsT2(t *testing.T) {
+	setupEnv(t)
+	code, out, errs := run(t, "mcp", "--help")
+	if code != ExitOK || strings.Contains(out, "deleted or moved") || !strings.Contains(out, "mail:mark") ||
+		!strings.Contains(out, "mail:move") || !strings.Contains(out, "mail:trash") || !strings.Contains(out, "nothing is ever sent") {
+		t.Fatalf("mcp --help: %d %s %s", code, out, errs)
+	}
+	code, out, errs = run(t, "sync", "--help")
+	if code != ExitOK || strings.Contains(out, "never sends, deletes or moves") || !strings.Contains(out, "queued mailbox actions") {
+		t.Fatalf("sync --help: %d %s %s", code, out, errs)
+	}
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"deleted or moved by PostKauz", "get six MCP tools:", "tags and marks; no move"} {
+		if strings.Contains(string(readme), bad) {
+			t.Errorf("README still says %q", bad)
+		}
+	}
+}

@@ -32,7 +32,8 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 | `mail:read` | Köpfe, Bodies, Anhänge lesen, Ordner und Konten listen | R0 |
 | `mail:search` | nur Suche und Köpfe/Snippets, **keine Bodies** (für Triage-Agenten) | R0 |
 | `mail:draft` | Entwürfe anlegen, ändern, zur Prüfung vorlegen | R1/R2 |
-| `mail:tag` | lokale Tags und Flags (gelesen/markiert) | R1/R2 |
+| `mail:tag` | lokale Tags (mit `[tags] sync_keywords` zusätzlich als IMAP-Keywords am Server) | R1 |
+| `mail:mark` | Flags am Server: gelesen/ungelesen, markiert (`messages.mark`, auf allen Kopien einer Nachricht; seit der Nachbesserung T2 eigener Scope, V20) | R2 |
 | `mail:move` | Verschieben, Archivieren | R2 |
 | `mail:trash` | in den Papierkorb (nie endgültig) | R3 |
 | `mail:sync` | Sync anstoßen | R1 |
@@ -40,7 +41,7 @@ Scopes sind Zeichenketten je API-Schlüssel (`internal/policy`). Es gibt bewusst
 | `audit:read` | Audit-Log lesen | R0 |
 | `admin` | Konten, Schlüssel, Policy verwalten; seit S1.10 Import aus lokalen Dateien (`import.run`: liest beliebige mbox-/Maildir-Pfade, deshalb nur Mensch, kein MCP-Tool). **Ersetzt keine Mail-Scopes.** | – |
 
-**Rollen** bündeln Scopes (`policy.Roles`, getestet): `reader` (read, search, audit:read) · `assistant` (reader + draft, tag, sync) · `operator` (assistant + move, trash, export) · `admin` (operator + admin). Agenten bekommen standardmäßig `assistant`; `operator` nur bewusst. Ein Schlüssel kann seine Rolle mit `--scopes` nur **verengen** (z. B. `reader` nur mit `mail:search`).
+**Rollen** bündeln Scopes (`policy.Roles`, getestet): `reader` (read, search, audit:read) · `assistant` (reader + draft, tag, sync) · `triage` (read, search, draft, tag; seit T2) · `operator` (assistant + mark, move, trash, export) · `admin` (operator + admin). **`mail:mark` gehört bewusst nicht zu `assistant` und `triage`** (Nachbesserung T2, V20): Markieren schreibt am Server auf alle Kopien, ohne Freigabe; ein Agent, den eine Mail per Prompt-Injection zu „alles als gelesen markieren“ bringt, versteckte sonst neue Mails in einem geteilten Posteingang. Vorhandene `assistant`-Schlüssel behalten nach dem Update auf T2 damit ihr bisheriges Verhalten am Server (nur lokale Tags kommen dazu). Die Scopes stehen je Schlüssel in der Datenbank: Ein `operator`- oder `admin`-Schlüssel, der vor diesem Stand angelegt wurde, hat `mail:mark` nicht; er wird neu angelegt, wenn er markieren soll. Agenten bekommen standardmäßig `assistant`; `operator` nur bewusst. Ein Schlüssel kann seine Rolle mit `--scopes` nur **verengen** (z. B. `reader` nur mit `mail:search`).
 
 **Pseudo-Scope `any`** (seit S1.8, `policy.ScopeAny`): steht an Operationen, die nur über den aufrufenden Schlüssel selbst Auskunft geben (`policy.get`, MCP `mail_get_policy`). Jeder gültige Schlüssel darf sie aufrufen; kein Schlüssel trägt diesen Scope, keine Rolle enthält ihn (Test).
 

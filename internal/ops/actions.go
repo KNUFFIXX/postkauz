@@ -276,11 +276,12 @@ func (o *actionOps) create(ctx context.Context, call Call, r actions.Request, ou
 }
 
 // MessagesMark setzt gelesen/ungelesen bzw. markiert (S3.1, R2, Scope
-// mail:tag): sofort im Spiegel (pending), auf dem Server per Job.
+// mail:mark seit der Nachbesserung T2, V20): sofort im Spiegel (pending),
+// auf dem Server per Job.
 func MessagesMark(d Deps) Operation {
 	o := newActionOps(d)
 	return Operation{
-		Name: "messages.mark", Scope: policy.ScopeMailTag, Risk: policy.R2, Idempotent: true,
+		Name: "messages.mark", Scope: policy.ScopeMailMark, Risk: policy.R2, Idempotent: true,
 		Summary: "Mark messages as read or unread, flagged or unflagged; the change shows at once and reaches the server through the sync job.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
