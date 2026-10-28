@@ -221,10 +221,10 @@ func TestToolListFollowsScopes(t *testing.T) {
 	// S2.8: assistant (mit mail:draft) sieht dazu die sechs Entwurfs-Tools,
 	// die Resources für Entwurf und Stil und den Prompt draft_reply.
 	drafting := []string{"mail_create_draft", "mail_get_approval", "mail_get_draft", "mail_list_drafts", "mail_request_ready",
-		"mail_update_draft"}
+		"mail_update_draft", "mail_sync_now"} // mail_sync_now: Scope mail:sync (T2)
 	wantAssistant := slices.Sorted(slices.Values(append(slices.Clone(want), drafting...)))
 	tl, res, pr = listTools(t, policy.Key{ID: "key:as", Scopes: policy.Roles["assistant"]})
-	if !slices.Equal(tl, wantAssistant) || len(tl) != 15 {
+	if !slices.Equal(tl, wantAssistant) || len(tl) != 16 {
 		t.Fatalf("assistant tools = %v", tl)
 	}
 	if len(res) != 11 || !slices.Contains(res, "mail://{account}/draft/{id}") || !slices.Contains(res, "mail://style/{+identity}") ||

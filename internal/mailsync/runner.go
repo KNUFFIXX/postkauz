@@ -47,6 +47,9 @@ type Runner struct {
 	// DraftMailbox ist [draft] mailbox der Konfiguration (leer = Ordner mit
 	// Rolle drafts).
 	DraftMailbox string
+	// Requests führt angeforderte Syncs aus (Job sync, T2;
+	// ops.NewSyncJobs); nil = keine.
+	Requests SyncJobRunner
 }
 
 // RemoteCloser ist ein Remote mit Close und Strategie.
@@ -137,9 +140,19 @@ func (r *Runner) Sync(ctx context.Context, a store.Account, cred provider.Creden
 		// die Kontosperre; er legt die Entwürfe ab.
 		eng.Drafts = &Drafts{Pusher: r.Pusher, Jobs: jr, Account: a, Mailbox: r.DraftMailbox}
 	}
+	if r.Requests != nil {
+		// Job sync (T2): angeforderte Syncs dieses Kontos.
+		eng.Requests = &SyncRequests{Jobs: r.Requests, Account: a, TakeOver: locked}
+	}
 	so := Options{Window: o.Window, Full: o.Full, Mailboxes: o.Mailboxes, RetryDrafts: !o.Watch}
 	if !o.Watch {
+		runStart := time.Now()
 		rep, err := eng.SyncAll(ctx, so)
+		if err == nil && rep.failedMailboxes() == 0 {
+			// Ein einmaliger Lauf erledigt die angeforderten Syncs, die er
+			// abdeckt (T2).
+			eng.settleRequests(ctx, so.Mailboxes, runStart)
+		}
 		fill(&out, rep)
 		out.DurationMS = time.Since(start).Milliseconds()
 		return out, err

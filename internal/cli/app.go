@@ -180,6 +180,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	// sync.run nie auf).
 	if r, ok := deps.Runner.(*mailsync.Runner); ok {
 		r.Pusher, r.DraftMailbox = ops.NewDraftPusher(deps), a.cfg.Draft.Mailbox
+		// Job sync (T2, sync.request/mail_sync_now): Der Sync führt
+		// angeforderte Läufe aus bzw. erledigt sie mit.
+		if sj := ops.NewSyncJobs(deps); sj != nil {
+			r.Requests = sj
+		}
 	}
 	reg, err := ops.NewDefaultRegistry(deps)
 	if err != nil {

@@ -62,7 +62,7 @@ func TestMCPAssistantSession(t *testing.T) {
 			}
 		}
 	}
-	if len(names) != 15 || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
+	if len(names) != 16 || !slices.Contains(names, "mail_sync_now") || !slices.Contains(names, "mail_create_draft") || !slices.Contains(names, "mail_request_ready") {
 		t.Fatalf("tools = %v", names)
 	}
 	for _, n := range names {

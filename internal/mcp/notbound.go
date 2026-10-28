@@ -9,7 +9,7 @@ var notOverMCP = map[string]string{
 	"accounts.remove": "admin: human only (CLI)",
 	"accounts.set":    "admin, human only (A02 E2): own addresses decide whom reply-all leaves out, and it replaces stored passwords; CLI account set",
 	"accounts.login":  "admin, human only (S3.7): interactive Microsoft sign-in in the browser that stores a refresh token; CLI account login",
-	"sync.run":        "mail_sync_now needs the job type sync (the MCP process does not sync itself, docs/architektur.md section 7); later",
+	"sync.run":        "the MCP process has no mail password and does not sync itself (ADR-009); mail_sync_now queues the job sync instead (sync.request)",
 	"import.run":      "admin: reads local files (mbox, maildir) into the archive; human only (CLI)",
 	"keys.create":     "admin: key management is for humans only",
 	"keys.list":       "admin: key management is for humans only",

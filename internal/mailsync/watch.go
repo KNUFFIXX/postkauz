@@ -59,7 +59,8 @@ type WatchOptions struct {
 
 // Watch synct sofort, danach alle Interval und zusätzlich bei jeder
 // IDLE-Meldung für die INBOX, bis ctx endet (Rückgabe nil). Alle
-// JobsInterval legt er wartende Entwürfe ab (Job draft_push, S2.5). Läufe über
+// JobsInterval legt er wartende Entwürfe ab (Job draft_push, S2.5) und
+// führt einen angeforderten Sync aus (Job sync, T2). Läufe über
 // alle Ordner gleichen alle FullCheckInterval die UID-Listen vollständig ab
 // (Löschungserkennung, A02 A1). Fehler eines
 // Laufs (Verbindung) beenden Watch nicht; der nächste Lauf versucht es neu
@@ -103,7 +104,9 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 
 	var lastFull time.Time // Beginn des letzten erfolgreichen vollen Abgleichs
 	firstRound := true
-	round := func(only []string) error {
+	// round liefert den Fehler, der Watch beendet (Anmeldung), und den des
+	// Laufs (für den Job sync).
+	round := func(only []string) (fatal, runErr error) {
 		ro := o.Options
 		if only == nil && !firstRound && o.BeforeFullRound != nil {
 			o.BeforeFullRound(ctx)
@@ -121,7 +124,7 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		ro.RetryDrafts = ro.CheckDeleted
 		rep, err := e.SyncAll(ctx, ro)
 		if ctx.Err() != nil {
-			return nil
+			return nil, ctx.Err()
 		}
 		// Nur ein voller Abgleich ohne übersprungenen Ordner zählt; scheitern
 		// einzelne Ordner, gleicht der nächste Lauf erneut alle voll ab
@@ -131,16 +134,20 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		} else if err == nil && ro.CheckDeleted {
 			e.log().Info("full UID check incomplete; repeating it in the next round", "failed_mailboxes", failed)
 		}
+		// Angeforderte Syncs, die dieser Lauf abdeckt, sind erledigt (T2).
+		if err == nil && rep.failedMailboxes() == 0 {
+			e.settleRequests(ctx, ro.Mailboxes, start)
+		}
 		if o.OnRound != nil {
 			o.OnRound(rep, err)
 		}
 		if errors.Is(err, provider.ErrAuth) {
-			return err
+			return err, err
 		}
 		if err != nil {
 			e.log().Warn("sync round failed; retrying at the next interval", "error", err.Error())
 		}
-		return nil
+		return nil, err
 	}
 
 	// Jobs zwischen zwei Läufen (draft_push): Der Sync hält die
@@ -164,13 +171,13 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		return nil
 	}
 
-	if err := round(nil); err != nil {
-		return err
+	if fatal, _ := round(nil); fatal != nil {
+		return fatal
 	}
 	t := time.NewTicker(o.Interval)
 	defer t.Stop()
-	var jobsC <-chan time.Time // nil = keine Jobs (ohne Engine.Drafts)
-	if e.Drafts != nil {
+	var jobsC <-chan time.Time // nil = keine Jobs (ohne Engine.Drafts und Engine.Requests)
+	if e.Drafts != nil || e.Requests != nil {
 		jt := time.NewTicker(o.JobsInterval)
 		defer jt.Stop()
 		jobsC = jt.C
@@ -180,8 +187,16 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		case <-ctx.Done():
 			return nil
 		case <-jobsC:
-			if err := pushJobs(); err != nil {
-				return err
+			if e.Drafts != nil {
+				if err := pushJobs(); err != nil {
+					return err
+				}
+			}
+			// Angeforderter Sync (Job sync, T2): sofort ein Lauf.
+			if e.Requests != nil && ctx.Err() == nil {
+				if err := e.runSyncRequest(ctx, o.JobsInterval, round); err != nil {
+					return err
+				}
 			}
 		case err := <-idleDone:
 			idleDone = nil // beendet; ohne Fehler (IDLE nicht unterstützt) bleibt das Polling
@@ -189,12 +204,12 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 				return err
 			}
 		case <-kick:
-			if err := round([]string{o.IdleMailbox}); err != nil {
-				return err
+			if fatal, _ := round([]string{o.IdleMailbox}); fatal != nil {
+				return fatal
 			}
 		case <-t.C:
-			if err := round(nil); err != nil {
-				return err
+			if fatal, _ := round(nil); fatal != nil {
+				return fatal
 			}
 		}
 	}

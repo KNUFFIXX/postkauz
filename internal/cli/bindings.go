@@ -77,6 +77,8 @@ var bindings = []binding{
 	{op: "sync.run", path: []string{"sync"}, args: cobra.NoArgs, flags: syncFlags, input: syncInput,
 		human: renderSync, progress: syncProgress,
 		covers: []string{"account", "full", "watch", "window", "interval_seconds", "idle_restart_seconds", "full_check_interval_seconds", "jobs_interval_seconds", "mailboxes"}},
+	{op: "sync.request", path: []string{"sync", "request"}, args: cobra.NoArgs, flags: syncRequestFlags, input: syncRequestInput,
+		human: renderSyncRequest, covers: []string{"account", "mailbox"}},
 	{op: "import.run", path: []string{"import"}, use: "<mbox|maildir> <file-or-folder>", args: cobra.ExactArgs(2),
 		flags: importFlags, input: importInput, human: renderImport, progress: importProgress,
 		covers: []string{"account", "format", "path", "mailbox", "labels_from", "rescan", "no_extract"}, outputOnError: true},

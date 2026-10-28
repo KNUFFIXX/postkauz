@@ -269,6 +269,10 @@ type Engine struct {
 	// Drafts legt zu Beginn jedes Laufs wartende Entwürfe im
 	// Entwürfe-Ordner ab (Job draft_push, S2.5; drafts.go); nil = nicht.
 	Drafts *Drafts
+	// Requests führt im Dauerbetrieb angeforderte Syncs aus und erledigt
+	// sie nach jedem fehlerfreien Lauf (Job sync, T2; syncrequest.go);
+	// nil = nicht.
+	Requests *SyncRequests
 }
 
 func (e *Engine) maxMessageBytes() int64 {

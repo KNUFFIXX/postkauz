@@ -107,6 +107,9 @@ func syncProgress(cmd *cobra.Command, a *app) func(ops.Progress) {
 			if watching, _ := cmd.Flags().GetBool("watch"); watching {
 				fmt.Fprintf(a.stdout, "%s  %d drafts put into %s\n", time.Now().UTC().Format(time.RFC3339), p.Done, termLine(p.Mailbox))
 			}
+		case "sync_request":
+			// Angeforderter Sync (Job sync, T2): nur im Dauerbetrieb.
+			fmt.Fprintf(a.stdout, "%s  requested sync (job %d): %s\n", time.Now().UTC().Format(time.RFC3339), p.Done, termLine(p.Message))
 		case "round":
 			if r := p.Round; r != nil {
 				line := fmt.Sprintf("%s  %d new, %d updated, %d removed, %d errors; %d messages mirrored",
@@ -276,6 +279,46 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		parts = append(parts, fmt.Sprintf("%d edited in the mail client (taken over)", c.TakenOver))
 	}
 	fmt.Fprintf(w, "drafts: %s\n", strings.Join(parts, "; "))
+}
+
+// --- sync request (T2) --------------------------------------------------------
+
+func syncRequestFlags(cmd *cobra.Command) {
+	cmd.Flags().String("mailbox", "", "only this mailbox (default: all mailboxes)")
+}
+
+func syncRequestInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	in := ops.SyncRequestInput{Account: accountFlag(cmd)}
+	if cmd.Flags().Changed("mailbox") {
+		v, _ := cmd.Flags().GetString("mailbox")
+		if strings.TrimSpace(v) == "" {
+			return nil, "", usageError{errors.New("--mailbox must not be empty")}
+		}
+		in.Mailbox = v
+	}
+	b, err := json.Marshal(in)
+	return b, "", err
+}
+
+func renderSyncRequest(w io.Writer, out any) error {
+	o, ok := out.(ops.SyncRequestOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	what := "all mailboxes"
+	if o.Mailbox != "" {
+		what = "mailbox " + termLine(o.Mailbox)
+	}
+	switch {
+	case o.DryRun:
+		fmt.Fprintf(w, "dry run: would queue a sync of account %s (%s); nothing was queued\n", o.Account, what)
+	case o.Merged:
+		fmt.Fprintf(w, "sync of account %s (%s) added to queued job %d\n", o.Account, what, o.JobID)
+	default:
+		fmt.Fprintf(w, "sync of account %s (%s) queued as job %d\n", o.Account, what, o.JobID)
+	}
+	_, err := fmt.Fprintf(w, "note: %s\n", o.Note)
+	return err
 }
 
 // --- mailbox list -------------------------------------------------------------
