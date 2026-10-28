@@ -173,11 +173,18 @@ func (e *Engine) Watch(ctx context.Context, o WatchOptions) error {
 		}
 		// Postfach-Aktionen (T2, E1): binnen JobsInterval auf dem Server.
 		ar, err := e.runActions(ctx, true)
+		// Was vor einem Abbruch schon ausgeführt ist, zählt im Ergebnis
+		// (T3: sonst fehlten die Zahlen, wenn Strg+C den Takt gerade beim
+		// Abschluss des Jobs traf); der Abbruch selbst ist kein Fehler.
+		if ar != nil && o.OnActions != nil {
+			x := *ar
+			if ctx.Err() != nil {
+				x.Error = ""
+			}
+			o.OnActions(x, err)
+		}
 		if ctx.Err() != nil {
 			return nil
-		}
-		if ar != nil && o.OnActions != nil {
-			o.OnActions(*ar, err)
 		}
 		if errors.Is(err, provider.ErrAuth) {
 			return err

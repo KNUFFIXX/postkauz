@@ -620,11 +620,18 @@ func (s *SQLite) HasQueuedActions(ctx context.Context, accountID int64) (bool, e
 
 // EnsureActionJob reiht den Job mailbox_action ein, wenn ausführbare
 // Aktionen warten und keiner offen ist (etwa nach fünf Fehlern des alten).
+// V14 der Nachbesserung T2: Auch der Backoff eines endgültig gescheiterten
+// Jobs gilt (FailJob setzt run_at auf den nächsten Versuch, auch bei
+// failed); bis dahin entsteht kein neuer Job. Sonst legte der Jobs-Takt
+// von sync --watch nach dem fünften Fehler sofort einen neuen an, und der
+// Backoff wirkte nicht.
 func (s *SQLite) EnsureActionJob(ctx context.Context, accountID int64, now time.Time) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO jobs(type, payload, run_at, key_id)
 		SELECT ?, json_object('account_id', ?), ?, 'system'
-		WHERE EXISTS (SELECT 1 FROM actions WHERE account_id = ? AND state IN ('queued','running'))`,
-		JobMailboxAction, accountID, now.UnixMilli(), accountID)
+		WHERE EXISTS (SELECT 1 FROM actions WHERE account_id = ? AND state IN ('queued','running'))
+		  AND NOT EXISTS (SELECT 1 FROM jobs WHERE type = ? AND json_extract(payload, '$.account_id') = ?
+		                  AND (state IN ('queued','running') OR (state = 'failed' AND run_at > ?)))`,
+		JobMailboxAction, accountID, now.UnixMilli(), accountID, JobMailboxAction, accountID, now.UnixMilli())
 	if err != nil {
 		return false, fmt.Errorf("store: ensure mailbox_action job: %w", err)
 	}
