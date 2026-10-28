@@ -381,6 +381,47 @@ var migrationChecks = map[int]func(context.Context, *sql.Tx) error{
 	},
 }
 
+// migrationRewrites passt das SQL einer Migration an einen Bestand an,
+// den ein früherer Zwischenbuild hinterlassen hat; die Datei auf main bleibt
+// unverändert (Rahmen 4: eine Migration auf main wird nie geändert). Die
+// Funktion läuft in der Transaktion der Migration, nach migrationChecks.
+var migrationRewrites = map[int]func(context.Context, *sql.Tx, string) (string, error){
+	// Zusatz (b) der Prüfsitzung DRACO-PK09 zu T3: Eine Datenbank aus einem
+	// Zwischenbuild von T2 hat mailboxes.virtual_view schon auf Schema 20;
+	// dort scheiterte 0021 mit „duplicate column name“. Steht die Spalte
+	// schon da, entfällt nur das ALTER; die Kennzeichnung nach Namen läuft
+	// wie sonst. Werte außerhalb von 0/1 brechen ab (keine stille Bereinigung).
+	21: func(ctx context.Context, tx *sql.Tx, src string) (string, error) {
+		has, err := hasColumn(ctx, tx, "mailboxes", "virtual_view")
+		if err != nil || !has {
+			return src, err
+		}
+		if !strings.Contains(src, alter0021) {
+			return "", fmt.Errorf("column virtual_view exists, but the ALTER statement of this migration is unknown; nothing was changed")
+		}
+		var bad int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM mailboxes WHERE virtual_view IS NULL OR virtual_view NOT IN (0,1)`).Scan(&bad); err != nil {
+			return "", err
+		}
+		if bad > 0 {
+			return "", fmt.Errorf("column virtual_view exists with %d values other than 0 or 1; nothing was changed, please report this", bad)
+		}
+		return strings.Replace(src, alter0021, "", 1), nil
+	},
+}
+
+// alter0021 ist die Anweisung aus 0021_virtual_view.sql, die
+// migrationRewrites[21] auslässt, wenn die Spalte schon existiert.
+const alter0021 = "ALTER TABLE mailboxes ADD COLUMN virtual_view INTEGER NOT NULL DEFAULT 0 CHECK (virtual_view IN (0,1));"
+
+// hasColumn sagt, ob eine Tabelle eine Spalte hat (Namen nur aus festen
+// Konstanten, nie aus Eingaben).
+func hasColumn(ctx context.Context, tx *sql.Tx, table, column string) (bool, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n)
+	return n > 0, err
+}
+
 // fkCheckTables nennt je Migration mit fkOffDirective die Tabellen, die
 // sie neu baut; nur diese prüft PRAGMA foreign_key_check (K1): Eine
 // Prüfung der ganzen Datenbank dauert bei großen Beständen und bräche
@@ -452,7 +493,14 @@ func (s *SQLite) apply(ctx context.Context, m Migration) error {
 			return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
+	src := m.SQL
+	if rewrite := migrationRewrites[m.Version]; rewrite != nil {
+		if src, err = rewrite(ctx, tx, src); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, src); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("store: migration %04d_%s: %w", m.Version, m.Name, err)
 	}
