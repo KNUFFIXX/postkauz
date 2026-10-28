@@ -6,6 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Docs
 
+- T2 (0.3.0-alpha.4): README-Abschnitt „Tags and mailbox actions“, `docs/cli.md` 2k, `docs/mcp.md`, `docs/sicherheit.md` (Herkunftsprüfung, Aktionen, Kopfprüfung), `docs/datenmodell.md` (Schema 20), `docs/betrieb.md` (neu, Teil Windows-Dauerbetrieb); Abnahme D7a (`docs/abnahme_D7a.md`/`.ps1`); Protokolle `docs/protokolle/T2_stand.md` und `T2_wpa.md`. `docs/cli.md` Abschnitt 5: `[approval]` und `[tags]` stehen im Beispiel nicht mehr mitten im Abschnitt `[draft]`.
 - Nachbesserung T1b und Merge mit `main` (28.10.2026, 0.3.0-alpha.3): Abnahme T1 (`docs/abnahme_T1.md`/`.ps1`) für den neuen Build (`-NewVersion`), mit Markerdatei gegen Junction/`subst`, Prozessprüfung über Pfad und Kommandozeile und exklusivem Öffnen der Live-Datenbank, maskierten Kontonamen und Pfaden, Zeile zu Entwürfen mit ungültigem Schlüssel, Schritt 4 mit genauen Pfaden; Protokoll `docs/protokolle/T1b_nachbesserung.md`; Stand und Festlegungen von T1b in `docs/roadmap.md` übertragen; nach T2 verschobene Punkte in `auftraege/A03_teile.md`.
 - T1b (0.3.0-alpha.2): `docs/abnahme_T1.md` Schritte 1 bis 4 und `docs/abnahme_T1.ps1` (Update einer Kopie von 0.2.0-rc8, Vergleich alt/neu, Laufzeit der Migrationen); ADR-004 Nachtrag (zwei Einträge je Aufruf, Policy prüft die Eingabe); Stand und Festlegungen in `docs/protokolle/T1b_stand.md`.
 - ADR-010 angenommen (27.10.2026): HTTP-MCP zustandslos, PostKauz nur Resource Server, externer Autorisierungsserver (Empfehlung Authelia), zuerst Modus `auth = "key"` (`docs/entscheidungen.md`); Spike P-AUTH (S3.0, T5 Phase 1) mit Prüfliste für Authelia 4.39.28 und Dex v2.46.1: `docs/protokolle/S30_pauth.md`, Rohdaten, Entwurf und Stand T5. Der Spike-Code bleibt auf seinem Zweig.
@@ -24,6 +25,15 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Added
 
+- T2: Migration 0020 (Schema 20): Tabellen `actions` und `action_targets` (Aktion gebunden an Nachricht, Ordner, UID und UIDVALIDITY), Job-Typ `mailbox_action`, `message_mailboxes.pending_flags` und `content_loaded`, `accounts.drafts_mailbox`; Tags mit Prüfung von Name und `set_by` (E5); Nachtrag von `drafts.updated_by` aus dem Audit für Entwürfe von vor 0019.
+- T2: Lokale Tags (`tag add|remove|list`, Suche `tag:`; MCP `mail_tag`, `mail_list_tags`); optional als IMAP-Keywords (`[tags] sync_keywords`).
+- T2: Postfach-Aktionen `mark` (`--seen`, `--unseen`, `--flagged`, `--unflagged`), `move` (`--to`, `--role`, `--from`) und `trash` (nur Antrag, Exit 4; `action approve|reject <n>` durch den Menschen, `trash --yes`), `action show|list`; MCP `mail_mark`, `mail_move`, `mail_trash`, `mail_get_action`, `mail_list_actions`. Der Spiegel zeigt die Änderung sofort (`pending`), auf den Server kommt sie über den Job `mailbox_action` (`sync`, `sync --watch` binnen `--jobs-interval`).
+- T2: `draft cleanup <id>` legt ältere Kopien eines Entwurfs in den Papierkorb (nur der Mensch, nur Kopien mit genau dem abgelegten Inhalt).
+- T2: Rolle `triage` für die unbeaufsichtigte Nacht-Triage (lesen, suchen, Entwürfe, Tags und Markieren; Vertragstest beweist, dass sie nichts anderes kann).
+- T2: Policy-Datei: Verengung je Schlüssel `[keys.<name>]`, `[agent_defaults] dry_run_default`; `key create --dry-run-default`; Konfiguration `[approval] ttl` (neuer Name für `[draft] approval_ttl`); `account set --drafts-mailbox` (Entwürfe-Ordner je Konto, A5.1).
+- T2 (WP-A): `sync --watch --all`: ein Prozess beobachtet alle Konten, je Konto mit eigener Sperre und eigenen Zugangsdaten; ein Konto mit belegter Sperre oder ohne Verbindung versucht es später erneut, eines mit abgelehnter Anmeldung endet allein. Fortschritt und Bericht nennen das Konto; im Audit steht ein Aufruf mit allen Konten.
+- T2 (WP-A): Neue Operation `sync.request` (R1, `mail:sync`): MCP-Tool `mail_sync_now` und CLI `sync request [-a …] [--mailbox …]` reihen einen Sync ein (`status: queued`, `job_id`); ein laufendes `sync --watch` führt ihn binnen `--jobs-interval` aus, sonst der nächste `sync`. Vor der Ausführung wird der Schlüssel geprüft (widerrufen, abgelaufen, ohne `mail:sync`: kein Lauf, Job `failed`, Audit `sync.job`).
+- T2 (WP-A): Windows-Dauerbetrieb: `Register-SyncWatch.ps1` registriert die Aufgabe „PostKauz sync watch“ (bei Anmeldung, ohne Passwort im Skript), `Run-SyncWatch.ps1` startet `sync --watch --all` nach einem Absturz neu (60 s bis 30 min, nach Anmeldefehler 30 min) und schreibt ein rotierendes Log; beide im Release-Paket. Anleitung: `docs/betrieb.md` (neu).
 - Nachbesserung T1b: Migration 0019 ergänzt `drafts.updated_by` (letzter Schreiber des Inhalts) und `drafts.push_hold` (Push hält einen Entwurf des Menschen zurück, dessen Inhalt zuletzt ein ungültiger Schlüssel geändert hat); `draft show --json` zeigt beide.
 - Nachbesserung T1b: `doctor` zeigt je OAuth2-Konto den letzten Token-Refresh aus dem Audit (`token_refresh`) und warnt bei einem Fehler, bis ein späteres `ok` oder eine neue Anmeldung ihn aufhebt (B-M4).
 - T1b (0.3.0-alpha.2): Migration 0018 (Schema 18): Audit mit Start- und Abschluss-Eintrag (`started`, `ref_id`; A1 Variante A). `audit` und `mail_audit_log` zeigen je Aufruf eine Zeile mit Endergebnis (`end_id`), `--raw`/`raw` alle Zeilen, `--result started` offene Aufrufe; `doctor` zählt Aufrufe ohne Abschluss (`audit_unfinished_calls`).
@@ -70,6 +80,15 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Changed
 
+- T2: Risiko R3 geht dem Trockenlauf vor (A14): Ein R3-Aufruf liefert auch im Trockenlauf `needs_approval`. Ohne Regeln endet eine Operation mit Eingabeprüfung fail closed (`policy_rules_missing`); ein Panic in der Eingabeprüfung wird wie im Handler abgefangen.
+- T2: `[move] bulk_confirm_threshold` höchstens 1.000 (vorher 100.000).
+- T2: Die MCP-Anleitung beschreibt die Schreibrechte nach den Scopes des Schlüssels („never … moves mail“ nur ohne `mail:move`); `mail_get_policy` nennt je Operation `needs_approval` und die Grenzen.
+- T2: Ein abgelaufener (nicht widerrufener) Schlüssel hält einen vom Menschen freigegebenen Entwurf oder eine vom Menschen freigegebene Aktion nicht mehr auf (Offene Frage 1, Standardantwort).
+- T2: Das MCP-Fehlerlog nennt `audit_id` und einen festen Fehlercode.
+- T2 (WP-A): Exit-Code 6 (`auth`, `oauth_refresh`) statt 1 für abgelehnte Anmeldungen.
+- T2 (WP-A): `sync`, `sync --watch` und `import` versuchen die Kontosperre einige Male, bevor sie `sync_running` melden (`doctor` hält Sperren einen Augenblick).
+- T2 (WP-A): `account remove` meldet bei OAuth2-Konten `stored token deleted` statt `stored password deleted` (`--json`: `secret_kind`).
+- T2 (WP-A): Tote `sync.run`-/`import.run`-Starts werden erst nach zehn Minuten abgeschlossen (wie `doctor` sie zählt); ein langsamer Lauf vor seiner Sperre wird nicht mehr fälschlich als `process_ended` abgeschlossen. `import` sperrt das Konto vor dem Durchsuchen der Quelle, und `sync --watch` prüft tote Starts vor jedem Lauf über alle Ordner erneut.
 - Nachbesserung T1b: Wer die Kontosperre holt (Sync, Import), schließt offene `sync.run`-/`import.run`-Starts früherer, hart beendeter Läufe dieses Kontos ab (`error`/`process_ended`, `ref_id`); `doctor` blendet offene Starts nur noch je gesperrtem Konto aus (A-F9).
 - Nachbesserung T1b: Scheitert das Audit eines Token-Refresh, meldet das Log eine Warnung (ohne Token, ohne Fehlertext; B-M2); `doctor --secrets` meldet einen Lesefehler des Schlüsselbunds beim Refresh-Token als `Skipped` (B-M3).
 - T1b: Ein erlaubter Aufruf schreibt zwei Audit-Einträge; der Abschluss trägt seinen eigenen Zeitstempel und die Dauer. Einträge vor Schema 18 bleiben unverändert.
@@ -94,6 +113,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- T2 (A13.1): `move` nutzt nur IMAP `MOVE`; ohne die Fähigkeit passiert nichts (`unsupported`) statt des stillen Rückfalls von go-imap auf COPY, `\Deleted` und EXPUNGE. `make guard` verbietet Expunge und `\Deleted` außerhalb der zwei erlaubten Stellen.
+- T2: Vor einer Aktion an einer Serverkopie, deren Inhalt PostKauz nie selbst geladen hat, vergleicht der Job den Kopf; weicht er ab, passiert nichts (`stale`).
+- T2: Die Stildatei eines Entwurfs öffnet nicht mehr blockierend (eine untergeschobene FIFO hielt den Aufruf an).
+- T2: `messages.trash` ohne verdrahteten Entwurfsdienst endete mit nil-Zeiger (nur Tests betroffen).
 - Nachbesserung T1b: Ein Entwurf des Menschen, den ein Agent geändert hat, wird nach dem Widerruf des Agenten-Schlüssels nicht mehr abgelegt (zurück auf `draft`, Freigabe `rejected`, zurückgehalten; A-F3).
 - Nachbesserung T1b: `audit verify` findet wieder eine nachträglich eingeschobene Zeile mit freier niedriger ID im Zeitraum eines abgeschlossenen Tages (`database_changed`; Regression aus T1b, A-F4); der Zählabgleich reicht bis zur größten letzten ID aller abgeschlossenen Tage, so meldet eine unveränderte rc8-Kopie mit offenem letztem Exporttag keinen falschen Alarm.
 - Nachbesserung T1b: Ein hart beendeter `sync --watch` lässt `doctor` nicht mehr dauerhaft warnen (A-F9).

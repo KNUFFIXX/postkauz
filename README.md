@@ -203,7 +203,7 @@ PostKauz is **draft-only**: it writes drafts into your Drafts folder; you send t
 - When you have sent the draft from your mail client, the next `sync` finds it in Sent (by its Message-ID, or by recipients, subject, time and text when the client gave it a new Message-ID) and marks it `sent_by_human`. Otherwise you close it with `draft mark-sent <id>` or `draft abandon <id>`.
 - Agents with a key of the role `assistant` get six MCP tools: create, change, read and list drafts, submit one for approval, read the state of an approval.
 
-**What never happens:** PostKauz never sends mail (there is no SMTP code), never deletes, expunges or moves a message, and never overwrites a draft you changed in your mail client (further changes are refused with `draft_taken_over`). After a change it puts a new copy into Drafts and leaves the older one there; `draft list` and `draft show` warn about it, and you delete it in your mail client. The MCP server never holds the mailbox password. No API key, whatever its role, can approve, reject, abandon or mark a draft as sent, or manage identities (`human_only`).
+**What never happens:** PostKauz never sends mail (there is no SMTP code), never deletes or expunges a message (moving and the trash: see the next section), and never overwrites a draft you changed in your mail client (further changes are refused with `draft_taken_over`). After a change it puts a new copy into Drafts and leaves the older one there; `draft list` and `draft show` warn about it, and you delete it in your mail client or, after a look, with `draft cleanup <id>` (moves the older copies to the trash; only a human). The MCP server never holds the mailbox password. No API key, whatever its role, can approve, reject, abandon or mark a draft as sent, or manage identities (`human_only`).
 
 ```sh
 postkauz identity add -a mail --email me@example.org --name "Me" --signature-file signature.txt
@@ -217,6 +217,28 @@ postkauz sync -a mail && postkauz draft list         # status sent_by_human
 ```
 
 The check hook is a program you name as a list in `policy.toml` (`[draft] check_hook`, no shell); the examples `check-example.ps1` (Windows PowerShell 5.1) and `check-example.sh` come with each release and lie in `deploy/hooks/`. For a German quote line set `[draft] quote_line = 'Am {date_numeric} schrieb {from}:'` in `config.toml`. Details: `docs/cli.md` (sections 2j and 5), `docs/versanderkennung.md` (how sending is detected), `docs/sicherheit.md` (section 5).
+
+## Tags and mailbox actions
+
+Slice 3, part T2 (pre-alpha, build 0.3.0-alpha.4):
+
+- **Tags** are local labels in the mirror (`tag add rechnung 42`, `tag remove`, `tag list`, search with `tag:rechnung`). They never touch the server unless `[tags] sync_keywords = true` copies them as IMAP keywords.
+- **Mark, move, trash** change the server: `mark 42 --seen`, `mark 42 --flagged`, `move 42 --to Archive` (or `--role archive`), `trash 42`. The mirror shows the change at once (`pending` flags); the server gets it from the process that has the password: the next `postkauz sync`, or a running `sync --watch` within about 10 seconds (`--jobs-interval`). Moves use IMAP `MOVE` only; a server without `MOVE` gets nothing, and PostKauz never expunges.
+- **Trash needs a human.** `trash` (and `mail_trash` for agents) only files a request (exit code 4, `needs_approval`); `action approve <id>` (a human, no key) lets it run, `action reject <id>` drops it. `trash 42 --yes` approves your own request in one step. Nothing is ever deleted for good.
+- `action list` and `action show <id>` show what is queued, done, partial or failed, target by target.
+- Agents: `mail_tag`, `mail_list_tags`, `mail_mark`, `mail_move`, `mail_trash`, `mail_get_action`, `mail_list_actions`, depending on the scopes of the key. The role `triage` (read, search, drafts, tags and marks; no move, no trash, no sync) is meant for unattended night runs. `policy.toml` limits moves and the trash for keys (`[move] agent_may`, `[delete] agent_may`, `bulk_confirm_threshold`, per key `[keys.<name>]`).
+
+```sh
+postkauz search 'from:billing@example.org after:2026-10-01' --json   # pick the ids
+postkauz tag add rechnung 42 43
+postkauz mark 42 43 --seen
+postkauz move 42 43 --to Archive
+postkauz trash 44                     # request filed, exit 4
+postkauz action approve 3             # only a human
+postkauz sync -a mail && postkauz action show 3
+```
+
+Details: `docs/cli.md` (section 2k), `docs/mcp.md`, `docs/sicherheit.md`.
 
 ## Set up MCP in Claude Code
 
@@ -342,6 +364,6 @@ PostKauz (Arbeitstitel) ist ein E-Mail-Client für KI-Agenten, ohne Oberfläche:
 
 Der MVP ist **draft-only**: Er legt Entwürfe in den Entwürfe-Ordner, sendet aber nie selbst. Gesendet wird vom Menschen im gewohnten Mailclient.
 
-Stand: Release-Kandidat 0.2.0-rc1 (Pre-Alpha), Schnitt 2 (Entwürfe) gebaut, Abnahme D5 mit echten Mailclients steht aus; zuletzt veröffentlicht: 0.1.0-rc2 (Schnitt 1). Schnitt 2: Entwürfe im Entwürfe-Ordner, Freigabe nur durch den Menschen, Prüf-Hook, Erkennung des Versands (Abschnitt „Drafts"). Schnitt 1: Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, MCP-Server über stdio (lesend, mit Rolle `assistant` auch Entwürfe), Import aus mbox/Maildir, täglicher Audit-Export mit Hash-Kette). Installation in unter 15 Minuten: Abschnitt „Install in under 15 minutes"; Einrichtung in Claude Code: „Set up MCP in Claude Code". Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
+Stand: zuletzt veröffentlicht 0.2.0-rc8 (Schnitt 2, Entwürfe); Schnitt 3 im Bau (Pre-Alpha-Builds 0.3.0-alpha.x, nur für Abnahmen). Seit T2 (0.3.0-alpha.4): lokale Tags, Markieren, Verschieben und Papierkorb über einen Job des Prozesses mit dem Passwort (Papierkorb nur nach Freigabe durch den Menschen, nie endgültig gelöscht), `mail_sync_now` und `sync --watch --all` mit Windows-Aufgabe (Abschnitte „Tags and mailbox actions“ und „Continuous sync on Windows“). Schnitt 2: Entwürfe im Entwürfe-Ordner, Freigabe nur durch den Menschen, Prüf-Hook, Erkennung des Versands (Abschnitt „Drafts"). Schnitt 1: Konten, Spiegel mit Sync und IDLE, Threads, bereinigter Text, Anhänge mit Typprüfung und Textextraktion, Volltextsuche mit deutschen Wortformen, Umlaut-/ß-Schreibweisen und Teilwörtern, API-Schlüssel, Audit mit Export und Prüfung, MCP-Server über stdio (lesend, mit Rolle `assistant` auch Entwürfe), Import aus mbox/Maildir, täglicher Audit-Export mit Hash-Kette). Installation in unter 15 Minuten: Abschnitt „Install in under 15 minutes"; Einrichtung in Claude Code: „Set up MCP in Claude Code". Text aus PDF-Anhängen nur mit dem optionalen `pdftotext` (siehe oben). Die Dokumentation unter `docs/` ist deutsch; Einstieg: `docs/architektur.md` und `docs/entscheidungen.md`. Entwicklungsregeln für KI-Sitzungen: `CLAUDE.md`.
 
 Nicht-Ziele: keine GUI vor 1.0, kein Massenversand, keine Agenten-Postfächer, keine eigene Google-OAuth-App, kein Spamfilter, kein PGP/S/MIME im MVP.

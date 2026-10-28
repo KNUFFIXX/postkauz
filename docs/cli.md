@@ -386,13 +386,13 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   name = ""                 # wer freigibt (approvals.decided_by); leer = Benutzername des Betriebssystems
   [draft]                   # seit S2.1 (gewirkt ab S2.2–S2.6); nicht zu verwechseln mit [draft] der Policy-Datei
   approval_ttl = "168h"     # so lange gilt eine offene oder erteilte Freigabe (1m bis 8760h); seit T2 heißt der Schlüssel [approval] ttl
+  max_attachment_bytes = 26214400  # Summe der Anhänge eines Entwurfs (Standard 25 MiB, höchstens 256 MiB)
+  mailbox = ""              # Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts; seit T2 geht ein Ordner je Konto vor (account set --drafts-mailbox)
+  quote_line = "On {date}, {from} wrote:"  # Einleitung des Zitats; nur {date}, {date_numeric} und {from}, eine Zeile
   [approval]                # seit T2 (E3): gilt für Entwürfe und Anträge auf Aktionen (Papierkorb)
   ttl = "168h"              # neuer Name für [draft] approval_ttl (der alte bleibt gültig; beide verschieden gesetzt ist ein Fehler)
   [tags]                    # seit T2 (E5)
   sync_keywords = false     # true: Tags zusätzlich als IMAP-Keywords auf den Server (nur in Ordnern mit PERMANENTFLAGS \*)
-  max_attachment_bytes = 26214400  # Summe der Anhänge eines Entwurfs (Standard 25 MiB, höchstens 256 MiB)
-  mailbox = ""              # Ordner für die Entwurfskopien; leer = Ordner mit Rolle drafts; seit T2 geht ein Ordner je Konto vor (account set --drafts-mailbox)
-  quote_line = "On {date}, {from} wrote:"  # Einleitung des Zitats; nur {date}, {date_numeric} und {from}, eine Zeile
   ```
 
 - **Zitatzeile auf Deutsch** (`[draft] quote_line`, Platzhalter `{date_numeric}` seit S2.4): Programmausgaben sind Englisch, deshalb beginnt ein Zitat standardmäßig mit `On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel <erika@example.org> wrote:`. Die Vorlage kennt drei Platzhalter: `{date}` (Datum der Ausgangsnachricht englisch, wie oben), `{date_numeric}` (dasselbe Datum als `21.10.2026 09:15`, in derselben Zeitzone wie `{date}`, also der der Ausgangsnachricht, siehe unten; fehlt das Datum, steht `??.??.???? ??:??`) und `{from}` (Absender als `Name <adresse>`). Für Deutsch:
