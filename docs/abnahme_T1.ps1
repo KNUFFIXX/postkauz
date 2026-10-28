@@ -1,17 +1,21 @@
 ﻿<#
 .SYNOPSIS
     Abnahme T1 (PostKauz, Schnitt 3, Teile T1a und T1b): Update einer KOPIE
-    der echten Datenbank von 0.2.0-rc8 auf 0.3.0-alpha.2.
+    der echten Datenbank von 0.2.0-rc8 auf den neuen Stand (-NewVersion,
+    Standard 0.3.0-alpha.3).
 
 .DESCRIPTION
     Gehoert zu docs/abnahme_T1.md (Schritte 0 bis 4) und
     auftraege/A03_teile.md, Teil T1b, Haltepunkt. Laeuft auf Windows mit
     Windows PowerShell 5.1, ohne Go, ohne Docker, nur mit den beiden
-    Programmen (alt: 0.2.0-rc8, neu: 0.3.0-alpha.2 aus dist/).
+    Programmen (alt: 0.2.0-rc8, neu: -NewVersion aus dist/).
 
     Das Skript
-      - Schritt 0: prueft, dass kein postkauz-Prozess laeuft (die Aufgaben
-        und die Claude-App stoppt der Mensch vorher von Hand, md Schritt 0);
+      - Schritt 0: prueft, dass kein postkauz-Prozess laeuft (Name, Pfad
+        und Kommandozeile, auch umbenannte wie postkauz-rc8.exe) und dass
+        sich die Live-Datenbank exklusiv oeffnen laesst (nur lesend, sofort
+        wieder geschlossen); die Aufgaben und die Claude-App stoppt der
+        Mensch vorher von Hand (md Schritt 0);
       - Schritt 1: prueft den freien Platz (mindestens dreimal die Datenbank)
         und kopiert postkauz.db, -wal und -shm ZUSAMMEN aus -LiveDataDir
         nach -DataDir (nur lesend an der Quelle);
@@ -21,7 +25,11 @@
         Kommando migriert, Dauer gemessen) und vergleicht die Ergebnisse;
       - Schritt 3 (nur mit -Sync und -SyncAccount): lesender Sync nur der
         INBOX eines Kontos mit dem neuen Programm, nur wenn kein Entwurf auf
-        seine Kopie im Entwuerfe-Ordner wartet (sonst SKIP);
+        seine Kopie im Entwuerfe-Ordner wartet (sonst SKIP; ebenso SKIP,
+        wenn draft list die Obergrenze von 500 erreicht);
+      - Zeile 2d: wie viele wartende Entwuerfe der erste Push nach der
+        Umstellung verwerfen bzw. zuruecksetzen wuerde (Schluessel
+        widerrufen, abgelaufen oder unbekannt; A8, A-F3);
       - Schritt 4 (Umstellung des Dauerbetriebs) fuehrt das Skript NICHT
         aus; es nennt nur den Rueckweg (Snapshot).
 
@@ -32,20 +40,28 @@
     (%APPDATA%\postkauz\config.toml) oder -LiveConfig ist. Jedes Programm
     laeuft mit --data-dir und --config (ausser "version", das keine
     Datenbank oeffnet). -WorkDir darf weder im Live- noch im Standard-
-    Datenverzeichnis liegen. Die Live-Datenbank wird nie geoeffnet, nur
-    kopiert.
+    Datenverzeichnis liegen. Die Live-Datenbank wird nie mit PostKauz
+    geoeffnet, nur kopiert (und fuer die Pruefung auf andere Prozesse einen
+    Augenblick exklusiv zum Lesen geoeffnet). Zeichenketten allein
+    erkennen Junctions und subst-Laufwerke nicht: Das Skript legt deshalb
+    in -DataDir und -WorkDir eine Markerdatei an und bricht ab, wenn sie im
+    Live- oder Standard-Datenverzeichnis sichtbar ist.
 
     Jede Pruefung ist eine Zeile "OK <Nr> <Beschreibung>",
     "FAIL <Nr> <Beschreibung>" oder "SKIP <Nr> <Beschreibung>", darunter
     eingerueckt die Ist-Ausgabe (gekuerzt, Mailadressen maskiert,
-    Suchbegriffe nicht im Protokoll). Letzte Zeile:
+    Kontonamen als konto1..n, Benutzerordner und die Datenverzeichnisse
+    als Platzhalter, Suchbegriffe nicht im Protokoll). Letzte Zeile:
     "T1: <n> OK, <m> FAIL, <k> SKIP". Exit 0 nur ohne FAIL.
 
 .PARAMETER OldExe
     postkauz.exe 0.2.0-rc8 (der Stand im Dauerbetrieb).
 
 .PARAMETER NewExe
-    postkauz.exe 0.3.0-alpha.2 (aus dist/, der zu pruefende Stand).
+    postkauz.exe des zu pruefenden Stands (aus dist/).
+
+.PARAMETER NewVersion
+    Erwartete Version von -NewExe (Standard 0.3.0-alpha.3).
 
 .PARAMETER LiveDataDir
     Datenverzeichnis des Dauerbetriebs (Quelle der Kopie; wird nur
@@ -83,13 +99,14 @@
 
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File abnahme_T1.ps1 `
-      -OldExe C:\PK\rc8\postkauz.exe -NewExe C:\PK\alpha2\postkauz.exe `
+      -OldExe C:\PK\rc8\postkauz.exe -NewExe C:\PK\alpha3\postkauz.exe `
       -LiveDataDir C:\PostKauz\data -LiveConfig C:\PostKauz\config.toml `
       -DataDir C:\PK\t1\data -Config C:\PK\t1\config.toml -WorkDir C:\PK\t1
 #>
 param(
     [Parameter(Mandatory = $true)] [string] $OldExe,
     [Parameter(Mandatory = $true)] [string] $NewExe,
+    [string] $NewVersion = '0.3.0-alpha.3',
     [Parameter(Mandatory = $true)] [string] $LiveDataDir,
     [Parameter(Mandatory = $true)] [string] $DataDir,
     [Parameter(Mandatory = $true)] [string] $Config,
@@ -112,12 +129,47 @@ try { [Console]::OutputEncoding = $script:Utf8 } catch { }
 
 # ---------------------------------------------------------------- Hilfen
 
-# Mailadressen und Schluessel nie ins Protokoll.
+# Platzhalter fuer Pfade (C-F17): laengste zuerst; je Pfad auch in der
+# Schreibweise von JSON (doppelte Backslashes) und mit Schraegstrichen.
+$script:PathMask = New-Object System.Collections.Generic.List[object]
+function Add-PathMask {
+    param([string] $Path, [string] $Name)
+    if (-not $Path) { return }
+    $full = $Path
+    try { $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\') } catch { }
+    foreach ($v in @($full, $full.Replace('\', '\\'), $full.Replace('\', '/'))) {
+        $script:PathMask.Add((New-Object PSObject -Property @{ Text = $v; Name = $Name }))
+    }
+    $sorted = @($script:PathMask | Sort-Object -Property @{ Expression = { $_.Text.Length }; Descending = $true })
+    $script:PathMask = New-Object System.Collections.Generic.List[object]
+    foreach ($x in $sorted) { $script:PathMask.Add($x) }
+}
+
+# Kontonamen (C-F17): konto1..n in der Reihenfolge des ersten Auftretens.
+$script:AccountMask = @{}
+function Add-AccountMask {
+    param([string] $Name)
+    if (-not $Name -or $script:AccountMask.ContainsKey($Name)) { return }
+    $script:AccountMask[$Name] = 'konto' + ($script:AccountMask.Count + 1)
+}
+
+# Mailadressen, Schluessel, Kontonamen und Pfade nie ins Protokoll.
 function Hide-Private {
     param([string] $Text)
     if ($null -eq $Text) { return '' }
     $t = [regex]::Replace($Text, 'pk_key_[A-Za-z0-9_-]+', 'pk_key_********')
-    return [regex]::Replace($t, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '<adresse>')
+    $t = [regex]::Replace($t, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '<adresse>')
+    foreach ($m in $script:PathMask) {
+        $t = [regex]::Replace($t, [regex]::Escape($m.Text), $m.Name, 'IgnoreCase')
+    }
+    # Alle Namen in einem Durchgang (sonst trifft ein Name einen schon
+    # eingesetzten Platzhalter); laengste zuerst.
+    $names = @($script:AccountMask.Keys | Sort-Object -Property Length -Descending | ForEach-Object { [regex]::Escape($_) })
+    if ($names.Count -gt 0) {
+        $pattern = '(?<![A-Za-z0-9-])(' + ($names -join '|') + ')(?![A-Za-z0-9-])'
+        $t = [regex]::Replace($t, $pattern, { param($m) $script:AccountMask[$m.Value] })
+    }
+    return $t
 }
 
 function Write-Log {
@@ -144,7 +196,7 @@ function Add-Check {
     if ($Ok) { $script:NOk++; $tag = 'OK' } else { $script:NFail++; $tag = 'FAIL'; $script:Fails.Add($Nr + ' ' + $Desc) }
     Write-Log ($tag + ' ' + $Nr + ' ' + $Desc)
     if ($Detail) {
-        foreach ($l in ((Limit-Text $Detail) -split "`r?`n")) { Write-Log ('      ' + $l) }
+        foreach ($l in ((Limit-Text (Hide-Private $Detail)) -split "`r?`n")) { Write-Log ('      ' + $l) }
     }
 }
 
@@ -279,7 +331,7 @@ function Get-State {
     if ($null -ne $aj) { foreach ($x in $aj.accounts) { $names += ([string] $x.name + '=' + [string] $x.email) } }
     $st.Accounts = ($names | Sort-Object) -join ';'
     $st.AccountNames = @()
-    if ($null -ne $aj) { foreach ($x in $aj.accounts) { $st.AccountNames += [string] $x.name } }
+    if ($null -ne $aj) { foreach ($x in $aj.accounts) { $st.AccountNames += [string] $x.name; Add-AccountMask ([string] $x.name) } }
     Add-Check ($Nr + '.2') ($Label + ': accounts list') (($a.Exit -eq 0) -and ($names.Count -gt 0)) $a.Text
 
     $boxes = @()
@@ -309,6 +361,71 @@ function Get-State {
     return $st
 }
 
+# Laufende PostKauz-Prozesse (C-F7): nach Name, nach Pfad der Programmdatei
+# (auch umbenannt, z. B. postkauz-rc8.exe) und nach der Kommandozeile;
+# PowerShell selbst (dieses Skript) zaehlt nicht.
+function Get-PkProcesses {
+    $exes = @((Get-FullPath $OldExe), (Get-FullPath $NewExe))
+    $list = @()
+    try {
+        $list = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $name = [string] $_.Name
+            $path = [string] $_.ExecutablePath
+            $cmd = [string] $_.CommandLine
+            ($_.ProcessId -ne $PID) -and ($name -notmatch '^(powershell|pwsh)(\.exe)?$') -and (
+                ($name -match '^(postkauz|pk)([-_.][^\\]*)?\.exe$') -or
+                ($path -and ($exes -contains (Get-FullPath $path))) -or
+                ($cmd -match '(?i)^\s*"?[^" ]*postkauz[^\\/" ]*\.exe'))
+        })
+    } catch {
+        # Ohne CIM: wenigstens nach Namen.
+        $list = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(postkauz|pk)([-_.].*)?$' } |
+            ForEach-Object { New-Object PSObject -Property @{ ProcessId = $_.Id; Name = $_.ProcessName } })
+    }
+    return $list
+}
+
+# Die Live-Datenbank einen Augenblick exklusiv zum Lesen oeffnen (C-F7):
+# Gelingt das nicht, haelt ein anderer Prozess sie offen. Liefert '' oder
+# den Grund.
+function Test-DbExclusive {
+    param([string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    try {
+        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+        $fs.Close()
+        return ''
+    } catch {
+        return $_.Exception.Message
+    }
+}
+
+# Markerdatei (C-F2): in Dir anlegen und pruefen, ob sie in einem der
+# verbotenen Verzeichnisse auftaucht (Junction, subst, Netzlaufwerk auf
+# denselben Ordner). Liefert '' oder den Ort, an dem sie sichtbar war.
+function Test-Marker {
+    param([string] $Dir, [string[]] $Forbidden)
+    if (-not (Test-Path -LiteralPath $Dir)) { [void] [System.IO.Directory]::CreateDirectory($Dir) }
+    $name = '.pk-abnahme-marker-' + [guid]::NewGuid().ToString('N')
+    $marker = Join-Path $Dir $name
+    [System.IO.File]::WriteAllText($marker, 'Abnahme T1: Marker, darf geloescht werden', $script:Utf8)
+    $seen = ''
+    try {
+        foreach ($f in $Forbidden) {
+            if (-not $f -or -not (Test-Path -LiteralPath $f)) { continue }
+            $hit = @(Get-ChildItem -LiteralPath $f -Recurse -Force -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($hit.Count -gt 0) { $seen = $f; break }
+        }
+    } finally {
+        try {
+            Remove-Item -LiteralPath $marker -Force -ErrorAction Stop
+        } catch {
+            Stop-Run ('Markerdatei liess sich nicht loeschen, bitte von Hand entfernen: ' + $marker)
+        }
+    }
+    return $seen
+}
+
 # ---------------------------------------------------------------- Pruefungen vor dem Start
 
 
@@ -328,15 +445,33 @@ foreach ($f in @($OldExe, $NewExe, $Config)) {
 if ((Test-Inside $WorkDir $LiveDataDir) -or ($defaultData -and (Test-Inside $WorkDir $defaultData))) { Stop-Run '-WorkDir liegt im Live- oder Standard-Datenverzeichnis.' }
 if ($Sync -and -not $SyncAccount) { Stop-Run '-Sync braucht -SyncAccount.' }
 
+# C-F2: Zeichenketten erkennen Junction und subst nicht. Markerdatei in
+# -DataDir und -WorkDir; taucht sie im Live- oder Standard-Datenverzeichnis
+# auf, zeigen beide auf denselben Ordner. -DataDir muss dafuer leer sein
+# oder (mit -SkipCopy) nur die Kopie enthalten; der Marker wird sofort
+# wieder geloescht.
+foreach ($d in @($DataDir, $WorkDir)) {
+    $where = Test-Marker $d @($LiveDataDir, $defaultData)
+    if ($where) { Stop-Run ('Eine Markerdatei aus ' + $d + ' ist in ' + $where + ' sichtbar (Junction, subst oder derselbe Ordner).') }
+}
+
 # Protokoll erst nach den Pruefungen der Pfade anlegen.
 if (-not (Test-Path -LiteralPath $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir | Out-Null }
 $script:Log = Join-Path $WorkDir 'T1_windows.txt'
 [System.IO.File]::WriteAllText($script:Log, '', $script:Utf8)
-Write-Log ('Abnahme T1 ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ', Rechner ' + $env:COMPUTERNAME)
-Write-Log ('Programm alt: ' + $OldExe)
-Write-Log ('Programm neu: ' + $NewExe)
 $script:Data = [System.IO.Path]::GetFullPath($DataDir)
 $script:Cfg = [System.IO.Path]::GetFullPath($Config)
+# C-F17: Pfade mit dem Windows-Benutzernamen nie im Klartext (vor dem
+# ersten Eintrag); der Rechnername steht nicht im Protokoll.
+Add-PathMask $LiveDataDir '<LiveDataDir>'
+Add-PathMask $DataDir '<DataDir>'
+Add-PathMask $WorkDir '<WorkDir>'
+Add-PathMask $Config '<Config>'
+Add-PathMask $LiveConfig '<LiveConfig>'
+Add-PathMask $env:USERPROFILE '<USERPROFILE>'
+Write-Log ('Abnahme T1 ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
+Write-Log ('Programm alt: ' + $OldExe)
+Write-Log ('Programm neu: ' + $NewExe)
 
 $script:Queries = @('has:attachment', 'is:unread', 'is:flagged', 'in:inbox')
 if ($SearchFile) {
@@ -347,13 +482,16 @@ if ($SearchFile) {
 
 $vo = Invoke-Native $OldExe @('version')
 $vn = Invoke-Native $NewExe @('version')
-Add-Check '0.0' 'Versionen: alt 0.2.0-rc8, neu 0.3.0-alpha.2' (($vo.Out -match '0\.2\.0-rc8') -and ($vn.Out -match '0\.3\.0-alpha\.2')) ('alt: ' + $vo.Out.Trim() + "`nneu: " + $vn.Out.Trim())
+Add-Check '0.0' ('Versionen: alt 0.2.0-rc8, neu ' + $NewVersion) (($vo.Out -match '0\.2\.0-rc8') -and ($vn.Out -match ([regex]::Escape($NewVersion) + '(?![0-9])'))) ('alt: ' + $vo.Out.Trim() + "`nneu: " + $vn.Out.Trim())
 
 # ---------------------------------------------------------------- Schritt 0
 
-$procs = @(Get-Process -Name postkauz -ErrorAction SilentlyContinue)
-Add-Check '0.4' 'kein postkauz-Prozess laeuft (Aufgaben und Claude-App gestoppt, md Schritt 0)' ($procs.Count -eq 0) (($procs | ForEach-Object { 'PID ' + $_.Id }) -join "`n")
+$procs = @(Get-PkProcesses)
+Add-Check '0.4' 'kein postkauz-Prozess laeuft (Name, Pfad, Kommandozeile; Aufgaben und Claude-App gestoppt, md Schritt 0)' ($procs.Count -eq 0) (($procs | ForEach-Object { 'PID ' + $_.ProcessId + ' ' + $_.Name }) -join "`n")
 if ($procs.Count -gt 0) { Stop-Run 'Erst alle PostKauz-Prozesse beenden (docs/abnahme_T1.md, Schritt 0).' }
+$busy = Test-DbExclusive (Join-Path $LiveDataDir 'postkauz.db')
+Add-Check '0.5' 'Live-Datenbank von keinem Prozess geoeffnet (exklusiv lesbar)' (-not $busy) $busy
+if ($busy) { Stop-Run 'Ein Prozess haelt die Live-Datenbank offen (Aufgabe, Claude-App, MCP-Server; auch OneDrive, Sicherung, Virenscanner oder Suchindex). Beenden bzw. pausieren und neu starten.' }
 
 # ---------------------------------------------------------------- Schritt 1
 
@@ -383,9 +521,10 @@ if (-not $SkipCopy) {
         }
     }
     # Nach dem Kopieren: lief in der Zwischenzeit ein Prozess an, ist die Kopie unbrauchbar.
-    $procs = @(Get-Process -Name postkauz -ErrorAction SilentlyContinue)
-    Add-Check '1.2' 'Datenbank, -wal und -shm zusammen kopiert, kein Prozess dazwischen' ($copied -and $procs.Count -eq 0) ''
-    if (-not $copied -or $procs.Count -gt 0) { Stop-Run 'Kopie unvollstaendig oder ein Prozess lief an.' }
+    $procs = @(Get-PkProcesses)
+    $busy = Test-DbExclusive $liveDb
+    Add-Check '1.2' 'Datenbank, -wal und -shm zusammen kopiert, kein Prozess dazwischen' ($copied -and $procs.Count -eq 0 -and -not $busy) $busy
+    if (-not $copied -or $procs.Count -gt 0 -or $busy) { Stop-Run 'Kopie unvollstaendig oder ein Prozess lief an.' }
 } else {
     if (-not (Test-Path -LiteralPath $copyDb)) { Stop-Run ('-SkipCopy, aber keine Kopie in ' + $copyDb) }
     if (@(Get-ChildItem -LiteralPath $script:Data -Filter 'postkauz.db.pre-*.bak').Count -gt 0) { Stop-Run 'Die Kopie wurde schon migriert (Snapshot vorhanden); neu kopieren.' }
@@ -401,7 +540,7 @@ $old = Get-State $OldExe '2a' 'alt'
 # ---------------------------------------------------------------- Schritt 2: neuer Stand
 
 Write-Log ''
-Write-Log '--- Schritt 2b: dieselbe Kopie mit dem neuen Programm (0.3.0-alpha.2), migriert beim ersten Kommando'
+Write-Log ('--- Schritt 2b: dieselbe Kopie mit dem neuen Programm (' + $NewVersion + '), migriert beim ersten Kommando')
 $m = Invoke-Pk $NewExe @('accounts', 'list')
 $snaps = @(Get-ChildItem -LiteralPath $script:Data -Filter 'postkauz.db.pre-*.bak' -ErrorAction SilentlyContinue)
 Add-Check '2b.0' ('Migrationen laufen (Dauer samt Snapshot ' + $m.Ms + ' ms), Snapshot angelegt') (($m.Exit -eq 0) -and ($snaps.Count -ge 1)) ($m.Text + "`n" + (($snaps | ForEach-Object { $_.Name }) -join "`n"))
@@ -440,6 +579,62 @@ foreach ($line in ($au.Out -split "`r?`n")) {
 }
 Add-Check '2c.5' ('Audit neu: je Aufruf ein Start und ein Abschluss (accounts list: ' + $started + ' Starts, ' + $ended + ' Abschluesse)') (($au.Exit -eq 0) -and ($started -eq 2) -and ($ended -eq 2)) ''
 
+# C-F19: Welche wartenden Entwuerfe wuerde der erste Push nach der
+# Umstellung nicht ablegen (A8, A-F3)? Schluessel nicht aktiv = widerrufen,
+# abgelaufen oder unbekannt. Entwurf eines Agenten: verworfen; Entwurf des
+# Menschen mit Vorlage oder Inhalt eines solchen Schluessels: zurueck auf
+# draft. Nur gezaehlt, nichts geaendert.
+Write-Log ''
+Write-Log '--- Schritt 2d: Entwuerfe mit ungueltigem Schluessel (nur Zaehlung an der Kopie)'
+$kl = Invoke-Pk $NewExe @('key', 'list', '--json')
+$klj = Get-Json $kl.Out
+$active = @{}
+# Gueltig wie im Push (originDenied): aktiv und mit Scope mail:draft.
+if ($null -ne $klj) { foreach ($k in $klj.keys) { if (($k.status -eq 'active') -and (@($k.scopes) -contains 'mail:draft')) { $active['key:' + [string] $k.name] = $true } } }
+function Test-KeyBad {
+    param([string] $Id)
+    return ($Id -like 'key:*') -and (-not $active.ContainsKey($Id))
+}
+$dw = Invoke-Pk $NewExe @('draft', 'list', '--status', 'draft', '--status', 'pending_approval', '--status', 'ready', '--limit', '500', '--json')
+$dwj = Get-Json $dw.Out
+$abandon = 0
+$reset = 0
+$waitingAll = 0
+if (($kl.Exit -eq 0) -and ($null -ne $klj) -and ($dw.Exit -eq 0) -and ($null -ne $dwj)) {
+    foreach ($x in @($dwj.drafts | Where-Object { $_.remote -eq 'pending' })) {
+        $waitingAll++
+        $ds = Invoke-Pk $NewExe @('draft', 'show', [string] $x.draft_id, '--json') ('draft show <id> --json')
+        $dsj = Get-Json $ds.Out
+        if ($null -eq $dsj) { continue }
+        # Schon zurueckgehalten: steht nicht mehr in der Warteschlange.
+        if ($dsj.push_hold) { continue }
+        # Dieselben Schluessel wie der Push: Anlage, Vorlage einer offenen
+        # oder erteilten Freigabe, letzte Aenderung (ausser der Mensch hat
+        # selbst vorgelegt).
+        $created = [string] $dsj.created_by
+        $updated = [string] $dsj.updated_by
+        $req = ''
+        if ($dsj.approval_id -and (@('pending', 'approved') -contains [string] $dsj.approval_status)) {
+            $ap = Invoke-Pk $NewExe @('approval', 'show', [string] $dsj.approval_id, '--json') ('approval show <id> --json')
+            $apj = Get-Json $ap.Out
+            if ($null -ne $apj) { $req = [string] $apj.requested_by }
+        }
+        $ids = @($created, $req)
+        if ($updated -and ($updated -ne $created) -and ($req -ne 'cli')) { $ids += $updated }
+        $bad = $false
+        foreach ($i in $ids) { if (Test-KeyBad $i) { $bad = $true } }
+        if (-not $bad) { continue }
+        if ($created -eq 'cli') { $reset++ } else { $abandon++ }
+    }
+    Write-Log ('INFO 2d Entwuerfe, die der erste Push nach der Umstellung verwerfen bzw. zuruecksetzen wuerde: ' + ($abandon + $reset) +
+        ' (verwerfen ' + $abandon + ', zuruecksetzen ' + $reset + '; wartend insgesamt ' + $waitingAll + ')')
+    if (@($dwj.drafts).Count -ge 500) { Write-Log '      draft list hat die Obergrenze 500 erreicht; die Zahl ist eine Untergrenze.' }
+} else {
+    # Nur Exit-Code und stderr: stdout von draft list enthaelt Betreffs.
+    Write-Log ('INFO 2d nicht ermittelbar: key list exit ' + $kl.Exit + ', draft list exit ' + $dw.Exit)
+    foreach ($l in ((Limit-Text (Hide-Private ($kl.Err + "`n" + $dw.Err))) -split "`r?`n")) { Write-Log ('      ' + $l) }
+}
+
 # ---------------------------------------------------------------- Schritt 3
 
 Write-Log ''
@@ -452,6 +647,9 @@ if (-not $Sync) {
     if ($null -ne $dlj) { foreach ($x in $dlj.drafts) { if ($x.remote -eq 'pending') { $waiting++ } } }
     if (($dl.Exit -ne 0) -or ($null -eq $dlj)) {
         Add-Check '3.1' 'draft list lesbar' $false $dl.Text
+    } elseif (@($dlj.drafts).Count -ge 500) {
+        # C-F1: Bei genau 500 koennten weitere Entwuerfe fehlen.
+        Add-Skip '3' 'lesender Sync nicht pruefbar: draft list liefert 500 Entwuerfe (Obergrenze), weitere koennten auf ihre Kopie warten'
     } elseif ($waiting -gt 0) {
         Add-Skip '3' ('lesender Sync: ' + $waiting + ' Entwurf/Entwuerfe warten auf ihre Kopie; ein Sync wuerde sie im echten Postfach ablegen')
     } else {
