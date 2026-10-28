@@ -44,11 +44,24 @@ Umgebung: Cloud-Container Linux, 4 Kerne, `go version go1.27.3 linux/amd64` (nac
 | `make integration` | Endstand `9c71347` | exit 0: 9 Integrationstests PASS gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14 (ImportOverlapDovecot, DraftPush, DraftPushRefusals, DraftPushWatchAndOffline, Sync, Idle, SentDetection, CapabilitiesAndRoles, WrongPassword); kein FAIL, kein SKIP | 2 min 24 s |
 | `make vuln` | – | **nicht gelaufen:** Die Netzwerk-Richtlinie der Cloud-Umgebung weist `vuln.go.dev` ab (`Forbidden`), wie in T1a und T1b; nachholen im CI-Job `vuln` bzw. in der Prüfsitzung | – |
 | `make cross` | Endstand | exit 0: linux/amd64 28,3 MB, windows/amd64 28,1 MB, darwin/arm64 26,6 MB | 2 min |
-| `make release VERSION=0.3.0-alpha.3` | `9c71347`, ohne lokale Änderungen | `dist/` mit Programmen für linux/amd64, windows/amd64, darwin/arm64, `SHA256SUMS`, `VERSION`; Windows-Programm `7556d69120a1e4d243ab801b747cc2aeea44ee96213cf21fc7075a98a86c90ab` | < 1 min |
+| `make release VERSION=0.3.0-alpha.3` | `9c71347` (ersetzt, siehe Nachtrag) | wie unten, Windows-Programm `7556d69120a1e4d243ab801b747cc2aeea44ee96213cf21fc7075a98a86c90ab`; nicht mehr gültig | < 1 min |
 | Rauchtest Linux-Programm aus `dist/` | – | frisches Datenverzeichnis: `version` 0.3.0-alpha.3; `doctor` Datenbank ok, Schema 19 = bekannt, 0 Aufrufe ohne Abschluss; `audit --raw --json` zeigt Start und Abschluss | – |
 | Messung Migrationen 0018 + 0019 | Endstand | 50.000 Nachrichten, 20.000 Audit-Zeilen, 28 MB, samt Snapshot: 272 ms, 238 ms, 271 ms (`POSTKAUZ_MEASURE_MIGRATION=1 go test ./internal/store -run TestMeasureMigrationsT1b -v`); die zwei neuen Spalten in `drafts` sind `ALTER TABLE ADD COLUMN` ohne Umbau | – |
 
 **Docker:** Daemon von Hand gestartet (`dockerd`); die drei Images kamen diesmal direkt von Docker Hub (gleiche Tags wie in `deploy/testmail/docker-compose.yml`).
+
+## Nachtrag: `golang.org/x/net` v0.62.0 (GO-2026-6860)
+
+Die Prüfsitzung meldete aus `make vuln` (govulncheck v1.9.0) auf `main` `bac9f12` und `898bd95` einen erreichbaren Fund: GO-2026-6860 in `golang.org/x/net` v0.61.0 (`html.Parse`, quadratischer Aufwand beim Zusammenfassen von Textknoten; Aufrufpfad `internal/sanitize/html.go` → `sanitize.HTML`). Commit `c17802e`: `go get golang.org/x/net@v0.62.0`, `go mod tidy` (nur `x/net` ändert sich, Lizenz BSD-3-Clause), CHANGELOG unter „Security“. Danach volle Prüfläufe am Stand `c17802e`:
+
+| Befehl | Ergebnis | Laufzeit |
+|---|---|---|
+| `make check` | exit 0 | rund 5 min |
+| `make race` | exit 0: 30 Pakete ok, kein Datenrennen (längste: ops 906 s, importer 847 s, cli 728 s, mailsync 692 s) | 18 min 27 s |
+| `make integration` | exit 0: dieselben 9 Integrationstests PASS gegen Dovecot 2.4.5, Stalwart 0.11.8, GreenMail 2.1.14; kein FAIL, kein SKIP | 3 min |
+| `make vuln` | **nicht gelaufen:** `vuln.go.dev` weiter gesperrt (`Forbidden`); die Prüfsitzung prüft nach | – |
+| `make cross` | exit 0: linux/amd64 28,3 MB, windows/amd64 28,1 MB, darwin/arm64 26,6 MB | 2 min |
+| `make release VERSION=0.3.0-alpha.3` | neu gebaut an `c17802e` ohne lokale Änderungen; **gültiger Build**; Windows-Programm `d14470ed2b20d349dca323ac0b68ca17b1d00646aa837b3076ba7e058d5d5cf9`; `go version -m` zeigt `golang.org/x/net v0.62.0` | < 1 min |
 
 ## Offen
 
