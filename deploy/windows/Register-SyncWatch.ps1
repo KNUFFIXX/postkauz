@@ -36,7 +36,10 @@
     (conhost.exe --headless). Only one copy runs at a time.
 
     After registering, the script starts the task once and checks that it is
-    running and writing its log (unless -NoStart).
+    running and writing its log (unless -NoStart). It then watches the log
+    for another 15 seconds: if postkauz.exe ended in that time (for example
+    a wrong data directory or a database that needs a migration) or no
+    postkauz.exe is running, it warns and ends with exit code 1.
 
     Stop it: Stop-ScheduledTask -TaskName "PostKauz sync watch". Remove it:
     this script with -Unregister. See docs/betrieb.md, part "Windows".
@@ -132,6 +135,27 @@ function Get-TrimmedPath {
         return $Value
     }
     return $Value.TrimEnd('\')
+}
+
+# Get-NewLogPart liest den Teil des Logs ab Byte From (nach einer Rotation
+# ist die Datei kuerzer: dann alles). Das Log ist UTF-8; Run-SyncWatch.ps1
+# schreibt weiter, deshalb FileShare ReadWrite.
+function Get-NewLogPart {
+    param([string]$Path, [long]$From)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return ""
+    }
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        if ($stream.Length -lt $From) {
+            $From = 0
+        }
+        [void]$stream.Seek($From, [System.IO.SeekOrigin]::Begin)
+        $reader = New-Object System.IO.StreamReader($stream, (New-Object System.Text.UTF8Encoding($false)))
+        return $reader.ReadToEnd()
+    } finally {
+        $stream.Dispose()
+    }
 }
 
 function Get-DoctorReport {
@@ -345,13 +369,38 @@ do {
         }
     }
 } while (-not $ok -and (Get-Date) -lt $deadline)
+# V6 (Nachbesserung T2): "starting:" schreibt Run-SyncWatch.ps1 vor dem
+# Start von postkauz.exe. Ob das Programm laeuft, zeigt erst die Zeit danach:
+# 15 s lang darf im neuen Teil des Logs kein "ended with exit code" stehen,
+# und am Ende muss ein postkauz.exe mit diesem Pfad laufen.
+$ended = $false
+$running = $false
 if ($ok) {
-    Write-Step ("OK: the task is running and writes " + $logPath)
+    Write-Step "Watching the log for 15 seconds ..."
+    $settle = (Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Seconds 1
+        $ended = (Get-NewLogPart -Path $logPath -From $before).Contains("ended with exit code")
+    } while (-not $ended -and (Get-Date) -lt $settle)
+    $running = $null -ne (Get-Process -Name "postkauz" -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ExePath })
+}
+if ($ok -and -not $ended -and $running) {
+    Write-Step ("OK: the task is running, postkauz.exe runs and writes " + $logPath)
     Write-Step ("Look at the log with: Get-Content -LiteralPath " + (Get-QuotedArgument -Value $logPath) + " -Tail 20 -Wait")
     exit 0
 }
 $info = Get-ScheduledTaskInfo -TaskName $TaskName
-Write-Warning ("The task did not start as expected (state " + (Get-ScheduledTask -TaskName $TaskName).State + ", last result " + $info.LastTaskResult + ").")
+if ($ok) {
+    if ($ended) {
+        Write-Warning "postkauz.exe started but ended within 15 seconds; the task restarts it with a growing wait, but it will most likely end again."
+    } else {
+        Write-Warning "The task is running, but no postkauz.exe from this path is running."
+    }
+    Write-Warning "Last lines of the log:"
+    (Get-NewLogPart -Path $logPath -From $before) -split "`r?`n" | Where-Object { $_ -ne "" } | Select-Object -Last 10 | ForEach-Object { Write-Warning ("  " + $_) }
+} else {
+    Write-Warning ("The task did not start as expected (state " + (Get-ScheduledTask -TaskName $TaskName).State + ", last result " + $info.LastTaskResult + ").")
+}
 Write-Warning "Try the restart script by hand to see the error message (Ctrl+C stops it):"
 Write-Warning ("  powershell -ExecutionPolicy Bypass -File " + (Get-QuotedArgument -Value $WrapperPath) + " -ExePath " + (Get-QuotedArgument -Value $ExePath) + " -DataDir " + (Get-QuotedArgument -Value $resolvedDataDir) + " -MaxRuns 1")
 if (-not $ShowWindow) {

@@ -89,11 +89,13 @@ Erwartet (Auszug):
 == Task 'PostKauz sync watch' registered: starts at logon of PC\du
 == Log: C:\PostKauz\data\logs\sync-watch.log
 == Starting the task to check it ...
-== OK: the task is running and writes C:\PostKauz\data\logs\sync-watch.log
+== Watching the log for 15 seconds ...
+== OK: the task is running, postkauz.exe runs and writes C:\PostKauz\data\logs\sync-watch.log
 ```
 
 - Weigert sich Windows, das Skript auszuführen („nicht digital signiert“), einmal `Unblock-File .\Register-SyncWatch.ps1` und `Unblock-File .\Run-SyncWatch.ps1`, dann noch einmal.
 - Eine Warnung `Account …: password missing` heißt: Dieses Konto wird erst beobachtet, wenn du das Passwort gespeichert hast (Schritt 2). Die anderen laufen schon.
+- Endet es mit `postkauz.exe started but ended within 15 seconds` oder `no postkauz.exe from this path is running` (Exit-Code 1, seit der Nachbesserung T2), stehen darunter die letzten Zeilen des Logs mit dem Grund (z. B. falsches Datenverzeichnis, Datenbank braucht ein Update). Die Aufgabe bleibt registriert und versucht es mit wachsender Pause weiter; behebe den Grund und registriere noch einmal.
 - Endet es mit `The task did not start as expected`, steht darunter ein Kommando, mit dem du das Hilfsskript von Hand startest und die Fehlermeldung siehst. Klappt es von Hand, registriere noch einmal mit `-ShowWindow` (dann läuft die Aufgabe mit einem minimierten Fenster statt unsichtbar).
 
 Die Aufgabe startet ab jetzt bei jeder Anmeldung an Windows von selbst. Sie läuft nur, solange du angemeldet bist.
@@ -193,7 +195,7 @@ Zwei Versionen dürfen nie gleichzeitig auf dieselbe Datenbank zugreifen (README
 3. Die Claude-App ganz beenden (auch im Infobereich unten rechts). Danach zeigt 1.4 auch keine Zeile `mcp` mehr.
 4. `C:\PostKauz\postkauz.exe` durch die neue Datei ersetzen. Die neuen `Register-SyncWatch.ps1` und `Run-SyncWatch.ps1` aus dem Paket ebenfalls nach `C:\PostKauz` kopieren.
 5. `C:\PostKauz\postkauz.exe doctor --data-dir C:\PostKauz\data` — erwartet `database: needs_migration` (oder `ok`, wenn sich das Schema nicht ändert), dann `C:\PostKauz\postkauz.exe accounts list --data-dir C:\PostKauz\data` (führt die Migration aus; erwartet: deine Konten).
-6. Aufgabe neu registrieren (übernimmt neue Einstellungen der Skripte) und starten: das Kommando aus 1.3. Erwartet: `== OK: the task is running …`.
+6. Aufgabe neu registrieren (übernimmt neue Einstellungen der Skripte) und starten: das Kommando aus 1.3. Erwartet: `== OK: the task is running, postkauz.exe runs …`.
 7. Audit-Export wieder einschalten: `Enable-ScheduledTask -TaskName "PostKauz audit export"`; Claude-App wieder starten.
 
 ### 1.8 Zusammenspiel mit dem Audit-Export
