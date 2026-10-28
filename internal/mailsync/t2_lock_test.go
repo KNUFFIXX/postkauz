@@ -20,13 +20,13 @@ func TestLockAccountRetriesBriefHolds(t *testing.T) {
 	lockAttempts, lockRetryWait = 5, 50*time.Millisecond
 
 	// Kurz gehalten (wie doctor): der zweite Versuch gelingt.
-	held, err := flock.TryLock(path)
+	brief, err := flock.TryLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() {
 		time.Sleep(70 * time.Millisecond)
-		held.Release()
+		brief.Release()
 	}()
 	l, err := lockAccount(dir, 7)
 	if err != nil {
@@ -35,11 +35,11 @@ func TestLockAccountRetriesBriefHolds(t *testing.T) {
 	l.release()
 
 	// Dauerhaft gehalten: nach allen Versuchen ErrLocked, nicht früher.
-	held, err = flock.TryLock(path)
+	other, err := flock.TryLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer held.Release()
+	defer other.Release()
 	start := time.Now()
 	if _, err := lockAccount(dir, 7); !errors.Is(err, flock.ErrLocked) {
 		t.Fatalf("err = %v, want ErrLocked", err)
