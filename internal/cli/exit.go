@@ -196,4 +196,6 @@ var deniedHints = map[string]string{
 	"too_large":            "shorten the field named in the message (limits: docs/cli.md)",
 	"draft_changed":        "the draft was changed by someone else meanwhile; check it with: draft show <id>, then try again",
 	"no_recipients":        "the draft has no recipient; add one with: draft edit <id> --to <address>, then request again",
+	"not_exported":         "export the audit first (audit export), check it (audit verify), then run audit rotate again",
+	"not_verified":         "run audit verify and clear what it reports, then run audit rotate again",
 }

@@ -63,6 +63,14 @@ func scanAudit(sc interface{ Scan(...any) error }) (AuditRecord, error) {
 
 // AuditQuery liefert Audit-Einträge aufsteigend nach ID.
 func (s *SQLite) AuditQuery(ctx context.Context, f AuditFilter) ([]AuditRecord, error) {
+	return auditQuery(ctx, s.db, f)
+}
+
+// auditQuery ist AuditQuery auf einer Datenbank mit der Tabelle
+// audit_events (auch einem Archiv, AuditArchiveDB).
+func auditQuery(ctx context.Context, db interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, f AuditFilter) ([]AuditRecord, error) {
 	var where []string
 	var args []any
 	add := func(cond string, v any) { where = append(where, cond); args = append(args, v) }
@@ -102,7 +110,7 @@ func (s *SQLite) AuditQuery(ctx context.Context, f AuditFilter) ([]AuditRecord, 
 	if f.Limit > 0 {
 		q += fmt.Sprintf(` LIMIT %d`, f.Limit)
 	}
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

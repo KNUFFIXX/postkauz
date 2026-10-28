@@ -142,7 +142,7 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 
 ### Updating
 
-A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
+A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`, readable only by you; after a successful update the two newest copies are kept, older ones are removed). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
 
 1. the `sync --watch` task (Windows: `Stop-ScheduledTask` and `Disable-ScheduledTask -TaskName "PostKauz sync watch"`, see [docs/betrieb.md](docs/betrieb.md) 1.7; Linux: `systemctl --user stop` of its unit),
 2. the audit export task ("PostKauz audit export": "Disable" until the update is done; Linux: `systemctl --user stop postkauz-audit-export.timer`),
@@ -240,6 +240,17 @@ postkauz sync -a mail && postkauz action show 3
 ```
 
 Details: `docs/cli.md` (section 2k), `docs/mcp.md`, `docs/sicherheit.md`.
+
+## Deleting from the local archive
+
+Slice 3, part T3. PostKauz keeps what was deleted on the server until you remove it yourself; only a human (no `--key`) can, and agents never see these commands; `purge` and `blob gc` never run while a sync or import is running (`sync_running`). Try each with `--dry-run` first: it only counts.
+
+- `purge --older-than 180d` deletes messages that were deleted on the server more than 180 days ago, with their text, tags and search index. Imported archive messages and messages a draft refers to always stay. Default period: `[retention] deleted_remote_after` (none).
+- `blob gc` then deletes stored files (raw messages, attachments) nothing refers to any more and that are older than `[retention] blob_gc_min_age` (24 hours); draft attachments always stay.
+
+- `audit rotate` moves audit days older than `[audit] retain` (365 days) into an archive database `audit-archive-<from>-<to>.db` next to the database, but only days that were exported and confirmed by `audit verify` (otherwise `not_exported` / `not_verified`). `audit verify` and `audit export` keep working across the archive; keep the file with your backups.
+
+Step by step (German): `docs/betrieb.md`, section 5; details: `docs/cli.md`, section 2m.
 
 ## Set up MCP in Claude Code
 

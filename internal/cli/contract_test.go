@@ -226,6 +226,11 @@ var cliSamples = []cliSample{
 	// Ausgabe geht dann auf stderr, stdout gehört dem Strom).
 	{"backup.create", []string{"backup", "create", "--to", "{backupdir}"}, false},
 	{"backup.create", []string{"backup", "create", "--tar", "-", "--dry-run"}, false},
+	// T3: Löschkonzept (E8); im Testbestand ist nichts alt genug, beide
+	// zählen nur.
+	{"retention.purge", []string{"purge", "--older-than", "30d", "-a", "demo"}, false},
+	{"blobs.gc", []string{"blob", "gc", "--dry-run"}, false},
+	{"audit.rotate", []string{"audit", "rotate", "--dry-run"}, false},
 }
 
 // sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf

@@ -277,6 +277,12 @@ var contractInputs = map[string]struct {
 	// Sicherung (S3.4): der Runner ist ein Fake (contractBackup), der Pfad
 	// wird nie angefasst.
 	"backup.create": {input: `{"to":"/nonexistent/backup-target"}`},
+	// Löschkonzept (T3, E8): Umgebung aus seedRetention (eine auf dem Server
+	// gelöschte Nachricht, eine Blob-Zeile ohne Verweis, ein exportierter
+	// Audit-Tag von vor zwei Jahren).
+	"retention.purge": {input: `{"older_than":"30d","account":"demo"}`},
+	"blobs.gc":        {input: `{}`},
+	"audit.rotate":    {input: `{}`},
 }
 
 // contractBackup meldet Sicherungen, die schreiben dürften (DryRun=false).
@@ -491,6 +497,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
+	seedRetention(t, e)
 	return e
 }
 

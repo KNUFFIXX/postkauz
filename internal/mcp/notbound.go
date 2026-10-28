@@ -34,6 +34,10 @@ var notOverMCP = map[string]string{
 	"drafts.cleanup_copies": "human only: moves earlier draft copies to the trash at once; CLI draft cleanup",
 	// Sicherung (S3.4, E7): Ein Agent kopiert nie das ganze Archiv.
 	"backup.create": "admin, human only (E7): copies the whole archive unencrypted; CLI backup create",
+	// Löschkonzept (T3, E8): nur für Menschen, Agenten sehen es nicht.
+	"retention.purge": "human only (E8): deletes messages from the local archive; CLI purge",
+	"blobs.gc":        "human only (E8): deletes stored files without reference; CLI blob gc",
+	"audit.rotate":    "human only (E8): moves exported audit days into an archive database; CLI audit rotate",
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
 	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",

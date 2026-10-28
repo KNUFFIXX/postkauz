@@ -23,6 +23,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
+	"github.com/KNUFFIXX/postkauz/internal/retention"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -186,6 +187,11 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if p := st.Path(); p != "" {
 		deps.TokenLockDir = filepath.Dir(p)
 	}
+	// Löschkonzept (T3, E8): purge und blob gc halten die Kontosperren
+	// neben der Datenbank.
+	deps.Retention = &retention.Service{Store: st, Blobs: blobs, LockDir: deps.TokenLockDir}
+	deps.RetentionConfig = ops.RetentionConfig{DeletedRemoteAfter: a.cfg.Retention.DeletedRemoteAfter.D(),
+		BlobGCMinAge: a.cfg.Retention.BlobGCMinAge.D(), AuditRetain: a.cfg.Audit.Retain.D()}
 	// draft_push (A02 E1, S2.5): Der Sync legt wartende Entwürfe im
 	// Entwürfe-Ordner ab; nur er hat die Zugangsdaten (der MCP-Server ruft
 	// sync.run nie auf).

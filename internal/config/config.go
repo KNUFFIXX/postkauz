@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,78 @@ type Config struct {
 	Approval Approval `toml:"approval"`
 	// Tags: Abschnitt [tags] (seit T2, E5).
 	Tags Tags `toml:"tags"`
+	// Retention: Abschnitt [retention] (seit T3, E8: Löschkonzept).
+	Retention Retention `toml:"retention"`
+}
+
+// Retention: Abschnitt [retention] der Konfiguration (E8, A11). Gelöscht
+// wird nur über die ausdrücklichen Operationen purge und blob gc, nie
+// nebenbei.
+type Retention struct {
+	// DeletedRemoteAfter: Standardfrist von purge für Nachrichten, die auf
+	// dem Server gelöscht wurden (0 = nie; dann braucht purge
+	// --older-than).
+	DeletedRemoteAfter Duration `toml:"deleted_remote_after"`
+	// BlobGCMinAge: blob gc löscht nur Dateien ohne Verweis, die älter sind
+	// (0 = Standard 24h; mindestens 1h).
+	BlobGCMinAge Duration `toml:"blob_gc_min_age"`
+}
+
+// Standards und Grenzen für [retention] und [audit] retain.
+const (
+	DefaultBlobGCMinAge = 24 * time.Hour
+	MinBlobGCMinAge     = time.Hour
+	DefaultAuditRetain  = 365 * 24 * time.Hour
+	MinAuditRetain      = 24 * time.Hour
+	// MaxDurationDays: größte Tagesangabe einer Dauer (wie ops.ParseSince;
+	// time.Duration läuft bei rund 106.751 Tagen über).
+	MaxDurationDays = 100000
+)
+
+// Duration ist eine Dauer in der Konfiguration: wie Go ("90m", "24h"),
+// zusätzlich in Tagen ("365d") oder als Zahl 0. Negative Werte sind ein
+// Fehler.
+type Duration time.Duration
+
+// D liefert den Wert als time.Duration.
+func (d Duration) D() time.Duration { return time.Duration(d) }
+
+// UnmarshalTOML liest eine Dauer (Zeichenkette oder die Zahl 0).
+func (d *Duration) UnmarshalTOML(v any) error {
+	switch x := v.(type) {
+	case int64:
+		if x != 0 {
+			return fmt.Errorf("a duration needs a unit, e.g. \"%dd\" or \"%dh\" (only 0 may stand alone)", x, x)
+		}
+		*d = 0
+		return nil
+	case string:
+		p, err := ParseDuration(x)
+		if err != nil {
+			return err
+		}
+		*d = Duration(p)
+		return nil
+	}
+	return fmt.Errorf("a duration must be a string like \"365d\" or \"24h\"")
+}
+
+// ParseDuration liest "<n>d" oder eine Go-Dauer ("24h", "90m", "0s");
+// negativ oder über MaxDurationDays ist ein Fehler.
+func ParseDuration(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.ParseInt(n, 10, 64)
+		if err != nil || days < 0 || days > MaxDurationDays {
+			return 0, fmt.Errorf("invalid duration %q: use whole days from 0 to %dd", s, MaxDurationDays)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q: use e.g. 365d, 24h or 90m", s)
+	}
+	return d, nil
 }
 
 // Approval: Abschnitt [approval] der Konfiguration.
@@ -124,6 +197,10 @@ type Audit struct {
 	// ExportDir ist das Standardziel von `audit export`: ein zweiter Ort
 	// (anderer Datenträger oder Rechner), nicht das Datenverzeichnis.
 	ExportDir string `toml:"export_dir"`
+	// Retain: `audit rotate` verschiebt nur exportierte und bestätigte
+	// Tage, die älter sind, in eine Archivdatenbank (E8; 0 = Standard
+	// 365d, mindestens 1d). Nach dem Laden steht hier der wirksame Wert.
+	Retain Duration `toml:"retain"`
 }
 
 // IMAP steuert den Watchdog der IMAP-Verbindungen (ADR-007, Nachtrag
@@ -341,6 +418,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	if err := checkDraft(&cfg.Draft); err != nil {
 		return cfg, p, err
 	}
+	if err := checkRetention(&cfg); err != nil {
+		return cfg, p, err
+	}
 	cfg.Approval.TTL = cfg.Draft.ApprovalTTL
 	if cfg.DataDir == "" {
 		var err error
@@ -402,6 +482,24 @@ func checkDraft(d *Draft) error {
 	rest := strings.NewReplacer("{date}", "", "{date_numeric}", "", "{from}", "").Replace(d.QuoteLine)
 	if strings.ContainsAny(rest, "{}") {
 		return fmt.Errorf("config: draft.quote_line knows only the placeholders {date}, {date_numeric} and {from}")
+	}
+	return nil
+}
+
+// checkRetention prüft [retention] und [audit] retain und setzt die
+// Standards (T3, E8, A11).
+func checkRetention(cfg *Config) error {
+	switch v := cfg.Retention.BlobGCMinAge.D(); {
+	case v == 0:
+		cfg.Retention.BlobGCMinAge = Duration(DefaultBlobGCMinAge)
+	case v < MinBlobGCMinAge:
+		return fmt.Errorf("config: retention.blob_gc_min_age %s is too short (at least %s; 0 = default %s)", v, MinBlobGCMinAge, DefaultBlobGCMinAge)
+	}
+	switch v := cfg.Audit.Retain.D(); {
+	case v == 0:
+		cfg.Audit.Retain = Duration(DefaultAuditRetain)
+	case v < MinAuditRetain:
+		return fmt.Errorf("config: audit.retain %s is too short (at least 1d; 0 = default 365d)", v)
 	}
 	return nil
 }

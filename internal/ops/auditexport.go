@@ -528,11 +528,18 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
+			// Archivierte Tage (audit rotate) liest der Export aus ihrem
+			// Archiv, als stünden sie noch in der Datenbank.
+			src, closeArchives, err := openAuditSource(ctx, repo)
+			defer closeArchives()
+			if err != nil {
+				return nil, err
+			}
 			done, err := repo.AuditExports(ctx)
 			if err != nil {
 				return nil, err
 			}
-			plan, err := buildAuditPlan(ctx, repo, done)
+			plan, err := buildAuditPlan(ctx, src.repo, done)
 			if err != nil {
 				return nil, err
 			}
@@ -600,7 +607,10 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				if closed {
 					// Neu schreiben (anderer Ort, Datei fehlt, altes Format,
 					// Kette davor neu): Einträge aus dem Bereich des Nachweises.
-					if evs, err = loadAuditDay(ctx, repo, plan.asg, p); err != nil {
+					if a := src.archiveOf(day); a != nil && a.problem != "" {
+						return nil, fmt.Errorf("%w: %s (run audit verify)", ErrAuditArchive, a.path)
+					}
+					if evs, err = loadAuditDay(ctx, src.repo, plan.asg, p); err != nil {
 						return nil, err
 					}
 				}
@@ -799,7 +809,7 @@ func AuditVerify(repo AuditRepo) Operation {
     "days_checked": {"type": "integer"},
     "problems": {"type": "array", "items": {"type": "object", "properties": {
       "day": {"type": "string"}, "file": {"type": "string"},
-      "problem": {"type": "string", "enum": ["file_missing", "file_changed", "database_changed", "chain_broken", "manifest_missing", "manifest_changed"]},
+      "problem": {"type": "string", "enum": ["file_missing", "file_changed", "database_changed", "chain_broken", "manifest_missing", "manifest_changed", "archive_missing", "archive_changed"]},
       "line": {"type": "integer"}},
       "required": ["day", "file", "problem"]}},
     "not_exported": {"type": "array", "items": {"type": "string"}},
@@ -813,185 +823,236 @@ func AuditVerify(repo AuditRepo) Operation {
 			if err := decodeInput(call.Input, &struct{}{}); err != nil {
 				return nil, err
 			}
-			done, err := repo.AuditExports(ctx)
+			src, closeArchives, err := openAuditSource(ctx, repo)
+			defer closeArchives()
 			if err != nil {
 				return nil, err
 			}
-			plan, err := buildAuditPlan(ctx, repo, done)
+			out, _, err := verifyAudit(ctx, src)
 			if err != nil {
 				return nil, err
-			}
-			out := AuditVerifyOutput{Status: "ok", Problems: []AuditProblem{}, NotExported: []string{}}
-			add := func(day, file, problem string, line int) {
-				out.Problems = append(out.Problems, AuditProblem{Day: day, File: file, Problem: problem, Line: line})
-			}
-			exported := map[string]store.AuditExport{}
-			// Manifest je Ort; nur geprüft, wenn dort ein Tag im Format 2 liegt.
-			manifests := map[string][]auditManifestDay{}
-			chained := map[string]bool{}
-			var locations []string
-			head := auditChainGenesis
-			closedRows := 0       // Einträge der abgeschlossenen Tage (Zählabgleich, A-F4)
-			originBroken := false // ein Tag des Originals passt nicht mehr (A10)
-			for _, e := range done {
-				exported[e.Day] = e
-				out.DaysChecked++
-				if e.Location == "" {
-					// Wiederhergestellt (A10): Der Export gehört zum Original,
-					// sein Ort ist hier unbekannt. Geprüft werden nur die
-					// Zeilen der Datenbank gegen die Prüfsumme des Nachweises.
-					evs, err := loadAuditDay(ctx, repo, plan.asg, e)
-					if err != nil {
-						return nil, err
-					}
-					if _, ok := plan.asg.closed(e.Day); ok {
-						closedRows += len(evs)
-					}
-					d2, err := auditDayContent(evs, e.LastEventID, 2, head)
-					if err != nil {
-						return nil, err
-					}
-					switch {
-					case sha256Hex(d2.content) == e.SHA256:
-						head = d2.head
-						out.ChainHead = head
-					default:
-						d1, err := auditDayContent(evs, e.LastEventID, 1, "")
-						if err != nil {
-							return nil, err
-						}
-						switch {
-						case sha256Hex(d1.content) == e.SHA256:
-							out.LegacyDays++
-						case originBroken:
-							// Ohne Datei ist das Kettenende des Vortags nur aus der
-							// Datenbank bekannt; nach einer veränderten Zeile lässt
-							// sich dieser Tag nicht mehr prüfen.
-							add(e.Day, "", AuditChainBroken, 0)
-						default:
-							add(e.Day, "", AuditDatabaseChanged, 0)
-							originBroken = true
-						}
-						head = d2.head
-					}
-					out.OriginDays++
-					continue
-				}
-				if _, ok := manifests[e.Location]; !ok {
-					locations = append(locations, e.Location)
-					manifests[e.Location] = nil
-				}
-				file := filepath.Join(e.Location, auditFileName(e.Day))
-				fileBytes, ferr := os.ReadFile(file)
-				if ferr != nil && !errors.Is(ferr, fs.ErrNotExist) {
-					return nil, ferr
-				}
-				fileOK := ferr == nil && sha256Hex(fileBytes) == e.SHA256
-
-				// Welches Format ergibt die Prüfsumme des Nachweises? Die
-				// Einträge des Tages werden tageweise geladen (nur der
-				// ID-Bereich des Nachweises), nie das ganze Protokoll.
-				evs, err := loadAuditDay(ctx, repo, plan.asg, e)
-				if err != nil {
-					return nil, err
-				}
-				if _, ok := plan.asg.closed(e.Day); ok {
-					closedRows += len(evs)
-				}
-				d2, err := auditDayContent(evs, e.LastEventID, 2, head)
-				if err != nil {
-					return nil, err
-				}
-				format, db := 0, d2
-				if sha256Hex(d2.content) == e.SHA256 {
-					format = 2
-				} else if d1, err := auditDayContent(evs, e.LastEventID, 1, ""); err != nil {
-					return nil, err
-				} else if sha256Hex(d1.content) == e.SHA256 {
-					format, db = 1, d1
-				} else if ferr == nil && !looksLikeChain(fileBytes) {
-					db = d1 // zum Vergleich mit einer Datei im Format 1
-				}
-
-				switch {
-				case ferr != nil:
-					add(e.Day, file, AuditFileMissing, 0)
-				case !fileOK:
-					add(e.Day, file, AuditFileChanged, firstDiffLine(fileBytes, db.content))
-				}
-				if format == 0 {
-					line := 0
-					if ferr == nil {
-						line = firstDiffLine(db.content, fileBytes)
-					}
-					add(e.Day, file, AuditDatabaseChanged, line)
-				}
-				// Die Kette der Datei selbst (auch ohne Datenbank prüfbar).
-				dayHead := d2.head
-				if ferr == nil && format != 1 && looksLikeChain(fileBytes) {
-					fh, bad := checkChain(fileBytes, head)
-					if bad > 0 {
-						add(e.Day, file, AuditChainBroken, bad)
-					} else if fileOK {
-						// Datei unverändert: Ihr Kettenende ist das exportierte
-						// (so zieht eine geänderte Datenbankzeile keine
-						// Folgefehler in späteren Tagen nach sich).
-						dayHead = fh
-					}
-				}
-				if format == 1 {
-					out.LegacyDays++
-				} else {
-					chained[e.Location] = true
-					head = dayHead
-					out.ChainHead = head
-				}
-				events := db.events
-				if fileOK {
-					events = bytes.Count(fileBytes, []byte{'\n'})
-				}
-				manifests[e.Location] = append(manifests[e.Location], auditManifestDay{Day: e.Day, File: auditFileName(e.Day),
-					Events: events, FirstEventID: e.FirstEventID, LastEventID: e.LastEventID, SHA256: e.SHA256, ChainHead: dayHead})
-			}
-			for _, loc := range locations {
-				if !chained[loc] {
-					continue
-				}
-				path := filepath.Join(loc, auditManifestName())
-				b, err := os.ReadFile(path)
-				switch {
-				case errors.Is(err, fs.ErrNotExist):
-					add("", path, AuditManifestMissing, 0)
-				case err != nil:
-					return nil, err
-				default:
-					if want := buildManifest(manifests[loc]); !bytes.Equal(b, want) {
-						add("", path, AuditManifestChanged, firstDiffLine(b, want))
-					}
-				}
-			}
-			stray, err := auditStrayRows(ctx, repo, plan, closedRows)
-			if err != nil {
-				return nil, err
-			}
-			for _, day := range stray {
-				file := ""
-				if e, ok := exported[day]; ok {
-					file = filepath.Join(e.Location, auditFileName(day))
-				}
-				add(day, file, AuditDatabaseChanged, 0)
-			}
-			for _, d := range plan.days {
-				e, ok := exported[d]
-				evs := plan.events[d]
-				if !ok || evs[len(evs)-1].ID > e.LastEventID {
-					out.NotExported = append(out.NotExported, d)
-				}
-			}
-			if len(out.Problems) > 0 {
-				out.Status = "mismatch"
 			}
 			return out, nil
 		},
 	}
+}
+
+// verifyAudit ist audit verify über Datenbank und Archive (src). heads
+// nennt je exportiertem Tag den Kettenwert nach ihm (audit rotate: Anker).
+// Seit T3 (E8, A14): Ein Archiv, das fehlt oder sich verändert hat, ist ein
+// Befund (archive_missing, archive_changed); seine Tage prüft verify dann
+// nur an den Exportdateien, und die Kette läuft ab dem gespeicherten Anker
+// weiter. Bei einem verwendbaren Archiv muss die Kette am Ende seines
+// letzten Tages den Anker ergeben, sonst chain_broken.
+func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[string]string, error) {
+	repo := src.repo
+	heads := map[string]string{}
+	out := AuditVerifyOutput{Status: "ok", Problems: []AuditProblem{}, NotExported: []string{}}
+	add := func(day, file, problem string, line int) {
+		out.Problems = append(out.Problems, AuditProblem{Day: day, File: file, Problem: problem, Line: line})
+	}
+	for _, a := range src.archives {
+		if a.problem != "" {
+			add(a.FromDay+".."+a.ToDay, a.path, a.problem, 0)
+		}
+	}
+	done, err := repo.AuditExports(ctx)
+	if err != nil {
+		return out, nil, err
+	}
+	plan, err := buildAuditPlan(ctx, repo, done)
+	if err != nil {
+		return out, nil, err
+	}
+	exported := map[string]store.AuditExport{}
+	// Manifest je Ort; nur geprüft, wenn dort ein Tag im Format 2 liegt.
+	manifests := map[string][]auditManifestDay{}
+	chained := map[string]bool{}
+	var locations []string
+	head := auditChainGenesis
+	closedRows := 0       // Einträge der abgeschlossenen Tage (Zählabgleich, A-F4)
+	originBroken := false // ein Tag des Originals passt nicht mehr (A10)
+	for _, e := range done {
+		exported[e.Day] = e
+		out.DaysChecked++
+		if e.Location == "" {
+			// Wiederhergestellt (A10): Der Export gehört zum Original,
+			// sein Ort ist hier unbekannt. Geprüft werden nur die
+			// Zeilen der Datenbank gegen die Prüfsumme des Nachweises.
+			evs, err := loadAuditDay(ctx, repo, plan.asg, e)
+			if err != nil {
+				return out, nil, err
+			}
+			if _, ok := plan.asg.closed(e.Day); ok {
+				closedRows += len(evs)
+			}
+			d2, err := auditDayContent(evs, e.LastEventID, 2, head)
+			if err != nil {
+				return out, nil, err
+			}
+			switch {
+			case sha256Hex(d2.content) == e.SHA256:
+				head = d2.head
+				out.ChainHead = head
+			default:
+				d1, err := auditDayContent(evs, e.LastEventID, 1, "")
+				if err != nil {
+					return out, nil, err
+				}
+				switch {
+				case sha256Hex(d1.content) == e.SHA256:
+					out.LegacyDays++
+				case originBroken:
+					// Ohne Datei ist das Kettenende des Vortags nur aus der
+					// Datenbank bekannt; nach einer veränderten Zeile lässt
+					// sich dieser Tag nicht mehr prüfen.
+					add(e.Day, "", AuditChainBroken, 0)
+				default:
+					add(e.Day, "", AuditDatabaseChanged, 0)
+					originBroken = true
+				}
+				head = d2.head
+			}
+			// Archiv der Rotation (T3) in einer Wiederherstellung: Kette am
+			// Ende seines letzten Tages gegen den Anker, wie unten.
+			if arc := src.archiveOf(e.Day); arc != nil && e.Day == arc.ToDay {
+				if arc.problem != "" {
+					head = arc.ChainHead
+				} else if head != arc.ChainHead {
+					add(e.Day, arc.path, AuditChainBroken, 0)
+				}
+				out.ChainHead = head
+			}
+			heads[e.Day] = head
+			out.OriginDays++
+			continue
+		}
+		if _, ok := manifests[e.Location]; !ok {
+			locations = append(locations, e.Location)
+			manifests[e.Location] = nil
+		}
+		file := filepath.Join(e.Location, auditFileName(e.Day))
+		fileBytes, ferr := os.ReadFile(file)
+		if ferr != nil && !errors.Is(ferr, fs.ErrNotExist) {
+			return out, nil, ferr
+		}
+		fileOK := ferr == nil && sha256Hex(fileBytes) == e.SHA256
+
+		// Welches Format ergibt die Prüfsumme des Nachweises? Die
+		// Einträge des Tages werden tageweise geladen (nur der
+		// ID-Bereich des Nachweises), nie das ganze Protokoll.
+		evs, err := loadAuditDay(ctx, repo, plan.asg, e)
+		if err != nil {
+			return out, nil, err
+		}
+		if _, ok := plan.asg.closed(e.Day); ok {
+			closedRows += len(evs)
+		}
+		d2, err := auditDayContent(evs, e.LastEventID, 2, head)
+		if err != nil {
+			return out, nil, err
+		}
+		format, db := 0, d2
+		if sha256Hex(d2.content) == e.SHA256 {
+			format = 2
+		} else if d1, err := auditDayContent(evs, e.LastEventID, 1, ""); err != nil {
+			return out, nil, err
+		} else if sha256Hex(d1.content) == e.SHA256 {
+			format, db = 1, d1
+		} else if ferr == nil && !looksLikeChain(fileBytes) {
+			db = d1 // zum Vergleich mit einer Datei im Format 1
+		}
+
+		switch {
+		case ferr != nil:
+			add(e.Day, file, AuditFileMissing, 0)
+		case !fileOK:
+			add(e.Day, file, AuditFileChanged, firstDiffLine(fileBytes, db.content))
+		}
+		// Tag eines Archivs, das fehlt oder verändert ist: Die
+		// Zeilen sind nicht lesbar, das meldet der Befund des Archivs.
+		arc := src.archiveOf(e.Day)
+		unusable := arc != nil && arc.problem != ""
+		if format == 0 && !unusable {
+			line := 0
+			if ferr == nil {
+				line = firstDiffLine(db.content, fileBytes)
+			}
+			add(e.Day, file, AuditDatabaseChanged, line)
+		}
+		// Die Kette der Datei selbst (auch ohne Datenbank prüfbar).
+		dayHead := d2.head
+		if ferr == nil && format != 1 && looksLikeChain(fileBytes) {
+			fh, bad := checkChain(fileBytes, head)
+			if bad > 0 {
+				add(e.Day, file, AuditChainBroken, bad)
+			} else if fileOK {
+				// Datei unverändert: Ihr Kettenende ist das exportierte
+				// (so zieht eine geänderte Datenbankzeile keine
+				// Folgefehler in späteren Tagen nach sich).
+				dayHead = fh
+			}
+		}
+		if arc != nil && e.Day == arc.ToDay {
+			switch {
+			case unusable:
+				dayHead = arc.ChainHead // weiter ab dem Anker
+			case dayHead != arc.ChainHead:
+				add(e.Day, arc.path, AuditChainBroken, 0)
+			}
+		}
+		if format == 1 {
+			out.LegacyDays++
+		} else {
+			chained[e.Location] = true
+			head = dayHead
+			out.ChainHead = head
+		}
+		heads[e.Day] = head
+		events := db.events
+		if fileOK {
+			events = bytes.Count(fileBytes, []byte{'\n'})
+		}
+		manifests[e.Location] = append(manifests[e.Location], auditManifestDay{Day: e.Day, File: auditFileName(e.Day),
+			Events: events, FirstEventID: e.FirstEventID, LastEventID: e.LastEventID, SHA256: e.SHA256, ChainHead: dayHead})
+	}
+	for _, loc := range locations {
+		if !chained[loc] {
+			continue
+		}
+		path := filepath.Join(loc, auditManifestName())
+		b, err := os.ReadFile(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			add("", path, AuditManifestMissing, 0)
+		case err != nil:
+			return out, nil, err
+		default:
+			if want := buildManifest(manifests[loc]); !bytes.Equal(b, want) {
+				add("", path, AuditManifestChanged, firstDiffLine(b, want))
+			}
+		}
+	}
+	stray, err := auditStrayRows(ctx, repo, plan, closedRows)
+	if err != nil {
+		return out, nil, err
+	}
+	for _, day := range stray {
+		file := ""
+		if e, ok := exported[day]; ok {
+			file = filepath.Join(e.Location, auditFileName(day))
+		}
+		add(day, file, AuditDatabaseChanged, 0)
+	}
+	for _, d := range plan.days {
+		e, ok := exported[d]
+		evs := plan.events[d]
+		if !ok || evs[len(evs)-1].ID > e.LastEventID {
+			out.NotExported = append(out.NotExported, d)
+		}
+	}
+	if len(out.Problems) > 0 {
+		out.Status = "mismatch"
+	}
+	return out, heads, nil
 }

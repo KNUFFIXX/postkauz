@@ -152,6 +152,11 @@ type Operation struct {
 	// nur); die Wirkung gibt erst eine Freigabe des Menschen frei. Der
 	// Abschluss-Eintrag im Audit lautet needs_approval.
 	ApprovalRequest bool
+	// AuditCounts liefert aus der Ausgabe eines erfolgreichen Aufrufs
+	// Zähler für den Abschluss-Eintrag im Audit (E8: Löschkonzept mit
+	// Zählern im Audit). Der Executor ergänzt die Parameter des Abschlusses
+	// um "counts": {Name: Zahl}; nur Zahlen, also nie Inhalt. nil = keine.
+	AuditCounts func(out any) map[string]int64
 
 	// input ist das aufgelöste InputSchema (Registry.Register setzt es).
 	input *jsonschema.Resolved
