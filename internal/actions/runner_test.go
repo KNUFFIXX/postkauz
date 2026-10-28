@@ -441,8 +441,10 @@ func TestRunnerSavesResultsPerMailbox(t *testing.T) {
 	}
 	f := &fakeRemote{nextUID: 40, moveErrFor: map[string]error{"Archiv": provider.ErrConnection}}
 	r := &Runner{Store: st, Blobs: blobs()}
-	if _, err := r.Run(ctx, acct, f); err == nil {
-		t.Fatal("connection error not returned")
+	// Nachprüfung zu fd70f19, Punkt 6: Der Bericht zählt das schon
+	// gespeicherte Ergebnis der ersten Gruppe (V6-Zeile).
+	if rep, err := r.Run(ctx, acct, f); err == nil || rep.Actions != 1 || rep.OK != 1 || rep.Failed != 0 || rep.Stale != 0 {
+		t.Fatalf("run with connection error = %+v, %v", rep, err)
 	}
 	got, _ := st.Action(ctx, a.ID)
 	res := map[int64]string{}
@@ -459,8 +461,8 @@ func TestRunnerSavesResultsPerMailbox(t *testing.T) {
 	}
 	f.moveErrFor = nil
 	f.calls = nil
-	if _, err := r.Run(ctx, acct, f); err != nil {
-		t.Fatal(err)
+	if rep, err := r.Run(ctx, acct, f); err != nil || rep.Actions != 1 || rep.OK != 1 {
+		t.Fatalf("second run = %+v, %v", rep, err)
 	}
 	got, _ = st.Action(ctx, a.ID)
 	if got.State != store.ActionDone || strings.Join(f.calls, "|") != "MOVE Archiv -> Projekte" {

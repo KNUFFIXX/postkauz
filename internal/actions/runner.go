@@ -147,9 +147,6 @@ func (r *Runner) Run(ctx context.Context, accountID int64, remote Remote) (Repor
 	for _, a := range queue {
 		rep.Actions++
 		results, unsaved, code, err := r.runOne(ctx, a, byID, remote)
-		if err != nil {
-			return rep, err
-		}
 		for _, t := range results {
 			switch t.Result {
 			case store.TargetOK, store.TargetSkipped:
@@ -159,6 +156,9 @@ func (r *Runner) Run(ctx context.Context, accountID int64, remote Remote) (Repor
 			default:
 				rep.Failed++
 			}
+		}
+		if err != nil {
+			return rep, err // Aktion bleibt running; der nächste Lauf macht den Rest
 		}
 		st, err := r.Store.FinishAction(context.WithoutCancel(ctx), a.ID, unsaved, code, r.now())
 		if err != nil {
@@ -176,7 +176,9 @@ func fatal(ctx context.Context, err error) bool {
 
 // runOne führt eine Aktion aus. results: alle Ergebnisse dieses Laufs;
 // unsaved: die davon, die noch nicht gespeichert sind (die Ergebnisse der
-// Kommandos speichert runOne je Quellordner sofort, V4).
+// Kommandos speichert runOne je Quellordner sofort, V4). Bricht der Lauf
+// ab (err), sind results die schon gespeicherten Ergebnisse, damit der
+// Bericht sie zählt (Nachprüfung zu fd70f19, Punkt 6).
 func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]store.Mailbox, remote Remote) (results, unsaved []store.TargetResult, code string, err error) {
 	open := []store.ActionTarget{}
 	for _, t := range a.Targets {
@@ -236,6 +238,7 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 		groups[t.MailboxID] = append(groups[t.MailboxID], t)
 	}
+	var saved []store.TargetResult
 	for _, mbID := range order {
 		ts := groups[mbID]
 		mb := boxes[mbID]
@@ -245,11 +248,12 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 		res, err := r.apply(ctx, a, mb, dest, ts, uids, remote)
 		if err != nil && fatal(ctx, err) {
-			return nil, nil, "", err
+			return saved, nil, "", err
 		}
 		if err := r.Store.SaveTargetResults(context.WithoutCancel(ctx), a.ID, res, r.now()); err != nil {
-			return nil, nil, "", err
+			return saved, nil, "", err
 		}
+		saved = append(saved, res...)
 		results = append(results, res...)
 	}
 	return results, unsaved, "", nil
