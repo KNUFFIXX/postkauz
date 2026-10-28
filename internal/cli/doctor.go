@@ -83,6 +83,8 @@ type DoctorReport struct {
 	PolicyError   string `json:"policy_error,omitempty"`
 	// AttachDir: Ordner für Dateianhänge von Entwürfen ([paths] attach_dir).
 	AttachDir string `json:"attach_dir"`
+	// ExportDir: Ziel von attach save ([paths] export_dir, S3.3).
+	ExportDir string `json:"export_dir"`
 	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
@@ -196,6 +198,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
 	rep.AttachDir = a.paths.AttachDir
+	rep.ExportDir = a.paths.ExportDir
 	pf := doctorPolicy(&rep, a.paths.ConfigFile)
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
@@ -612,6 +615,9 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	}
 	if r.AttachDir != "" {
 		fmt.Fprintf(w, "attach:    %s [paths.attach_dir]\n", r.AttachDir)
+	}
+	if r.ExportDir != "" {
+		fmt.Fprintf(w, "export:    %s [paths.export_dir]\n", r.ExportDir)
 	}
 	if r.PDFTool != "" {
 		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)

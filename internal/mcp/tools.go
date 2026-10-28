@@ -116,6 +116,14 @@ var tools = []toolBinding{
 		defaults: map[string]any{"max_chars": ops.DefaultMaxChars},
 		desc: "Read the text extracted from an attachment (PDF with pdftotext if installed, DOCX, text, HTML, forwarded mail). " +
 			"Executables and type mismatches are never extracted. Text cut after {max_chars} characters by default (max_chars)."},
+	// Anhang sichern (S3.3, E6; Scope mail:export): nur unter export_dir,
+	// nie das Archiv (messages.export bleibt dem Menschen, notbound.go).
+	{tool: "mail_save_attachment", op: "attachments.save", title: "Save an attachment as a file", mail: true, dryRun: true,
+		desc: "Save one attachment (id from mail_list_attachments) as a file below the export folder of the user (export_dir), " +
+			"optionally in subdir (a relative folder such as invoices/2026; no .., no absolute path). The file name is cleaned; " +
+			"an existing file is never replaced (a counter is added: name-2.pdf); programs, scripts and shortcuts get the ending " +
+			".blocked (blocked=true). Returns the path relative to export_dir, size and sha256; the file content is not returned. " +
+			"dry_run=true only shows the path it would use."},
 	{tool: "mail_audit_log", op: "audit.list", title: "Audit log",
 		desc: "Show audit log entries: which key called which operation when, with which result. Never contains message content. " +
 			"since: duration back from now (10m, 24h, 7d), a date or RFC 3339; default 24h."},

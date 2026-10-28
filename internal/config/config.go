@@ -83,6 +83,10 @@ type PathsConfig struct {
 	// AttachDir: Dateianhänge von Entwürfen nur von hier (A02 E10;
 	// Standard <Datenverzeichnis>/attach). Relativ = zum Datenverzeichnis.
 	AttachDir string `toml:"attach_dir"`
+	// ExportDir: Ziel von attachments.save und Basis relativer Ziele von
+	// messages.export (S3.3, E6; Standard <Datenverzeichnis>/export).
+	// Relativ = zum Datenverzeichnis.
+	ExportDir string `toml:"export_dir"`
 }
 
 // Operator: Abschnitt [operator]. Name ist, wer im MVP freigibt
@@ -117,6 +121,7 @@ const (
 	MaxAttachmentBytesLimit = 256 << 20
 	DefaultQuoteLine        = "On {date}, {from} wrote:"
 	DefaultAttachDirName    = "attach"
+	DefaultExportDirName    = "export"
 )
 
 // Audit steuert den Export des Audit-Logs (docs/sicherheit.md, Abschnitt 6).
@@ -167,6 +172,8 @@ type Paths struct {
 	SecretsDir   string `json:"secrets_dir"`
 	// AttachDir: aufgelöster [paths] attach_dir (absolut).
 	AttachDir string `json:"attach_dir"`
+	// ExportDir: aufgelöster [paths] export_dir (absolut).
+	ExportDir string `json:"export_dir"`
 }
 
 // ConfigPath liefert den Pfad der Konfigurationsdatei: POSTKAUZ_CONFIG, sonst
@@ -372,6 +379,14 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		p.AttachDir = filepath.Clean(d)
 	}
 	cfg.Paths.AttachDir = p.AttachDir
+	p.ExportDir = filepath.Join(p.DataDir, DefaultExportDirName)
+	if d := strings.TrimSpace(cfg.Paths.ExportDir); d != "" {
+		if !filepath.IsAbs(d) {
+			d = filepath.Join(p.DataDir, d)
+		}
+		p.ExportDir = filepath.Clean(d)
+	}
+	cfg.Paths.ExportDir = p.ExportDir
 	return cfg, p, nil
 }
 

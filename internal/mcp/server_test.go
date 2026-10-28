@@ -247,14 +247,16 @@ func TestToolListFollowsScopes(t *testing.T) {
 	// sendet, endgültig löscht oder verwaltet; Markieren am Server,
 	// Verschieben und den Antrag auf Papierkorb ja (mail:mark, mail:move,
 	// mail:trash).
-	wantAdmin := slices.Sorted(slices.Values(append(slices.Clone(wantAssistant), "mail_mark", "mail_move", "mail_trash")))
+	// S3.3: dazu mail_save_attachment (Scope mail:export, operator und
+	// admin); messages.export bleibt dem Menschen.
+	wantAdmin := slices.Sorted(slices.Values(append(slices.Clone(wantAssistant), "mail_mark", "mail_move", "mail_trash", "mail_save_attachment")))
 	tl, _, _ = listTools(t, policy.Key{ID: "key:a", Scopes: policy.Roles["admin"]})
 	if !slices.Equal(tl, wantAdmin) {
 		t.Fatalf("admin tools = %v", tl)
 	}
 	for _, name := range tl {
 		for _, bad := range []string{"send", "delete", "approve", "reject", "abandon", "sent", "identit", "expunge", "empty",
-			"key", "account_add", "account_set", "cleanup"} {
+			"key", "account_add", "account_set", "cleanup", "export"} {
 			if strings.Contains(name, bad) {
 				t.Fatalf("tool %s looks like a tool reserved for humans", name)
 			}

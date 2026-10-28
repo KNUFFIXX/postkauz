@@ -256,3 +256,41 @@ Folgt beim Zusammenführen von Teil T4. Bis dahin: [betrieb_microsoft.md](betrie
 ## 4. Betrieb auf einem VPS
 
 Folgt mit Teil T5 (Linux-Server, systemd, Fernzugriff über HTTP-MCP).
+
+## 5. Export
+
+Seit T3 kann PostKauz einzelne Anhänge als Datei ablegen und das ganze Archiv eines Kontos als mbox oder als Ordner mit `.eml`-Dateien ausgeben. Der Export ist **nicht verschlüsselt**: Lege ihn nur auf einen Datenträger, den du selbst schützt (wie beim Backup).
+
+### 5.1 Einen Anhang ablegen
+
+```powershell
+C:\PostKauz\postkauz.exe attach list 1201
+C:\PostKauz\postkauz.exe attach save 7 --subdir rechnungen
+```
+
+Erwartet: `saved attachment 7 of message 1201 as rechnungen/Rechnung.pdf below export_dir (…)`. Die Datei liegt im Ordner, den `doctor` in der Zeile `export:` nennt (Standard `C:\PostKauz\data\export`). Gibt es den Namen schon, heißt die neue Datei `Rechnung-2.pdf`; nichts wird überschrieben. Programme und Skripte (z. B. `.exe`, `.bat`, `.js`) bekommen die Endung `.blocked`: Öffne sie nicht. Einen anderen Ordner stellst du in der Konfiguration ein (`[paths] export_dir`).
+
+### 5.2 Das Archiv exportieren
+
+Das Ziel muss ein **neuer oder leerer** Ordner sein.
+
+```powershell
+C:\PostKauz\postkauz.exe export mbox --to D:\Export\privat-mbox -a privat
+C:\PostKauz\postkauz.exe export eml --to D:\Export\privat-eml -a privat
+```
+
+Erwartet: je Ordner eine Zeile `  INBOX: 230 of 230 messages`, am Ende eine Tabelle und `messages: …, skipped: …`. `skipped` mit `no_blob` sind Nachrichten, von denen nur der Kopf gespiegelt ist; sie fehlen im Export. Ist der Zielordner nicht leer, endet der Befehl mit `denied (target_not_fresh)` und ändert nichts. Nur einen Ordner: `--mailbox INBOX`; nur neuere Nachrichten: `--since 2026-01-01`.
+
+- **mbox:** eine Datei je Ordner, Unterordner wie bei Thunderbird (`Archiv.sbd\2024`). Nachrichten, die nicht mehr auf dem Server liegen, stehen unter `_imported` (importiert) bzw. `_no_folder`.
+- **eml:** je Ordner ein Unterordner mit einer Datei je Nachricht, dazu `index.csv` (Nummer, Message-ID, Datum, Ordner, Größe, Prüfsumme; ohne Betreff und Adressen).
+
+### 5.3 Die mbox in Thunderbird öffnen (ungeprüft, Stand Oktober 2026)
+
+Thunderbird liest mbox-Dateien nicht ohne Zusatz ein. Der übliche Weg ist das Add-on **ImportExportTools NG**:
+
+1. Thunderbird: Menü **Extras → Add-ons und Themes**, nach „ImportExportTools NG“ suchen, **Zu Thunderbird hinzufügen**, Thunderbird neu starten.
+2. Links unter **Lokale Ordner** einen neuen Ordner anlegen, z. B. `Export privat` (Rechtsklick → **Neuer Ordner**).
+3. Rechtsklick auf diesen Ordner → **ImportExportTools NG → Importiere mbox-Datei** → **Einzelne mbox-Dateien importieren** (bzw. „alle mbox-Dateien aus einem Verzeichnis einschließlich Unterordnern“ für den ganzen Export) → die Datei (z. B. `INBOX`) im Exportordner wählen.
+4. Ein paar Nachrichten öffnen: Betreff, Text und Anhänge müssen lesbar sein.
+
+Die Menünamen können je nach Version abweichen; geprüft wird das in der Abnahme D7.

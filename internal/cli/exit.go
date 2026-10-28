@@ -186,4 +186,9 @@ var deniedHints = map[string]string{
 	"too_large":            "shorten the field named in the message (limits: docs/cli.md)",
 	"draft_changed":        "the draft was changed by someone else meanwhile; check it with: draft show <id>, then try again",
 	"no_recipients":        "the draft has no recipient; add one with: draft edit <id> --to <address>, then request again",
+	// S3.3 (E6): Anhänge sichern und Export.
+	"outside_export_dir":    "save only below export_dir: give --subdir as a relative folder without .. and without symbolic links (see: doctor)",
+	"invalid_subdir":        "use plain folder names in --subdir (no reserved names like CON, no : or control characters)",
+	"attachment_not_stored": "the attachment was not stored when the message was mirrored; save the message from the mail client instead",
+	"target_not_fresh":      "export only into a new or empty folder; choose another --to",
 }
