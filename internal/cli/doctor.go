@@ -95,6 +95,9 @@ type DoctorAccount struct {
 	Password string `json:"password"` // stored | environment | missing | unknown | oauth2 (kein Passwort)
 	EnvVar   string `json:"env_var"`
 	Status   string `json:"status"`
+	// LastError: letzter Fehler am Konto bei Status error (account test;
+	// sync --watch --all nach einem Anmeldefehler, V10). Nie ein Geheimnis.
+	LastError string `json:"last_error,omitempty"`
 	// OAuth2-Konten (S3.7): Token stored | missing | unreadable | unknown;
 	// Ablauf des zuletzt ausgegebenen Access-Tokens (es bleibt im Speicher
 	// und wird erneuert) und Zeitpunkt der letzten Anmeldung bzw. des
@@ -277,6 +280,13 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	for _, acc := range list {
 		da := DoctorAccount{Name: acc.Name, EnvVar: secrets.EnvName(acc.CredentialRef), Status: acc.Status, Password: "unknown"}
+		if acc.Status == "error" {
+			da.LastError = acc.LastError
+			if strings.HasPrefix(acc.LastError, "sync --watch --all:") {
+				rep.Warnings = append(rep.Warnings, fmt.Sprintf("account %s: %s (fix the password with account set %s --password-stdin, or account login %s for OAuth2)",
+					acc.Name, acc.LastError, acc.Name, acc.Name))
+			}
+		}
 		if ia, ok := incomplete[acc.Name]; ok {
 			at := ia.LastAt
 			da.IncompleteAnswers, da.IncompleteAnswersLast, da.IncompleteAnswersAt = ia.Total, ia.Last, &at
@@ -634,6 +644,9 @@ func printDoctor(w io.Writer, r DoctorReport) {
 				fmt.Fprintf(w, "  %s: OAuth2 token %s%s, status %s\n", a.Name, a.Token, exp, a.Status)
 			} else {
 				fmt.Fprintf(w, "  %s: password %s, status %s (env override: %s)\n", a.Name, a.Password, a.Status, a.EnvVar)
+			}
+			if a.LastError != "" {
+				fmt.Fprintf(w, "    last error: %s\n", a.LastError)
 			}
 			if a.IncompleteAnswersAt != nil {
 				fmt.Fprintf(w, "    incomplete server answers: %d (last: %d on %s)\n", a.IncompleteAnswers, a.IncompleteAnswersLast,

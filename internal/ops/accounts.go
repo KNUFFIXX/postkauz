@@ -67,6 +67,9 @@ type AccountRepo interface {
 	DeleteAccount(ctx context.Context, id int64) error
 	CountMessages(ctx context.Context, accountID int64) (int, error)
 	UpdateAccountProbe(ctx context.Context, id int64, capabilities, status, lastError string) error
+	// SetAccountStatus setzt Status und letzten Fehler ohne die Fähigkeiten
+	// (sync --watch --all nach einem Anmeldefehler, V10).
+	SetAccountStatus(ctx context.Context, id int64, status, lastError string) error
 	// DataDirID ist die Kennung des Datenverzeichnisses im
 	// Schlüsselbund-Verweis (S2.0/A2).
 	DataDirID(ctx context.Context) (string, error)

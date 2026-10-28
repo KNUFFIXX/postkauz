@@ -178,6 +178,9 @@ type AccountRef struct {
 	Status        string
 	// AuthType: password | app_password | oauth2 (Spalte seit 0001).
 	AuthType string
+	// LastError: letzter Fehler laut Konto (account test, sync --watch
+	// --all nach einem Anmeldefehler; Spalte seit 0001).
+	LastError string
 }
 
 // AccountRefs liefert Name, Verweis und Status aller Konten, nach Namen
@@ -186,7 +189,7 @@ type AccountRef struct {
 // einen Bestand mit älterem Schema die Konten (vorher: „no such column:
 // aliases" bei Schema 7).
 func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status, auth_type FROM accounts ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status, auth_type, COALESCE(last_error,'') FROM accounts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +197,7 @@ func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
 	var out []AccountRef
 	for rows.Next() {
 		var a AccountRef
-		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status, &a.AuthType); err != nil {
+		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status, &a.AuthType, &a.LastError); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -272,6 +275,17 @@ func (s *SQLite) UpdateAccountProbe(ctx context.Context, id int64, capabilities,
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET capabilities = ?, status = ?, last_error = ? WHERE id = ?`,
 		capabilities, status, le, id)
+	return err
+}
+
+// SetAccountStatus setzt Status und letzten Fehler (ohne Geheimnisse), die
+// Fähigkeiten bleiben (sync --watch --all, V10).
+func (s *SQLite) SetAccountStatus(ctx context.Context, id int64, status, lastError string) error {
+	var le any
+	if lastError != "" {
+		le = lastError
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE accounts SET status = ?, last_error = ? WHERE id = ?`, status, le, id)
 	return err
 }
 

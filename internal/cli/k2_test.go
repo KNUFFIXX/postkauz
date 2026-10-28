@@ -47,3 +47,39 @@ func TestDoctorShowsIncompleteAnswers(t *testing.T) {
 		t.Fatalf("doctor text: %d %s %s", code, out, errs)
 	}
 }
+
+// V10 der Nachbesserung T2: Scheitert unter sync --watch --all die
+// Anmeldung eines Kontos, steht das am Konto (Status error, letzter
+// Fehler mit der Wiederholung alle 30 min); doctor zeigt es mit Warnung.
+func TestDoctorShowsAuthRetryOfWatchAll(t *testing.T) {
+	dataDir, _ := setupEnv(t)
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dataDir, "postkauz.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.CreateAccount(t.Context(), store.Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 1,
+		TLS: "none", Username: "tester@example.invalid", AuthType: "password", CredentialRef: "account/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := "sync --watch --all: login rejected by the server at 2026-10-28 14:03 UTC; retrying every 30m"
+	if err := st.SetAccountStatus(t.Context(), id, "error", msg); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	rep := doctorJSON(t)
+	if len(rep.Accounts) != 1 || rep.Accounts[0].Status != "error" || rep.Accounts[0].LastError != msg ||
+		!hasWarning(rep, "account demo: "+msg) {
+		t.Fatalf("doctor: %+v", rep)
+	}
+	code, out, errs := run(t, "doctor")
+	if code != ExitOK || !strings.Contains(out, "    last error: "+msg) {
+		t.Fatalf("doctor text: %d %s %s", code, out, errs)
+	}
+}

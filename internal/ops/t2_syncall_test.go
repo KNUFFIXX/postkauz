@@ -13,12 +13,13 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // allRunner spielt je Konto ein Verhalten: "watch" läuft bis ctx endet,
 // "busy" meldet zuerst sync_running, dann watch, "auth" scheitert an der
-// Anmeldung.
+// Anmeldung, "authonce" nur beim ersten Mal (dann watch).
 type allRunner struct {
 	mu       sync.Mutex
 	behavior map[string]string
@@ -39,6 +40,8 @@ func (r *allRunner) Sync(ctx context.Context, a store.Account, cred provider.Cre
 	}
 	switch {
 	case b == "auth":
+		return SyncOutput{Account: a.Name}, fmt.Errorf("%w: server said no to %s", provider.ErrAuth, cred.Password)
+	case b == "authonce" && n == 1:
 		return SyncOutput{Account: a.Name}, fmt.Errorf("%w: server said no to %s", provider.ErrAuth, cred.Password)
 	case b == "busy" && n == 1:
 		return SyncOutput{Account: a.Name}, fmt.Errorf("%w: account %s", ErrSyncRunning, a.Name)
@@ -73,7 +76,7 @@ func newAllEnv(t *testing.T, behavior map[string]string) (*accountsEnv, *allRunn
 
 // T2: sync --watch --all beobachtet jedes Konto in einer eigenen Goroutine.
 // Ein Konto mit belegter Sperre versucht es später erneut, eines mit
-// abgelehnter Anmeldung endet; keines beendet die anderen. Das Audit hat
+// abgelehnter Anmeldung nach 30 min (V10); keines beendet die anderen. Das Audit hat
 // einen Aufruf mit allen Konten als Ziel, Meldungen tragen das Konto, und
 // kein Fehlertext enthält das Passwort.
 func TestSyncWatchAllAccounts(t *testing.T) {
@@ -138,7 +141,7 @@ func TestSyncWatchAllAccounts(t *testing.T) {
 	}
 	mu.Unlock()
 	if len(accountLines) != 2 || !strings.Contains(strings.Join(accountLines, "\n"), "beta: another sync is running") ||
-		!strings.Contains(strings.Join(accountLines, "\n"), "gamma: stopped:") {
+		!strings.Contains(strings.Join(accountLines, "\n"), "; retrying in 30m (") {
 		t.Fatalf("account lines = %q", accountLines)
 	}
 	var start audit.Event
@@ -152,19 +155,120 @@ func TestSyncWatchAllAccounts(t *testing.T) {
 	}
 }
 
-// T2: Enden alle Konten von selbst, kommt der Fehler, der einen Menschen
-// braucht (Anmeldung zuerst), damit die Aufgabenplanung ihn am Exit-Code
-// erkennt. --all gilt nur mit watch, nicht mit account oder mailboxes.
+// T2/V10: Auch wenn alle Konten an der Anmeldung scheitern, endet --all
+// nicht von selbst (jedes versucht es nach 30 min erneut); nach dem Ende
+// nennt der Bericht je Konto den Fehler, ohne Passwort. --all gilt nur mit
+// watch, nicht mit account oder mailboxes.
 func TestSyncWatchAllInputAndEnd(t *testing.T) {
 	e, _ := newAllEnv(t, map[string]string{"alpha": "auth", "beta": "auth"})
-	_, err := e.x.Execute(context.Background(), Request{Key: adminKey, Operation: "sync.run", Input: json.RawMessage(`{"watch":true,"all":true}`)})
-	if !errors.Is(err, provider.ErrAuth) || strings.Contains(err.Error(), canary) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	res, err := e.x.Execute(ctx, Request{Key: adminKey, Operation: "sync.run", Input: json.RawMessage(`{"watch":true,"all":true}`)})
+	if err != nil {
 		t.Fatalf("all accounts failed: %v", err)
+	}
+	for _, a := range res.Output.(SyncOutput).Accounts {
+		if !strings.Contains(a.Error, "server said no") || strings.Contains(a.Error, canary) {
+			t.Fatalf("account %s: %q", a.Account, a.Error)
+		}
 	}
 	for _, in := range []string{`{"all":true}`, `{"watch":true,"all":true,"account":"alpha"}`, `{"watch":true,"all":true,"mailboxes":["INBOX"]}`} {
 		var ie *InputError
 		if _, err := e.x.Execute(context.Background(), Request{Key: adminKey, Operation: "sync.run", Input: json.RawMessage(in)}); !errors.As(err, &ie) {
 			t.Errorf("%s: want input error, got %v", in, err)
 		}
+	}
+}
+
+// V10 der Nachbesserung T2: Unter --all versucht ein Konto nach einem
+// Anmeldefehler (auch NO [UNAVAILABLE]) oder ohne Zugangsdaten nach
+// allRetryMax erneut, statt bis zum Neustart zu enden. Solange steht es mit
+// Status error am Konto (doctor zeigt es); die erste Runde danach löscht
+// den Vermerk.
+func TestSyncWatchAllRetriesAfterAuthFailure(t *testing.T) {
+	e, r := newAllEnv(t, map[string]string{"alpha": "authonce", "beta": "watch"})
+	defer func(f, m time.Duration) { allRetryFirst, allRetryMax = f, m }(allRetryFirst, allRetryMax)
+	allRetryFirst, allRetryMax = 10*time.Millisecond, 200*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b, err := e.st.AccountByName(ctx, "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.sec.Delete(b.CredentialRef); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var lines []string
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.x.Execute(ctx, Request{Key: adminKey, Actor: audit.ActorHuman, Operation: "sync.run",
+			Input: json.RawMessage(`{"watch":true,"all":true}`), Progress: func(p Progress) {
+				if p.Event == "account" {
+					mu.Lock()
+					lines = append(lines, p.Account+": "+p.Message)
+					mu.Unlock()
+				}
+			}})
+		done <- err
+	}()
+	status := func(name string) store.AccountRef {
+		refs, err := e.st.AccountRefs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range refs {
+			if a.Name == name {
+				return a
+			}
+		}
+		t.Fatalf("no account %s", name)
+		return store.AccountRef{}
+	}
+	// beta ohne Passwort: Vermerk, kein Ende.
+	deadline := time.Now().Add(5 * time.Second)
+	for status("beta").Status != "error" && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if st := status("beta"); st.Status != "error" || !strings.HasPrefix(st.LastError, "sync --watch --all: no credentials (no password stored)") {
+		t.Fatalf("beta = %+v", st)
+	}
+	// alpha: erst abgelehnt, nach allRetryMax angemeldet; danach Status ok.
+	select {
+	case n := <-r.started:
+		if n != "alpha" {
+			t.Fatalf("started %s", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("alpha did not retry")
+	}
+	if st := status("alpha"); st.Status != "ok" || st.LastError != "" {
+		t.Fatalf("alpha after retry = %+v", st)
+	}
+	// beta bekommt sein Passwort zurück und läuft beim nächsten Versuch.
+	if err := e.sec.Set(b.CredentialRef, secrets.Secret(canary)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-r.started:
+		if n != "beta" {
+			t.Fatalf("started %s", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("beta did not retry")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	all := strings.Join(lines, "\n")
+	if !strings.Contains(all, "alpha: ") || !strings.Contains(all, "retrying in 200ms (login errors are not retried sooner") ||
+		!strings.Contains(all, "beta: no password stored") || strings.Contains(all, canary) || strings.Contains(all, "stopped:") {
+		t.Fatalf("lines = %s", all)
+	}
+	if r.calls["alpha"] != 2 {
+		t.Fatalf("calls = %v", r.calls)
 	}
 }
