@@ -45,6 +45,9 @@ type Account struct {
 	// ohne Migration im JSON der Spalte sync_policy unter "oauth2"
 	// (Festlegung T4; die Spalte war bis dahin unbenutzt, '{}').
 	OAuth *OAuthClient
+	// DraftsMailbox ist der Entwürfe-Ordner dieses Kontos (A5.1, Migration
+	// 0020; "" = [draft] mailbox der Konfiguration, sonst Rolle drafts).
+	DraftsMailbox string
 }
 
 // OAuthClient ist der öffentliche Client eines OAuth2-Kontos.
@@ -71,14 +74,14 @@ type AccountSummary struct {
 }
 
 const accountCols = `id, name, email, provider_type, host, port, tls, username, auth_type, credential_ref,
-	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at, aliases, sync_policy`
+	insecure_test_server, capabilities, status, COALESCE(last_error,''), created_at, aliases, sync_policy, COALESCE(drafts_mailbox,'')`
 
 func scanAccount(sc interface{ Scan(...any) error }, a *Account, extra ...any) error {
 	var created int64
 	var insecure int
 	var aliases, policy string
 	dest := append([]any{&a.ID, &a.Name, &a.Email, &a.Provider, &a.Host, &a.Port, &a.TLS, &a.Username,
-		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created, &aliases, &policy}, extra...)
+		&a.AuthType, &a.CredentialRef, &insecure, &a.Capabilities, &a.Status, &a.LastError, &created, &aliases, &policy, &a.DraftsMailbox}, extra...)
 	if err := sc.Scan(dest...); err != nil {
 		return err
 	}

@@ -475,10 +475,14 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		err := tx.QueryRowContext(ctx, `SELECT count(*) FROM message_mailboxes WHERE mailbox_id = ? AND uid = ?`, b.MailboxID, uid).Scan(&n)
 		return n > 0, err
 	}
-	insertLink := func(mid int64, f LinkFlags) error {
+	// loaded: PostKauz hat den Inhalt dieser Kopie selbst geladen (neue
+	// Nachricht); eine per Message-ID und Größe verknüpfte Kopie prüft der
+	// Job vor einer Aktion erst am Kopf (T2 Punkt 3, Migration 0020).
+	insertLink := func(mid int64, f LinkFlags, loaded bool) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO message_mailboxes(message_id, mailbox_id, uid, modseq, flag_seen, flag_flagged,
-			flag_answered, flag_draft, keywords) VALUES (?,?,?,?,?,?,?,?,?)`,
-			mid, b.MailboxID, f.UID, nullModSeq(f.ModSeq), b2i(f.Seen), b2i(f.Flagged), b2i(f.Answered), b2i(f.Draft), keywordsJSON(f.Keywords))
+			flag_answered, flag_draft, keywords, content_loaded) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			mid, b.MailboxID, f.UID, nullModSeq(f.ModSeq), b2i(f.Seen), b2i(f.Flagged), b2i(f.Answered), b2i(f.Draft), keywordsJSON(f.Keywords),
+			b2i(loaded))
 		return err
 	}
 	for _, n := range b.New {
@@ -491,7 +495,7 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		if err != nil {
 			return res, err
 		}
-		if err := insertLink(mid, n.Link); err != nil {
+		if err := insertLink(mid, n.Link, true); err != nil {
 			return res, fmt.Errorf("store: insert link: %w", err)
 		}
 		if err := assignThread(ctx, tx, b.AccountID, mid, threadMessage(n)); err != nil {
@@ -505,7 +509,7 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		} else if ok {
 			continue
 		}
-		if err := insertLink(l.MessageID, l.Flags); err != nil {
+		if err := insertLink(l.MessageID, l.Flags, false); err != nil {
 			return res, fmt.Errorf("store: link message %d: %w", l.MessageID, err)
 		}
 		touched[l.MessageID] = true // refreshMessage löscht deleted_remote_at
@@ -514,10 +518,15 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 	for _, f := range b.Flags {
 		var mid int64
 		kw := keywordsJSON(f.Keywords)
+		// Eine Kopie mit offener Änderung (pending_flags, Aktion queued oder
+		// running) behält ihre lokalen Flags, bis der Job sie geschrieben
+		// hat; danach gewinnt der Server (E1).
 		err := tx.QueryRowContext(ctx, `UPDATE message_mailboxes SET flag_seen = ?, flag_flagged = ?, flag_answered = ?,
-			flag_draft = ?, keywords = ?, modseq = COALESCE(?, modseq)
+			flag_draft = ?, keywords = ?, modseq = COALESCE(?, modseq), pending_flags = NULL
 			WHERE mailbox_id = ? AND uid = ?
 			  AND (flag_seen != ? OR flag_flagged != ? OR flag_answered != ? OR flag_draft != ? OR keywords != ?)
+			  AND NOT EXISTS (SELECT 1 FROM actions a WHERE a.id = json_extract(message_mailboxes.pending_flags, '$.action')
+			                  AND a.state IN ('queued','running'))
 			RETURNING message_id`,
 			b2i(f.Seen), b2i(f.Flagged), b2i(f.Answered), b2i(f.Draft), kw, nullModSeq(f.ModSeq), b.MailboxID, f.UID,
 			b2i(f.Seen), b2i(f.Flagged), b2i(f.Answered), b2i(f.Draft), kw).Scan(&mid)

@@ -364,6 +364,21 @@ var migrationChecks = map[int]func(context.Context, *sql.Tx) error{
 		}
 		return nil
 	},
+	// 0020 baut tags und message_tags mit den Regeln aus E5 neu: Bestehende
+	// Zeilen müssen sie schon erfüllen (bis S3 schrieb nichts in diese
+	// Tabellen; eine Zeile, die nicht passt, wird nicht still geändert).
+	20: func(ctx context.Context, tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM tags
+			WHERE length(name) NOT BETWEEN 1 AND 64 OR name GLOB '*[^a-z0-9._-]*')
+			+ (SELECT count(*) FROM message_tags WHERE set_by IS NULL OR NOT (set_by = 'cli' OR set_by GLOB 'key:?*'))`).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%d tag entries do not match the tag rules (E5); nothing was changed, please report this", n)
+		}
+		return nil
+	},
 }
 
 // fkCheckTables nennt je Migration mit fkOffDirective die Tabellen, die
@@ -374,6 +389,7 @@ var migrationChecks = map[int]func(context.Context, *sql.Tx) error{
 // ganze Datenbank, wie bisher.
 var fkCheckTables = map[int][]string{
 	17: {"message_mailboxes"},
+	20: {"jobs", "actions", "action_targets", "tags", "message_tags"},
 }
 
 // foreignKeyCheck prüft die Fremdschlüssel der Tabellen (nil = alle) und
