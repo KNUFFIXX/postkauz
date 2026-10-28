@@ -268,6 +268,19 @@ func deleteParts(st secrets.Store, ref, gen string, n int) {
 	}
 }
 
+// deletePartsErr löscht die Teile 1 bis n der Generation gen wie
+// deleteParts, meldet aber jeden Fehler außer secrets.ErrNotFound (B-M1;
+// für Delete, wo ein liegengebliebener Teil nicht mehr auffindbar wäre).
+func deletePartsErr(st secrets.Store, ref, gen string, n int) error {
+	var errs []error
+	for i := 1; i <= n; i++ {
+		if err := st.Delete(PartRef(ref, gen, i)); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // Load liest Refresh-Token und Ablauf. Fehlt der Eintrag: secrets.ErrNotFound.
 // Fehlt ein Teil, weil ein zweiter Prozess währenddessen umgestellt und die
 // alte Generation gelöscht hat, liest Load den neuen Haupteintrag.
@@ -344,17 +357,26 @@ func load(st secrets.Store, ref, raw string) (Saved, error) {
 // Haupteintrag mehr nennt (Rest aus Save), findet Delete nicht: Der
 // Schlüsselbund kann nicht auflisten. Fehlt der Haupteintrag:
 // secrets.ErrNotFound (Teile ohne Generation werden trotzdem gelöscht).
+// Scheitert das Löschen eines Teils (außer "fehlt"), bleibt der
+// Haupteintrag stehen und Delete meldet den Fehler (B-M1; sonst meldete
+// account remove secret_deleted, und die Teile lägen unauffindbar).
 func Delete(st secrets.Store, ref string) error {
 	st = secrets.Stored(st)
+	// B-M1: Erst alle Teile; scheitert einer (außer "fehlt"), bleibt der
+	// Haupteintrag stehen, damit die Teile auffindbar bleiben und ein
+	// zweiter Versuch sie findet.
+	var errs []error
 	if _, rec, ok := readMain(st, ref); ok {
 		if rec.Gen != "" {
-			deleteParts(st, ref, rec.Gen, maxParts)
+			errs = append(errs, deletePartsErr(st, ref, rec.Gen, maxParts))
 		}
 		if rec.PrevGen != "" {
-			deleteParts(st, ref, rec.PrevGen, maxParts)
+			errs = append(errs, deletePartsErr(st, ref, rec.PrevGen, maxParts))
 		}
 	}
-	err := st.Delete(ref)
-	deleteParts(st, ref, "", maxParts)
-	return err
+	errs = append(errs, deletePartsErr(st, ref, "", maxParts))
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("oauth: token parts could not be deleted, the main entry %s stays: %w", ref, err)
+	}
+	return st.Delete(ref)
 }

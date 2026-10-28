@@ -34,6 +34,8 @@ type memStore struct {
 	// (die Goroutine des Schlüsselbunds läuft weiter).
 	lateMain bool
 	late     func()
+	// failDelete: Delete dieses Eintrags scheitert (B-M1).
+	failDelete string
 }
 
 func newMemStore() *memStore { return &memStore{m: map[string]string{}, max: 2560} }
@@ -86,6 +88,9 @@ func (s *memStore) Delete(ref string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if ref == s.failDelete {
+		return fmt.Errorf("%w: test keyring locked", secrets.ErrUnavailable)
+	}
 	if _, ok := s.m[ref]; !ok {
 		return secrets.ErrNotFound
 	}
@@ -519,5 +524,31 @@ func TestSaveLockedWaitsForTheLock(t *testing.T) {
 	// Ohne Ordner: keine Sperre.
 	if err := SaveLocked("", st, testRef, Token{RefreshToken: "CANARY-small"}, time.Now()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// B-M1: Scheitert das Löschen eines Teils, meldet Delete den Fehler und
+// lässt den Haupteintrag stehen (die Teile bleiben auffindbar); ein
+// zweiter Versuch räumt alles ab.
+func TestDeleteKeepsMainEntryWhenAPartFails(t *testing.T) {
+	st := newMemStore()
+	big := "CANARY-big-" + strings.Repeat("Ab9_-", 4096/5)
+	if err := Save(st, testRef, Token{RefreshToken: secrets.Secret(big)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	st.failDelete = PartRef(testRef, genOf(t, st), 2)
+	err := Delete(st, testRef)
+	if err == nil || errors.Is(err, secrets.ErrNotFound) || strings.Contains(err.Error(), "CANARY") {
+		t.Fatalf("delete with a failing part = %v", err)
+	}
+	if _, ok := st.m[testRef]; !ok {
+		t.Fatal("main entry deleted although a part is left")
+	}
+	if _, ok := st.m[st.failDelete]; !ok {
+		t.Fatal("failing part vanished")
+	}
+	st.failDelete = ""
+	if err := Delete(st, testRef); err != nil || len(st.keys()) != 0 {
+		t.Fatalf("second delete: %v %v", err, st.keys())
 	}
 }
