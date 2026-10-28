@@ -140,3 +140,50 @@ func TestDraftsMailboxPerAccount(t *testing.T) {
 		t.Fatalf("drafts mailbox: %q / %q", e.runner.draftsMailbox(a2), e.runner.draftsMailbox(e.account(t)))
 	}
 }
+
+// Nachprüfung zu fd70f19, Punkt 2: Vor den Aktionen gleicht der Sync die
+// Ordnerliste ab. Hier verliert „Archive“ am Server die Rolle archive (ein
+// neuer Ordner „Archiv“ gewinnt sie nach der Namensregel), ohne dass ein
+// Lauf es schon gesehen hat; die V1-Prüfung des Ziels muss die neue Rolle
+// sehen: kein MOVE, Ziel stale, Fehler target_changed.
+func TestActionsSeeServerRoleChangeBeforeMove(t *testing.T) {
+	e := newPushEnv(t, "Archive")
+	raw := "Message-ID: <rolle@example.org>\r\nFrom: a@example.org\r\nSubject: Rolle\r\n\r\nText\r\n"
+	if _, err := e.u.Append("INBOX", litBytes{bytes.NewReader([]byte(raw))}, &imap.AppendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Actions = &actions.Runner{Store: e.st, Blobs: e.blobs}
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	svc := &actions.Service{Store: e.st}
+	dest, ok, err := svc.FindMailbox(ctx, e.acct, "", "archive")
+	if err != nil || !ok || dest.Path != "Archive" {
+		t.Fatalf("archive mailbox = %+v %v %v", dest, ok, err)
+	}
+	ids, _ := e.st.MessageIDsByHeader(ctx, e.acct, "rolle@example.org")
+	plan, err := svc.PlanMove(ctx, ids, "", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, actions.Request{AccountID: e.acct, Kind: store.ActionMove, IDs: ids, Plan: plan, RequestedBy: "cli",
+		Params: store.ActionParams{TargetMailboxID: dest.MailboxID, TargetMailbox: dest.Path, TargetRole: dest.Role}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.u.Create("Archiv", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := e.st.Action(ctx, a.ID)
+	if got.Error != "target_changed" || got.Targets[0].Result != store.TargetStale {
+		t.Fatalf("action = %+v", got)
+	}
+	client := imapSession(t, e.addr)
+	if len(serverCopies(t, client, "Archive", "rolle@example.org")) != 0 || len(serverCopies(t, client, "INBOX", "rolle@example.org")) != 1 {
+		t.Fatal("message was moved although the target lost its role")
+	}
+}
