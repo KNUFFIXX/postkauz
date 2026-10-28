@@ -144,7 +144,7 @@ Then set up the [daily audit export](#daily-audit-export) to a second location. 
 
 A new version may update the database schema on its first start (with a backup copy next to the database, `postkauz.db.pre-NNNN-….bak`). Two versions must never work on the same database at once. **Before the first start of a new version, stop every process of the old one:**
 
-1. the `sync --watch` task (Windows: Task Scheduler, task of the watcher, "End" and "Disable"; Linux: `systemctl --user stop` of its unit),
+1. the `sync --watch` task (Windows: `Stop-ScheduledTask` and `Disable-ScheduledTask -TaskName "PostKauz sync watch"`, see [docs/betrieb.md](docs/betrieb.md) 1.7; Linux: `systemctl --user stop` of its unit),
 2. the audit export task ("PostKauz audit export": "Disable" until the update is done; Linux: `systemctl --user stop postkauz-audit-export.timer`),
 3. the Claude app (it starts the MCP server `postkauz mcp`; quit it completely, also from the tray area),
 4. any other `postkauz` window.
@@ -263,6 +263,16 @@ Optional entries in `env`: `POSTKAUZ_DATA_DIR` to use another data directory (fo
 **3. Check it.** In Claude Code, `/mcp` lists the server and its tools: `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_list_accounts`, `mail_list_mailboxes`, `mail_list_attachments`, `mail_get_attachment_text`, `mail_audit_log`, `mail_get_policy` (with a key of the role `assistant` also the six draft tools, see [Drafts](#drafts)). Ask something like "Search my mail for invoices and summarise them"; afterwards `postkauz audit --since 10m --key-id key:claude-code` shows each call with the key name and without any mail text.
 
 The server only reads the local mirror and writes drafts into it; keep it current with `postkauz sync` (or `sync --watch`), which also puts the drafts into the Drafts folder. Revoke a key you no longer need: `postkauz key revoke claude-code`. Note that the client configuration stores the key in plain text in your user profile; use a short expiry and the narrowest role that works. Details: `docs/mcp.md`, `docs/sicherheit.md`.
+
+## Continuous sync on Windows
+
+One scheduled task keeps all accounts in sync while you are logged on: `postkauz sync --watch --all` (one process, one lock per account; an account whose login fails does not stop the others). `Register-SyncWatch.ps1` registers it and `Run-SyncWatch.ps1` restarts the program after a crash (wait 60 s, doubled up to 30 min; after a rejected login, exit code 6, always 30 min) and writes a rotating log to `<data dir>\logs\sync-watch.log`. Both scripts come with each release (`deploy/windows/`); keep them next to each other. No password goes into the task or the scripts: `postkauz` reads it from the Windows Credential Manager as usual.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Register-SyncWatch.ps1 -DataDir C:\PostKauz\data -ConfigFile C:\PostKauz\config.toml
+```
+
+Agents cannot sync themselves (the MCP server has no mail password); the MCP tool `mail_sync_now` (CLI `sync request`) queues a sync that the running watcher starts within about 10 s. Step-by-step guide (German): [docs/betrieb.md](docs/betrieb.md).
 
 ## Daily audit export
 
