@@ -28,7 +28,7 @@ Auftrag: [auftraege/A03_T2_nachbesserung.md](../../auftraege/A03_T2_nachbesserun
 
 1. **V20:** `mail:mark` nur in `operator`/`admin`. `assistant` und `triage` markieren nicht am Server; lokale Tags bleiben `mail:tag`. Keywords (`[tags] sync_keywords = true`) laufen weiter unter `mail:tag`, weil der Mensch sie in `config.toml` ausdrücklich einschaltet. Die Scopes stehen je Schlüssel in der Datenbank: Ältere `operator`-/`admin`-Schlüssel bekommen `mail:mark` nicht nachträglich (neu anlegen; Hinweis in `docs/betrieb.md` 1.7a). Der Mensch an der CLI (Rolle `admin`) markiert wie bisher.
 2. **V1:** Ohne gespeicherte Rolle (Aktion per Pfad mit Ordner ohne Rolle) zählt nur der Pfad; ein `move` endet aber nie im Papierkorb. Fehlt `Params.TargetMailbox` ganz, gilt das Ziel als geändert (fail closed; alle Aktionen aus dem Code haben es).
-3. **V13:** Nur in Sichten und sonst nirgends → `ambiguous_source` (statt aus einer Sicht zu verschieben, was in Gmail nur ein Label entfernt); mit `--from` bleibt jede Sicht Quelle. Die Spalte kommt in Migration 0020, weil 0020 noch nicht auf `main` liegt (Auftrag). **Folge:** Ein Datenverzeichnis, das ein Build von `0.3.0-alpha.4` schon auf Schema 20 gebracht hat, kennt die Spalte nicht; es braucht ein frisches `-DataDir` (D7a beginnt Teil A ohnehin frisch; `-AccountDataDir` ist eine Kopie und wird neu kopiert).
+3. **V13:** Nur in Sichten und sonst nirgends → `ambiguous_source` (statt aus einer Sicht zu verschieben, was in Gmail nur ein Label entfernt); mit `--from` bleibt jede Sicht Quelle. ~~Die Spalte kommt in Migration 0020~~ **Berichtigt in der Nachprüfung (Abschnitt 7):** Die Spalte steht in **Migration 0021**; 0020 ist wieder bytegleich mit `da5386b`. Der Nachtrag in 0020 war ein Fehler: Der Läufer vergleicht nur Nummern, eine von `0.3.0-alpha.4` migrierte Datenbank hätte die Spalte nie bekommen, und jeder Sync wäre gescheitert.
 4. **V10:** Ein Prozess, in dem alle Konten an der Anmeldung scheitern, endet nicht mehr von selbst; Exit 6 kommt nur noch aus Läufen mit einem Konto. Der Wrapper wartet bei Exit 6 weiter 30 min (unverändert). Endet `--all` mit Strg+C, während ein Konto auf den nächsten Anmeldeversuch wartet, nennt der Bericht dieses Kontos den Anmeldefehler.
 5. **V7:** `content_loaded = 0` nur bei mehr als einer UID je Quellordner und MOVE.
 6. **V6:** Die Zahlen zählen Ziele (Serverkopien), die Zahl der Aktionen steht in Klammern.
@@ -49,7 +49,7 @@ Auftrag: [auftraege/A03_T2_nachbesserung.md](../../auftraege/A03_T2_nachbesserun
 
 V3, V8, V11, V14, V16, V17, V18, V19, V21 mit Kurzbeschreibung in [A03_teile.md](../../auftraege/A03_teile.md) T3 und in der Roadmap (Stand T2, „Nachbesserung“). V5 der Prüfsitzung (Offline-Teil von D7a weist D7.1/2 nicht nach) steht als Abweichung in [abnahme_D7a.md](../abnahme_D7a.md).
 
-## 5. `make race` und Build
+## 5. `make race` und Build (Stand `fd70f19`, überholt durch Abschnitt 7)
 
 - **`make race`** (allein, ohne parallelen `make check`) an `692a492` plus den Doku-Änderungen: **alle Pakete grün** in 15:12 min; längste Pakete `internal/cli` 812 s, `internal/importer` 794 s, `internal/mailsync` 688 s, `internal/ops` 476 s (alle unter der Grenze von 30 min je Paket).
 - **Build:** `make release VERSION=0.3.0-alpha.5` an `ab94add` (Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`); `postkauz-linux-amd64 version` → `postkauz 0.3.0-alpha.5`. SHA-256:
@@ -63,7 +63,31 @@ V3, V8, V11, V14, V16, V17, V18, V19, V21 mit Kurzbeschreibung in [A03_teile.md]
 
 ## 6. Offen
 
-1. Abnahme D7a mit `0.3.0-alpha.5` durch die Prüfsitzung am Büro-PC (frisches `-DataDir`/`-WorkDir`; die `-AccountDataDir`-Kopie neu ziehen, siehe Festlegung 3).
+1. Abnahme D7a mit dem neu gebauten `0.3.0-alpha.5` (Abschnitt 7) durch die Prüfsitzung am Büro-PC (frisches `-DataDir`/`-WorkDir` wie immer; eine schon von `alpha.4` migrierte Kopie bekommt die Spalte jetzt über 0021).
 2. `make vuln` (hier gesperrt).
 3. PowerShell-Skripte unter Windows: `Register-SyncWatch.ps1` (15-s-Prüfung, auch mit absichtlich falschem `-DataDir` → Warnung und Exit 1), `abnahme_D7a.ps1` (B0.3a).
 4. Gmail-Verhalten bei MOVE und „Label entfernen“ nur in D7a messbar (unverändert).
+
+## 7. Nachtrag: Nachprüfung der Prüfsitzung zu `fd70f19`
+
+Die Prüfsitzung bestätigte alle acht Punkte und V4/V6 am Quelltext (Regressionstests scheitern ohne Fix) und fand sieben weitere Punkte vor dem Merge, davon ein Blocker. Alle behoben:
+
+| Punkt | Commit | Inhalt | Regressionstest (scheitert vorher, besteht nachher) |
+|---|---|---|---|
+| 1 (Blocker) | `0272098` | `0020_actions.sql` wieder bytegleich mit `da5386b`; `mailboxes.virtual_view` samt Kennzeichnung des Bestands als **Migration 0021** (Schema 21) | `TestSchema20OfAlpha4Migrates`: Schema-20-Datenbank, erzeugt mit dem Code von `da5386b` (`internal/store/testdata/t2_schema20`, Generator `gen/main.go` mit Anleitung), migriert; danach laufen `ServerCopies` (Sicht gekennzeichnet) und `SyncMailboxes`. Gegenprobe mit 0020 von `fd70f19`: `no such column: b.virtual_view` |
+| 2 | `ad5345c` | Warten Aktionen, gleicht der Job vorher die Ordnerliste ab (`runActions`, auch im Jobs-Takt von `sync --watch`); scheitert der Abgleich, warten die Aktionen | `TestActionsSeeServerRoleChangeBeforeMove` (Server im Prozess: „Archive“ verliert die Rolle an einen neuen Ordner „Archiv“ ohne vorherigen Lauf → kein MOVE, `stale`, `target_changed`); ohne Fix verschoben |
+| 3 | `160228a` | Erste erfolgreiche Runde nach dem Start (und nach jedem Vermerk) setzt Status `error` des Kontos auf `ok` (`store.ClearAccountError`, nur bei `error`) | `TestSyncWatchAllStatusAfterRestartAndStop` (Vermerk aus einem früheren Prozess verschwindet; Konto mit Status `new` bleibt `new`) |
+| 4 | `160228a` | Konto, das unter `--all` an einem anderen Fehler endet: `last_error` `sync --watch --all: stopped (<Art>) at <Zeit>; it runs again after a restart of the task`, `doctor` warnt | derselbe Test (Konto `beta`), `TestDoctorShowsAuthRetryOfWatchAll` (Fall „stopped“) |
+| 5 | `b2633a1` | `Register-SyncWatch.ps1` wertet nur den neuen Teil des Logs aus, rotationsfest: Hat sich die erste Zeile des Logs geändert, zählen der Rest von `sync-watch.1.log` ab der alten Größe und die ganze neue Datei (Erstelldatum taugt nicht: NTFS-Tunneling); alte `starting:`-Zeilen zählen nicht mehr | Lesetest; dazu Python-Nachbau der drei Funktionen (Scratchpad, nicht im Repository) mit sechs Fällen: ohne neue Zeilen, ohne Rotation, Rotation nach bzw. vor „starting:“ (neue Datei größer als die alte Größe), leere neue Datei, Fehlstart nach Rotation: alle OK; die alte Prüfung (Datei größer als vorher) meldete die Rotationsfälle als Fehlstart |
+| 6 | `dee6df2` | `runOne` gibt bei Abbruch die schon gespeicherten Ergebnisse zurück; `Run` zählt sie, bevor es endet | `TestRunnerSavesResultsPerMailbox` um Zähler ergänzt (Abbruch: `actions 1, ok 1`; zweiter Lauf: `ok 1`); ohne Fix `ok 0` |
+| 7 | `11568ef` | README „Continuous sync on Windows“, `docs/betrieb.md` 1.1 und die Hilfe von `Register-SyncWatch.ps1`/`Run-SyncWatch.ps1`: mit `--all` beendet eine abgelehnte Anmeldung das Programm nicht; Exit 6 nur bei Läufen mit einem Konto | – (Text) |
+| T3 | `11568ef` | Nicht gespeicherter Quellpfad eines Ziels in `A03_teile.md` T3 und Roadmap | – |
+
+**Festlegungen (Einspruch möglich, Rahmen 11), ergänzt in roadmap.md Nr. 59:** (g) Der Ordnerabgleich vor Aktionen läuft nur, wenn Aktionen warten (ein `LIST` je Jobs-Takt mit Arbeit, nicht alle 10 s). (h) Die erste erfolgreiche Runde löscht nur den Status `error` (gleich, wer ihn schrieb: auch ein alter Fehler von `account test` ist dann überholt); andere Status bleiben. (i) Ein „stopped“-Konto läuft erst nach einem Neustart der Aufgabe wieder; der Vermerk nennt nur die Art (`incomplete server answer`, `not supported by the server`, sonst `unexpected error, see the log`).
+
+**Nebenbefund im Prüflauf:** Ein `make check` scheiterte einmal an `internal/drafts` `TestConcurrentWritersOnOneFile` (`database is locked (5) (SQLITE_BUSY)` nach 9,9 s; zwei Schreiber, `busy_timeout` 5 s) — unter Volllast unmittelbar nach einer Migrationsmessung. Der Test stammt aus `main` (`27920c4`), das Paket ist hier nicht geändert; allein 20 von 20 Läufen grün, der nächste volle `make check` grün. Kein Fix in diesem Zweig; Kandidat für T3 (längeres `busy_timeout` im Test oder weniger Last).
+
+**Migrationen:** 0020 an der synthetischen Datenbank 0,38 s, **0021 0,20 s** (50.000 Nachrichten, 80.000 Ordnerkopien, 20.000 Audit-Zeilen, einschließlich Snapshot; `POSTKAUZ_MEASURE_MIGRATION=1`).
+
+**Prüfläufe und Build nach der Nachprüfung:** siehe Abschnitt 8.
+

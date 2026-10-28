@@ -115,6 +115,12 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### Fixed
 
+- Nachprüfung zu `fd70f19` (Blocker): `mailboxes.virtual_view` kommt mit **Migration 0021** (Schema 21) statt als Nachtrag in 0020; Datenbanken, die 0.3.0-alpha.4 auf Schema 20 gebracht hat, bekommen die Spalte (vorher scheiterte dort jeder Sync und jede Aktion mit „no such column“, `doctor` meldete ok). Regressionstest mit einer Datenbank, die der Code von `da5386b` erzeugt hat.
+- Nachprüfung zu `fd70f19`: Warten Aktionen, gleicht der Job vorher die Ordnerliste ab (auch im Jobs-Takt von `sync --watch`), damit die Prüfung des Zielordners die aktuelle Rolle sieht.
+- Nachprüfung zu `fd70f19`: Unter `sync --watch --all` löscht die erste erfolgreiche Runde einen gespeicherten Fehler des Kontos auch nach einem Neustart (vorher warnte `doctor` nach korrigiertem Passwort dauerhaft); ein Konto, das an einem anderen Fehler endet, steht als `stopped` am Konto, `doctor` warnt.
+- Nachprüfung zu `fd70f19`: `Register-SyncWatch.ps1` wertet nur den neuen Teil des Logs aus, auch über eine Rotation hinweg (vorher Fehlstart gemeldet, wenn der Wrapper ein volles Log rotierte).
+- Nachprüfung zu `fd70f19`: Bricht eine Aktion in einem späteren Quellordner ab, zählt die Zeile `actions:` die schon gespeicherten Ergebnisse.
+- Nachprüfung zu `fd70f19`: README, `docs/betrieb.md` und Skript-Hilfen: Mit `--all` beendet eine abgelehnte Anmeldung das Programm nicht mehr; Exit 6 nur bei Läufen mit einem Konto.
 - Nachbesserung T2 (V1): `move`/`trash` binden den Zielordner an Pfad und Rolle, nicht nur an die ID (`mailboxes.id` wird nach zwei Ordnerabgleichen wiederverwendet; ein Ordner kann die Rolle wechseln). Passt eines nicht mehr oder endete ein `move` im Papierkorb, geht kein Kommando an den Server: alle Ziele `stale`, Fehler `target_changed`.
 - Nachbesserung T2 (V9): `move --role inbox` auf eine Mail, die schon im Posteingang liegt, verschiebt nicht mehr ihre Kopie aus „Alle Nachrichten“, sondern überspringt sie (`skipped`).
 - Nachbesserung T2 (V13): Gmail „Markiert“/„Wichtig“ (auch `\Flagged`/`\Important`) sind als virtuelle Sicht gekennzeichnet (`mailboxes.virtual_view`, Migration 0021, Schema 21; 0020 bleibt unverändert, damit Datenbanken von 0.3.0-alpha.4 die Spalte bekommen) und nie Quelle von `move`/`trash` ohne `--from`; `trash` einer Mail, die Gmail als wichtig einstuft, endete vorher mit `ambiguous_source` (D7a B6).
