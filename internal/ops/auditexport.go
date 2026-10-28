@@ -239,10 +239,12 @@ func loadAuditDay(ctx context.Context, repo AuditRepo, asg auditAssigner, rec st
 // auditStrayRows findet Zeilen, die weder ein abgeschlossener Tag noch der
 // Plan der offenen Tage sieht (Nachbesserung T1b, A-F4): etwa eine
 // nachträglich eingeschobene Zeile mit freier niedriger ID und dem
-// Zeitstempel eines abgeschlossenen Tages. Zählabgleich bis zur letzten ID
-// L des letzten abgeschlossenen Tages: Zeilen mit id <= L = Einträge der
-// abgeschlossenen Tage (closedRows, tageweise geladen) + Zeilen des Plans
-// mit id <= L. Nur bei Abweichung lädt sie die Zeilen bis L und nennt die
+// Zeitstempel eines abgeschlossenen Tages. Zählabgleich bis L, der größten
+// letzten ID über alle abgeschlossenen Tage (nicht nur des zeitlich
+// letzten: rc8 hat verspätete Einträge in alte Tage exportiert, deren
+// Bereich dann über ihn hinausreicht; Nachprüfung der Nachbesserung):
+// Zeilen mit id <= L = Einträge der abgeschlossenen Tage (closedRows,
+// tageweise geladen, alle mit id <= L) + Zeilen des Plans mit id <= L. Nur bei Abweichung lädt sie die Zeilen bis L und nennt die
 // Exporttage der fremden Zeilen (sonst kostet die Prüfung eine Zählung
 // über den Primärschlüssel).
 func auditStrayRows(ctx context.Context, repo AuditRepo, plan auditPlan, closedRows int) ([]string, error) {
@@ -250,19 +252,25 @@ func auditStrayRows(ctx context.Context, repo AuditRepo, plan auditPlan, closedR
 	if !ok {
 		return nil, nil
 	}
+	upTo := int64(0)
+	for d := range plan.asg.records {
+		if last, closed := plan.asg.closed(d); closed {
+			upTo = max(upTo, last)
+		}
+	}
 	want := closedRows
 	for _, d := range plan.days {
 		for _, r := range plan.events[d] {
-			if r.ID <= c.LastEventID {
+			if r.ID <= upTo {
 				want++
 			}
 		}
 	}
-	n, err := repo.AuditCountUpTo(ctx, c.LastEventID)
+	n, err := repo.AuditCountUpTo(ctx, upTo)
 	if err != nil || n == want {
 		return nil, err
 	}
-	list, err := repo.AuditQuery(ctx, store.AuditFilter{UpToID: c.LastEventID})
+	list, err := repo.AuditQuery(ctx, store.AuditFilter{UpToID: upTo})
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +278,9 @@ func auditStrayRows(ctx context.Context, repo AuditRepo, plan auditPlan, closedR
 	var days []string
 	for _, r := range list {
 		day := plan.asg.day(r)
-		stray := r.TS.Before(end) // offener Tag, aber nicht im Plan
+		// Offener Tag, aber nicht im Plan (der lädt ts ab dem Ende von c
+		// oder id über der letzten ID von c).
+		stray := r.TS.Before(end) && r.ID <= c.LastEventID
 		if _, closed := plan.asg.closed(day); closed {
 			rec := plan.asg.records[day]
 			stray = r.ID < rec.FirstEventID || r.ID > rec.LastEventID

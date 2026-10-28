@@ -510,3 +510,47 @@ func TestAuditVerifyFindsInsertedLowID(t *testing.T) {
 		}
 	}
 }
+
+// Nachprüfung der Nachbesserung T1b (Blocker im Zählabgleich A-F4): rc8
+// exportiert im Lauf des Tages, der letzte Exporttag ist dann nicht
+// abgeschlossen; ein älterer Tag (2. Oktober) reicht mit dem verspäteten
+// Eintrag über die letzte ID des zeitlich letzten abgeschlossenen Tages
+// hinaus. Auf der unveränderten Kopie meldet audit verify ok; ein Einschub
+// mit ID −1 im 2. Oktober ergibt database_changed (er darf die Zählung
+// nicht ausgleichen).
+func TestAuditVerifyRc8OpenLastDay(t *testing.T) {
+	ctx := context.Background()
+	for _, insert := range []bool{false, true} {
+		dbPath, _ := fixtureDB(t, "t1b_schema16")
+		// Letzter Export am selben Tag wie sein Tag (wie rc8 im Dauerbetrieb).
+		if _, err := rawDB(t, dbPath).Exec(`UPDATE audit_exports SET exported_at = ? WHERE day = '2026-10-04'`,
+			time.Date(2026, 10, 4, 10, 0, 0, 0, time.UTC).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		st, err := store.Open(dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if insert {
+			if err := st.ExecForTest(`INSERT INTO audit_events(id, ts, actor_type, operation, result) VALUES (-1, ?, 'system', 'sync.run', 'ok')`,
+				time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC).UnixMilli()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, err := AuditVerify(st).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := out.(AuditVerifyOutput)
+		if !insert && (v.Status != "ok" || len(v.Problems) != 0) {
+			t.Fatalf("verify of an unchanged rc8 copy = %+v", v)
+		}
+		if insert && (v.Status != "mismatch" || len(v.Problems) != 1 || v.Problems[0].Problem != AuditDatabaseChanged || v.Problems[0].Day != "2026-10-02") {
+			t.Fatalf("verify after inserting id -1 = %+v", v)
+		}
+	}
+}
