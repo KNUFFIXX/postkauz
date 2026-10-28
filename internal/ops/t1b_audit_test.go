@@ -375,3 +375,49 @@ func TestAuditPlanLoadsOnlyOpenDays(t *testing.T) {
 		t.Fatalf("verify after moving = %+v", v)
 	}
 }
+
+// Nachbesserung T1b, A-F4: Eine nachträglich eingeschobene Zeile mit freier
+// niedriger ID (0 oder -1) und dem Zeitstempel eines abgeschlossenen Tages
+// liegt außerhalb des ID-Bereichs seines Nachweises. audit verify findet
+// sie über den Zählabgleich (database_changed an diesem Tag), ohne das
+// ganze Protokoll zu lesen, solange nichts abweicht.
+func TestAuditVerifyFindsInsertedLowID(t *testing.T) {
+	for _, id := range []int64{0, -1} {
+		e := newAdminEnv(t)
+		ctx := t.Context()
+		day := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+		clock := day
+		e.x.Now = func() time.Time { return clock }
+		auditClock = func() time.Time { return clock }
+		t.Cleanup(func() { auditClock = time.Now })
+		for d := 0; d < 3; d++ {
+			clock = day.Add(time.Duration(d) * 24 * time.Hour)
+			for i := 0; i < 5; i++ {
+				e.run(t, adminKey, "keys.list", map[string]any{})
+			}
+		}
+		clock = day.Add(3*24*time.Hour + time.Hour)
+		if _, err := e.run(t, adminKey, "audit.export", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+		verify := func() AuditVerifyOutput {
+			t.Helper()
+			out, err := AuditVerify(e.st).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.(AuditVerifyOutput)
+		}
+		if v := verify(); v.Status != "ok" {
+			t.Fatalf("verify before = %+v", v)
+		}
+		if err := e.st.ExecForTest(`INSERT INTO audit_events(id, ts, actor_type, operation, result) VALUES (?, ?, 'system', 'sync.run', 'ok')`,
+			id, day.Add(24*time.Hour+time.Minute).UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+		v := verify()
+		if v.Status != "mismatch" || len(v.Problems) != 1 || v.Problems[0].Problem != AuditDatabaseChanged || v.Problems[0].Day != "2026-03-02" {
+			t.Fatalf("id %d: verify after insert = %+v", id, v)
+		}
+	}
+}

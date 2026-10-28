@@ -204,6 +204,15 @@ func (s *SQLite) AuditOpenStarts(ctx context.Context, before time.Time, skipOps 
 	return n, err
 }
 
+// AuditCountUpTo zählt die Einträge mit ID bis einschließlich id (audit
+// verify, Zählabgleich der abgeschlossenen Tage; nur über den Primärschlüssel,
+// ohne Zeilen zu lesen).
+func (s *SQLite) AuditCountUpTo(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE id <= ?`, id).Scan(&n)
+	return n, err
+}
+
 // AuditDays liefert die Tage (UTC, YYYY-MM-DD) mit Audit-Einträgen, aufsteigend.
 func (s *SQLite) AuditDays(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT strftime('%Y-%m-%d', ts / 1000, 'unixepoch') FROM audit_events ORDER BY 1`)

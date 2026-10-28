@@ -22,6 +22,9 @@ type AuditRepo interface {
 	AuditDays(ctx context.Context) ([]string, error)
 	SaveAuditExport(ctx context.Context, e store.AuditExport) error
 	AuditExports(ctx context.Context) ([]store.AuditExport, error)
+	// AuditCountUpTo zählt die Einträge mit ID bis einschließlich id
+	// (audit verify, Zählabgleich; A-F4).
+	AuditCountUpTo(ctx context.Context, id int64) (int, error)
 }
 
 // AuditEventOutput ist ein Audit-Eintrag in audit.list und im Export.

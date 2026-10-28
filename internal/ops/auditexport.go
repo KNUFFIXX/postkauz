@@ -236,6 +236,59 @@ func loadAuditDay(ctx context.Context, repo AuditRepo, asg auditAssigner, rec st
 	return slices.DeleteFunc(list, func(r store.AuditRecord) bool { return asg.day(r) != rec.Day }), nil
 }
 
+// auditStrayRows findet Zeilen, die weder ein abgeschlossener Tag noch der
+// Plan der offenen Tage sieht (Nachbesserung T1b, A-F4): etwa eine
+// nachträglich eingeschobene Zeile mit freier niedriger ID und dem
+// Zeitstempel eines abgeschlossenen Tages. Zählabgleich bis zur letzten ID
+// L des letzten abgeschlossenen Tages: Zeilen mit id <= L = Einträge der
+// abgeschlossenen Tage (closedRows, tageweise geladen) + Zeilen des Plans
+// mit id <= L. Nur bei Abweichung lädt sie die Zeilen bis L und nennt die
+// Exporttage der fremden Zeilen (sonst kostet die Prüfung eine Zählung
+// über den Primärschlüssel).
+func auditStrayRows(ctx context.Context, repo AuditRepo, plan auditPlan, closedRows int) ([]string, error) {
+	c, ok := plan.asg.lastClosed()
+	if !ok {
+		return nil, nil
+	}
+	want := closedRows
+	for _, d := range plan.days {
+		for _, r := range plan.events[d] {
+			if r.ID <= c.LastEventID {
+				want++
+			}
+		}
+	}
+	n, err := repo.AuditCountUpTo(ctx, c.LastEventID)
+	if err != nil || n == want {
+		return nil, err
+	}
+	list, err := repo.AuditQuery(ctx, store.AuditFilter{UpToID: c.LastEventID})
+	if err != nil {
+		return nil, err
+	}
+	end := auditDayEnd(c.Day)
+	var days []string
+	for _, r := range list {
+		day := plan.asg.day(r)
+		stray := r.TS.Before(end) // offener Tag, aber nicht im Plan
+		if _, closed := plan.asg.closed(day); closed {
+			rec := plan.asg.records[day]
+			stray = r.ID < rec.FirstEventID || r.ID > rec.LastEventID
+		}
+		if stray && !slices.Contains(days, day) {
+			days = append(days, day)
+		}
+	}
+	if len(days) == 0 {
+		// Zahl weicht ab, ohne dass eine Zeile zuzuordnen ist (z. B. eine
+		// Zeile mit ID <= 0, die die Abfrage nicht liefert): dem letzten
+		// abgeschlossenen Tag zuschreiben.
+		days = append(days, c.Day)
+	}
+	slices.Sort(days)
+	return days, nil
+}
+
 // AuditUnexportedDays liefert die Exporttage, deren Einträge noch nicht
 // (vollständig) exportiert sind, nach derselben Zuordnung wie audit.export
 // (für doctor).
@@ -759,6 +812,7 @@ func AuditVerify(repo AuditRepo) Operation {
 			chained := map[string]bool{}
 			var locations []string
 			head := auditChainGenesis
+			closedRows := 0 // Einträge der abgeschlossenen Tage (Zählabgleich, A-F4)
 			for _, e := range done {
 				exported[e.Day] = e
 				out.DaysChecked++
@@ -779,6 +833,9 @@ func AuditVerify(repo AuditRepo) Operation {
 				evs, err := loadAuditDay(ctx, repo, plan.asg, e)
 				if err != nil {
 					return nil, err
+				}
+				if _, ok := plan.asg.closed(e.Day); ok {
+					closedRows += len(evs)
 				}
 				d2, err := auditDayContent(evs, e.LastEventID, 2, head)
 				if err != nil {
@@ -851,6 +908,17 @@ func AuditVerify(repo AuditRepo) Operation {
 						add("", path, AuditManifestChanged, firstDiffLine(b, want))
 					}
 				}
+			}
+			stray, err := auditStrayRows(ctx, repo, plan, closedRows)
+			if err != nil {
+				return nil, err
+			}
+			for _, day := range stray {
+				file := ""
+				if e, ok := exported[day]; ok {
+					file = filepath.Join(e.Location, auditFileName(day))
+				}
+				add(day, file, AuditDatabaseChanged, 0)
 			}
 			for _, d := range plan.days {
 				e, ok := exported[d]
