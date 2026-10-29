@@ -64,6 +64,10 @@ var (
 	// ErrBusy: Eine andere Sicherung dieses Datenverzeichnisses läuft
 	// (Sperre LockName im Datenverzeichnis); nichts wurde geschrieben.
 	ErrBusy = errors.New("backup: another backup of this data directory is running")
+	// ErrIncomplete: Ein Blob, auf den der Schnappschuss verweist, fehlt
+	// im Blob-Store (etwa purge und blob gc zwischen Schnappschuss und
+	// Kopie); die Sicherung bricht ab, ihr Manifest wird nicht geschrieben.
+	ErrIncomplete = errors.New("backup: incomplete")
 )
 
 // File ist ein Eintrag im Manifest: Pfad relativ zum Sicherungsordner

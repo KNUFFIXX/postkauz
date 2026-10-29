@@ -247,6 +247,31 @@ func (r *Runner) listBlobs() ([]blobFile, error) {
 	return out, err
 }
 
+// checkComplete prüft, dass jeder Blob, auf den der Schnappschuss
+// verweist (refs), unter den gelesenen Blobs ist (T3-Nachbesserung 5b):
+// listBlobs liest nur, was gerade da ist; laufen zwischen Schnappschuss und
+// Verzeichnislauf purge und blob gc, fehlte ein Blob sonst still. Werte, die
+// kein gültiger Hash sind, können keine Datei sein und zählen nicht
+// (doctor --blobs meldet sie).
+func checkComplete(refs map[string]bool, blobs []blobFile) error {
+	have := make(map[string]bool, len(blobs))
+	for _, b := range blobs {
+		have[b.sum] = true
+	}
+	var missing []string
+	for h := range refs {
+		if blob.ValidHash(h) && !have[h] {
+			missing = append(missing, h)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("%w: %d blob(s) the database refers to are missing from the blob store (first: %s)",
+		ErrIncomplete, len(missing), missing[0])
+}
+
 // listArchives liefert die Archivdatenbanken von audit.rotate im
 // Datenverzeichnis (audit-archive-<von>-<bis>.db; generisch jede Datei, die
 // archiveRE erfüllt).
@@ -294,7 +319,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		return res, err
 	}
 	if o.DryRun {
-		return r.dryRunFolder(to, prev, now, res)
+		return r.dryRunFolder(ctx, to, prev, now, res)
 	}
 
 	if err := os.MkdirAll(to, dirMode); err != nil {
@@ -327,6 +352,22 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		_ = os.Remove(tmpDB)
 		return res, err
 	}
+	// 2. Verweise des Schnappschusses gegen den Blob-Store, bevor er an
+	// seinen Platz kommt: Fehlt ein Blob, bleibt die frühere Sicherung im
+	// Ordner unberührt.
+	contents, err := store.ReadSnapshot(ctx, tmpDB)
+	if err != nil {
+		_ = os.Remove(tmpDB)
+		return res, err
+	}
+	blobs, err := r.listBlobs()
+	if err == nil {
+		err = checkComplete(contents.Blobs, blobs)
+	}
+	if err != nil {
+		_ = os.Remove(tmpDB)
+		return res, err
+	}
 	if err := os.Rename(tmpDB, filepath.Join(to, name)); err != nil {
 		_ = os.Remove(tmpDB)
 		return res, err
@@ -336,11 +377,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
 		CreatedAt: res.CreatedAt, Database: name, Files: []File{{Path: name, Kind: KindDatabase, Size: dbSize, SHA256: dbSum}}}
 
-	// 2. Blobs: nur fehlende kopieren.
-	blobs, err := r.listBlobs()
-	if err != nil {
-		return res, err
-	}
+	// 3. Blobs: nur fehlende kopieren.
 	for _, b := range blobs {
 		if err := ctx.Err(); err != nil {
 			return res, err
@@ -359,7 +396,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		m.Files = append(m.Files, f)
 	}
 
-	// 3. Archivdatenbanken von audit.rotate.
+	// 4. Archivdatenbanken von audit.rotate.
 	archives, err := r.listArchives()
 	if err != nil {
 		return res, err
@@ -383,7 +420,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		m.Files = append(m.Files, File{Path: a, Kind: KindAuditArchive, Size: size, SHA256: sum})
 	}
 
-	// 4. Manifest zuletzt: Erst mit ihm gilt der neue Stand.
+	// 5. Manifest zuletzt: Erst mit ihm gilt der neue Stand.
 	b, err := m.encode()
 	if err != nil {
 		return res, err
@@ -395,7 +432,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	res.ManifestSHA256 = hex.EncodeToString(sum[:])
 	res.Files, res.Bytes, res.Blobs, res.AuditArchives = m.Counts.Files, m.Counts.Bytes, m.Counts.Blobs, m.Counts.AuditArchives
 
-	// 5. Ältere Schnappschüsse gehören zu keinem Manifest mehr.
+	// 6. Ältere Schnappschüsse gehören zu keinem Manifest mehr.
 	if entries, err := os.ReadDir(to); err == nil {
 		for _, e := range entries {
 			if e.Name() != name && snapshotRE.MatchString(e.Name()) && e.Type().IsRegular() {
@@ -456,15 +493,25 @@ func (r *Runner) syncBlob(b blobFile, dst string, prev map[string]File) (File, b
 	return File{Path: b.rel, Kind: KindBlob, Size: n, SHA256: sum}, true, nil
 }
 
-// dryRunFolder zählt, was eine Sicherung in den Ordner kopieren würde.
-func (r *Runner) dryRunFolder(to string, prev map[string]File, now time.Time, res Result) (Result, error) {
+// dryRunFolder zählt, was eine Sicherung in den Ordner kopieren würde. Wie
+// die Sicherung bricht er ab, wenn ein Blob fehlt, auf den die Datenbank
+// verweist (erst die Verweise, dann das Verzeichnis: Put schreibt die Datei
+// vor der Zeile).
+func (r *Runner) dryRunFolder(ctx context.Context, to string, prev map[string]File, now time.Time, res Result) (Result, error) {
 	res.Database = snapshotName(now, 1)
 	res.Files = 1
 	if fi, err := os.Stat(r.Store.Path()); err == nil {
 		res.Bytes = fi.Size() // Schätzung: der Schnappschuss ist meist etwas kleiner
 	}
+	refs, err := r.Store.BlobReferences(ctx)
+	if err != nil {
+		return res, err
+	}
 	blobs, err := r.listBlobs()
 	if err != nil {
+		return res, err
+	}
+	if err := checkComplete(refs, blobs); err != nil {
 		return res, err
 	}
 	for _, b := range blobs {
@@ -539,7 +586,7 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 		return res, err
 	}
 	if o.DryRun {
-		return r.dryRunFolder(filepath.Join(r.DataDir, snapshotDir, "dry-run-no-target"), nil, now, res)
+		return r.dryRunFolder(ctx, filepath.Join(r.DataDir, snapshotDir, "dry-run-no-target"), nil, now, res)
 	}
 	sdir := filepath.Join(r.DataDir, snapshotDir)
 	if err := os.MkdirAll(sdir, dirMode); err != nil {
@@ -562,6 +609,19 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 		return res, err
 	}
 	r.at("snapshot")
+	// Verweise des Schnappschusses gegen den Blob-Store, bevor das erste
+	// Byte in den Strom geht (wie im Ordner-Modus).
+	contents, err := store.ReadSnapshot(ctx, snap)
+	if err != nil {
+		return res, err
+	}
+	blobs, err := r.listBlobs()
+	if err != nil {
+		return res, err
+	}
+	if err := checkComplete(contents.Blobs, blobs); err != nil {
+		return res, err
+	}
 	name := snapshotName(now, 1)
 	res.Database = name
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
@@ -590,10 +650,6 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 		}
 		res.BytesCopied += size
 		m.Files = append(m.Files, File{Path: a, Kind: KindAuditArchive, Size: size, SHA256: sum})
-	}
-	blobs, err := r.listBlobs()
-	if err != nil {
-		return res, err
 	}
 	for _, b := range blobs {
 		if err := ctx.Err(); err != nil {

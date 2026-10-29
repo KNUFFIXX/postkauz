@@ -119,6 +119,10 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, backup.ErrCorruptSource):
 		return ExitError, ErrorInfo{Code: "blob_corrupt", Message: err.Error(),
 			Hint: "a file in the blob store does not match its hash; check the data directory with: doctor --blobs=all"}
+	case errors.Is(err, backup.ErrIncomplete):
+		return ExitError, ErrorInfo{Code: "backup_incomplete", Message: err.Error(),
+			Hint: "no new backup was recorded (an earlier one in the folder stays valid); run backup create again; " +
+				"if it fails again, check the data directory with: doctor --blobs=all"}
 	case errors.Is(err, backup.ErrBusy):
 		return ExitError, ErrorInfo{Code: "backup_running", Message: err.Error(),
 			Hint: "nothing was written; wait until the other backup (e.g. a scheduled task) has finished, then run backup create again"}

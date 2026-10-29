@@ -317,6 +317,8 @@ Ohne neue Mails steht dort `copied 0`. Wer mehrere Stände aufheben will, nimmt 
 
 Es läuft immer nur **eine** Sicherung je Datenverzeichnis. Startest du eine zweite, während die erste noch kopiert (z. B. von Hand neben einer geplanten Aufgabe), bricht die zweite ab, ohne etwas zu schreiben: `error: backup: another backup of this data directory is running` (Code `backup_running`). Warte, bis die erste fertig ist, und starte dann neu.
 
+Fehlt während der Sicherung eine Mail-Datei, auf die die Datenbank zeigt (etwa weil gleichzeitig `purge` und `blob gc` liefen), bricht die Sicherung ab: `error: backup: incomplete: … blob(s) the database refers to are missing from the blob store …` (Code `backup_incomplete`). Eine frühere Sicherung im Ordner bleibt dann gültig. Starte die Sicherung einfach noch einmal; kommt der Fehler wieder, prüfe das Datenverzeichnis mit `doctor --blobs=all`.
+
 Ab und zu prüfen, ob die Sicherung noch vollständig und unverändert ist (liest alles, schreibt nichts):
 
 ```powershell
