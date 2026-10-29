@@ -50,6 +50,11 @@ var ErrAuditArchive = errors.New("audit archive is missing or changed")
 // T3, Punkt 3a).
 var ErrAuditRotateRunning = errors.New("another audit rotate of this data directory is running")
 
+// AuditRotateLockName ist die Sperrdatei neben der Datenbank, die eine
+// Rotation hält, während sie ihr Archiv schreibt und einträgt (Punkt 3a;
+// doctor prüft sie, zweite Nachbesserung T3, Punkt 14).
+const AuditRotateLockName = "audit-rotate.lock"
+
 // auditArchiveState ist ein Archiv mit dem Ergebnis seiner Prüfung.
 type auditArchiveState struct {
 	store.AuditArchive
@@ -241,6 +246,17 @@ func AuditRotate(repo AuditRepo, retain time.Duration) Operation {
 			cutoff := now.Add(-retain)
 			out := AuditRotateOutput{Status: "nothing_to_rotate", Retain: formatDays(retain), Cutoff: cutoff.Format(time.RFC3339), DryRun: call.DryRun}
 
+			// Kein Export zugleich (zweite Nachbesserung T3, Punkt 2): Er
+			// hat die Archivliste schon geladen und schriebe verschobene
+			// Tage sonst leer neu. Die Sperre gilt vor dem Laden der
+			// Archive bis zum Ende; der Trockenlauf sperrt nicht.
+			if !call.DryRun {
+				unlockExport, err := lockBesideDB(repo, AuditExportLockName, ErrAuditExportRunning)
+				if err != nil {
+					return nil, err
+				}
+				defer unlockExport()
+			}
 			src, closeArchives, err := openAuditSource(ctx, repo)
 			defer closeArchives()
 			if err != nil {
@@ -314,7 +330,7 @@ func AuditRotate(repo AuditRepo, retain time.Duration) Operation {
 				return out, nil
 			}
 			// Nur eine Rotation je Datenverzeichnis zugleich (Punkt 3a).
-			unlock, err := lockBesideDB(repo, "audit-rotate.lock", ErrAuditRotateRunning)
+			unlock, err := lockBesideDB(repo, AuditRotateLockName, ErrAuditRotateRunning)
 			if err != nil {
 				return nil, err
 			}

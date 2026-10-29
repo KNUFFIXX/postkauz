@@ -477,8 +477,22 @@ type AuditExportOutput struct {
 var ErrAuditExportChanged = errors.New("audit export file does not match its recorded checksum")
 
 // ErrAuditExportRunning: Ein anderer Export dieses Datenverzeichnisses
-// läuft (Sperrdatei audit-export.lock neben der Datenbank).
-var ErrAuditExportRunning = errors.New("another audit export of this data directory is running")
+// läuft (Sperrdatei audit-export.lock neben der Datenbank) oder, seit der
+// zweiten Nachbesserung T3 (Punkt 2), eine Rotation, die dieselbe Sperre
+// hält.
+var ErrAuditExportRunning = errors.New("another audit export or audit rotate of this data directory is running")
+
+// AuditExportLockName ist die Sperrdatei neben der Datenbank, die Export
+// und Rotation holen (Nachbesserung T3, Punkt 1d; zweite Nachbesserung,
+// Punkt 2).
+const AuditExportLockName = "audit-export.lock"
+
+// ErrAuditExportSourceChanged: Die Einträge eines abgeschlossenen Tages
+// sind nicht mehr genau die seines Nachweises (erste bis letzte ID), etwa
+// weil eine Rotation ohne Sperre sie inzwischen verschoben hat (zweite
+// Nachbesserung T3, Punkt 2). Der Export bricht ab, bevor er etwas
+// schreibt; sonst ersetzte er den Nachweis durch einen leeren Tag.
+var ErrAuditExportSourceChanged = errors.New("audit export: the entries of an exported day no longer match its record")
 
 // ErrAuditExportOtherInstance: Das Manifest am Ziel stammt von einem
 // anderen Datenverzeichnis, etwa dem Original einer Wiederherstellung
@@ -609,7 +623,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			// Nur ein Export je Datenverzeichnis zugleich (Nachbesserung T3,
 			// Punkt 1d); der Trockenlauf schreibt nichts und sperrt nicht.
 			if !call.DryRun {
-				unlock, err := lockBesideDB(repo, "audit-export.lock", ErrAuditExportRunning)
+				unlock, err := lockBesideDB(repo, AuditExportLockName, ErrAuditExportRunning)
 				if err != nil {
 					return nil, err
 				}
@@ -713,6 +727,18 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					}
 					if evs, err = loadAuditDay(ctx, src.repo, plan.asg, p); err != nil {
 						return nil, err
+					}
+					// Zweite Absicherung (zweite Nachbesserung T3, Punkt 2):
+					// genau der Bereich des Nachweises, sonst Abbruch vor dem
+					// ersten Schreiben.
+					first, last := int64(0), int64(0)
+					if len(evs) > 0 {
+						first, last = evs[0].ID, evs[len(evs)-1].ID
+					}
+					if first != p.FirstEventID || last != p.LastEventID {
+						return nil, fmt.Errorf("%w: day %s should hold entries %d to %d, found %d to %d; nothing was written "+
+							"(an audit rotate may have run meanwhile; run audit verify, then audit export again)",
+							ErrAuditExportSourceChanged, day, p.FirstEventID, p.LastEventID, first, last)
 					}
 				}
 				d, err := auditDayContent(evs, 0, AuditExportFormat, head)

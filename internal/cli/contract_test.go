@@ -493,6 +493,8 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{fmt.Errorf("%w: x", backup.ErrCorruptSource), ExitError, "blob_corrupt"},
 		{backup.ErrBusy, ExitError, "backup_running"},
 		{fmt.Errorf("%w: x", backup.ErrIncomplete), ExitError, "backup_incomplete"},
+		{ops.ErrAuditExportRunning, ExitError, "audit_export_running"},
+		{fmt.Errorf("%w: x", ops.ErrAuditExportSourceChanged), ExitError, "audit_export_source_changed"},
 		{errors.New("boom"), ExitError, "error"},
 	}
 	for _, c := range cases {
