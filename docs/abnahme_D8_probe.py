@@ -10,7 +10,11 @@ Jede Pruefung ist eine Zeile `OK <Nr> <Beschreibung>`, `FAIL <Nr> ...` oder
 Letzte Zeile `probe: <n> OK, <m> FAIL, <k> SKIP`. Exit 0 nur ohne FAIL.
 Geprueft wird an stabilen Merkmalen (Status, Kopfzeilen, Toolnamen, Felder),
 nicht an ganzen Saetzen. Schluessel und Token erscheinen nie in der Ausgabe
-(maskiert, auch in Fehlermeldungen).
+(maskiert, auch in Fehlermeldungen). Gekuerzt wird immer erst nach dem
+Maskieren: Ein abgeschnittenes Token passt nicht mehr auf JWT_RE und nicht
+mehr auf den Vergleich mit SECRETS.
+
+Test (ohne Netz): python3 -m unittest docs/abnahme_D8_probe_t5n2_test.py
 
 Unterkommandos:
   key    Modus key: Bearer = PostKauz-Schluessel (aus --key-file).
@@ -60,6 +64,7 @@ def mask(text):
 
 
 def short(text, limit=900):
+    # Erst maskieren, dann kuerzen (siehe Kopf).
     text = mask(text)
     if len(text) > limit:
         text = text[:limit] + " ...[gekuerzt]"
@@ -103,7 +108,9 @@ class Resp:
     def show(self):
         keep = [k + ": " + v for k, v in self.headers
                 if k.lower() in ("www-authenticate", "content-type", "mcp-session-id", "server", "retry-after", "allow")]
-        return "status " + str(self.status) + "\n" + "\n".join(keep) + "\n" + (self.body or "")[:600]
+        # Erst maskieren, dann kuerzen: Ein Schnitt mitten in einem Token liesse
+        # Kopf und Nutzlast (aud, iss, sub) sonst unmaskiert stehen.
+        return "status " + str(self.status) + "\n" + "\n".join(keep) + "\n" + mask(self.body or "")[:600]
 
 
 def request(method, url, body=None, headers=None, host=None, timeout=30):
@@ -213,7 +220,7 @@ def session_checks(nr, s, expect_tools, principal, oauth_sub=None):
     check(nr + ".3", "kein Tool zum Senden, Loeschen oder Freigeben", not bad, ", ".join(bad))
     r, out = s.tool("mail_search", {"query": "a", "limit": 3})
     ok = out is not None and not out["is_error"] and isinstance(out["json"], dict) and out["json"].get("untrusted") is True
-    check(nr + ".4", "mail_search -> Ergebnis in der Untrusted-Huelle", ok, (out or {}).get("text", r.show())[:400])
+    check(nr + ".4", "mail_search -> Ergebnis in der Untrusted-Huelle", ok, mask((out or {}).get("text", r.show()))[:400])
     r, out = s.tool("mail_audit_log", {"since": "10m", "operation": "messages.search"})
     events = ((out or {}).get("json") or {}).get("events", [])
     via = [e.get("params", {}).get("via", {}) for e in events]
@@ -386,7 +393,7 @@ def cmd_oauth(a):
     issuer = servers[0]
     meta = as_metadata(issuer)
     if not check(a.nr + ".7", "Metadaten des Autorisierungsservers (RFC 8414) mit PKCE S256", isinstance(meta, dict)
-                 and "S256" in (meta.get("code_challenge_methods_supported") or []), json.dumps(meta)[:500] if meta else issuer):
+                 and "S256" in (meta.get("code_challenge_methods_supported") or []), mask(json.dumps(meta))[:500] if meta else issuer):
         return
     if a.key_file:
         key = read_secret(a.key_file)

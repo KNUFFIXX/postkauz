@@ -224,6 +224,9 @@ function Write-Log {
     try { Write-Host $t } catch { }
 }
 
+# Kuerzt Text. Immer erst maskieren (Hide-Private), dann kuerzen: Ein
+# abgeschnittenes Token passt nicht mehr auf das Muster und bliebe teilweise
+# stehen.
 function Limit-Text {
     param([string] $Text, [int] $MaxLines = 20, [int] $MaxChars = 1800)
     if ($null -eq $Text) { return '' }
@@ -577,7 +580,7 @@ function Invoke-Probe {
         if ($line -match '^probe: ') { continue }
         if ($line.Trim()) { Write-Log $line }
     }
-    if ($r.Err.Trim()) { Write-Log ('      [stderr] ' + (Limit-Text $r.Err 5 400)) }
+    if ($r.Err.Trim()) { Write-Log ('      [stderr] ' + (Limit-Text (Hide-Private $r.Err) 5 400)) }
     if ($r.TimedOut) { Add-Check ($ProbeArgs[0] + '-Probe') 'Probe innerhalb der Zeitgrenze' $false '' }
 }
 
@@ -947,7 +950,7 @@ try {
         Add-Skip 'A2-A4' 'mcp --http laeuft nicht'
     }
     $srvText = Stop-McpHttp
-    Add-Check 'A5.1' 'mcp --http meldet den Start auf stderr' (Test-Has $srvText 'mcp --http: listening on 127\.0\.0\.1:\d+ \(auth key') (Limit-Text $srvText 5 600)
+    Add-Check 'A5.1' 'mcp --http meldet den Start auf stderr' (Test-Has $srvText 'mcp --http: listening on 127\.0\.0\.1:\d+ \(auth key') (Limit-Text (Hide-Private $srvText) 5 600)
 
     $r = Invoke-Pk @('audit', '--raw', '--since', '1h', '--limit', '1000', '--json')
     $ev = @(Get-JsonLines $r.Out)
