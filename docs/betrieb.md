@@ -438,17 +438,19 @@ Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Roll
 
 ### 4.2 Erst lokal ausprobieren (Modus `key`, ohne Tailscale)
 
-1. Einen Schlüssel für den Test anlegen (nur lesen, einen Tag gültig):
+> **Achtung, nie die Live-Datenbank mit einem Testbau:** Gegen dein echtes Datenverzeichnis (`C:\PostKauz\data`, `C:\PostKauz\config.toml`) nur mit einem **Release von `main`**. Ein Testbau (zum Beispiel `0.3.0-alpha.8b` aus einem Arbeitszweig) stellt die Datenbank beim ersten Start auf ein neues Schema um; danach öffnet sie ein Programm von `main` nicht mehr. Testbauten deshalb nur mit einem **eigenen, neuen** `--data-dir` und `--config`, wie in den Beispielen unten (`C:\PK\http-test\…`, ein Ordner außerhalb von `C:\PostKauz`). Die Abnahme D8 macht das selbst ([abnahme_D8.md](abnahme_D8.md)).
+
+1. Einen Schlüssel für den Test anlegen (nur lesen, einen Tag gültig; der Ordner `C:\PK\http-test` entsteht dabei neu):
 
    ```powershell
-   C:\PostKauz\postkauz.exe key create --name http-test --role reader --expires 1d --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+   C:\PostKauz\postkauz.exe key create --name http-test --role reader --expires 1d --data-dir C:\PK\http-test\data --config C:\PK\http-test\config.toml
    ```
 
    Erwartet: `key http-test created (…)` und darunter eingerückt der Schlüssel `pk_key_…`. Er erscheint nur dieses eine Mal; kopiere ihn.
 2. Den Server starten (das Fenster bleibt offen):
 
    ```powershell
-   C:\PostKauz\postkauz.exe mcp --http --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+   C:\PostKauz\postkauz.exe mcp --http --data-dir C:\PK\http-test\data --config C:\PK\http-test\config.toml
    ```
 
    Erwartet: `mcp --http: listening on 127.0.0.1:8787 (auth key, resource http://127.0.0.1:8787/mcp); stop with Ctrl+C`
@@ -472,8 +474,14 @@ Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Roll
    claude mcp add --transport http postkauz-http http://127.0.0.1:8787/mcp --header "Authorization: Bearer <schlüssel>"
    ```
 
-   In Claude Code zeigt `/mcp` dann `postkauz-http` mit 9 Tools (Rolle `reader`).
-6. Beenden: im ersten Fenster Strg+C. Den Testschlüssel widerrufen: `postkauz.exe key revoke http-test`.
+   In Claude Code zeigt `/mcp` dann `postkauz-http` mit 12 Tools (Rolle `reader`; das Test-Datenverzeichnis hat noch keine Mails, die Suche bleibt also leer).
+6. Beenden: im ersten Fenster Strg+C. Den Testschlüssel widerrufen und den Testordner löschen:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe key revoke http-test --data-dir C:\PK\http-test\data --config C:\PK\http-test\config.toml
+   claude mcp remove postkauz-http
+   Remove-Item -Recurse C:\PK\http-test
+   ```
 
 Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt. `doctor` zeigt die Einstellungen in der Zeile `http:`.
 
@@ -659,6 +667,8 @@ POSTKAUZ_VERSION=<version> docker compose up -d
 - Sicherung: `postkauz backup create --to /pfad/auf/verschluesseltem/ziel` regelmäßig (Abschnitt 2), Audit-Export als Timer (`deploy/systemd/postkauz-audit-export.*`).
 
 ### 4.9 Vorläufig: ein Windows-PC als Knoten (bis zum VPS)
+
+> **Achtung:** Dieser Abschnitt arbeitet mit deinem echten Datenverzeichnis. Das geht nur mit einem **Release von `main`**. Testbauten (Arbeitszweige, Abnahmen) laufen nur mit einem eigenen, neuen `--data-dir` und `--config` (siehe 4.2), sonst stellt der Testbau die Live-Datenbank auf ein neues Schema um.
 
 Bis über einen VPS entschieden ist, kann ein PC des Betreibers der Knoten sein (Abnahme D8, vorläufig): Tailscale für Windows installieren, Dauer-Sync wie in Abschnitt 1, `mcp --http` in einem eigenen Fenster wie in 4.2 (eine geplante Aufgabe dafür kommt mit dem Betriebsentscheid), dann in einer PowerShell als normaler Nutzer `tailscale serve --bg 8787` und `[http] resource` auf den Namen des PCs im Tailnet setzen. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS).
 
