@@ -78,11 +78,19 @@ Wie Teil A, zusätzlich `-NodeName pc.<tailnet>.ts.net` (neues `-DataDir`, `-Con
 
 ## Teil C: aus der Cloud-Sitzung (Linux)
 
-Während Teil B auf Enter wartet. Der Schlüssel `cloud-reader-c` (Datei aus B4, Pfad steht im Protokoll) und der Auth-Key kommen als Geheimnisse in die Sitzung:
+Während Teil B auf Enter wartet. Der Schlüssel `cloud-reader-c` (Datei aus B4, Pfad steht im Protokoll) und der Auth-Key kommen als Geheimnisse in die Sitzung. Das Skript gibt den Auth-Key nur über eine Datei mit Rechten 600 an `tailscale up --auth-key=file:<pfad>` (nie als Argument, nicht in der Umgebung von `tailscaled`) und löscht die Datei gleich danach. Die Schlüsseldatei für Teil C ebenfalls mit Rechten 600 und außerhalb des Repo-Klons ablegen.
+
+Das Bash-Werkzeug einer Cloud-Sitzung hat keine Eingabe. Darum: Skript **im Hintergrund** starten, das Protokoll mitlesen und die Weiter-Signale als Dateien im Arbeitsordner anlegen (der Pfad steht in der zweiten Zeile des Protokolls):
 
 ```bash
 TS_AUTHKEY=<geheim> D8_NODE=pc.<tailnet>.ts.net D8_KEY_FILE=/pfad/cloud-reader-c.txt D8_PRINCIPAL=cloud-reader-c sh docs/abnahme_D8_cloud.sh
+# später, nach B4.1 (Widerruf) auf dem PC:
+touch <Arbeitsordner>/go
 ```
+
+- **Arbeitsordner:** Standard ist ein neuer Ordner unter `$TMPDIR` bzw. `/tmp` (`mktemp -d`, Name `d8-cloud-…`), nie im Repo-Klon; ein `D8_WORK` im Klon bricht ab (zusätzlich steht `/d8-cloud-*/` in `.gitignore`). Am Ende bleibt dort nur das maskierte `D8_cloud.txt`; rohe Ausgaben von `tailscaled`, `tailscale up` und `openssl` (Peers, Endpunkte) löscht das Skript.
+- **Vom Tailnet** steht im Protokoll nur, wie viele andere Knoten sichtbar sind und ob der PostKauz-Knoten darunter ist (aus `tailscale status --json`), keine Namen, kein Login.
+- **Warten:** C5 wartet höchstens `D8_WAIT` Sekunden (Standard 1800) auf die Datei `go`; Inhalt `s` überspringt C5.
 
 | Nr | Schritt | Erwartet |
 |---|---|---|
@@ -91,10 +99,10 @@ TS_AUTHKEY=<geheim> D8_NODE=pc.<tailnet>.ts.net D8_KEY_FILE=/pfad/cloud-reader-c
 | C2.1–C2.2 | `curl https://<knoten>/.well-known/oauth-protected-resource` | JSON mit `resource` (im Modus `oauth` auch `authorization_servers`) |
 | C2.3–C2.4 | `openssl s_client` | Kette gültig, Ablauf in mehr als 14 Tagen (Akzeptanzkriterium 5) |
 | C3.x | Probe `key` | wie A3 (401 ohne Bearer, 405, 12 Tools, Hülle, Audit mit `transport http`) |
-| C5 | `[Du]` in Teil B Enter (Widerruf), dann hier Enter | 403 `denied (key_revoked)` |
+| C5 | `[Du]` in Teil B Enter (Widerruf, B4.1), dann Datei `go` im Arbeitsordner anlegen | 403 `denied (key_revoked)` |
 | C6.1 | `tailscale logout` | Knoten verlässt das Tailnet |
 
-Danach von Hand: Auth-Key in der Tailscale-Konsole widerrufen, falls noch gültig. Im Modus `oauth` (`D8_MODE=oauth`) läuft statt C3 die Probe `oauth` mit `--paste` (die Rückleitungs-URL aus dem Browser einfügen); die Messung des OAuth-Wegs gehört aber an den PC (Teil D, ADR-010 Folgen: aus einer Cloud-Sitzung bleibt OAuth unsicher, Risiko 3).
+Danach von Hand: Auth-Key in der Tailscale-Konsole widerrufen, falls noch gültig. Im Modus `oauth` (`D8_MODE=oauth`) läuft statt C3 die Probe `oauth`: Die Anmelde-URL steht ungefiltert nur in `<Arbeitsordner>/login-url.txt` (Rechte 600) und, falls die Sitzung ein Terminal hat, auf `/dev/tty`, nie im Protokoll. Die Rückleitungs-URL aus dem Browser kommt als eine Zeile mit Zeilenende in `<Arbeitsordner>/callback` (erst `callback.tmp` schreiben, dann umbenennen); die Probe wartet darauf höchstens `D8_WAIT` Sekunden und löscht die Datei nach dem Lesen; die Messung des OAuth-Wegs gehört aber an den PC (Teil D, ADR-010 Folgen: aus einer Cloud-Sitzung bleibt OAuth unsicher, Risiko 3).
 
 ## Teil D: Modus oauth mit Anmeldung im Browser (Windows)
 

@@ -31,6 +31,9 @@ secrets/
 /deploy/docker/config/
 /deploy/docker/auth/configuration.yml
 /deploy/docker/auth/users.yml
+# Abnahme D8, Teil C: Arbeitsordner des Cloud-Skripts (rohe Tailnet-Daten),
+# falls D8_WORK doch einmal im Klon angelegt wurde
+/d8-cloud-*/
 # internal/secrets ist das Go-Paket für den Schlüsselbund, kein Geheimnis
 !/internal/secrets/
 

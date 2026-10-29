@@ -7,43 +7,77 @@
 # abnahme_D8_probe.py neben diesem Skript).
 #
 # Eingaben nur über die Umgebung (nie als Argument, nie ins Repository):
-#   TS_AUTHKEY     ephemerer, zeitlich begrenzter Auth-Key mit Tag (Geheimnis)
+#   TS_AUTHKEY     ephemerer, zeitlich begrenzter Auth-Key mit Tag (Geheimnis);
+#                  geht nur über eine Datei mit Rechten 600 an tailscale up
+#                  (--auth-key=file:…), nie in eine Prozessliste
 #   D8_NODE        MagicDNS-Name des PostKauz-Knotens, z. B. postkauz.<tailnet>.ts.net
 #   D8_MODE        key (Standard) oder oauth
 #   D8_KEY_FILE    Datei mit dem Schlüssel cloud-reader (Rechte 600); im Modus
 #                  oauth nur für die Gegenprobe (Schlüssel als Bearer -> 401)
-#   D8_WORK        Arbeitsordner (wird neu angelegt; Standard ./d8-cloud-<zeit>)
+#   D8_WORK        Arbeitsordner, wird neu angelegt; Standard: ein neuer
+#                  Ordner unter $TMPDIR bzw. /tmp (mktemp), nie im Repo-Klon
 #   D8_PRINCIPAL   Schlüsselname (Standard cloud-reader)
 #   D8_TOOLS       Zahl der Tools der Rolle (Standard 12 = reader)
 #   D8_OTHER_TOKEN_FILE  optional: Token eines zweiten Clients für eine
 #                  andere Resource (Modus oauth, Schritt 3)
+#   D8_WAIT        Sekunden, die C5 (und im Modus oauth die Anmeldung) auf
+#                  das Weiter-Signal warten (Standard 1800)
+#
+# Ohne Terminal (Bash-Werkzeug einer Cloud-Sitzung): Skript im Hintergrund
+# starten; es wartet nie auf eine Eingabe, sondern auf Dateien im
+# Arbeitsordner (Pfad steht in der ersten Zeile des Protokolls):
+#   go         C5: nach dem Widerruf auf dem PostKauz-Knoten anlegen
+#              (Inhalt "s" überspringt C5)
+#   callback   Modus oauth: Rückleitungs-URL aus dem Browser, eine Zeile mit
+#              Zeilenende (erst in callback.tmp schreiben, dann umbenennen)
+#   login-url.txt  Modus oauth: Anmelde-URL (ungefiltert, Rechte 600; mit
+#              Terminal zusätzlich auf /dev/tty, nie ins Protokoll)
 #
 # Jede Prüfung ist eine Zeile "OK <Nr> …", "FAIL <Nr> …" oder "SKIP <Nr> …";
 # letzte Zeile "D8 Teil C: <n> OK, <m> FAIL, <k> SKIP". Protokoll
-# $D8_WORK/D8_cloud.txt; Knotenname, Tailnet-Adressen, Schlüssel und Token
-# sind darin maskiert. Exit 0 nur ohne FAIL.
+# $D8_WORK/D8_cloud.txt; Knotenname, Tailnet-Namen und -Adressen, Schlüssel
+# und Token sind darin maskiert; vom Tailnet steht nur die Zahl der Knoten
+# darin (keine Namen, kein Login). Rohe Ausgaben von tailscaled, tailscale up
+# und openssl löscht das Skript am Ende. Exit 0 nur ohne FAIL.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/.." && pwd)
 MODE=${D8_MODE:-key}
 PRINCIPAL=${D8_PRINCIPAL:-cloud-reader}
 TOOLS=${D8_TOOLS:-12}
-WORK=${D8_WORK:-$PWD/d8-cloud-$(date +%Y%m%d-%H%M%S)}
+WAIT=${D8_WAIT:-1800}
 NOK=0 NFAIL=0 NSKIP=0
 
 die() { echo "ABBRUCH: $*" >&2; exit 2; }
 [ -n "${TS_AUTHKEY:-}" ] || die "TS_AUTHKEY fehlt (ephemerer Auth-Key als Geheimnis der Sitzung)"
 [ -n "${D8_NODE:-}" ] || die "D8_NODE fehlt (MagicDNS-Name des PostKauz-Knotens)"
 case "$MODE" in key|oauth) ;; *) die "D8_MODE muss key oder oauth sein";; esac
+case "$WAIT" in ''|*[!0-9]*) die "D8_WAIT muss eine Zahl (Sekunden) sein";; esac
 if [ "$MODE" = key ] && [ ! -f "${D8_KEY_FILE:-}" ]; then die "D8_KEY_FILE fehlt (Datei mit dem Schlüssel $PRINCIPAL)"; fi
-for b in tailscale tailscaled curl openssl python3; do
+for b in tailscale tailscaled curl openssl python3 mktemp; do
   command -v "$b" >/dev/null 2>&1 || die "$b fehlt im PATH (Tailscale: statisches Paket von pkgs.tailscale.com, siehe docs/abnahme_D8.md)"
 done
-[ -e "$WORK" ] && die "$WORK gibt es schon; neuen D8_WORK wählen"
 umask 077
-mkdir -p "$WORK" || die "kann $WORK nicht anlegen"
+if [ -n "${D8_WORK:-}" ]; then
+  WORK=$D8_WORK
+  [ -e "$WORK" ] && die "$WORK gibt es schon; neuen D8_WORK wählen"
+  mkdir -p "$WORK" || die "kann $WORK nicht anlegen"
+else
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/d8-cloud-XXXXXX") || die "mktemp -d fehlgeschlagen"
+fi
+WORK=$(cd "$WORK" && pwd)
+# Nie im Repo-Klon: dort lägen rohe Tailnet-Daten neben dem Quelltext.
+case "$WORK/" in "$repo"/*) rmdir "$WORK" 2>/dev/null; die "D8_WORK liegt im Repository ($repo); einen Ordner außerhalb wählen (Standard: mktemp)";; esac
 LOG="$WORK/D8_cloud.txt"
 SOCK="$WORK/tailscaled.sock"
 PROXY=http://127.0.0.1:1055
+
+# Auth-Key sofort in eine Datei (Rechte 600 durch umask 077; printf ist in
+# sh eingebaut, kein eigener Prozess) und aus der Umgebung entfernen, bevor
+# irgendein Kindprozess startet (sonst stünde er in /proc/<pid>/environ).
+AUTHKEY_FILE="$WORK/authkey"
+printf '%s' "$TS_AUTHKEY" >"$AUTHKEY_FILE" || die "kann $AUTHKEY_FILE nicht schreiben"
+unset TS_AUTHKEY
 
 mask() {
   sed -e "s/$(printf '%s' "$D8_NODE" | sed 's/[.[\*^$/]/\\&/g')/<knoten>/g" \
@@ -61,15 +95,21 @@ fail() { NFAIL=$((NFAIL+1)); log "FAIL $*"; }
 skip() { NSKIP=$((NSKIP+1)); log "SKIP $*"; }
 
 cleanup() {
+  rm -f "$AUTHKEY_FILE"
   if [ -S "$SOCK" ]; then
     tailscale --socket="$SOCK" logout >/dev/null 2>&1 || true
   fi
   [ -n "${TSD_PID:-}" ] && kill "$TSD_PID" 2>/dev/null || true
-  rm -f "$WORK/tok.json" "$SOCK"
+  # Nur das maskierte Protokoll bleibt; rohe Ausgaben (Peers, Endpunkte),
+  # Token, Anmelde- und Rückleitungs-URL kommen weg.
+  rm -f "$WORK/tok.json" "$SOCK" "$WORK/tailscaled.log" "$WORK/up.log" "$WORK/sclient.err" \
+        "$WORK/probe.out" "$WORK/status.json" "$WORK/login-url.txt" "$WORK/callback" "$WORK/callback.tmp" "$WORK/go"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 2' INT TERM
 
 log "Abnahme D8 Teil C, Modus $MODE, $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+log "Arbeitsordner (Signale go und callback hier anlegen): $WORK"
 
 # ---------------------------------------------------------------- 1. Tailnet beitreten
 # Userspace-Modus ohne root; ephemer (Zustand nur im Speicher), der Knoten
@@ -79,20 +119,37 @@ tailscaled --tun=userspace-networking --state=mem: --socket="$SOCK" \
   --outbound-http-proxy-listen=127.0.0.1:1055 >"$WORK/tailscaled.log" 2>&1 &
 TSD_PID=$!
 i=0; while [ ! -S "$SOCK" ] && [ $i -lt 30 ]; do i=$((i+1)); sleep 1; done
-if tailscale --socket="$SOCK" up --auth-key="$TS_AUTHKEY" --hostname="d8-cloud-$$" --accept-dns=false >"$WORK/up.log" 2>&1; then
+# --auth-key=file:<pfad> liest den Schlüssel aus der Datei (tailscale up,
+# cmd/tailscale/cli/up.go, mindestens seit v1.30).
+if tailscale --socket="$SOCK" up --auth-key="file:$AUTHKEY_FILE" --hostname="d8-cloud-$$" --accept-dns=false >"$WORK/up.log" 2>&1; then
   ok "C1.1 Cloud-Knoten tritt dem Tailnet bei (Userspace, ephemer)"
+  rm -f "$AUTHKEY_FILE"
 else
+  rm -f "$AUTHKEY_FILE"
   fail "C1.1 Cloud-Knoten tritt dem Tailnet bei"; detail <"$WORK/up.log"; log "D8 Teil C: $NOK OK, $NFAIL FAIL, $NSKIP SKIP"; exit 1
 fi
-unset TS_AUTHKEY
-st=$(tailscale --socket="$SOCK" status 2>&1)
-peers=$(printf '%s\n' "$st" | grep -v "d8-cloud-$$" | grep -c '^100\.\|^fd7a' || true)
-if printf '%s\n' "$st" | grep -q "$(printf '%s' "$D8_NODE" | cut -d. -f1)" && [ "$peers" -eq 1 ]; then
+# Vom Status nur Zahlen ins Protokoll: wie viele andere Knoten sichtbar sind
+# und ob der PostKauz-Knoten darunter ist (keine Namen, kein Login).
+tailscale --socket="$SOCK" status --json >"$WORK/status.json" 2>/dev/null
+counts=$(D8_NODE="$D8_NODE" python3 -I -c '
+import json, os, sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    print("x x"); sys.exit(0)
+peers = list((d.get("Peer") or {}).values())
+node = os.environ["D8_NODE"].rstrip(".").lower()
+hit = any((p.get("DNSName") or "").rstrip(".").lower() == node for p in peers)
+print(len(peers), "ja" if hit else "nein")
+' "$WORK/status.json")
+rm -f "$WORK/status.json"
+peers=${counts% *}; hit=${counts#* }
+if [ "$peers" = 1 ] && [ "$hit" = ja ]; then
   ok "C1.2 tailscale status: nur der PostKauz-Knoten sichtbar (ACL)"
 else
-  fail "C1.2 tailscale status: erwartet genau den PostKauz-Knoten, sichtbar: $peers"
+  fail "C1.2 tailscale status: erwartet genau den PostKauz-Knoten"
 fi
-printf '%s\n' "$st" | detail
+log "      andere Knoten sichtbar: $peers, PostKauz-Knoten darunter: $hit"
 
 # ---------------------------------------------------------------- 2. Metadaten und Zertifikat
 prm=$(curl -sS --max-time 30 --proxy "$PROXY" "https://$D8_NODE/.well-known/oauth-protected-resource" 2>&1)
@@ -132,18 +189,29 @@ run_probe() {
 if [ "$MODE" = key ]; then
   run_probe key --url "https://$D8_NODE/mcp" --key-file "$D8_KEY_FILE" --nr C3 --principal "$PRINCIPAL" --expect-tools "$TOOLS"
 else
-  set -- oauth --url "https://$D8_NODE/mcp" --nr C4 --principal "$PRINCIPAL" --expect-tools "$TOOLS" --paste --token-file "$WORK/tok.json" --wait-expiry
+  # Anmelde-URL ungefiltert nur in login-url.txt und auf /dev/tty (mask
+  # machte sie unbrauchbar); die Rückleitungs-URL kommt über die Datei
+  # callback, nicht über die Standardeingabe.
+  set -- oauth --url "https://$D8_NODE/mcp" --nr C4 --principal "$PRINCIPAL" --expect-tools "$TOOLS" \
+    --login-url-file "$WORK/login-url.txt" --paste-file "$WORK/callback" --login-timeout "$WAIT" \
+    --token-file "$WORK/tok.json" --wait-expiry
   [ -f "${D8_KEY_FILE:-}" ] && set -- "$@" --key-file "$D8_KEY_FILE"
   [ -f "${D8_OTHER_TOKEN_FILE:-}" ] && set -- "$@" --other-token-file "$D8_OTHER_TOKEN_FILE"
   run_probe "$@"
 fi
 
+# ---------------------------------------------------------------- C5 Widerruf
+# Weiter-Signal über die Datei go (eine Cloud-Sitzung hat keine Eingabe):
+# Die Prüfsitzung legt sie an, sobald der Schlüssel auf dem PostKauz-Knoten
+# widerrufen ist (Teil B, B4.1). Inhalt "s" überspringt C5.
 log ""
-log "[Du] C5 Jetzt auf dem PostKauz-Knoten den Schlüssel widerrufen: postkauz key revoke $PRINCIPAL"
-log "     Danach hier Enter drücken (leer + Enter überspringt mit \"s\")."
-read -r ans || ans=s
-if [ "$ans" = s ]; then
-  skip "C5 Widerruf nicht geprüft"
+log "[Du] C5 Jetzt auf dem PostKauz-Knoten den Schlüssel widerrufen (Teil B: Enter bei B4), dann im Arbeitsordner die Datei go anlegen."
+log "     Warte höchstens $WAIT s auf $WORK/go (Inhalt \"s\" überspringt C5)."
+i=0; while [ ! -f "$WORK/go" ] && [ $i -lt "$WAIT" ]; do i=$((i+5)); sleep 5; done
+if [ ! -f "$WORK/go" ]; then
+  skip "C5 Widerruf nicht geprüft (kein Signal go innerhalb von $WAIT s)"
+elif [ "$(head -c 1 "$WORK/go")" = s ]; then
+  skip "C5 Widerruf nicht geprüft (Signal go mit \"s\")"
 else
   sleep 31  # Zwischenspeicher der Anmeldung (30 s)
   if [ "$MODE" = key ]; then

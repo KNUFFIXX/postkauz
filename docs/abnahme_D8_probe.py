@@ -17,6 +17,9 @@ Unterkommandos:
   oauth  Modus oauth: Authorization Code mit PKCE S256 beim
          Autorisierungsserver aus den Metadaten; der Mensch meldet sich im
          Browser an. --wait-expiry wartet den Ablauf ab und erneuert.
+         Ohne Terminal (Cloud-Sitzung): --login-url-file (Anmelde-URL nur
+         dorthin und auf /dev/tty) und --paste-file (Rueckleitungs-URL aus
+         einer Datei statt von der Standardeingabe).
   revoked  nach `key revoke`: gleicher Zugang -> 403 denied (key_revoked).
 
 Proxy: urllib nimmt HTTPS_PROXY/HTTP_PROXY aus der Umgebung (in der
@@ -291,6 +294,27 @@ def wait_for_code(port, timeout):
     return got
 
 
+def wait_for_file(path, timeout):
+    """Wartet auf eine Datei mit einer vollstaendigen Zeile (Weiter-Signal
+    ohne Standardeingabe, etwa aus einer Cloud-Sitzung). Liest sie und
+    loescht sie danach (sie enthaelt den Anmeldecode)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            text = ""
+        if text.endswith("\n"):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return text.strip()
+        time.sleep(2)
+    return ""
+
+
 def token_request(meta, form):
     r = request("POST", meta["token_endpoint"], urllib.parse.urlencode(form),
                 {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
@@ -310,9 +334,33 @@ def login(a, meta, resource):
          "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "resource": resource}
     url = meta["authorization_endpoint"] + "?" + urllib.parse.urlencode(q)
     print("")
-    print("[Du] Bitte diese Adresse im Browser oeffnen, anmelden und zustimmen:")
-    print("      " + url)
-    if a.paste:
+    if a.login_url_file:
+        # Ohne Filter nur in die Datei (Rechte 600) und, falls vorhanden, auf
+        # das Terminal; die Standardausgabe geht maskiert ins Protokoll und
+        # machte die URL unbrauchbar.
+        fd = os.open(a.login_url_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(url + "\n")
+        on_tty = False
+        try:
+            with open("/dev/tty", "w", encoding="utf-8") as t:
+                t.write("\n[Du] Bitte diese Adresse im Browser oeffnen, anmelden und zustimmen:\n      " + url + "\n")
+            on_tty = True
+        except OSError:
+            pass
+        print("[Du] Anmelde-Adresse steht in " + a.login_url_file + (" und auf dem Terminal" if on_tty else "")
+              + ": im Browser oeffnen, anmelden und zustimmen.")
+    else:
+        print("[Du] Bitte diese Adresse im Browser oeffnen, anmelden und zustimmen:")
+        print("      " + url)
+    if a.paste_file:
+        print("[Du] Danach die Adresse aus der Adresszeile (beginnt mit " + redirect + ") als eine Zeile mit Zeilenende in "
+              + a.paste_file + " ablegen (erst " + a.paste_file + ".tmp schreiben, dann umbenennen).")
+        print("      (die Probe wartet hoechstens " + str(a.login_timeout) + " s auf die Datei)")
+        sys.stdout.flush()
+        line = wait_for_file(a.paste_file, a.login_timeout)
+        got = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(line).query).items()}
+    elif a.paste:
         print("[Du] Danach die Adresse aus der Adresszeile (beginnt mit " + redirect + ") hier einfuegen und Enter:")
         sys.stdout.flush()
         line = sys.stdin.readline().strip()
@@ -434,6 +482,8 @@ def main():
         sp.add_argument("--callback-port", type=int, default=33418)
         sp.add_argument("--scope", default="openid offline_access")
         sp.add_argument("--paste", action="store_true", help="Rueckleitungs-URL einfuegen statt lokal empfangen (ohne Browser am Rechner)")
+        sp.add_argument("--paste-file", default="", help="Rueckleitungs-URL aus dieser Datei lesen (wartet bis --login-timeout; ohne Standardeingabe)")
+        sp.add_argument("--login-url-file", default="", help="Anmelde-URL nur in diese Datei (Rechte 600) und auf /dev/tty, nicht auf die Standardausgabe")
         sp.add_argument("--login-timeout", type=int, default=300)
         sp.add_argument("--other-token-file", default="")
         sp.add_argument("--wait-expiry", action="store_true")
