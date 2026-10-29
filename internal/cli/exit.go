@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/backup"
+	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -98,7 +99,10 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitError, ErrorInfo{Code: "mismatch", Message: err.Error(), Hint: "the audit log or its export was changed; see audit verify"}
 	case errors.Is(err, ops.ErrAuditExportRunning):
 		return ExitError, ErrorInfo{Code: "audit_export_running", Message: err.Error(),
-			Hint: "wait until the other audit export (e.g. the daily task) has finished, then run the command again"}
+			Hint: "wait until the other audit export (e.g. the daily task) or audit rotate has finished, then run the command again"}
+	case errors.Is(err, ops.ErrAuditExportSourceChanged):
+		return ExitError, ErrorInfo{Code: "audit_export_source_changed", Message: err.Error(),
+			Hint: "nothing was written; run audit verify, then audit export again"}
 	case errors.Is(err, ops.ErrAuditRotateRunning):
 		return ExitError, ErrorInfo{Code: "audit_rotate_running", Message: err.Error(),
 			Hint: "nothing was moved; wait until the other audit rotate has finished, run audit verify, then try again"}
@@ -126,6 +130,12 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, backup.ErrBusy):
 		return ExitError, ErrorInfo{Code: "backup_running", Message: err.Error(),
 			Hint: "nothing was written; wait until the other backup (e.g. a scheduled task) has finished, then run backup create again"}
+	case errors.Is(err, blob.ErrBusy):
+		// Nachbesserung 2, Punkt 8: Die Sperre des Blob-Ordners war in der
+		// Wartezeit nicht zu bekommen (blob gc löscht, oder ein anderes
+		// Programm hält gc.lock offen).
+		return ExitError, ErrorInfo{Code: "blob_busy", Message: err.Error(),
+			Hint: "the blob store is locked by blob gc, a running write or another program (e.g. a virus scanner or backup software); wait a moment, then run the command again"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, store.ErrMigrationBlocked):

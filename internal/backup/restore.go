@@ -65,6 +65,10 @@ type RestoreResult struct {
 	Blobs                int    `json:"blobs"`
 	AuditArchives        int    `json:"audit_archives"`
 	MigrationSnapshot    string `json:"migration_snapshot,omitempty"`
+	// MissingBlobs: Blobs, die schon beim Anlegen der Sicherung fehlten
+	// (Manifest missing_blobs; T3-Nachbesserung 2, Punkt 4). Die Kopie
+	// übernimmt diesen Zustand; doctor --blobs nennt sie weiter.
+	MissingBlobs []string `json:"missing_blobs,omitempty"`
 	// Leftovers: Arbeitsordner abgebrochener Wiederherstellungen neben dem
 	// Ziel (RestoreLeftovers); löschen.
 	Leftovers []string `json:"leftovers,omitempty"`
@@ -152,6 +156,7 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 	}
 	res.BackupCreatedAt, res.BackupProgramVersion, res.BackupSchemaVersion = m.CreatedAt, m.ProgramVersion, m.SchemaVersion
 	res.Files, res.Bytes, res.Blobs, res.AuditArchives = m.Counts.Files, m.Counts.Bytes, m.Counts.Blobs, m.Counts.AuditArchives
+	res.MissingBlobs = m.MissingBlobs
 	if err := checkRestoreTarget(from, to, o.Refuse); err != nil {
 		return res, err
 	}
@@ -344,7 +349,8 @@ func restoreEvent(res RestoreResult, fx store.RestoreFixes, now time.Time) audit
 	p := map[string]any{"source_hash": PathHash(res.Source), "manifest_sha256": res.ManifestSHA256,
 		"backup_created_at": res.BackupCreatedAt, "backup_program_version": res.BackupProgramVersion,
 		"backup_schema_version": res.BackupSchemaVersion, "schema_version": res.SchemaVersion,
-		"files": res.Files, "bytes": res.Bytes, "blobs": res.Blobs, "audit_archives": res.AuditArchives}
+		"files": res.Files, "bytes": res.Bytes, "blobs": res.Blobs, "audit_archives": res.AuditArchives,
+		"missing_blobs": len(res.MissingBlobs)}
 	var fixes map[string]any
 	if b, err := json.Marshal(fx); err == nil && json.Unmarshal(b, &fixes) == nil {
 		maps.Copy(p, fixes)
@@ -437,10 +443,41 @@ func makeWork(to string) (string, error) {
 	return work, nil
 }
 
+// Umbenennen und Entfernen im letzten Schritt von restore
+// (T3-Nachbesserung 2, Punkt 13; in Tests ersetzbar). Unter Windows hält
+// ein Virenscanner, der Indexdienst oder ein Sicherungsprogramm eine eben
+// geschriebene Datei oft kurz offen; Rename und Remove scheitern dann mit
+// ERROR_ACCESS_DENIED oder ERROR_SHARING_VIOLATION. Solche Fehler
+// (transientFSErr; unter macOS und Linux keiner) werden nach den Pausen
+// in fsRetryPauses wiederholt (fünfmal, zusammen gut 3 s).
+var (
+	fsRename       = os.Rename
+	fsRemove       = os.Remove
+	transientFSErr = isTransientFSErr
+	fsRetryPauses  = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond,
+		800 * time.Millisecond, 1600 * time.Millisecond}
+)
+
+// retryFS führt op aus und wiederholt sie nach einem vorübergehenden
+// Fehler; zurück kommt der letzte Fehler (der echte, nicht umgedeutet).
+func retryFS(op func() error) error {
+	err := op()
+	for _, pause := range fsRetryPauses {
+		if err == nil || !transientFSErr(err) {
+			return err
+		}
+		time.Sleep(pause)
+		err = op()
+	}
+	return err
+}
+
 // moveIntoPlace benennt den fertigen Arbeitsordner in das Ziel um. Ein
 // vorhandenes Ziel war bei der Prüfung leer und wird erst jetzt entfernt;
 // ist es inzwischen nicht mehr leer, scheitert das Entfernen und nichts
-// wird überschrieben.
+// wird überschrieben. Scheitert es aus einem anderen Grund, nennt der
+// Fehler den echten Grund (T3-Nachbesserung 2, Punkt 13; vorher hieß es
+// immer „no longer empty“).
 func moveIntoPlace(work, to string) error {
 	fi, err := os.Lstat(to)
 	switch {
@@ -450,11 +487,18 @@ func moveIntoPlace(work, to string) error {
 	case !fi.IsDir():
 		return targetErr("%s exists and is not a folder", to)
 	default:
-		if err := os.Remove(to); err != nil {
-			return targetErr("%s is no longer empty; restore only into a new or empty folder", to)
+		if err := retryFS(func() error { return fsRemove(to) }); err != nil {
+			if entries, rerr := os.ReadDir(to); rerr == nil && len(entries) > 0 {
+				return targetErr("%s is no longer empty; restore only into a new or empty folder", to)
+			}
+			return fmt.Errorf("restore: cannot remove the empty folder %s to put the copy there "+
+				"(is another program using it?): %w", to, err)
 		}
 	}
-	return os.Rename(work, to)
+	if err := retryFS(func() error { return fsRename(work, to) }); err != nil {
+		return fmt.Errorf("restore: cannot move the restored copy into place (is another program using it?): %w", err)
+	}
+	return nil
 }
 
 // RestoreLeftovers nennt Arbeitsordner abgebrochener Wiederherstellungen

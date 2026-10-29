@@ -1052,6 +1052,14 @@ func (e *Engine) mirrorRaw(r io.Reader, h provider.Header) (nm store.NewMessage,
 	if _, err := io.Copy(io.Discard, tee); err != nil {
 		return nm, nil, fmt.Errorf("hash message: %w", err)
 	}
+	var se *attachmentStoreError
+	if errors.As(perr, &se) {
+		// Nachbesserung 2, Punkt 8: Ein Anhang scheiterte am Blob-Store
+		// (Sperre, Platte, Rechte), nicht am Inhalt. Nicht spiegeln, wie
+		// beim Ablegen der Rohmail oben; der nächste Lauf versucht es
+		// erneut, statt den Anhang dauerhaft als "not stored" zu führen.
+		return store.NewMessage{}, nil, perr
+	}
 	nm.ContentHash, variants = hr.Sums()
 	nm.CleanVersion = CleanVersion
 	nm.Links = json.RawMessage("[]")

@@ -98,7 +98,13 @@ type Manifest struct {
 	// Database ist der Pfad des Schnappschusses (ein Eintrag in Files).
 	Database string `json:"database"`
 	Counts   Counts `json:"counts"`
-	Files    []File `json:"files"`
+	// MissingBlobs: Hashes der Blobs, auf die der Schnappschuss verweist,
+	// die aber schon vor der Sicherung im Blob-Store fehlten (sortiert,
+	// ohne Inhalte; T3-Nachbesserung 2, Punkt 4). Sie sind nicht in Files;
+	// restore übernimmt diesen Zustand (doctor --blobs nennt sie weiter).
+	// Fehlt das Feld, ist die Sicherung vollständig.
+	MissingBlobs []string `json:"missing_blobs,omitempty"`
+	Files        []File   `json:"files"`
 }
 
 var (
@@ -235,6 +241,16 @@ func parseManifest(b []byte, knownSchema int) (Manifest, error) {
 	}
 	if dbs != 1 {
 		return m, manifestErr("manifest must list exactly one database, not %d", dbs)
+	}
+	for i, h := range m.MissingBlobs {
+		switch {
+		case !hexRE.MatchString(h):
+			return m, manifestErr("missing_blobs has an invalid sha256")
+		case i > 0 && h <= m.MissingBlobs[i-1]:
+			return m, manifestErr("missing_blobs is not sorted or lists a blob twice")
+		case seen[blobRel(h, false)] || seen[blobRel(h, true)]:
+			return m, manifestErr("blob %s is listed as missing and as a file", h)
+		}
 	}
 	if c != m.Counts {
 		return m, manifestErr("counts in the manifest do not match its file list")

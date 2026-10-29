@@ -160,6 +160,16 @@ func TestMeasureMigration0022(t *testing.T) {
 		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
 		 INSERT INTO drafts(id,account_id,kind,in_reply_to_msg,message_id_header,remote_mailbox_id,remote_previous,created_at,updated_at)
 		 SELECT i, 1, 'reply', i * 10, 'd' || i || '@example.org', 2, '[{"mailbox_id":2,"uid":1,"uidvalidity":8}]', 1, 1 FROM n`,
+		// Zweite Nachbesserung T3, Punkt 12: Audit-Ziele thread:<id> und
+		// attachment:<id> (auch oberhalb von max(id), wie nach dem
+		// Zusammenführen von Threads oder dem Ersetzen von Anhängen).
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 20000)
+		 INSERT INTO audit_events(ts,actor_type,api_key_id,scope,operation,params_redacted,targets,result,reason,dry_run,duration_ms)
+		 SELECT 1700000000000 + (20000 + i)*60000, 'agent', 'k1', 'mail:read',
+		        CASE WHEN i % 2 = 0 THEN 'threads.get' ELSE 'attachments.text' END, '{"fields":["id"]}',
+		        CASE WHEN i % 2 = 0 THEN '["account:demo","thread:' || (i * 3 % 60000 + 1) || '"]'
+		             ELSE '["attachment:' || (i * 7 % 12000 + 1) || '","message:' || i || '"]' END,
+		        'ok', NULL, 0, 12 FROM n`,
 	)
 	fi, _ := os.Stat(path)
 	floors := map[string]string{}
@@ -173,6 +183,6 @@ func TestMeasureMigration0022(t *testing.T) {
 		floors[k] = v
 	}
 	_ = rows.Close()
-	t.Logf("migration 0022 (incl. snapshot): %s; messages 50000, links %d, threads 50000, attachments 10000, actions 1000 with 20000 targets, drafts 500, audit 20000; db %d bytes; floors %v; snapshot %s",
+	t.Logf("migration 0022 (incl. snapshot): %s; messages 50000, links %d, threads 50000, attachments 10000, actions 1000 with 20000 targets, drafts 500, audit 40000 (20000 with thread:/attachment: targets); db %d bytes; floors %v; snapshot %s",
 		took, links, fi.Size(), floors, filepath.Base(s.LastSnapshot))
 }

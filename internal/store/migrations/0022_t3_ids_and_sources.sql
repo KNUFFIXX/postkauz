@@ -29,8 +29,13 @@
 --      ($.target_mailbox_id), drafts.remote_mailbox_id, die früheren Kopien
 --      in drafts.remote_previous und der offene Ablageversuch in
 --      drafts.push_attempt (je $.mailbox_id).
---    attachments und threads verweist keine Tabelle ohne Fremdschlüssel;
---    ihr Startwert ist max(id).
+--    - attachments und threads: max(id) und die Audit-Ziele attachment:<id>
+--      bzw. thread:<id> in audit_events (zweite Nachbesserung T3, Punkt 12:
+--      Das Zusammenführen von Threads löscht oft den mit der größten ID, das
+--      Ersetzen der Anhänge einer Nachricht deren Zeilen; eine Tabelle ohne
+--      Fremdschlüssel verweist sonst nicht auf sie). Archive der Audit-
+--      Rotation kann es vor 0022 nicht geben (audit_archives entsteht erst
+--      unten).
 -- 2. action_targets.source_path (A03_teile.md T3, Nachprüfung zu fd70f19):
 --    Pfad des Quellordners beim Anlegen des Ziels; vor dem Kommando vergleicht
 --    der Runner ihn mit dem Pfad unter mailbox_id (wie beim Zielordner, V1).
@@ -55,9 +60,17 @@ INSERT INTO meta(key, value) VALUES ('id_floor_mailboxes', CAST((SELECT coalesce
         UNION ALL SELECT max(CAST(json_extract(push_attempt, '$.mailbox_id') AS INTEGER)) FROM drafts
                     WHERE push_attempt IS NOT NULL)) AS TEXT))
     ON CONFLICT(key) DO NOTHING;
-INSERT INTO meta(key, value) VALUES ('id_floor_attachments', CAST((SELECT coalesce(max(id), 0) FROM attachments) AS TEXT))
+INSERT INTO meta(key, value) VALUES ('id_floor_attachments', CAST((SELECT coalesce(max(v), 0) FROM (
+        SELECT max(id) AS v FROM attachments
+        UNION ALL SELECT max(CAST(substr(j.value, 12) AS INTEGER))
+                    FROM audit_events, json_each(CASE WHEN json_valid(targets) THEN targets ELSE '[]' END) AS j
+                    WHERE j.value LIKE 'attachment:%')) AS TEXT))
     ON CONFLICT(key) DO NOTHING;
-INSERT INTO meta(key, value) VALUES ('id_floor_threads', CAST((SELECT coalesce(max(id), 0) FROM threads) AS TEXT))
+INSERT INTO meta(key, value) VALUES ('id_floor_threads', CAST((SELECT coalesce(max(v), 0) FROM (
+        SELECT max(id) AS v FROM threads
+        UNION ALL SELECT max(CAST(substr(j.value, 8) AS INTEGER))
+                    FROM audit_events, json_each(CASE WHEN json_valid(targets) THEN targets ELSE '[]' END) AS j
+                    WHERE j.value LIKE 'thread:%')) AS TEXT))
     ON CONFLICT(key) DO NOTHING;
 
 CREATE TRIGGER messages_id_floor AFTER DELETE ON messages

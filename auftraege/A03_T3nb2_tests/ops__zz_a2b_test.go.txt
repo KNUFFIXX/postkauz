@@ -1,0 +1,49 @@
+package ops
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// A2(b): Angreifer mit Schreibrecht nur auf die Datenbank (nicht auf den
+// Exportordner) aendert eine Zeile, passt den Nachweis an und legt einen
+// Merker mit der Pruefsumme der (lesbaren) Exportdatei an.
+func TestZZA2bDBOnlyAttackerWithMarker(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	dir := filepath.Join(base, "audit-export")
+	now := time.Now().UTC()
+	st := t3nOpen(t, filepath.Join(base, "d", "postkauz.db"))
+	t3nEvent(t, st, now.Add(-time.Minute), "sync.run")
+	t3nEvent(t, st, now, "keys.list")
+	if _, err := t3nExport(st, dir); err != nil {
+		t.Fatal(err)
+	}
+	day := now.Format("2006-01-02")
+	fileSum, _ := fileSHA256(filepath.Join(dir, auditFileName(day)))
+	for _, q := range []string{`DROP TRIGGER audit_events_no_update`, `UPDATE audit_events SET operation = 'harmlos' WHERE id = 2`} {
+		if err := st.ExecForTest(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done, _ := st.AuditExports(ctx)
+	evs, _ := st.AuditQuery(ctx, store.AuditFilter{})
+	d, _ := auditDayContent(evs, 0, 2, auditChainGenesis)
+	rec := done[0]
+	rec.SHA256 = sha256Hex(d.content)
+	if err := st.ExecForTest(`UPDATE audit_exports SET sha256 = ? WHERE day = ?`, rec.SHA256, day); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddAuditExportPending(ctx, store.AuditExportPending{Day: day, Location: dir, SHA256: fileSum}); err != nil {
+		t.Fatal(err)
+	}
+	v := t3nVerify(t, st)
+	t.Logf("verify: %s %+v incomplete=%+v", v.Status, v.Problems, v.Incomplete)
+	if v.Status == "ok" {
+		t.Errorf("DB-only-Manipulation mit Merker bleibt unentdeckt")
+	}
+}

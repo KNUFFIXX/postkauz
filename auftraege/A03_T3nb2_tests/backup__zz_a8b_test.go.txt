@@ -1,0 +1,36 @@
+package backup
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// Nebenfund zu A8: Erste Sicherung in einen NEUEN Ordner scheitert
+// (backup_incomplete) -> Ordner bleibt nicht leer ohne Manifest -> jede
+// weitere Sicherung dorthin: backup_target ("holds no backup").
+func TestZZA8bFailedFirstBackupLeavesFolderUnusable(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	to := filepath.Join(t.TempDir(), "backup")
+	sum := e.sums[1]
+	_ = e.st.ExecForTest(`INSERT OR IGNORE INTO blobs(sha256, size, created_at) VALUES (?, 12, 1)`, sum)
+	_ = e.st.ExecForTest(`UPDATE messages SET blob_sha256 = ? WHERE id = 1`, sum)
+	if _, err := e.blobs.Remove(sum); err != nil {
+		t.Fatal(err)
+	}
+	_, err1 := e.r.Create(ctx, Options{To: to})
+	ents, _ := os.ReadDir(to)
+	var names []string
+	for _, x := range ents {
+		names = append(names, x.Name())
+	}
+	t.Logf("run 1: %v; left in folder: %v", err1, names)
+	// Blob wieder da (z. B. aus der Quarantaene zurueck) -> zweiter Lauf
+	e.put(t, e.blobs, "zweiter Blob")
+	e.now = e.now.Add(60e9)
+	if _, err := e.r.Create(ctx, Options{To: to}); err != nil {
+		t.Errorf("Nebenfund bestaetigt: nach behobenem Fehler scheitert die Sicherung in denselben Ordner: %v", err)
+	}
+}

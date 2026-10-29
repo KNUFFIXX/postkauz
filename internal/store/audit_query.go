@@ -396,8 +396,10 @@ type AuditExport struct {
 
 // SaveAuditExport trägt einen Export ein oder ersetzt den Eintrag desselben
 // Tages (ein Tag wird erneut exportiert, solange er noch läuft). In
-// derselben Transaktion fallen die Merker dieses Tages an diesem Ort weg
-// (AuditExportPending): Ab jetzt belegt der Nachweis die Datei.
+// derselben Transaktion fallen alle Merker dieses Tages weg
+// (AuditExportPending): Ab jetzt belegt der Nachweis die Datei. Seit der
+// zweiten Nachbesserung T3 (Punkt 7b) auch die an anderen Orten: Ein
+// Merker in einem aufgegebenen Ordner bliebe sonst für immer stehen.
 func (s *SQLite) SaveAuditExport(ctx context.Context, e AuditExport) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -416,7 +418,7 @@ func (s *SQLite) SaveAuditExport(ctx context.Context, e AuditExport) error {
 	}
 	keep := list[:0]
 	for _, p := range list {
-		if p.Day != e.Day || p.Location != e.Location {
+		if p.Day != e.Day {
 			keep = append(keep, p)
 		}
 	}

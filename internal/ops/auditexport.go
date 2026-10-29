@@ -477,8 +477,22 @@ type AuditExportOutput struct {
 var ErrAuditExportChanged = errors.New("audit export file does not match its recorded checksum")
 
 // ErrAuditExportRunning: Ein anderer Export dieses Datenverzeichnisses
-// läuft (Sperrdatei audit-export.lock neben der Datenbank).
-var ErrAuditExportRunning = errors.New("another audit export of this data directory is running")
+// läuft (Sperrdatei audit-export.lock neben der Datenbank) oder, seit der
+// zweiten Nachbesserung T3 (Punkt 2), eine Rotation, die dieselbe Sperre
+// hält.
+var ErrAuditExportRunning = errors.New("another audit export or audit rotate of this data directory is running")
+
+// AuditExportLockName ist die Sperrdatei neben der Datenbank, die Export
+// und Rotation holen (Nachbesserung T3, Punkt 1d; zweite Nachbesserung,
+// Punkt 2).
+const AuditExportLockName = "audit-export.lock"
+
+// ErrAuditExportSourceChanged: Die Einträge eines abgeschlossenen Tages
+// sind nicht mehr genau die seines Nachweises (erste bis letzte ID), etwa
+// weil eine Rotation ohne Sperre sie inzwischen verschoben hat (zweite
+// Nachbesserung T3, Punkt 2). Der Export bricht ab, bevor er etwas
+// schreibt; sonst ersetzte er den Nachweis durch einen leeren Tag.
+var ErrAuditExportSourceChanged = errors.New("audit export: the entries of an exported day no longer match its record")
 
 // ErrAuditExportOtherInstance: Das Manifest am Ziel stammt von einem
 // anderen Datenverzeichnis, etwa dem Original einer Wiederherstellung
@@ -512,19 +526,22 @@ func (ps auditPendingSet) has(day, location, sum string) bool {
 }
 
 // auditDataDirID liefert die volle Kennung des Datenverzeichnisses (""
-// ohne Store, etwa in Testattrappen, oder ohne Kennung).
-func auditDataDirID(ctx context.Context, repo AuditRepo) string {
+// ohne Store, etwa in Testattrappen, oder ohne Kennung). Jeder andere
+// Fehler beim Lesen (etwa eine gesperrte Datenbank) bricht ab: Mit ""
+// entfiele still der Schutz vor dem Ordner eines anderen
+// Datenverzeichnisses (zweite Nachbesserung T3, Punkt 7a).
+func auditDataDirID(ctx context.Context, repo AuditRepo) (string, error) {
 	r, ok := repo.(interface {
 		DataDirIDFull(ctx context.Context) (string, error)
 	})
 	if !ok {
-		return ""
+		return "", nil
 	}
 	id, err := r.DataDirIDFull(ctx)
-	if err != nil {
-		return ""
+	if errors.Is(err, store.ErrNoDataDirID) {
+		return "", nil
 	}
-	return id
+	return id, err
 }
 
 // lockBesideDB holt die Sperrdatei name neben der Datenbank, ohne zu
@@ -606,7 +623,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			// Nur ein Export je Datenverzeichnis zugleich (Nachbesserung T3,
 			// Punkt 1d); der Trockenlauf schreibt nichts und sperrt nicht.
 			if !call.DryRun {
-				unlock, err := lockBesideDB(repo, "audit-export.lock", ErrAuditExportRunning)
+				unlock, err := lockBesideDB(repo, AuditExportLockName, ErrAuditExportRunning)
 				if err != nil {
 					return nil, err
 				}
@@ -659,7 +676,10 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
-			dataDirID := auditDataDirID(ctx, repo)
+			dataDirID, err := auditDataDirID(ctx, repo)
+			if err != nil {
+				return nil, err
+			}
 			own, err := ownExportFiles(dir, dataDirID, done)
 			if err != nil {
 				return nil, err
@@ -708,6 +728,18 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					if evs, err = loadAuditDay(ctx, src.repo, plan.asg, p); err != nil {
 						return nil, err
 					}
+					// Zweite Absicherung (zweite Nachbesserung T3, Punkt 2):
+					// genau der Bereich des Nachweises, sonst Abbruch vor dem
+					// ersten Schreiben.
+					first, last := int64(0), int64(0)
+					if len(evs) > 0 {
+						first, last = evs[0].ID, evs[len(evs)-1].ID
+					}
+					if first != p.FirstEventID || last != p.LastEventID {
+						return nil, fmt.Errorf("%w: day %s should hold entries %d to %d, found %d to %d; nothing was written "+
+							"(an audit rotate may have run meanwhile; run audit verify, then audit export again)",
+							ErrAuditExportSourceChanged, day, p.FirstEventID, p.LastEventID, first, last)
+					}
 				}
 				d, err := auditDayContent(evs, 0, AuditExportFormat, head)
 				if err != nil {
@@ -750,7 +782,26 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					FirstEventID: d.first, LastEventID: d.last, SHA256: f.SHA256, ChainHead: d.head})
 			}
 			out.ChainHead = head
-			for _, p := range todo {
+			// partial ist das Manifest nach dem Nachweis von todo[upTo]: Tage
+			// bis dahin und unveränderte Tage mit den neuen Werten, noch
+			// nicht geschriebene mit ihrem Eintrag im bisherigen Manifest,
+			// wenn ihr Nachweis an diesem Ort genau diese Datei belegt (so
+			// rechnet audit verify das Manifest aus den Nachweisen nach).
+			partial := func(upTo int) []auditManifestDay {
+				var list []auditManifestDay
+				for j, t := range todo {
+					if j <= upTo || t.f.State == "unchanged" {
+						list = append(list, manifest[j])
+						continue
+					}
+					rec, recorded := prev[t.f.Day]
+					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location == dir && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
+						list = append(list, d)
+					}
+				}
+				return list
+			}
+			for i, p := range todo {
 				out.Files = append(out.Files, p.f)
 				if call.DryRun || p.f.State == "unchanged" {
 					continue
@@ -776,6 +827,13 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				if err != nil {
 					return nil, err
 				}
+				// Manifest des Stands nach diesem Nachweis (Nachbesserung
+				// T3 2, Punkt 1): Bricht der Lauf danach ab (Strg+C, Fehler,
+				// Rechner aus), passt das Manifest trotzdem zu den
+				// Nachweisen, und audit verify bleibt ok.
+				if err := writeFileAtomic(out.Manifest, buildManifest(partial(i), dataDirID)); err != nil {
+					return nil, err
+				}
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
@@ -799,15 +857,12 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 // Prüfsumme nennt, gelten als eigene. Ein Manifest, das nicht von diesem
 // Programm stammt, ist ErrAuditExportForeign. Seit der Nachbesserung T3
 // (Punkt 2) muss das Manifest auch zu diesem Datenverzeichnis gehören
-// (dataDirID): mit Kennung dieselbe, ohne Kennung (Manifest vor
-// 0.3.0-alpha.7) nur, wenn diese Datenbank schon einen Nachweis an diesem
-// Ort hat; eine wiederhergestellte Kopie hat keinen (Orte geleert, A10).
-// Sonst ErrAuditExportOtherInstance. Ohne bekannte Kennung (Attrappen)
-// entfällt der Vergleich.
-func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]string, error) {
+// (dataDirID, checkManifestOwner), sonst ErrAuditExportOtherInstance. Ohne
+// bekannte Kennung (Attrappen) entfällt der Vergleich.
+func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]auditManifestDay, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
-		return map[string]string{}, nil
+		return map[string]auditManifestDay{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -817,16 +872,79 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
 	}
 	if dataDirID != "" {
-		recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
-		if (m.DataDirID != "" && m.DataDirID != dataDirID) || (m.DataDirID == "" && !recordedHere) {
-			return nil, fmt.Errorf("%w: %s (use an export directory of its own for each data directory)", ErrAuditExportOtherInstance, dir)
+		if err := checkManifestOwner(dir, dataDirID, m, done); err != nil {
+			return nil, err
 		}
 	}
-	own := map[string]string{}
+	own := map[string]auditManifestDay{}
 	for _, d := range m.Days {
-		own[d.File] = d.SHA256
+		own[d.File] = d
 	}
 	return own, nil
+}
+
+// checkManifestOwner: Gehört das Manifest m am Ort dir zu diesem
+// Datenverzeichnis?
+//
+//   - Mit Kennung: nur dieselbe. Zweite Nachbesserung T3, Punkt 7c: Auch bei
+//     derselben Kennung (Wiederherstellung mit --keep-identity) nicht, wenn
+//     diese Datenbank an diesem Ort keinen Nachweis hat, aber Nachweise des
+//     Originals ohne Ort (A10).
+//   - Ohne Kennung (Manifest vor 0.3.0-alpha.7): wenn diese Datenbank einen
+//     Nachweis genau an diesem Ort hat oder (Punkt 3) jeder Tag des
+//     Manifests einem ihrer Nachweise mit gleichem Tag, gleicher Prüfsumme
+//     und einem Ort entspricht, gleich in welcher Schreibweise (unter
+//     Windows Groß- und Kleinschreibung, ein neuer Laufwerksbuchstabe von
+//     Google Drive). Eine wiederhergestellte Kopie hat nur Nachweise ohne
+//     Ort und bleibt abgewiesen.
+func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.AuditExport) error {
+	recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
+	switch {
+	case m.DataDirID != "" && m.DataDirID != dataDirID:
+		return fmt.Errorf("%w: %s (its manifest names another data directory; use an export directory of its own for each data directory)",
+			ErrAuditExportOtherInstance, dir)
+	case m.DataDirID != "":
+		if !recordedHere && slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == "" }) {
+			return fmt.Errorf("%w: %s (this database is a restored copy with the identity of the data directory that exports there; "+
+				"use an export directory of its own)", ErrAuditExportOtherInstance, dir)
+		}
+		return nil
+	case recordedHere || legacyManifestMatches(m, done):
+		return nil
+	}
+	last := ""
+	for _, e := range done {
+		if e.Location != "" {
+			last = e.Location // nach Tag sortiert: der Ort des jüngsten Nachweises
+		}
+	}
+	if last == "" {
+		return fmt.Errorf("%w: %s (its manifest has no data directory id, and this database has no audit export recorded there, "+
+			"as after a restore; use an export directory of its own)", ErrAuditExportOtherInstance, dir)
+	}
+	return fmt.Errorf("%w: %s (its manifest has no data directory id and does not match the audit exports of this database, "+
+		"last recorded at %s; if that is the same folder, run audit export --to %q once, otherwise use an export directory of its own)",
+		ErrAuditExportOtherInstance, dir, last, last)
+}
+
+// legacyManifestMatches: Jeder Tag des Manifests entspricht einem Nachweis
+// dieser Datenbank (gleicher Tag, gleiche Prüfsumme, Ort nicht leer). Ein
+// Manifest ohne Tage belegt nichts.
+func legacyManifestMatches(m auditManifest, done []store.AuditExport) bool {
+	if len(m.Days) == 0 {
+		return false
+	}
+	rec := map[string]store.AuditExport{}
+	for _, e := range done {
+		rec[e.Day] = e
+	}
+	for _, d := range m.Days {
+		e, ok := rec[d.Day]
+		if !ok || e.Location == "" || e.SHA256 != d.SHA256 || d.File != auditFileName(d.Day) {
+			return false
+		}
+	}
+	return true
 }
 
 // checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
@@ -834,7 +952,7 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 // belegt (Prüfsumme schon vorher geprüft), wenn ein Merker eines
 // abgebrochenen Exports sie belegt (gleicher Tag, gleicher Ort) oder wenn
 // das Manifest am Ziel sie mit ihrer Prüfsumme nennt.
-func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir string, pend auditPendingSet) error {
+func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditExport, dir string, pend auditPendingSet) error {
 	got, err := fileSHA256(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -848,7 +966,7 @@ func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir
 	if day, ok := auditDayOfFile(filepath.Base(path)); ok && pend.has(day, dir, got) {
 		return nil
 	}
-	if sum, ok := own[filepath.Base(path)]; ok && sum == got {
+	if d, ok := own[filepath.Base(path)]; ok && d.SHA256 == got {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrAuditExportForeign, filepath.Base(path))
@@ -1018,7 +1136,10 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 	if err != nil {
 		return out, nil, err
 	}
-	dataDirID := auditDataDirID(ctx, src.base)
+	dataDirID, err := auditDataDirID(ctx, src.base)
+	if err != nil {
+		return out, nil, err
+	}
 	exported := map[string]store.AuditExport{}
 	// Manifest je Ort; nur geprüft, wenn dort ein Tag im Format 2 liegt.
 	manifests := map[string][]auditManifestDay{}
@@ -1193,13 +1314,38 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 			}
 		}
 	}
-	// Dateien abgebrochener Exporte (Merker), die noch so am Ort liegen.
+	// Dateien abgebrochener Exporte (Merker), die noch am Ort liegen.
+	// Zweite Nachbesserung T3: Ein Merker für einen Tag, dessen Nachweis an
+	// einem anderen Ort steht, gehört zu einem aufgegebenen Ordner und wird
+	// übergangen (Punkt 7b). Liegt am Ort eines Merkers eine Datei, die
+	// weder zu ihm noch zu einem anderen Merker dieses Tages und Ortes passt,
+	// und hat der Tag dort keinen Nachweis (den prüft die Schleife oben),
+	// ist sie verändert (Punkt 6).
+	seen := map[string]bool{}
 	for _, p := range pend {
+		e, recorded := exported[p.Day]
+		if recorded && e.Location != p.Location {
+			continue
+		}
 		file := filepath.Join(p.Location, auditFileName(p.Day))
-		if got, err := fileSHA256(file); err == nil && got == p.SHA256 {
-			if e, ok := exported[p.Day]; !ok || e.Location != p.Location || e.SHA256 != got {
+		if seen[file] {
+			continue
+		}
+		got, err := fileSHA256(file)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue // Abbruch vor dem Umbenennen der Datei
+		case err != nil:
+			return out, nil, err
+		}
+		seen[file] = true
+		switch {
+		case pend.has(p.Day, p.Location, got):
+			if !recorded || e.SHA256 != got {
 				out.Incomplete = append(out.Incomplete, AuditProblem{Day: p.Day, File: file, Problem: AuditExportIncomplete})
 			}
+		case !recorded:
+			add(p.Day, file, AuditFileChanged, 0)
 		}
 	}
 	stray, err := auditStrayRows(ctx, repo, plan, closedRows)

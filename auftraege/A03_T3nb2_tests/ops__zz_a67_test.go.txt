@@ -1,0 +1,126 @@
+package ops
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// A6: Fehler beim Lesen der Kennung -> Schutz von Punkt 2 entfaellt still.
+type zzIDErr struct{ *store.SQLite }
+
+func (r zzIDErr) DataDirIDFull(context.Context) (string, error) {
+	return "", errors.New("database is locked")
+}
+
+func TestZZA6DataDirIDErrorDisablesCheck(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "audit-export")
+	now := time.Now().UTC()
+	orig := t3nOpen(t, filepath.Join(base, "orig", "postkauz.db"))
+	t3nEvent(t, orig, now.Add(-time.Minute), "sync.run")
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	cp := t3nRestoredCopy(t, orig, base, now)
+	t3nEvent(t, orig, now, "keys.list")
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	today := filepath.Join(dir, auditFileName(now.Format("2006-01-02")))
+	before, _ := os.ReadFile(today)
+	t3nEvent(t, cp, now, "accounts.list")
+	_, err := t3nExport(zzIDErr{cp}, dir)
+	after, _ := os.ReadFile(today)
+	mb, _ := os.ReadFile(filepath.Join(dir, auditManifestName()))
+	t.Logf("copy export with failing id lookup: err=%v changed=%v manifest has id=%v", err, !bytes.Equal(before, after), bytes.Contains(mb, []byte("datadir_id")))
+	if err == nil {
+		t.Errorf("A6 bestaetigt: Kennungsfehler -> Kopie schreibt in den Ordner des Originals")
+	}
+}
+
+// A7: Merker eines aufgegebenen Ordners bleibt, verify meldet ihn dauerhaft.
+func TestZZA7MarkerOfAbandonedFolderStays(t *testing.T) {
+	base := t.TempDir()
+	dirA := filepath.Join(base, "export-a")
+	dirB := filepath.Join(base, "export-b")
+	now := time.Now().UTC()
+	st := t3nOpen(t, filepath.Join(base, "d", "postkauz.db"))
+	repo := &t3nFailSaveRepo{SQLite: st}
+	t3nEvent(t, st, now.Add(-time.Minute), "sync.run")
+	if _, err := t3nExport(repo, dirA); err != nil {
+		t.Fatal(err)
+	}
+	t3nEvent(t, st, now, "keys.list")
+	repo.fail = true
+	_, _ = t3nExport(repo, dirA)
+	repo.fail = false
+	// Betreiber wechselt den Ordner (z. B. neues Laufwerk) und exportiert dort.
+	for i := range 3 {
+		t3nEvent(t, st, now, "keys.list")
+		if _, err := t3nExport(st, dirB); err != nil {
+			t.Fatal(err)
+		}
+		v := t3nVerify(t, st)
+		pend, _ := st.AuditExportPending(context.Background())
+		t.Logf("run %d: status=%s incomplete=%d markers=%d", i, v.Status, len(v.Incomplete), len(pend))
+		if i == 2 && len(v.Incomplete) > 0 {
+			t.Errorf("A7 bestaetigt: verify meldet dauerhaft %+v", v.Incomplete)
+		}
+	}
+}
+
+// A12: so, wie der Kommentar von TestT3NAuditExportTwoAborts es beschreibt:
+// zweiter Abbruch VOR dem Schreiben der Datei.
+type zzFailPending struct {
+	*t3nFailSaveRepo
+	failPending bool
+	wrote       int
+}
+
+func (r *zzFailPending) AddAuditExportPending(ctx context.Context, p store.AuditExportPending) error {
+	if r.failPending {
+		return errors.New("simulated abort before the file")
+	}
+	r.wrote++
+	return r.SQLite.AddAuditExportPending(ctx, p)
+}
+
+func TestZZA12TwoAbortsSecondBeforeFile(t *testing.T) {
+	e := newAdminEnv(t)
+	repo := &zzFailPending{t3nFailSaveRepo: &t3nFailSaveRepo{SQLite: e.st}}
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(e.dir, auditFileName(time.Now().UTC().Format("2006-01-02")))
+	repo.fail = true // 1. Abbruch nach der Datei
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err == nil {
+		t.Fatal("no abort 1")
+	}
+	first, _ := os.ReadFile(file)
+	repo.fail, repo.failPending = false, true // 2. Abbruch vor der Datei
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err == nil {
+		t.Fatal("no abort 2")
+	}
+	second, _ := os.ReadFile(file)
+	if !bytes.Equal(first, second) {
+		t.Fatal("abort 2 changed the file")
+	}
+	repo.failPending = false
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err != nil {
+		t.Fatalf("export after two aborts = %v", err)
+	}
+	if v := t3nVerify(t, repo); v.Status != "ok" {
+		t.Fatalf("verify = %+v", v)
+	}
+}

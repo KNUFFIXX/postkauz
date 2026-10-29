@@ -573,7 +573,10 @@ func normalizeAliases(in []string, own ...string) ([]string, error) {
 			// Nie die Adresse selbst nennen (B1), nur ihre Stelle.
 			return nil, inputErr("invalid alias (aliases[%d]): give a plain e-mail address such as alias@example.org", i)
 		}
-		a := strings.ToLower(addr.Address)
+		// Nur ASCII klein (mailaddr.Lower): strings.ToLower machte aus dem
+		// Kelvin-Zeichen ein „k“ und damit aus einer fremden Adresse eine
+		// eigene (zweite Nachbesserung T3, Punkt 9).
+		a := mailaddr.Lower(addr.Address)
 		if seen.Has(a) {
 			continue
 		}

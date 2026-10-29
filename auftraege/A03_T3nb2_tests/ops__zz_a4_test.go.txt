@@ -1,0 +1,52 @@
+package ops
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// A4: Kopie mit --keep-identity (gleiche Kennung) exportiert in den Ordner des Originals.
+func TestZZA4KeepIdentityCopyOverwritesOriginal(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	dir := filepath.Join(base, "audit-export")
+	now := time.Now().UTC()
+	orig := t3nOpen(t, filepath.Join(base, "orig", "postkauz.db"))
+	t3nEvent(t, orig, now.Add(-24*time.Hour), "sync.run")
+	t3nEvent(t, orig, now.Add(-time.Minute), "sync.run")
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.MkdirAll(filepath.Join(base, "copy"), 0o700)
+	snap := filepath.Join(base, "copy", "postkauz.db")
+	if err := orig.SnapshotTo(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	cp := t3nOpen(t, snap)
+	if _, err := cp.PrepareRestored(ctx, store.RestorePrep{DataDirID: "", // --keep-identity
+		Event: func(store.RestoreFixes) audit.Event {
+			return audit.Event{TS: now, ActorType: audit.ActorSystem, Operation: "backup.restore", Result: audit.ResultOK, ParamsRedacted: []byte("{}")}
+		}, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	t3nEvent(t, orig, now, "keys.list") // Original arbeitet nach der Sicherung weiter
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	today := filepath.Join(dir, auditFileName(now.Format("2006-01-02")))
+	before, _ := os.ReadFile(today)
+	t3nEvent(t, cp, now, "accounts.list")
+	_, err := t3nExport(cp, dir)
+	after, _ := os.ReadFile(today)
+	t.Logf("keep-identity copy export into original folder: err=%v, file changed=%v", err, !bytes.Equal(before, after))
+	if err == nil || !bytes.Equal(before, after) {
+		t.Errorf("A4 bestaetigt: Kopie mit gleicher Kennung ersetzt Tagesdatei des Originals (err=%v)", err)
+	}
+}

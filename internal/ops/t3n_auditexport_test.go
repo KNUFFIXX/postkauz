@@ -99,31 +99,10 @@ func TestT3NAuditExportAbortBetweenFileAndRecord(t *testing.T) {
 	}
 }
 
-// Punkt 1: Zwei Abbrüche hintereinander (der zweite vor dem Schreiben der
-// Datei): Die Datei des ersten bleibt über ihren Merker eine eigene.
-func TestT3NAuditExportTwoAborts(t *testing.T) {
-	e := newAdminEnv(t)
-	repo := &t3nFailSaveRepo{SQLite: e.st}
-	e.run(t, adminKey, "keys.list", map[string]any{})
-	if _, err := t3nExport(repo, e.dir); err != nil {
-		t.Fatal(err)
-	}
-	repo.fail = true
-	for range 2 {
-		e.run(t, adminKey, "keys.list", map[string]any{})
-		if _, err := t3nExport(repo, e.dir); err == nil {
-			t.Fatal("simulated abort did not happen")
-		}
-	}
-	repo.fail = false
-	e.run(t, adminKey, "keys.list", map[string]any{})
-	if _, err := t3nExport(repo, e.dir); err != nil {
-		t.Fatalf("export after two aborts = %v", err)
-	}
-	if v := t3nVerify(t, repo); v.Status != "ok" {
-		t.Fatalf("verify = %+v", v)
-	}
-}
+// Punkt 1: Zwei Abbrüche hintereinander, der zweite vor dem Schreiben der
+// Datei: TestT3N2TwoAbortsSecondBeforeFile (zweite Nachbesserung T3,
+// Punkt 7d; der frühere Test hier ließ beide Läufe erst nach der Datei
+// scheitern).
 
 // Punkt 1d: Ein zweiter Export desselben Datenverzeichnisses bricht mit
 // ErrAuditExportRunning ab, solange der erste läuft.

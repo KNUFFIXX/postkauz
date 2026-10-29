@@ -13,6 +13,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -320,6 +321,10 @@ func classify(err error) ToolError {
 		return ToolError{Status: "error", Code: "not_found", Message: "identity not found; see the from address of your drafts"}
 	case errors.Is(err, store.ErrAccountNotFound):
 		return ToolError{Status: "error", Code: "not_found", Message: "account not found; see mail_list_accounts"}
+	case errors.Is(err, blob.ErrBusy):
+		// Nachbesserung 2, Punkt 8: vorübergehend, der Agent darf es später
+		// erneut versuchen.
+		return ToolError{Status: "error", Code: "blob_busy", Message: "the attachment store is busy (blob gc or another program holds its lock); nothing was stored; try again in a moment"}
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return ToolError{Status: "error", Code: "canceled", Message: "the call was canceled or ran out of time"}
 	}

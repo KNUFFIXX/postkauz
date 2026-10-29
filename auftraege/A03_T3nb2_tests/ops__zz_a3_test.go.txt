@@ -1,0 +1,67 @@
+package ops
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// A3: Rotation laeuft, nachdem der Export die Archivliste geladen hat
+// (openAuditSource), und bevor er abgeschlossene Tage liest.
+type zzRotateDuringExport struct {
+	*store.SQLite
+	hook func()
+}
+
+func (r *zzRotateDuringExport) AuditExports(ctx context.Context) ([]store.AuditExport, error) {
+	if h := r.hook; h != nil {
+		r.hook = nil
+		h()
+	}
+	return r.SQLite.AuditExports(ctx)
+}
+
+func TestZZA3RotateDuringExportToNewFolder(t *testing.T) {
+	base := t.TempDir()
+	dirA := filepath.Join(base, "export-a")
+	dirB := filepath.Join(base, "export-b") // z. B. anderer Laufwerksbuchstabe
+	now := time.Now().UTC()
+	st := t3nOpen(t, filepath.Join(base, "d", "postkauz.db"))
+	t3nEvent(t, st, now.Add(-72*time.Hour), "sync.run")
+	t3nEvent(t, st, now.Add(-48*time.Hour), "sync.run")
+	t3nEvent(t, st, now.Add(-time.Minute), "sync.run")
+	if _, err := t3nExport(st, dirA); err != nil {
+		t.Fatal(err)
+	}
+	if v := t3nVerify(t, st); v.Status != "ok" {
+		t.Fatalf("verify before = %+v", v)
+	}
+	before, _ := st.AuditExports(context.Background())
+	repo := &zzRotateDuringExport{SQLite: st}
+	repo.hook = func() {
+		res, err := AuditRotate(st, 36*time.Hour).Handler(context.Background(), Call{Input: json.RawMessage(`{}`)})
+		t.Logf("rotation inside the export window: %+v err=%v", res, err)
+	}
+	out, err := t3nExport(repo, dirB)
+	t.Logf("export to new folder: err=%v", err)
+	for _, f := range out.Files {
+		t.Logf("  %s events=%d first=%d last=%d state=%s", f.Day, f.Events, f.FirstEventID, f.LastEventID, f.State)
+	}
+	after, _ := st.AuditExports(context.Background())
+	t.Logf("records before: %+v", before)
+	t.Logf("records after:  %+v", after)
+	v := t3nVerify(t, st)
+	t.Logf("verify after: %s %+v", v.Status, v.Problems)
+	if err == nil && v.Status != "ok" {
+		t.Errorf("A3 bestaetigt: Export ohne Fehler, danach verify %s", v.Status)
+	}
+	for i := range before {
+		if i < len(after) && after[i].LastEventID != before[i].LastEventID {
+			t.Errorf("A3 bestaetigt: Nachweis %s ueberschrieben: last %d -> %d", before[i].Day, before[i].LastEventID, after[i].LastEventID)
+		}
+	}
+}

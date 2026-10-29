@@ -43,7 +43,10 @@ func TestT3NConcurrentRotateKeepsCommittedArchive(t *testing.T) {
 	var archiveA string
 	repoB := &t3nRotateHookRepo{SQLite: e.st}
 	repoB.hook = func() {
-		out, err := AuditRotate(e.st, 365*24*time.Hour).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+		// Lauf A ohne Sperrdateien (ältere Programmversion): Seit der
+		// zweiten Nachbesserung T3 hält B die Exportsperre ab dem Start, ein
+		// Lauf mit Sperre käme gar nicht dazwischen.
+		out, err := AuditRotate(t3n2NoLockRepo{e.st}, 365*24*time.Hour).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
 		if err != nil {
 			t.Fatalf("rotation A: %v", err)
 		}

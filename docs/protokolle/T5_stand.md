@@ -49,6 +49,7 @@ Für die Prüfsitzung: Diese Datei ersetzt bei einem parallel laufenden Teil die
 ## Stand 29.10.2026
 
 - **Ausgangsstand:** Zweig `claude/determined-fermi-1g8w63`, Commit `9d2fc69` (T3 samt Nachbesserung, wird nach der Gegenprüfung zu `main`). Eine Cloud-Sitzung, Go 1.27.3 nach der Ausnahme in `CLAUDE.md` (der Container brachte 1.24.7 mit).
+- **Merge während der Sitzung:** Auf denselben Zweig hat eine andere Sitzung die zweite Nachbesserung T3 gepusht (19 Commits bis `04fb1c1`). Zusammengeführt per Merge (kein Rebase, kein Force-Push); Konflikte nur in `CHANGELOG.md`, `docs/datenmodell.md`, `docs/roadmap.md` (beide Stände behalten; die Festlegungen von T5 heißen dort jetzt Nummer 64). Die Prüfläufe unten liefen nach dem Merge erneut.
 - **T5 läuft nicht mehr parallel** (Merge-Reihenfolge T3 → T5): Diese Sitzung pflegt `docs/roadmap.md` und `CHANGELOG.md` selbst (Rahmen 10); diese Datei hält Einzelheiten, Festlegungen und Prüfläufe.
 - **Erledigt:** S3.5 und S3.6 nach ADR-010, Punkt für Punkt:
   1. Transport zustandslos (`Stateless`, `JSONResponse`), nur `POST /mcp`, GET/DELETE 405, PRM unter `/.well-known/oauth-protected-resource[/<pfad>]`, `/healthz` 204 ohne Inhalt; Härtung: 1 MiB (413), Fristen 60 s (Lesen, Schreiben; Kopf 10 s), keine `Server`-Kopfzeile, `Cache-Control: no-store`, Rate-Begrenzung (429), `Content-Type` geprüft (415).

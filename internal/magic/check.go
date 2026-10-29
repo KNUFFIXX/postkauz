@@ -72,6 +72,18 @@ var riskyExt = map[string]bool{
 	".one": true, ".rdp": true, ".application": true, ".accde": true, ".mde": true, ".website": true,
 	".library-ms": true, ".search-ms": true, ".diagcab": true, ".xbap": true, ".hlp": true,
 	".msh": true, ".msh1": true, ".msh2": true, ".mshxml": true, ".msh1xml": true, ".msh2xml": true,
+	// Seit der zweiten Nachbesserung T3 (Punkt 10): Rest der Sperrliste von
+	// Outlook (Level 1): Access-Projekte und -Datenbanken, App-Installer
+	// und App-Bündel, Office-Add-ins (VSTO), PowerShell-Formate und
+	// -Konsolen, Java Web Start, Windows Sandbox, Zertifikate (Import in
+	// den Zertifikatspeicher), Internet-Einstellungen, Installer-
+	// Transformationen, Exchange-Verknüpfungen, Visual Basic und
+	// Unix-Shell-Skripte.
+	".ade": true, ".adp": true, ".mdb": true, ".accdb": true, ".mda": true,
+	".appinstaller": true, ".appxbundle": true, ".msixbundle": true, ".vsto": true,
+	".ps2xml": true, ".psc1": true, ".jnlp": true, ".wsb": true,
+	".cer": true, ".crt": true, ".der": true, ".ins": true, ".isp": true, ".mst": true, ".xnk": true,
+	".vb": true, ".bas": true, ".ksh": true, ".csh": true,
 }
 
 // EffectiveExt liefert die Dateiendung, nach der Windows einen Namen

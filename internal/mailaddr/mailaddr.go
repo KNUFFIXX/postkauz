@@ -11,17 +11,23 @@
 // Key; andere Anbieter vergleicht Key nur ohne Rücksicht auf Groß- und
 // Kleinschreibung (dort können Punkte und „+“ verschiedene Postfächer
 // sein).
+//
+// Klein geschrieben wird nur ASCII (zweite Nachbesserung T3, Punkt 9):
+// strings.ToLower machte aus dem Kelvin-Zeichen U+212A ein „k“ und aus
+// U+0130 ein „i“; eine fremde Adresse bekäme so den Schlüssel einer
+// eigenen. Mailserver vergleichen Domains und (bei Gmail) lokale Teile nur
+// in ASCII ohne Rücksicht auf die Schreibweise.
 package mailaddr
 
 import "strings"
 
-// Key ist der Vergleichsschlüssel einer Adresse (ohne Namen): klein, ohne
-// Leerraum; für gmail.com und googlemail.com ohne Punkte im lokalen Teil,
+// Key ist der Vergleichsschlüssel einer Adresse (ohne Namen): ASCII klein,
+// ohne Leerraum; für gmail.com und googlemail.com ohne Punkte im lokalen Teil,
 // ohne Zusatz ab „+“ und mit der Domain gmail.com. Ohne „@“ oder mit
 // leerem lokalem Teil nach dem Kürzen bleibt die Adresse nur klein
 // geschrieben.
 func Key(addr string) string {
-	s := strings.ToLower(strings.TrimSpace(addr))
+	s := Lower(addr)
 	i := strings.LastIndexByte(s, '@')
 	if i <= 0 {
 		return s
@@ -38,6 +44,26 @@ func Key(addr string) string {
 		return s
 	}
 	return local + "@gmail.com"
+}
+
+// Lower ist die Adresse ohne Leerraum am Rand, nur in ASCII klein
+// geschrieben (andere Zeichen bleiben, wie sie sind). Zwei Adressen mit
+// gleichem Lower sind dieselbe Schreibweise; Key fasst darüber hinaus die
+// Gmail-Schreibweisen zusammen.
+func Lower(addr string) string {
+	s := strings.TrimSpace(addr)
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; 'A' <= c && c <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				if 'A' <= b[j] && b[j] <= 'Z' {
+					b[j] += 'a' - 'A'
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
 }
 
 // Set ist eine Menge von Schlüsseln (Key) eigener Adressen.

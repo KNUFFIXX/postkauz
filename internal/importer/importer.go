@@ -276,7 +276,7 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 		info.Size = n
 	} else {
 		var err error
-		info, err = r.e.Blobs.Put(io.TeeReader(content, h))
+		info, err = r.e.Blobs.PutContext(r.ctx, io.TeeReader(content, h))
 		if err != nil {
 			if errors.Is(err, blob.ErrTooLarge) {
 				rep.Errors++
@@ -335,10 +335,16 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 	if err != nil {
 		return err
 	}
-	if !mailsync.Prepare(r.e.Blobs, &nm, rc, it.date) {
+	parsed, err := mailsync.Prepare(r.e.Blobs, &nm, rc, it.date)
+	_ = rc.Close()
+	if err != nil {
+		// Ein Anhang scheiterte am Blob-Store (Nachbesserung 2, Punkt 8):
+		// wie ein Fehler beim Ablegen der Rohmail oben.
+		return err
+	}
+	if !parsed {
 		r.e.log().Info("message header unreadable; imported without parsed fields", "position", it.pos)
 	}
-	_ = rc.Close()
 	idx := len(r.batch.New)
 	r.batch.New = append(r.batch.New, store.ImportNew{Msg: nm, Folders: []store.ImportFolderFlags{it.flags}})
 	r.batchBytes += info.Size

@@ -1,0 +1,33 @@
+// HINWEIS Prüfsitzung: In dieser Datei steht _AT_ statt des At-Zeichens, damit das PII-Gate sie durchlässt. Beim Übernehmen die Adressen wie in internal/mailaddr/mailaddr_test.go aus Konstanten zusammensetzen (gm-Konstante), nicht als Literal.
+package mailaddr
+
+import "testing"
+
+// B3 (Nachprüfung): Fremde Adressen dürfen nicht als eigene gelten.
+func TestPKVB_B3_ForeignNeverOwn(t *testing.T) {
+	own := NewSet("pktestowner_AT_gmail.com", "pk.test_AT_web.de")
+	for _, a := range []string{
+		"", " ", "pktestowner", "_AT_gmail.com", "pktestowner_AT_gmail.com.evil.org", "pktestowner_AT_evil.org",
+		"pktestowner_AT_gmail.com_AT_evil.org", "pktestowner_AT_gmai1.com", "pktestowner_AT_gmail.co",
+		"pktest.owner_AT_googlemail.de", "pktestowner_AT_g.mail.com",
+		"pktеstowner_AT_gmail.com", // kyrillisches e
+		"pktestowner_AT_gmail。com", // ideographischer Punkt
+		"pktest_AT_web.de", "p.k.test_AT_web.de", "pk.test+x_AT_web.de",
+		"\"pktestowner\"_AT_gmail.com", // Quoted-Local-Part: anderer Schlüssel (nur falsch negativ)
+		"+pktestowner_AT_gmail.com", "._AT_gmail.com",
+	} {
+		if own.Has(a) {
+			t.Errorf("foreign address %q counts as own (key %q)", a, Key(a))
+		}
+	}
+	for _, a := range []string{"PK.Test.Owner_AT_gmail.com", "pktestowner+news_AT_googlemail.com", " PKTESTOWNER_AT_GMAIL.COM ", "PK.TEST_AT_WEB.DE"} {
+		if !own.Has(a) {
+			t.Errorf("own spelling %q not recognised", a)
+		}
+	}
+	// Kelvin-Zeichen U+212A: strings.ToLower macht daraus ein ASCII-k.
+	own2 := NewSet("kunde_AT_example.org")
+	if own2.Has("Kunde_AT_example.org") {
+		t.Errorf("address with KELVIN SIGN counts as own (key %q)", Key("Kunde_AT_example.org"))
+	}
+}

@@ -232,7 +232,7 @@ powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -DataDir C:\
 
 Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein `sync --watch`, der über Mitternacht (UTC) läuft, schreibt seinen Abschluss erst am Ende; der Export ordnet ihn dem nächsten offenen Tag zu (`docs/cli.md`, Abschnitt 2f). `audit verify` bleibt dabei `ok`.
 
-**Abgebrochener Export (seit 0.3.0-alpha.7):** Bricht ein Export ab (Strg+C, Rechner aus), merkt sich PostKauz die halb fertige Tagesdatei. `audit verify` zeigt dann `ok` und eine Zeile `<tag>: not exported completely (…)`; der nächste `audit export` (spätestens die tägliche Aufgabe) schließt ihn ab. Laufen zwei Exporte zugleich (Aufgabe und Hand), endet der zweite mit `error: another audit export of this data directory is running`; einfach später noch einmal.
+**Abgebrochener Export (seit 0.3.0-alpha.7):** Bricht ein Export ab (Strg+C, Rechner aus, Google Drive nicht erreichbar, Zeitlimit der Aufgabe), merkt sich PostKauz die halb fertige Tagesdatei; das Manifest passt seit 0.3.0-alpha.7b nach jedem fertigen Tag zum erreichten Stand. `audit verify` zeigt dann `ok` und eine Zeile `<tag>: not exported completely (…)`; der nächste `audit export` (spätestens die tägliche Aufgabe) schließt ihn ab. Laufen zwei Exporte zugleich (Aufgabe und Hand) oder ein Export und `audit rotate`, endet der zweite mit `error: another audit export or audit rotate of this data directory is running`; einfach später noch einmal.
 
 **Altfall (Abbruch mit einer Version vor 0.3.0-alpha.7):** `audit export` endet mit `audit export file does not match its recorded checksum` oder `the target directory holds a file this program did not write`, und `audit verify` meldet `export file was changed` für den jüngsten Tag. Reparatur:
 
@@ -242,6 +242,8 @@ Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein
 4. `audit verify` wie in Schritt 1 — erwartet eine Zeile, die mit `ok:` beginnt.
 
 Meldet `verify` mehr als einen Tag als verändert, ist es kein Abbruch: nicht reparieren, sondern klären (Abschnitt 1.8 oben, `docs/sicherheit.md` Abschnitt 6).
+
+**Erster Export nach dem Update (seit 0.3.0-alpha.7b):** Der Exportordner darf anders geschrieben sein als bisher (z. B. `g:\my drive\…` statt `G:\My Drive\…` oder ein neuer Laufwerksbuchstabe von Google Drive), solange das Manifest dort zu den Nachweisen passt. Endet der Export trotzdem mit `the target directory belongs to another data directory: … last recorded at <ort>`, einmal genau mit diesem Ort exportieren: `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export --to "<ort>"`, danach läuft die Aufgabe wieder.
 
 ### 1.9 MCP-Server ohne Passwort, Sync über Claude anstoßen
 
@@ -279,7 +281,7 @@ Die Beispiele nehmen an: Der verschlüsselte USB-Stick ist entsperrt und heißt 
 
 - die Datenbank als Schnappschuss (`postkauz-<Zeit>.db`); der Dauer-Sync darf dabei weiterlaufen,
 - alle Mails und Anhänge (Ordner `blobs`), auch die Anhänge deiner Entwürfe,
-- die Audit-Archive (`audit-archive-….db`), falls es welche gibt; nur die, die die Datenbank kennt und die zu ihrer Prüfsumme passen. Fehlt eines oder wurde es verändert, kommt es nicht mit, die Sicherung warnt (`warning: audit archive … is not in this backup …`) und `audit verify` zeigt denselben Befund. Eine Archivdatei, die die Datenbank nicht kennt (Rest eines abgebrochenen `audit rotate`), nennt `doctor`; verschiebe sie aus dem Datenverzeichnis,
+- die Audit-Archive (`audit-archive-….db`), falls es welche gibt; nur die, die die Datenbank kennt und die zu ihrer Prüfsumme passen. Fehlt eines oder wurde es verändert, kommt es nicht mit, die Sicherung warnt (`warning: audit archive … is not in this backup …`) und `audit verify` zeigt denselben Befund. Eine Archivdatei, die die Datenbank nicht kennt (Rest eines abgebrochenen `audit rotate`), nennt `doctor`; verschiebe sie aus dem Datenverzeichnis. Meldet `doctor` stattdessen `an audit rotate of this data directory is running right now`, läuft die Rotation noch: nichts verschieben, später `doctor` noch einmal,
 - `manifest.json`: Liste aller Dateien mit Größe und Prüfsumme (SHA-256),
 - `ENCRYPT-ME.txt`: der Hinweis auf die Verschlüsselung.
 
@@ -317,7 +319,16 @@ Ohne neue Mails steht dort `copied 0`. Wer mehrere Stände aufheben will, nimmt 
 
 Es läuft immer nur **eine** Sicherung je Datenverzeichnis. Startest du eine zweite, während die erste noch kopiert (z. B. von Hand neben einer geplanten Aufgabe), bricht die zweite ab, ohne etwas zu schreiben: `error: backup: another backup of this data directory is running` (Code `backup_running`). Warte, bis die erste fertig ist, und starte dann neu.
 
-Fehlt während der Sicherung eine Mail-Datei, auf die die Datenbank zeigt (etwa weil gleichzeitig `purge` und `blob gc` liefen), bricht die Sicherung ab: `error: backup: incomplete: … blob(s) the database refers to are missing from the blob store …` (Code `backup_incomplete`). Eine frühere Sicherung im Ordner bleibt dann gültig. Starte die Sicherung einfach noch einmal; kommt der Fehler wieder, prüfe das Datenverzeichnis mit `doctor --blobs=all`.
+Verschwindet **während** der Sicherung eine Mail-Datei, auf die die Datenbank zeigt (etwa weil gleichzeitig `purge` und `blob gc` liefen), bricht die Sicherung ab: `error: backup: incomplete: … blob(s) the database refers to disappeared from the blob store during the backup …` (Code `backup_incomplete`). Eine frühere Sicherung im Ordner bleibt dann gültig. Starte die Sicherung einfach noch einmal, in denselben Ordner. Das gilt auch, wenn schon die **erste** Sicherung in einen neuen Ordner abbrach (Fehler, Strg+C): Liegen dort nur `ENCRYPT-ME.txt` und Reste des abgebrochenen Laufs (Temporärdateien `.…tmp`, ein Datenbank-Schnappschuss `postkauz-….db`, der Ordner `blobs`), gilt der Ordner als leer, und der nächste Lauf räumt die Reste ab.
+
+Fehlte eine Mail-Datei **schon vor** der Sicherung (zum Beispiel, weil ein Virenscanner eine Mail mit Schadanhang in die Quarantäne verschoben hat), läuft die Sicherung trotzdem durch, damit eine einzige verlorene Datei nicht jede weitere Sicherung blockiert. Sie nennt die Datei dann nur mit ihrer Prüfsumme (Hash), nie mit Inhalt, zum Beispiel:
+
+```
+  missing:   1 blob already missing before the backup (see the warning)
+warning: 1 blob the database refers to was already missing from the blob store before this backup and is not in it (listed in the manifest as missing_blobs): 3f6c…; check the data directory with doctor --blobs=all
+```
+
+Die Liste steht auch im Manifest (`missing_blobs`) und als Zahl im Audit (`backup.done`). Prüfe dann das Datenverzeichnis mit `doctor --blobs=all` (die Zeile `rows without file` nennt denselben Hash) und hole die Datei, wenn möglich, aus der Quarantäne zurück; die nächste Sicherung nimmt sie dann wieder mit. Eine Wiederherstellung aus so einer Sicherung übernimmt den Zustand: `restore` nennt die fehlenden Dateien (`missing: … already missing when the backup was made`), `doctor --blobs` in der Kopie ebenso, und `restore` endet deshalb mit Exit 1 (`blob check failed: … already missing when the backup was made`); die übrigen Daten sind vollständig wiederhergestellt.
 
 Ab und zu prüfen, ob die Sicherung noch vollständig und unverändert ist (liest alles, schreibt nichts):
 
@@ -369,7 +380,7 @@ Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverz
 
    Vorher prüft `restore` jede Datei gegen das Manifest. Fehlt eine Datei oder wurde eine verändert, bricht es ab (`error: backup: invalid backup: …`) und entfernt, was es angelegt hatte. Ist der Zielordner nicht leer: `error: backup: target not allowed: … is not empty`.
 
-   `restore` arbeitet in einem Ordner neben dem Ziel (`C:\PostKauz\data-neu.restoring-…`) und benennt ihn erst ganz am Ende in `data-neu` um. Bricht der Rechner mittendrin ab (Stromausfall), bleibt dieser Ordner liegen; der nächste `restore` und `doctor` nennen ihn (`… is left from an interrupted restore …`). Lösche ihn und starte `restore` neu; benutze ihn nie als Datenverzeichnis.
+   `restore` arbeitet in einem Ordner neben dem Ziel (`C:\PostKauz\data-neu.restoring-…`) und benennt ihn erst ganz am Ende in `data-neu` um. Bricht der Rechner mittendrin ab (Stromausfall), bleibt dieser Ordner liegen; der nächste `restore` und `doctor` nennen ihn (`… is left from an interrupted restore …`). Lösche ihn und starte `restore` neu; benutze ihn nie als Datenverzeichnis. Hält ein anderes Programm (unter Windows oft der Virenscanner, der die eben geschriebenen Dateien prüft) den Ordner gerade fest, versucht `restore` das Umbenennen bis zu fünfmal mit kurzer Pause (zusammen gut 3 Sekunden). Klappt es dann nicht, nennt die Meldung den echten Grund, z. B. `error: restore: cannot move the restored copy into place (is another program using it?): … being used by another process`; der Arbeitsordner wird entfernt. Warte kurz und starte `restore` noch einmal.
 
    Für alles Weitere bekommt die Kopie eine **eigene** Konfiguration `C:\PostKauz\config-neu.toml` (Kopie der Live-Konfiguration) mit eigenem Exportordner, nie dem des Originals:
 
@@ -392,7 +403,7 @@ Eine Wiederherstellung ist eine **neue Instanz** (A10). Nichts darin schreibt vo
 
 - **Neue Kennung:** Die Kopie sucht ihre Passwörter unter eigenen Namen im Schlüsselbund; die Einträge des Originals liest, verschiebt und löscht sie nie. Mit `--keep-identity` behält sie die Kennung des Originals und benutzt dessen Passwörter. Das ist nur gedacht, wenn das Original verloren ist und du auf demselben Rechner weiterarbeiten willst; Original und Kopie dürfen dann nicht beide laufen.
 - **Offene Aufträge sind geschlossen:** Entwürfe ablegen, markieren, verschieben, angeforderte Syncs (`failed`, Grund `restored`); offene Anträge auf den Papierkorb sind abgelehnt. Entwürfe, die noch in den Entwürfe-Ordner sollten, hält die Kopie zurück: `draft show <id>` sagt warum; `draft edit` oder `draft request` gibt sie frei (vorher prüfen, ob das Original sie schon abgelegt hat).
-- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …` bzw. `export_dir` in ihrer Konfiguration, 2.5 Schritt 2), nie den des Originals, auch mit `--keep-identity` nicht. Ohne `--keep-identity` verweigert der Export den Ordner des Originals seit 0.3.0-alpha.7 selbst (das Manifest dort trägt die Kennung des Originals).
+- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …` bzw. `export_dir` in ihrer Konfiguration, 2.5 Schritt 2), nie den des Originals, auch mit `--keep-identity` nicht. Ohne `--keep-identity` verweigert der Export den Ordner des Originals seit 0.3.0-alpha.7 selbst (das Manifest dort trägt die Kennung des Originals), mit `--keep-identity` seit 0.3.0-alpha.7b, solange die Kopie dort noch nichts exportiert hat.
 
 ### 2.7 Original und Kopie auf demselben Rechner
 
