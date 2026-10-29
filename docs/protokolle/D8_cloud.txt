@@ -1,0 +1,36 @@
+# Abschrift aus der Cloud-Sitzung (Claude Code, Umgebung mit Tailscale 1.104.4 im Userspace, Netz begrenzt auf *.tailscale.com und log.tailscale.io),
+# Chat-Ausgabe von abnahme_D8_cloud.sh (D8_MODE=key) gegen 0.3.0-alpha.8b, Pruefsitzung DRACO-PK10, 29.10.2026; typografische Anfuehrungszeichen stammen aus der Darstellung.
+# C1.2: Die Tailnet-Regel gab Mitgliedern damals Ziel "*"; dadurch sah der Cloud-Knoten (tag:cloud) vier weitere Geraete, erreichen konnte er nur draco:443.
+# Danach verengt: Mitglieder nur noch zu autogroup:member, Heimnetz-Subnetz und autogroup:internet; tag:cloud nur zu draco tcp:443 (Richtlinien-Tests gruen).
+# Teil C wurde danach nicht wiederholt (neuer Auth-Key noetig); erwartet: C1.2 OK.
+Abnahme D8 Teil C, Modus key, 2026-10-29T12:29:23Z
+Arbeitsordner (Signale go und callback hier anlegen): /tmp/d8-cloud-rYKjlg
+OK C1.1 Cloud-Knoten tritt dem Tailnet bei (Userspace, ephemer)
+FAIL C1.2 tailscale status: erwartet genau den PostKauz-Knoten
+andere Knoten sichtbar: 4, PostKauz-Knoten darunter: ja
+OK C2.1 Metadaten der Resource mit resource
+SKIP C2.2 authorization_servers nur im Modus oauth
+{"resource":"https://<knoten>/mcp","bearer_methods_supported":["header"],"resource_name":"postkauz"}
+OK C2.3 Zertifikatskette gültig
+OK C2.4 Zertifikat läuft frühestens in 14 Tagen ab
+issuer=C = US, O = Let's Encrypt, CN = YE1
+notAfter=Jan 27 11:24:44 2027 GMT
+OK C3.1 GET /healthz -> 204 ohne Inhalt
+OK C3.2 Metadaten (RFC 9728) mit resource
+OK C3.3 POST /mcp ohne Bearer -> 401 mit WWW-Authenticate resource_metadata
+OK C3.4 POST /mcp mit falschem Zugang -> 401
+OK C3.5 GET /mcp -> 405
+OK C3s.1 initialize -> 200, keine Session-ID, keine Server-Kennung
+OK C3s.2 tools/list -> 12 Tools (Rolle des Schluessels)
+tools: mail_audit_log, mail_get_action, mail_get_attachment_text, mail_get_message, mail_get_policy, mail_get_thread, mail_list_accounts, mail_list_actions, mail_list_attachments, mail_list_mailboxes, mail_list_tags, mail_search
+OK C3s.3 kein Tool zum Senden, Loeschen oder Freigeben
+OK C3s.4 mail_search -> Ergebnis in der Untrusted-Huelle
+OK C3s.5 mail_audit_log nennt transport http und Principal cloud-reader-c
+OK C3s.6 Zugang (Schluessel/Token) in keiner Antwort
+probe: 11 OK, 0 FAIL, 0 SKIP
+[Du] C5 Jetzt auf dem PostKauz-Knoten den Schlüssel widerrufen (Teil B: Enter bei B4), dann im Arbeitsordner die Datei go anlegen.
+OK C5.2 Zugang mit widerrufenem Schluessel -> 403 denied (key_revoked)
+{"code":"key_revoked","message":"the API key behind this access was revoked or has expired; ask the user for a new key","status":"denied"}
+probe: 1 OK, 0 FAIL, 0 SKIP
+OK C6.1 Cloud-Knoten hat das Tailnet verlassen (logout, ephemer)
+D8 Teil C: 17 OK, 1 FAIL, 1 SKIP
