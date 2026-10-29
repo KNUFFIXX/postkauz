@@ -22,13 +22,16 @@
     ohne Schluessel.
 
     Teil B (nur mit -NodeName): derselbe Server im Modus key fuer den
-    Namen des PCs im Tailnet (-NodeName, z. B. pc.<tailnet>.ts.net). Mit
+    Namen des PCs im Tailnet (-NodeName, z. B. pc.<tailnet>.ts.net). Zuerst
+    liest das Skript tailscale serve status --json; ist HTTPS 443 schon
+    belegt, bricht es mit Hinweis ab (nichts wird ueberschrieben). Mit
     Zustimmung je Schritt: tailscale serve --bg <Port>, Pruefung ueber
     https://<NodeName>/, dann laeuft der Server, bis der Betreiber Enter
     drueckt (in dieser Zeit fuehrt die Pruefsitzung Teil C aus der
-    Cloud-Sitzung aus). Danach tailscale serve aus (mit Zustimmung) und
-    Widerruf des Schluessels. Der Schluessel fuer Teil C liegt waehrenddessen
-    in <WorkDir>\lauf-...\keys\cloud-reader-c.txt (danach geloescht).
+    Cloud-Sitzung aus). Danach tailscale serve --https=443 off (mit
+    Zustimmung) und Widerruf des Schluessels. Der Schluessel fuer Teil C
+    liegt waehrenddessen in <WorkDir>\lauf-...\keys\cloud-reader-c.txt
+    (danach geloescht).
 
     Teil D (nur mit -Issuer und -NodeName): Modus oauth gegen den
     Autorisierungsserver (Authelia, docs/betrieb.md 4.6). Der Betreiber
@@ -37,7 +40,13 @@
     nach der Anmeldung mit 403 und nennt das Subjekt; dann mit -Subject
     wiederholen. Mit -Subject: Tools nach dem Schluessel, Audit mit iss/sub,
     Ablauf des Tokens (5 min) abwarten -> 401, Refresh -> 200, Widerruf ->
-    403 denied (key_revoked).
+    403 denied (key_revoked). tailscale serve wie in Teil B.
+
+    Aufraeumen: Teile A, B und D laufen in try/finally. Am Ende jedes
+    Teils und bei jedem Abbruch (Fehler, Strg+C) schaltet das Skript
+    tailscale serve wieder aus (bei Abbruch ohne weitere Frage; das sagt
+    schon die Frage vor dem Einschalten), beendet mcp --http, widerruft die
+    angelegten Schluessel und loescht Schluessel- und Refresh-Dateien.
 
     Sicherheitsregeln (A03_teile.md, Rahmen 5): -DataDir, -Config und
     -LivePath sind Pflicht (wie bei D7). Abbruch ohne Aenderung, wenn
@@ -242,8 +251,13 @@ function Add-Skip {
     Write-Log ('SKIP ' + $Nr + ' ' + $Why)
 }
 
+# Abbruch. Waehrend der Teile A, B und D ($script:Main) wirft Stop-Run nur;
+# der Block um die Teile raeumt im finally auf (Clear-Part) und ruft
+# Stop-Run danach noch einmal fuer Protokoll und Exit 2.
+$script:Main = $false
 function Stop-Run {
     param([string] $Why)
+    if ($script:Main) { throw ('D8-ABBRUCH: ' + $Why) }
     if ($script:Log) {
         Write-Log ('ABBRUCH: ' + $Why)
         Write-Log ('D8: ' + $script:NOk + ' OK, ' + ($script:NFail + 1) + ' FAIL, ' + $script:NSkip + ' SKIP')
@@ -530,9 +544,11 @@ function Start-McpHttp {
     return $p
 }
 
-# Beendet mcp --http und legt seine Ausgabe (maskiert) im Laufordner ab.
+# Beendet den laufenden mcp --http ($script:Srv) und legt seine Ausgabe
+# (maskiert) im Laufordner ab.
 function Stop-McpHttp {
-    param($P)
+    $P = $script:Srv
+    $script:Srv = $null
     if ($null -eq $P) { return '' }
     if (-not $P.HasExited) { try { $P.Kill() } catch { } }
     [void] $P.WaitForExit(15000)
@@ -606,11 +622,136 @@ function New-TestKey {
     $j = Get-Json $r.Out
     $ok = ($r.Exit -eq 0 -and $null -ne $j -and ([string] $j.secret).StartsWith('pk_key_'))
     Add-Check $Nr ('key create --name ' + $Name + ' --role reader --expires 1d') $ok $r.Text
+    # Angelegt ist angelegt: am Ende des Teils (auch bei Abbruch) widerrufen.
+    if ($r.Exit -eq 0) { $script:OpenKeys.Add($Name) }
     if (-not $ok) { return '' }
     $f = Join-Path $script:Run ('keys\' + $Name + '.txt')
     New-ExclusiveFile $f ([string] $j.secret)
+    $script:OpenFiles.Add($f)
     $script:Secrets.Add([string] $j.secret)
     return $f
+}
+
+# Schluessel ist in einem Pruefschritt widerrufen worden: nicht noch einmal.
+function Set-KeyRevoked {
+    param([string] $Name)
+    [void] $script:OpenKeys.Remove($Name)
+}
+
+# ---------------------------------------------------------------- tailscale serve
+
+# Liest "tailscale serve status --json" (die ServeConfig von tailscaled;
+# "null" oder leer, wenn nichts eingestellt ist). State: 'frei', 'belegt'
+# (HTTPS/TCP auf Port 443 dieses Knotens: Eintrag "443" unter TCP oder
+# "<name>:443" unter Web, auch in Vordergrund-Sitzungen unter Foreground)
+# oder 'unbekannt' (Fehler, kein JSON).
+function Get-Serve443 {
+    $r = Invoke-Native $script:TsExe @('serve', 'status', '--json') @{} 60
+    $txt = ([string] $r.Out).Trim()
+    $state = 'unbekannt'
+    if ($r.Exit -eq 0 -and ($txt -eq '' -or $txt -eq 'null' -or $txt -eq '{}')) {
+        $state = 'frei'
+    } elseif ($r.Exit -eq 0) {
+        $j = Get-Json $txt
+        if ($null -ne $j) {
+            $state = 'frei'
+            $cfgs = New-Object System.Collections.Generic.List[object]
+            $cfgs.Add($j)
+            if ($null -ne $j.Foreground) { foreach ($p in $j.Foreground.PSObject.Properties) { $cfgs.Add($p.Value) } }
+            foreach ($c in $cfgs) {
+                if ($null -eq $c) { continue }
+                if ($null -ne $c.TCP) { foreach ($p in $c.TCP.PSObject.Properties) { if ($p.Name -eq '443') { $state = 'belegt' } } }
+                if ($null -ne $c.Web) { foreach ($p in $c.Web.PSObject.Properties) { if ($p.Name -match ':443$') { $state = 'belegt' } } }
+            }
+        }
+    }
+    return New-Object PSObject -Property @{ State = $state; Text = ('> tailscale serve status --json' + "`n" + $r.Out + "`n" + $r.Err) }
+}
+
+# Schaltet tailscale serve fuer -Port ein. Vorher muss HTTPS 443 frei sein;
+# sonst Abbruch mit Hinweis (D8 ueberschreibt keine fremde Einstellung).
+# Zustimmung je Schritt; die Zustimmung deckt auch das Ausschalten bei
+# Abbruch (Strg+C, Fehler), das ohne weitere Frage laeuft. Liefert $true,
+# wenn serve auf diesen Server zeigt.
+function Enable-Serve {
+    param([string] $CheckNr, [string] $Nr, [string] $OffNr)
+    $script:ServeOffNr = $OffNr
+    if ($script:ServeKept) {
+        # Teil B hat serve auf Wunsch des Betreibers angelassen (gleicher Port).
+        $script:ServeKept = $false
+        $script:ServeOn = $true
+        Write-Log ('      ' + $Nr + ': tailscale serve aus Teil B ist noch an (gleicher Port); am Ende dieses Teils wieder aus')
+        return $true
+    }
+    $s = Get-Serve443
+    if ($s.State -ne 'frei') {
+        foreach ($l in ((Limit-Text (Hide-Private $s.Text)) -split "`r?`n")) { Write-Log ('      ' + $l) }
+        Stop-Run ($CheckNr + ' tailscale serve: HTTPS auf Port 443 ist schon belegt oder nicht lesbar (' + $s.State + '). D8 ueberschreibt keine fremde Einstellung. Bitte mit "tailscale serve status" pruefen und, nur wenn sie nicht mehr gebraucht wird, von Hand ausschalten ("tailscale serve --https=443 off"); dann D8 mit neuen Pfaden wiederholen.')
+    }
+    Add-Check $CheckNr 'tailscale serve status --json: HTTPS 443 ist frei (nichts wird ueberschrieben)' $true $s.Text
+    if (-not (Confirm-Step $Nr ('tailscale serve --bg ' + $Port + ' (macht https://<knoten>/ im Tailnet auf diesen Server; kein Funnel). Am Ende des Teils fragt das Skript vor dem Ausschalten; bei Abbruch schaltet es ohne Frage aus (tailscale serve --https=443 off).'))) { return $false }
+    $r = Invoke-Native $script:TsExe @('serve', '--bg', [string] $Port) @{} 60
+    # Auch nach einem Fehler koennte etwas eingestellt sein: dann ebenfalls
+    # am Ende ausschalten.
+    $script:ServeOn = $true
+    Add-Check $Nr ('tailscale serve --bg ' + $Port) ($r.Exit -eq 0) ($r.Out + "`n" + $r.Err)
+    return ($r.Exit -eq 0)
+}
+
+# Schaltet tailscale serve auf 443 wieder aus und prueft danach, dass 443
+# frei ist. Ask: am normalen Ende eines Teils mit Zustimmung (wie bisher);
+# im finally (Abbruch) ohne Frage, wie in Enable-Serve angekuendigt.
+function Disable-Serve {
+    param([bool] $Ask)
+    if (-not $script:ServeOn) { return }
+    $nr = $script:ServeOffNr
+    if ($Ask -and -not (Confirm-Step $nr 'tailscale serve wieder ausschalten (tailscale serve --https=443 off)')) {
+        $script:ServeOn = $false
+        $script:ServeKept = $true
+        Add-Skip $nr 'tailscale serve bleibt an (von Hand: tailscale serve --https=443 off)'
+        return
+    }
+    $script:ServeOn = $false
+    $r = Invoke-Native $script:TsExe @('serve', '--https=443', 'off') @{} 60
+    $s = Get-Serve443
+    Add-Check $nr 'tailscale serve --https=443 off, danach HTTPS 443 frei (status --json)' ($r.Exit -eq 0 -and $s.State -eq 'frei') ($r.Out + "`n" + $r.Err + "`n" + $s.Text)
+}
+
+# ---------------------------------------------------------------- Aufraeumen
+
+# Was ein Teil angelegt oder gestartet hat und am Ende wieder weg muss, auch
+# bei Abbruch: tailscale serve, der laufende mcp --http, Schluessel (werden
+# widerrufen) und Dateien (Schluessel, Refresh-Token).
+$script:Srv = $null
+$script:OpenKeys = New-Object System.Collections.Generic.List[string]
+$script:OpenFiles = New-Object System.Collections.Generic.List[string]
+$script:TsExe = ''
+$script:ServeOn = $false
+$script:ServeKept = $false
+$script:ServeOffNr = ''
+
+# Laeuft am Ende von Teil A, B und D und im finally. Fehler hier brechen
+# nichts ab; was liegen bleibt, steht im Protokoll.
+function Clear-Part {
+    if ($script:ServeOn) {
+        try { Disable-Serve $false } catch { try { Write-Log ('      Aufraeumen: tailscale serve --https=443 off fehlgeschlagen, bitte von Hand ausfuehren') } catch { } }
+    }
+    if ($null -ne $script:Srv) {
+        try { [void] (Stop-McpHttp) } catch { try { Write-Log '      Aufraeumen: mcp --http liess sich nicht beenden, bitte im Task-Manager beenden' } catch { } }
+    }
+    foreach ($n in @($script:OpenKeys)) {
+        try {
+            $r = Invoke-Pk @('key', 'revoke', $n)
+            Write-Log ('      Aufraeumen: key revoke ' + $n + ' (exit ' + $r.Exit + ')')
+        } catch { try { Write-Log ('      Aufraeumen: key revoke ' + $n + ' fehlgeschlagen') } catch { } }
+    }
+    $script:OpenKeys.Clear()
+    foreach ($f in @($script:OpenFiles)) {
+        try {
+            if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction Stop }
+        } catch { try { Write-Log ('      Aufraeumen: Datei liess sich nicht loeschen, bitte von Hand: ' + $f) } catch { } }
+    }
+    $script:OpenFiles.Clear()
 }
 
 # Stellt sicher, dass weder ein Schluessel noch der Knotenname im Text steht.
@@ -725,174 +866,200 @@ if ($Issuer) { Write-Log 'Teil D: ja (-Issuer)' } else { Write-Log 'Teil D: nein
 $base = 'http://127.0.0.1:' + $Port
 $mcpUrl = $base + '/mcp'
 $hostLocal = '127.0.0.1:' + $Port
-
-# ================================================================ Teil A
-
-Write-Log ''
-Write-Log '===== Teil A: mcp --http lokal im Modus key (offline)'
-
-$det = 'SHA-256 postkauz.exe: ' + (Get-FileHash -LiteralPath $script:ExeFull -Algorithm SHA256).Hash
-$r = Invoke-Native $script:ExeFull @('version')
-Add-Check 'A0.1' ('version nennt ' + $ExpectVersion) ($r.Exit -eq 0 -and (Test-Has $r.Out ([regex]::Escape($ExpectVersion) + '(?![0-9A-Za-z.])'))) ($r.Out.Trim() + "`n" + $det)
-
-[void] [System.IO.Directory]::CreateDirectory($script:Data)
-[void] [System.IO.Directory]::CreateDirectory((Split-Path -Parent $script:Cfg))
-New-ExclusiveFile $script:Cfg ("# Abnahme D8, Teil A: nur dieses Datenverzeichnis`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`n")
-
-$r = Invoke-Pk @('doctor', '--json')
-$j = Get-Json $r.Out
-$hok = ($null -ne $j -and $null -ne $j.http -and $j.http.listen -eq $hostLocal -and $j.http.auth -eq 'key' -and $j.http.listen_allowed -eq $true)
-Add-Check 'A1.1' ('doctor --json: http.listen ' + $hostLocal + ', auth key, listen_allowed') $hok $r.Text
-
-$keyFile = New-TestKey 'cloud-reader' 'A1.2'
-
-$r = Invoke-PkIn $script:Data $script:Cfg @('mcp', '--http', '--listen', ('0.0.0.0:' + $Port)) '' 30
-Add-Check 'A1.3' 'mcp --http --listen 0.0.0.0:<Port> -> Abbruch vor dem Start (Exit 2, allow_non_loopback)' ($r.Exit -eq 2 -and (Test-Has $r.Err 'allow_non_loopback')) $r.Text
-
-$srv = Start-McpHttp $script:Cfg 'mcp-http-a.txt'
-$r = Invoke-Http 'GET' ($base + '/healthz')
-Add-Check 'A2.1' 'mcp --http laeuft: GET /healthz -> 204 ohne Inhalt' ($r.Status -eq 204 -and -not $r.Body) $r.Show
-if ($r.Status -eq 204) {
-    $r = Invoke-Http 'GET' ($base + '/.well-known/oauth-protected-resource/mcp')
-    $j = Get-Json $r.Body
-    Add-Check 'A2.2' 'Metadaten (RFC 9728): resource = http://127.0.0.1:<Port>/mcp, keine authorization_servers' ($r.Status -eq 200 -and $null -ne $j -and $j.resource -eq $mcpUrl -and $null -eq $j.authorization_servers) $r.Show
-    $r = Invoke-Http 'POST' $mcpUrl $script:JsonHdr $script:InitBody
-    Add-Check 'A2.3' 'POST /mcp ohne Bearer -> 401 mit WWW-Authenticate resource_metadata' ($r.Status -eq 401 -and (Test-Has $r.Headers '(?i)WWW-Authenticate: Bearer resource_metadata="http://127\.0\.0\.1:\d+/\.well-known/oauth-protected-resource/mcp"')) $r.Show
-    $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders ('pk_key_' + ('x' * 43))) $script:InitBody
-    Add-Check 'A2.4' 'POST /mcp mit unbekanntem Schluessel -> 401' ($r.Status -eq 401) $r.Show
-    $key = ''
-    if ($keyFile) { $key = [System.IO.File]::ReadAllText($keyFile).Trim() }
-    $r = Invoke-Http 'GET' $mcpUrl (Get-McpHeaders $key)
-    Add-Check 'A2.5' 'GET /mcp -> 405' ($r.Status -eq 405) $r.Show
-    $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody 'evil.example.org'
-    Add-Check 'A2.6' 'fremder Host-Kopf -> 421' ($r.Status -eq 421) $r.Show
-    $big = New-Object byte[] (1048576 + 100)
-    for ($k = 0; $k -lt $big.Length; $k++) { $big[$k] = 32 }
-    $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $null '' $big
-    if ($r.Status -eq 0) {
-        Add-Skip 'A2.7' 'Anfrage ueber 1 MiB: Server schloss die Verbindung vor der Antwort (Windows liest dann keinen Status; 413 belegt der Unit-Test TestHTTPHardening)'
-    } else {
-        Add-Check 'A2.7' 'Anfrage ueber 1 MiB -> 413' ($r.Status -eq 413) ('status ' + $r.Status)
-    }
-    $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody
-    Add-Check 'A2.8' 'initialize mit Schluessel -> 200, keine Session-ID, keine Server-Kennung' ($r.Status -eq 200 -and -not (Test-Has $r.Headers '(?im)^(Mcp-Session-Id|Server):')) $r.Show
-    if ($keyFile) {
-        Invoke-Probe @('key', '--url', $mcpUrl, '--key-file', $keyFile, '--nr', 'A3', '--principal', 'cloud-reader', '--expect-tools', '12') 'MCP-Sitzung'
-    }
-    $r = Invoke-Pk @('key', 'revoke', 'cloud-reader')
-    Add-Check 'A4.1' 'key revoke cloud-reader' ($r.Exit -eq 0 -and (Test-Has $r.Out 'revoked')) $r.Text
-    Write-Log '      warte 31 s (Zwischenspeicher der Anmeldung 30 s) ...'
-    Start-Sleep -Seconds 31
-    $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody
-    $j = Get-Json $r.Body
-    Add-Check 'A4.2' 'widerrufener Schluessel -> 403 {"status":"denied","code":"key_revoked"}' ($r.Status -eq 403 -and $null -ne $j -and $j.status -eq 'denied' -and $j.code -eq 'key_revoked') $r.Show
-} else {
-    Add-Skip 'A2-A4' 'mcp --http laeuft nicht'
-}
-$srvText = Stop-McpHttp $srv
-Add-Check 'A5.1' 'mcp --http meldet den Start auf stderr' (Test-Has $srvText 'mcp --http: listening on 127\.0\.0\.1:\d+ \(auth key') (Limit-Text $srvText 5 600)
-
-$r = Invoke-Pk @('audit', '--raw', '--since', '1h', '--limit', '1000', '--json')
-$ev = @(Get-JsonLines $r.Out)
-$http = @($ev | Where-Object { $null -ne $_.params -and $null -ne $_.params.via -and $_.params.via.transport -eq 'http' })
-$auth = @($ev | Where-Object { $_.operation -eq 'keys.authenticate' -and $_.result -eq 'denied' })
-$detail = 'Eintraege mit params.via.transport=http: ' + $http.Count + "`n" + 'keys.authenticate denied: ' + (@($auth | ForEach-Object { $_.reason }) -join ', ')
-$needHttp = 1
-if (-not $script:Py) { $needHttp = 0 }
-Add-Check 'A5.2' 'Audit: Aufrufe mit transport http und Principal; gescheiterte Anmeldungen (key_invalid, key_revoked)' ($r.Exit -eq 0 -and $http.Count -ge $needHttp -and @($auth | Where-Object { $_.reason -eq 'key_invalid' }).Count -ge 1 -and @($auth | Where-Object { $_.reason -eq 'key_revoked' }).Count -ge 1) $detail
-$logText = ''
-$logFile = Join-Path $script:Data 'postkauz.log'
-if (Test-Path -LiteralPath $logFile) { $logText = [System.IO.File]::ReadAllText($logFile) }
-Add-Check 'A5.3' 'Schluessel weder im Log noch im Audit noch in der Ausgabe von mcp --http' ((Test-NoSecret $logText) -and (Test-NoSecret $r.Out) -and (Test-NoSecret $srvText)) ''
-$r = Invoke-Pk @('audit', 'verify', '--json')
-$j = Get-Json $r.Out
-Add-Check 'A5.4' 'audit verify -> status ok' ($r.Exit -eq 0 -and $null -ne $j -and $j.status -eq 'ok') $r.Text
-
-# ================================================================ Teil B
-
 if ($NodeName) {
-    Write-Log ''
-    Write-Log '===== Teil B: dieser PC als Knoten im Tailnet (Modus key)'
-    $res = 'https://' + $NodeName + '/mcp'
-    $cfgB = $script:Cfg + '.tailnet.toml'
-    New-ExclusiveFile $cfgB ("# Abnahme D8, Teil B`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`nresource = '" + $res + "'`r`n")
-    $keyC = New-TestKey 'cloud-reader-c' 'B1.1'
-    $srv = Start-McpHttp $cfgB 'mcp-http-b.txt'
-    $r = Invoke-Http 'GET' ($base + '/healthz')
-    Add-Check 'B1.2' 'mcp --http laeuft (Resource https://<knoten>/mcp)' ($r.Status -eq 204) $r.Show
-    $r = Invoke-Http 'POST' $mcpUrl $script:JsonHdr $script:InitBody
-    Add-Check 'B1.3' 'Host 127.0.0.1 gilt mit eigener Resource nicht mehr -> 421' ($r.Status -eq 421) $r.Show
     $ts = @(Get-Command 'tailscale.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($ts.Count -eq 0) {
-        Add-Skip 'B2' 'tailscale.exe nicht im PATH (Tailscale fuer Windows installieren)'
-    } elseif (Confirm-Step 'B2.1' ('tailscale serve --bg ' + $Port + ' (macht https://<knoten>/ im Tailnet auf diesen Server; kein Funnel)')) {
-        $r = Invoke-Native $ts[0].Path @('serve', '--bg', [string] $Port) @{} 60
-        Add-Check 'B2.1' ('tailscale serve --bg ' + $Port) ($r.Exit -eq 0) ($r.Out + "`n" + $r.Err)
-        $r = Invoke-Http 'GET' ('https://' + $NodeName + '/.well-known/oauth-protected-resource/mcp')
+    if ($ts.Count -gt 0) { $script:TsExe = $ts[0].Path }
+}
+
+# Teile A, B und D in einem Block: Was ein Teil anlegt (Schluessel,
+# Schluessel- und Refresh-Dateien, mcp --http, tailscale serve), raeumt
+# Clear-Part am Ende des Teils weg und im finally auch bei Abbruch
+# (Stop-Run, Fehler, Strg+C).
+$script:Main = $true
+$abort = ''
+$done = $false
+try {
+
+    # ============================================================ Teil A
+
+    Write-Log ''
+    Write-Log '===== Teil A: mcp --http lokal im Modus key (offline)'
+
+    $det = 'SHA-256 postkauz.exe: ' + (Get-FileHash -LiteralPath $script:ExeFull -Algorithm SHA256).Hash
+    $r = Invoke-Native $script:ExeFull @('version')
+    Add-Check 'A0.1' ('version nennt ' + $ExpectVersion) ($r.Exit -eq 0 -and (Test-Has $r.Out ([regex]::Escape($ExpectVersion) + '(?![0-9A-Za-z.])'))) ($r.Out.Trim() + "`n" + $det)
+
+    [void] [System.IO.Directory]::CreateDirectory($script:Data)
+    [void] [System.IO.Directory]::CreateDirectory((Split-Path -Parent $script:Cfg))
+    New-ExclusiveFile $script:Cfg ("# Abnahme D8, Teil A: nur dieses Datenverzeichnis`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`n")
+
+    $r = Invoke-Pk @('doctor', '--json')
+    $j = Get-Json $r.Out
+    $hok = ($null -ne $j -and $null -ne $j.http -and $j.http.listen -eq $hostLocal -and $j.http.auth -eq 'key' -and $j.http.listen_allowed -eq $true)
+    Add-Check 'A1.1' ('doctor --json: http.listen ' + $hostLocal + ', auth key, listen_allowed') $hok $r.Text
+
+    $keyFile = New-TestKey 'cloud-reader' 'A1.2'
+
+    $r = Invoke-PkIn $script:Data $script:Cfg @('mcp', '--http', '--listen', ('0.0.0.0:' + $Port)) '' 30
+    Add-Check 'A1.3' 'mcp --http --listen 0.0.0.0:<Port> -> Abbruch vor dem Start (Exit 2, allow_non_loopback)' ($r.Exit -eq 2 -and (Test-Has $r.Err 'allow_non_loopback')) $r.Text
+
+    $script:Srv = Start-McpHttp $script:Cfg 'mcp-http-a.txt'
+    $r = Invoke-Http 'GET' ($base + '/healthz')
+    Add-Check 'A2.1' 'mcp --http laeuft: GET /healthz -> 204 ohne Inhalt' ($r.Status -eq 204 -and -not $r.Body) $r.Show
+    if ($r.Status -eq 204) {
+        $r = Invoke-Http 'GET' ($base + '/.well-known/oauth-protected-resource/mcp')
         $j = Get-Json $r.Body
-        Add-Check 'B2.2' 'https://<knoten>/.well-known/oauth-protected-resource/mcp -> resource https://<knoten>/mcp (Zertifikat gueltig)' ($r.Status -eq 200 -and $null -ne $j -and $j.resource -eq $res) $r.Show
-        if ($keyC) {
-            Invoke-Probe @('key', '--url', $res, '--key-file', $keyC, '--nr', 'B3', '--principal', 'cloud-reader-c', '--expect-tools', '12') 'Sitzung ueber das Tailnet'
+        Add-Check 'A2.2' 'Metadaten (RFC 9728): resource = http://127.0.0.1:<Port>/mcp, keine authorization_servers' ($r.Status -eq 200 -and $null -ne $j -and $j.resource -eq $mcpUrl -and $null -eq $j.authorization_servers) $r.Show
+        $r = Invoke-Http 'POST' $mcpUrl $script:JsonHdr $script:InitBody
+        Add-Check 'A2.3' 'POST /mcp ohne Bearer -> 401 mit WWW-Authenticate resource_metadata' ($r.Status -eq 401 -and (Test-Has $r.Headers '(?i)WWW-Authenticate: Bearer resource_metadata="http://127\.0\.0\.1:\d+/\.well-known/oauth-protected-resource/mcp"')) $r.Show
+        $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders ('pk_key_' + ('x' * 43))) $script:InitBody
+        Add-Check 'A2.4' 'POST /mcp mit unbekanntem Schluessel -> 401' ($r.Status -eq 401) $r.Show
+        $key = ''
+        if ($keyFile) { $key = [System.IO.File]::ReadAllText($keyFile).Trim() }
+        $r = Invoke-Http 'GET' $mcpUrl (Get-McpHeaders $key)
+        Add-Check 'A2.5' 'GET /mcp -> 405' ($r.Status -eq 405) $r.Show
+        $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody 'evil.example.org'
+        Add-Check 'A2.6' 'fremder Host-Kopf -> 421' ($r.Status -eq 421) $r.Show
+        $big = New-Object byte[] (1048576 + 100)
+        for ($k = 0; $k -lt $big.Length; $k++) { $big[$k] = 32 }
+        $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $null '' $big
+        if ($r.Status -eq 0) {
+            Add-Skip 'A2.7' 'Anfrage ueber 1 MiB: Server schloss die Verbindung vor der Antwort (Windows liest dann keinen Status; 413 belegt der Unit-Test TestHTTPHardening)'
+        } else {
+            Add-Check 'A2.7' 'Anfrage ueber 1 MiB -> 413' ($r.Status -eq 413) ('status ' + $r.Status)
         }
+        $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody
+        Add-Check 'A2.8' 'initialize mit Schluessel -> 200, keine Session-ID, keine Server-Kennung' ($r.Status -eq 200 -and -not (Test-Has $r.Headers '(?im)^(Mcp-Session-Id|Server):')) $r.Show
+        if ($keyFile) {
+            Invoke-Probe @('key', '--url', $mcpUrl, '--key-file', $keyFile, '--nr', 'A3', '--principal', 'cloud-reader', '--expect-tools', '12') 'MCP-Sitzung'
+        }
+        $r = Invoke-Pk @('key', 'revoke', 'cloud-reader')
+        Add-Check 'A4.1' 'key revoke cloud-reader' ($r.Exit -eq 0 -and (Test-Has $r.Out 'revoked')) $r.Text
+        if ($r.Exit -eq 0) { Set-KeyRevoked 'cloud-reader' }
+        Write-Log '      warte 31 s (Zwischenspeicher der Anmeldung 30 s) ...'
+        Start-Sleep -Seconds 31
+        $r = Invoke-Http 'POST' $mcpUrl (Get-McpHeaders $key) $script:InitBody
+        $j = Get-Json $r.Body
+        Add-Check 'A4.2' 'widerrufener Schluessel -> 403 {"status":"denied","code":"key_revoked"}' ($r.Status -eq 403 -and $null -ne $j -and $j.status -eq 'denied' -and $j.code -eq 'key_revoked') $r.Show
+    } else {
+        Add-Skip 'A2-A4' 'mcp --http laeuft nicht'
+    }
+    $srvText = Stop-McpHttp
+    Add-Check 'A5.1' 'mcp --http meldet den Start auf stderr' (Test-Has $srvText 'mcp --http: listening on 127\.0\.0\.1:\d+ \(auth key') (Limit-Text $srvText 5 600)
+
+    $r = Invoke-Pk @('audit', '--raw', '--since', '1h', '--limit', '1000', '--json')
+    $ev = @(Get-JsonLines $r.Out)
+    $http = @($ev | Where-Object { $null -ne $_.params -and $null -ne $_.params.via -and $_.params.via.transport -eq 'http' })
+    $auth = @($ev | Where-Object { $_.operation -eq 'keys.authenticate' -and $_.result -eq 'denied' })
+    $detail = 'Eintraege mit params.via.transport=http: ' + $http.Count + "`n" + 'keys.authenticate denied: ' + (@($auth | ForEach-Object { $_.reason }) -join ', ')
+    $needHttp = 1
+    if (-not $script:Py) { $needHttp = 0 }
+    Add-Check 'A5.2' 'Audit: Aufrufe mit transport http und Principal; gescheiterte Anmeldungen (key_invalid, key_revoked)' ($r.Exit -eq 0 -and $http.Count -ge $needHttp -and @($auth | Where-Object { $_.reason -eq 'key_invalid' }).Count -ge 1 -and @($auth | Where-Object { $_.reason -eq 'key_revoked' }).Count -ge 1) $detail
+    $logText = ''
+    $logFile = Join-Path $script:Data 'postkauz.log'
+    if (Test-Path -LiteralPath $logFile) { $logText = [System.IO.File]::ReadAllText($logFile) }
+    Add-Check 'A5.3' 'Schluessel weder im Log noch im Audit noch in der Ausgabe von mcp --http' ((Test-NoSecret $logText) -and (Test-NoSecret $r.Out) -and (Test-NoSecret $srvText)) ''
+    $r = Invoke-Pk @('audit', 'verify', '--json')
+    $j = Get-Json $r.Out
+    Add-Check 'A5.4' 'audit verify -> status ok' ($r.Exit -eq 0 -and $null -ne $j -and $j.status -eq 'ok') $r.Text
+    Clear-Part
+
+    # ============================================================ Teil B
+
+    if ($NodeName) {
         Write-Log ''
-        Write-Log '[Du] B4 Der Server laeuft. Jetzt fuehrt die Pruefsitzung Teil C aus der Cloud-Sitzung aus (abnahme_D8_cloud.sh, D8_MODE=key).'
-        Write-Log ('     Schluessel fuer Teil C (als Geheimnis der Cloud-Sitzung uebertragen, nie ins Repository): ' + $keyC)
-        Write-Log '     In Teil C Schritt C5 hier "key revoke cloud-reader-c" ausfuehren laesst das Skript selbst, sobald du Enter drueckst.'
-        try { [void] (Read-Host '      Enter, sobald Teil C bis zur Frage nach dem Widerruf gelaufen ist') } catch { }
-        $r = Invoke-Pk @('key', 'revoke', 'cloud-reader-c')
-        Add-Check 'B4.1' 'key revoke cloud-reader-c (fuer Teil C, Schritt C5)' ($r.Exit -eq 0) $r.Text
-        try { [void] (Read-Host '      Enter, sobald Teil C fertig ist (Server wird danach beendet)') } catch { }
-        if (Confirm-Step 'B5.1' 'tailscale serve wieder ausschalten (tailscale serve --https=443 off)') {
-            $r = Invoke-Native $ts[0].Path @('serve', '--https=443', 'off') @{} 60
-            Add-Check 'B5.1' 'tailscale serve --https=443 off' ($r.Exit -eq 0) ($r.Out + "`n" + $r.Err)
-        } else { Add-Skip 'B5.1' 'tailscale serve bleibt an (von Hand: tailscale serve --https=443 off)' }
-    } else { Add-Skip 'B2' 'ohne Zustimmung' }
-    [void] (Stop-McpHttp $srv)
-    [void] (Invoke-Pk @('key', 'revoke', 'cloud-reader-c'))
-    if ($keyC -and (Test-Path -LiteralPath $keyC)) { Remove-Item -LiteralPath $keyC -Force }
-}
-
-# ================================================================ Teil D
-
-if ($Issuer) {
-    Write-Log ''
-    Write-Log '===== Teil D: Modus oauth mit dem Autorisierungsserver'
-    $res = 'https://' + $NodeName + '/mcp'
-    $cfgD = $script:Cfg + '.oauth.toml'
-    $sub = $Subject
-    if (-not $sub) { $sub = 'noch-unbekannt' }
-    $subToml = $sub.Replace('\', '\\').Replace('"', '\"')
-    New-ExclusiveFile $cfgD ("# Abnahme D8, Teil D`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'oauth'`r`nresource = '" + $res + "'`r`nissuer = '" + $Issuer + "'`r`n[http.principals]`r`n""" + $subToml + """ = 'cloud-oauth'`r`n")
-    $keyD = New-TestKey 'cloud-oauth' 'D1.1'
-    $srv = Start-McpHttp $cfgD 'mcp-http-d.txt'
-    $r = Invoke-Http 'GET' ($base + '/healthz')
-    Add-Check 'D1.2' 'mcp --http laeuft im Modus oauth' ($r.Status -eq 204) $r.Show
-    $ts = @(Get-Command 'tailscale.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($ts.Count -gt 0 -and (Confirm-Step 'D1.3' ('tailscale serve --bg ' + $Port + ' (falls nach Teil B ausgeschaltet)'))) {
-        $r = Invoke-Native $ts[0].Path @('serve', '--bg', [string] $Port) @{} 60
-        Add-Check 'D1.3' ('tailscale serve --bg ' + $Port) ($r.Exit -eq 0) ($r.Out + "`n" + $r.Err)
+        Write-Log '===== Teil B: dieser PC als Knoten im Tailnet (Modus key)'
+        $res = 'https://' + $NodeName + '/mcp'
+        $cfgB = $script:Cfg + '.tailnet.toml'
+        New-ExclusiveFile $cfgB ("# Abnahme D8, Teil B`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`nresource = '" + $res + "'`r`n")
+        $keyC = New-TestKey 'cloud-reader-c' 'B1.1'
+        $script:Srv = Start-McpHttp $cfgB 'mcp-http-b.txt'
+        $r = Invoke-Http 'GET' ($base + '/healthz')
+        Add-Check 'B1.2' 'mcp --http laeuft (Resource https://<knoten>/mcp)' ($r.Status -eq 204) $r.Show
+        $r = Invoke-Http 'POST' $mcpUrl $script:JsonHdr $script:InitBody
+        Add-Check 'B1.3' 'Host 127.0.0.1 gilt mit eigener Resource nicht mehr -> 421' ($r.Status -eq 421) $r.Show
+        if (-not $script:TsExe) {
+            Add-Skip 'B2' 'tailscale.exe nicht im PATH (Tailscale fuer Windows installieren)'
+        } elseif (Enable-Serve 'B2.0' 'B2.1' 'B5.1') {
+            $r = Invoke-Http 'GET' ('https://' + $NodeName + '/.well-known/oauth-protected-resource/mcp')
+            $j = Get-Json $r.Body
+            Add-Check 'B2.2' 'https://<knoten>/.well-known/oauth-protected-resource/mcp -> resource https://<knoten>/mcp (Zertifikat gueltig)' ($r.Status -eq 200 -and $null -ne $j -and $j.resource -eq $res) $r.Show
+            if ($keyC) {
+                Invoke-Probe @('key', '--url', $res, '--key-file', $keyC, '--nr', 'B3', '--principal', 'cloud-reader-c', '--expect-tools', '12') 'Sitzung ueber das Tailnet'
+            }
+            Write-Log ''
+            Write-Log '[Du] B4 Der Server laeuft. Jetzt fuehrt die Pruefsitzung Teil C aus der Cloud-Sitzung aus (abnahme_D8_cloud.sh, D8_MODE=key).'
+            Write-Log ('     Schluessel fuer Teil C (als Geheimnis der Cloud-Sitzung uebertragen, nie ins Repository): ' + $keyC)
+            Write-Log '     Teil C wartet in Schritt C5 auf die Datei go in seinem Arbeitsordner. Erst hier Enter (Widerruf), dann legt die Pruefsitzung dort go an.'
+            try { [void] (Read-Host '      Enter, sobald Teil C bei Schritt C5 wartet (das Skript widerruft dann cloud-reader-c)') } catch { }
+            $r = Invoke-Pk @('key', 'revoke', 'cloud-reader-c')
+            Add-Check 'B4.1' 'key revoke cloud-reader-c (fuer Teil C, Schritt C5)' ($r.Exit -eq 0) $r.Text
+            if ($r.Exit -eq 0) { Set-KeyRevoked 'cloud-reader-c' }
+            try { [void] (Read-Host '      Enter, sobald Teil C fertig ist (Server wird danach beendet)') } catch { }
+        } else {
+            Add-Skip 'B2.2-B4.1' 'tailscale serve ist nicht an (ohne Zustimmung oder Fehler in B2.1)'
+        }
+        Disable-Serve $true
+        Clear-Part
     }
-    Write-Log '[Du] D2 Gleich erscheint eine Adresse. Im Browser oeffnen, beim Autorisierungsserver anmelden und zustimmen.'
-    $tok = Join-Path $script:Run 'keys\oauth-refresh.json'
-    $pa = @('oauth', '--url', $res, '--nr', 'D3', '--principal', 'cloud-oauth', '--expect-tools', '12', '--client-id', $ClientId, '--callback-port', [string] $CallbackPort, '--token-file', $tok)
-    if ($keyD) { $pa += @('--key-file', $keyD) }
-    if ($Subject) { $pa += '--wait-expiry' }
-    Invoke-ProbeInteractive $pa
-    if ($Subject -and (Test-Path -LiteralPath $tok)) {
-        $r = Invoke-Pk @('key', 'revoke', 'cloud-oauth')
-        Add-Check 'D4.1' 'key revoke cloud-oauth' ($r.Exit -eq 0) $r.Text
-        Start-Sleep -Seconds 3
-        Invoke-ProbeInteractive @('revoked', '--url', $res, '--token-file', $tok, '--nr', 'D4')
-    } elseif (-not $Subject) {
-        Add-Skip 'D4' 'ohne -Subject: Teil D mit dem oben genannten Subjekt wiederholen (-Subject "<sub>")'
-    }
-    [void] (Stop-McpHttp $srv)
-    [void] (Invoke-Pk @('key', 'revoke', 'cloud-oauth'))
-    foreach ($f in @($keyD, $tok)) { if ($f -and (Test-Path -LiteralPath $f)) { Remove-Item -LiteralPath $f -Force } }
-    Write-Log '[Du] D5 Danach von Hand: Claude Code am PC (docs/betrieb.md 4.6 Schritt 6) und das Testkonto im Autorisierungsserver deaktivieren.'
-}
 
-if ($keyFile -and (Test-Path -LiteralPath $keyFile)) { Remove-Item -LiteralPath $keyFile -Force }
+    # ============================================================ Teil D
+
+    if ($Issuer) {
+        Write-Log ''
+        Write-Log '===== Teil D: Modus oauth mit dem Autorisierungsserver'
+        $res = 'https://' + $NodeName + '/mcp'
+        $cfgD = $script:Cfg + '.oauth.toml'
+        $sub = $Subject
+        if (-not $sub) { $sub = 'noch-unbekannt' }
+        $subToml = $sub.Replace('\', '\\').Replace('"', '\"')
+        New-ExclusiveFile $cfgD ("# Abnahme D8, Teil D`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'oauth'`r`nresource = '" + $res + "'`r`nissuer = '" + $Issuer + "'`r`n[http.principals]`r`n""" + $subToml + """ = 'cloud-oauth'`r`n")
+        $keyD = New-TestKey 'cloud-oauth' 'D1.1'
+        $tok = Join-Path $script:Run 'keys\oauth-refresh.json'
+        $script:OpenFiles.Add($tok)
+        $script:Srv = Start-McpHttp $cfgD 'mcp-http-d.txt'
+        $r = Invoke-Http 'GET' ($base + '/healthz')
+        Add-Check 'D1.2' 'mcp --http laeuft im Modus oauth' ($r.Status -eq 204) $r.Show
+        if ($script:TsExe) {
+            [void] (Enable-Serve 'D1.3' 'D1.4' 'D5.1')
+        } else {
+            Add-Skip 'D1.3-D1.4' 'tailscale.exe nicht im PATH'
+        }
+        Write-Log '[Du] D2 Gleich erscheint eine Adresse. Im Browser oeffnen, beim Autorisierungsserver anmelden und zustimmen.'
+        $pa = @('oauth', '--url', $res, '--nr', 'D3', '--principal', 'cloud-oauth', '--expect-tools', '12', '--client-id', $ClientId, '--callback-port', [string] $CallbackPort, '--token-file', $tok)
+        if ($keyD) { $pa += @('--key-file', $keyD) }
+        if ($Subject) { $pa += '--wait-expiry' }
+        Invoke-ProbeInteractive $pa
+        if ($Subject -and (Test-Path -LiteralPath $tok)) {
+            $r = Invoke-Pk @('key', 'revoke', 'cloud-oauth')
+            Add-Check 'D4.1' 'key revoke cloud-oauth' ($r.Exit -eq 0) $r.Text
+            if ($r.Exit -eq 0) { Set-KeyRevoked 'cloud-oauth' }
+            Start-Sleep -Seconds 3
+            Invoke-ProbeInteractive @('revoked', '--url', $res, '--token-file', $tok, '--nr', 'D4')
+        } elseif (-not $Subject) {
+            Add-Skip 'D4' 'ohne -Subject: Teil D mit dem oben genannten Subjekt wiederholen (-Subject "<sub>")'
+        }
+        Disable-Serve $true
+        Clear-Part
+        Write-Log '[Du] D6 Danach von Hand: Claude Code am PC (docs/betrieb.md 4.6 Schritt 6) und das Testkonto im Autorisierungsserver deaktivieren.'
+    }
+    $done = $true
+} catch {
+    $m = [string] $_.Exception.Message
+    if ($m.StartsWith('D8-ABBRUCH: ')) { $abort = $m.Substring(12) } else { $abort = 'unerwarteter Fehler: ' + $m }
+} finally {
+    $script:Main = $false
+    if (-not $done) {
+        try { Write-Log '' } catch { }
+        try { Write-Log 'Abbruch: raeume auf (tailscale serve, mcp --http, Schluessel, Dateien)' } catch { }
+    }
+    Clear-Part
+    if ($script:ServeKept) {
+        try { Write-Log '[Du] tailscale serve ist noch an (deine Wahl). Von Hand ausschalten: tailscale serve --https=443 off' } catch { }
+    }
+}
+if ($abort) { Stop-Run $abort }
+
 Write-Log ''
 foreach ($f in $script:Fails) { Write-Log ('FAIL-Liste: ' + $f) }
 Write-Log ('D8: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL, ' + $script:NSkip + ' SKIP')

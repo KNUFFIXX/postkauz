@@ -15,8 +15,10 @@ D8 prüft beides: lokal ohne Netz (Teil A), über Tailscale vom PC aus (Teil B),
 
 - **Nie die Live-Datenbank** (Rahmen 5): `-DataDir`, `-Config` und `-LivePath` sind Pflicht (wie bei D7); das Skript legt Datenverzeichnis und Konfiguration neu an und bricht ohne Änderung ab, wenn sie oder `-WorkDir` im Standard-Datenverzeichnis, im Standard-Konfigurationsordner oder in einem mit `-LivePath` genannten Pfad liegen (oder umgekehrt). Ein Datei-Eintrag in `-LivePath` (etwa `C:\PostKauz\config.toml`) sperrt auch seinen Ordner. Dazu eine Markerdatei gegen Junction und `subst` (für `-DataDir`, `-WorkDir` und den Ordner von `-Config`) und ein Abbruch, wenn neben `-Config` schon eine `policy.toml` liegt. Kein Mailkonto, kein Passwort: `mcp --http` kennt keins.
 - **Port:** `-Port` (Standard 18787) auf `127.0.0.1`, nie der Standardport 8787 (ein laufender Dienst bleibt ungestört).
+- **`tailscale serve` bleibt nicht verändert:** Vor dem Einschalten liest das Skript `tailscale serve status --json`. Ist HTTPS auf Port 443 schon belegt (oder der Zustand nicht lesbar), bricht es mit Hinweis ab und überschreibt nichts. Eingeschaltet wird nur mit „ja“; am Ende von Teil B und D fragt es vor `tailscale serve --https=443 off` und prüft danach, dass 443 wieder frei ist. `tailscale serve reset` nutzt das Skript nie (es löschte auch andere Ports, etwa einen Anmeldedienst auf 8443).
+- **Aufräumen auch bei Abbruch:** Teile A, B und D laufen in `try`/`finally`. Bei einem Fehler oder Strg+C schaltet das Skript `tailscale serve` ohne weitere Frage aus (das sagt die Frage vor dem Einschalten), beendet `mcp --http`, widerruft die angelegten Schlüssel und löscht Schlüssel- und Refresh-Dateien.
 - **Geheimnisse:** Schlüssel liegen nur während des Laufs in `<WorkDir>\lauf-…\keys\` und werden danach gelöscht und widerrufen. Der Auth-Key von Tailscale und der Schlüssel für Teil C kommen als **Geheimnis der Cloud-Sitzung**, nie ins Repository, nie in ein Protokoll.
-- **Protokolle** `D8_windows.txt` (Windows) und `D8_cloud.txt` (Cloud-Sitzung): exklusiv neu angelegt; Schlüssel (`pk_key_********`), Token (`<token>`), Auth-Keys (`tskey-********`), Pfade (`<DataDir>` …), der Knotenname (`<knoten>`), der Aussteller (`<issuer>`, sein Host `<issuer-host>`), jeder andere Name unter `ts.net` (`<name>.ts.net`) und Tailnet-Adressen (`<tailnet-ip>` für 100.64.0.0/10, `<tailnet-ip6>` für `fd7a:115c:a1e0:…`) sind maskiert. Knotenname und Aussteller maskiert das Windows-Skript wörtlich (nicht als Pfad), auch in `resource`, `authorization_servers` und `aud`. Jede Zeile `OK`, `FAIL` oder `SKIP` mit Nummer; letzte Zeile `D8: …` bzw. `D8 Teil C: …`. Exit 0 nur ohne `FAIL`, Exit 2 bei Abbruch vor dem ersten Schritt.
+- **Protokolle** `D8_windows.txt` (Windows) und `D8_cloud.txt` (Cloud-Sitzung): exklusiv neu angelegt; Schlüssel (`pk_key_********`), Token (`<token>`), Auth-Keys (`tskey-********`), Pfade (`<DataDir>` …), der Knotenname (`<knoten>`), der Aussteller (`<issuer>`, sein Host `<issuer-host>`), jeder andere Name unter `ts.net` (`<name>.ts.net`) und Tailnet-Adressen (`<tailnet-ip>` für 100.64.0.0/10, `<tailnet-ip6>` für `fd7a:115c:a1e0:…`) sind maskiert. Knotenname und Aussteller maskiert das Windows-Skript wörtlich (nicht als Pfad), auch in `resource`, `authorization_servers` und `aud`. Jede Zeile `OK`, `FAIL` oder `SKIP` mit Nummer; letzte Zeile `D8: …` bzw. `D8 Teil C: …`. Exit 0 nur ohne `FAIL`, Exit 2 bei Abbruch (vor dem ersten Schritt oder mittendrin, dann nach dem Aufräumen).
 - **Abweichung zu A03 (Festlegung, Einspruch möglich):** A03 Teil D nennt für `reader` 9 Tools; seit T2 sind es **12** (dazu `mail_get_action`, `mail_list_actions`, `mail_list_tags`). Die Skripte erwarten 12.
 
 ## Voraussetzungen
@@ -66,12 +68,13 @@ Wie Teil A, zusätzlich `-NodeName pc.<tailnet>.ts.net` (neues `-DataDir`, `-Con
 | Nr | Schritt | Erwartet |
 |---|---|---|
 | B1.1–B1.3 | Schlüssel `cloud-reader-c`, Server mit `resource = https://<knoten>/mcp` | läuft; `Host` 127.0.0.1 → 421 (nur der Name des Knotens gilt) |
+| B2.0 | `tailscale serve status --json` | HTTPS 443 frei (sonst Abbruch mit Hinweis, Exit 2) |
 | B2.1 | `[Du]` `tailscale serve --bg <Port>` | Exit 0 |
 | B2.2 | `https://<knoten>/.well-known/oauth-protected-resource/mcp` vom PC | 200, `resource` = `https://<knoten>/mcp`, Zertifikat gültig |
 | B3.x | Probe `key` über `https://<knoten>/mcp` | wie A3 |
 | B4 | `[Du]` Server läuft, bis du Enter drückst: jetzt Teil C | – |
-| B4.1 | `key revoke cloud-reader-c` (nach der ersten Enter-Taste) | Exit 0 |
-| B5.1 | `[Du]` `tailscale serve --https=443 off` | Exit 0 |
+| B4.1 | `key revoke cloud-reader-c` (nach der ersten Enter-Taste; danach legt die Prüfsitzung in der Cloud-Sitzung die Datei `go` an, siehe C5) | Exit 0 |
+| B5.1 | `[Du]` `tailscale serve --https=443 off`, dann `status --json` | Exit 0, HTTPS 443 wieder frei |
 
 ## Teil C: aus der Cloud-Sitzung (Linux)
 
@@ -99,7 +102,8 @@ Wie Teil B mit zusätzlich `-Issuer https://<authelia>` (Authelia nach betrieb.m
 
 | Nr | Schritt | Erwartet |
 |---|---|---|
-| D1.1–D1.3 | Schlüssel `cloud-oauth`, Server im Modus `oauth`, `[Du]` `tailscale serve` | läuft |
+| D1.1–D1.2 | Schlüssel `cloud-oauth`, Server im Modus `oauth` | läuft |
+| D1.3–D1.4 | `tailscale serve status --json`, `[Du]` `tailscale serve --bg <Port>` | 443 frei, Exit 0 (wie B2.0–B2.1) |
 | D3.1–D3.7 | Metadaten | wie A2, dazu `authorization_servers` und RFC-8414-Metadaten mit PKCE S256 |
 | D3.8 | PostKauz-Schlüssel als Bearer | 401 |
 | D3.9 | Token für eine andere Audience (optional) | 401 |
@@ -110,6 +114,7 @@ Wie Teil B mit zusätzlich `-Issuer https://<authelia>` (Authelia nach betrieb.m
 | D3.13 | Ablauf abwarten (5 min + 30 s) | 401 |
 | D3.14 | Refresh | neues Token → 200 |
 | D4.1–D4.2 | `key revoke cloud-oauth`, Refresh, `initialize` | 403 `denied (key_revoked)` |
+| D5.1 | `[Du]` `tailscale serve --https=443 off`, dann `status --json` | Exit 0, HTTPS 443 wieder frei |
 
 Danach von Hand ([Du]): Claude Code am PC nach betrieb.md 4.6 Schritt 6 anbinden (`/mcp` → anmelden → `tools/list`), Ergebnis ins Protokoll; Testkonto in Authelia deaktivieren.
 
