@@ -84,3 +84,11 @@ func finalPathOf(p string) (string, error) {
 	}
 	return filepath.Clean(s), nil
 }
+
+// isTransientFSErr meldet Fehler, die unter Windows meist nur kurz
+// anhalten, weil ein anderes Programm (Virenscanner, Indexdienst,
+// Sicherungsprogramm) eine Datei offen hält: ERROR_ACCESS_DENIED und
+// ERROR_SHARING_VIOLATION (T3-Nachbesserung 2, Punkt 13; retryFS).
+func isTransientFSErr(err error) bool {
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
+}
