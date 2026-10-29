@@ -47,7 +47,11 @@
 --    der Runner ihn mit dem Pfad unter mailbox_id (wie beim Zielordner, V1).
 --    Offene Ziele bekommen den heutigen Pfad; abgeschlossene bleiben NULL.
 --
--- Keine Zeile wird verworfen oder inhaltlich geändert.
+-- 3. audit_archives (unten).
+-- 4. attachments.executable für Altbestand (unten, dritte Nachbesserung T3).
+--
+-- Keine Zeile wird verworfen; inhaltlich geändert wird nur
+-- attachments.executable von 0 auf 1 (Abschnitt 4).
 
 INSERT INTO meta(key, value) VALUES ('id_floor_messages', CAST((SELECT coalesce(max(v), 0) FROM (
         SELECT max(id) AS v FROM messages
@@ -143,3 +147,28 @@ BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;
 CREATE TRIGGER audit_archives_no_delete BEFORE DELETE ON audit_archives
 BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;
 
+-- 4. attachments.executable für Altbestand (dritte Nachbesserung T3, Punkt
+--    9c): Seit S3.3 kennt magic.ExecutableName mehr Endungen und bewertet
+--    den Namen so, wie Windows ihn ausführt (magic.EffectiveExt: letzter
+--    Pfadteil, NTFS-Datenstrom ab ":" weg, Punkte, Leerzeichen und
+--    Tabulatoren am Ende weg). Anhänge, die eine ältere Version gespiegelt
+--    hat, zeigten sonst executable = false. Die Liste ist die ganze
+--    riskyExt aus internal/magic/check.go (der Test
+--    TestT3N3Migration0022MarksExecutables vergleicht sie). Steuer- und
+--    Formatzeichen im Namen entfernt SQL nicht (Restfall). Nur 0 → 1.
+UPDATE attachments SET executable = 1
+ WHERE executable = 0 AND filename IS NOT NULL
+   AND (SELECT CASE WHEN instr(t, '.') > 0 THEN lower('.' || replace(t, rtrim(t, replace(t, '.', '')), '')) END
+          FROM (SELECT rtrim(CASE WHEN instr(b, ':') > 0 THEN substr(b, 1, instr(b, ':') - 1) ELSE b END, '. ' || char(9)) AS t
+                  FROM (SELECT replace(n, rtrim(n, replace(n, '/', '')), '') AS b
+                          FROM (SELECT replace(attachments.filename, '\', '/') AS n)))) IN (
+    '.accdb', '.accde', '.ade', '.adp', '.apk', '.app', '.appinstaller', '.application',
+    '.appref-ms', '.appx', '.appxbundle', '.bas', '.bat', '.cer', '.chm', '.cmd', '.com',
+    '.command', '.cpl', '.crt', '.csh', '.der', '.diagcab', '.dll', '.docm', '.dotm', '.exe',
+    '.gadget', '.hlp', '.hta', '.img', '.inf', '.ins', '.iso', '.isp', '.jar', '.jnlp', '.js',
+    '.jse', '.ksh', '.library-ms', '.lnk', '.mda', '.mdb', '.mde', '.msc', '.msh', '.msh1',
+    '.msh1xml', '.msh2', '.msh2xml', '.mshxml', '.msi', '.msix', '.msixbundle', '.msp', '.mst',
+    '.one', '.pif', '.potm', '.ppam', '.ppsm', '.pptm', '.ps1', '.ps1xml', '.ps2xml', '.psc1',
+    '.psd1', '.psm1', '.rdp', '.reg', '.scf', '.scr', '.sct', '.search-ms', '.settingcontent-ms',
+    '.sh', '.shb', '.sys', '.url', '.vb', '.vbe', '.vbs', '.vhd', '.vhdx', '.vsto', '.website',
+    '.ws', '.wsb', '.wsc', '.wsf', '.wsh', '.xbap', '.xlam', '.xll', '.xlsm', '.xltm', '.xnk');

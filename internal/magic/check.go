@@ -3,6 +3,7 @@ package magic
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -120,6 +121,17 @@ func EffectiveExt(name string) string {
 // ExecutableName meldet, ob ein Dateiname nach seiner wirksamen Endung
 // (EffectiveExt) ein Programm oder Skript ist.
 func ExecutableName(name string) bool { return riskyExt[EffectiveExt(name)] }
+
+// RiskyExtensions liefert alle Endungen, die ExecutableName kennt
+// (sortiert); Migration 0022 hat dieselbe Liste (Test im Store).
+func RiskyExtensions() []string {
+	list := make([]string, 0, len(riskyExt))
+	for e := range riskyExt {
+		list = append(list, e)
+	}
+	slices.Sort(list)
+	return list
+}
 
 // family ordnet verwandte Typen zusammen (ein Wert je Familie).
 func family(t string) string {
