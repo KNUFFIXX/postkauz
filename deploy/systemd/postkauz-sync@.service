@@ -6,8 +6,14 @@
 # Als System-Unit für den Nutzer postkauz (root richtet ein):
 #   install -Dm644 postkauz-sync@.service -t /etc/systemd/system/
 #   install -d -m 0750 -o root -g postkauz /etc/postkauz
-#   install -m 0640 -o root -g postkauz /dev/null /etc/postkauz/sync-<konto>.env
+#   install -d -m 0700 -o root -g root /etc/postkauz/credentials
+#   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-<konto>.env
 #   # in die Datei: POSTKAUZ_PASSWORD_<KONTO>=<passwort> (Name in Großbuchstaben)
+#
+# Die Passwortdatei gehört root und nur root liest sie: systemd selbst liest
+# EnvironmentFile=, bevor es zum Nutzer postkauz wechselt. Der Nutzer
+# postkauz (und damit der HTTP-MCP) kommt an die Datei nicht heran; das
+# Passwort steht danach nur in der Umgebung dieses Prozesses.
 #   systemctl daemon-reload
 #   systemctl enable --now postkauz-sync@<konto>.service
 #   journalctl -u postkauz-sync@<konto>.service
@@ -25,8 +31,9 @@ After=network-online.target
 Type=simple
 User=postkauz
 Group=postkauz
-# Zugangsdaten nur hier (Rechte 0640, root:postkauz); nie in der Unit selbst.
-EnvironmentFile=/etc/postkauz/sync-%i.env
+# Zugangsdaten nur hier (Rechte 0600, root:root; liest systemd als root);
+# nie in der Unit selbst.
+EnvironmentFile=/etc/postkauz/credentials/sync-%i.env
 Environment=POSTKAUZ_CONFIG=/etc/postkauz/config.toml
 Environment=POSTKAUZ_DATA_DIR=/var/lib/postkauz
 ExecStart=/usr/local/bin/postkauz sync --watch -a %i
@@ -38,6 +45,8 @@ RestartPreventExitStatus=6
 StateDirectory=postkauz
 StateDirectoryMode=0700
 UMask=0077
+# /proc zeigt nur Prozesse desselben Nutzers.
+ProtectProc=invisible
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

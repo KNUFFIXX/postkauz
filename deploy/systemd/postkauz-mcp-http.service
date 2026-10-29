@@ -1,8 +1,20 @@
 # PostKauz: MCP über HTTP (mcp --http, A03 S3.5, ADR-010), Vorlage für einen
 # VPS. Dieser Dienst kennt kein Postfachpasswort (ADR-009): kein
-# EnvironmentFile, kein Schlüsselbund. Er lauscht nur auf 127.0.0.1:8787
-# ([http] listen); TLS und das private Netz kommen von tailscale serve.
-# Anleitung: docs/betrieb.md, Abschnitt „VPS“.
+# EnvironmentFile, und der MCP-Prozess bekommt einen Secrets-Speicher, der
+# jeden Zugriff verweigert. Er lauscht nur auf 127.0.0.1:8787 ([http]
+# listen); TLS und das private Netz kommen von tailscale serve. Anleitung:
+# docs/betrieb.md, Abschnitt 4.4.
+#
+# Derselbe Nutzer wie der Sync-Dienst (postkauz), weil beide dieselbe
+# Datenbank und dieselben Blobs nutzen und PostKauz sie bei jedem Start auf
+# 0600/0700 setzt (store.Open, blob, config.RestrictPermissions); zwei
+# Nutzer mit gemeinsamer Gruppe gehen erst nach einer Code-Änderung.
+# Deshalb trennt die Unit selbst: eigener PID-Namensraum (PrivatePIDs=, ab
+# systemd 257; dann sieht der Dienst /proc/<pid>/environ des Sync-Dienstes
+# nicht), /proc nur mit eigenen Prozessen (ProtectProc=), die
+# Passwortdateien unsichtbar (InaccessiblePaths=). Ältere systemd-Versionen
+# melden PrivatePIDs= als unbekannt und ignorieren es: dann kann dieser
+# Dienst die Umgebung des Sync-Dienstes lesen (docs/betrieb.md, 4.4).
 #
 #   install -Dm644 postkauz-mcp-http.service -t /etc/systemd/system/
 #   systemctl daemon-reload
@@ -25,6 +37,12 @@ RestartSec=10
 StateDirectory=postkauz
 StateDirectoryMode=0700
 UMask=0077
+# Passwortdateien der Sync-Dienste gibt es in diesem Dienst nicht.
+InaccessiblePaths=-/etc/postkauz/credentials
+# Eigener PID-Namensraum (systemd 257 und neuer): keine fremden Prozesse,
+# also auch nicht /proc/<pid>/environ von postkauz-sync@.
+PrivatePIDs=yes
+ProtectProc=invisible
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

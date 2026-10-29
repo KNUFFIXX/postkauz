@@ -428,7 +428,7 @@ Seit T5 (S3.5, S3.6; ADR-010). Ziel: Ein Agent erreicht PostKauz auch von außer
 
 - **Zwei Dienste** auf dem Dauerläufer (VPS oder PC):
   - `postkauz sync --watch` kennt die Mailpasswörter und spiegelt die Postfächer (wie in Abschnitt 1).
-  - `postkauz mcp --http` kennt **kein** Mailpasswort. Er lauscht nur auf `127.0.0.1:8787` und beantwortet MCP-Anfragen über HTTP.
+  - `postkauz mcp --http` kennt **kein** Mailpasswort. Er lauscht nur auf `127.0.0.1:8787` und beantwortet MCP-Anfragen über HTTP. Jeder MCP-Prozess (stdio und `--http`) bekommt einen Secrets-Speicher, der jeden Zugriff verweigert (Backend `denied`): Schlüsselbund, die Datei von `insecure-file` und `POSTKAUZ_PASSWORD_*` fasst er nie an.
 - **Tailscale** verbindet deine Geräte zu einem privaten Netz (Tailnet). `tailscale serve` macht aus `http://127.0.0.1:8787` die Adresse `https://<knoten>.<tailnet>.ts.net` mit gültigem Zertifikat, **nur im Tailnet**. Kein Funnel, kein Cloudflare-Tunnel, kein offener Port im Internet.
 - **Anmeldung** an `mcp --http`, eine von zwei Arten (`[http] auth`):
   - `key`: Der Client schickt einen PostKauz-Schlüssel mit (`Authorization: Bearer pk_key_…`). Einfach, geht auch ohne Browser, also aus einer Cloud-Sitzung. Nur auf Loopback oder einer Tailnet-Adresse.
@@ -500,7 +500,10 @@ Für einen kleinen EU-VPS (Debian oder Ubuntu). Als `root`:
    ```bash
    install -m 0755 postkauz-linux-amd64 /usr/local/bin/postkauz
    install -d -m 0750 -o root -g postkauz /etc/postkauz
+   install -d -m 0700 -o root -g root /etc/postkauz/credentials
    ```
+
+   In `/etc/postkauz/credentials` liegen später die Passwortdateien (4.4); nur `root` kommt hinein.
 
 6. Konfiguration `/etc/postkauz/config.toml` (Rechte 0640, root:postkauz), Beispiel:
 
@@ -515,19 +518,19 @@ Für einen kleinen EU-VPS (Debian oder Ubuntu). Als `root`:
 
 ### 4.4 Konten und Dienste (systemd)
 
-Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos kommt aus einer Datei, die nur der Sync-Dienst liest (Rückfrage R2; Microsoft-Konten mit OAuth2 bleiben auf den Windows-PCs).
+Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in einer Datei, die nur `root` lesen kann. systemd liest sie beim Start des Sync-Dienstes selbst (als `root`, bevor es zum Nutzer `postkauz` wechselt) und gibt das Passwort nur diesem Dienst in die Umgebung (Rückfrage R2; Microsoft-Konten mit OAuth2 bleiben auf den Windows-PCs).
 
 1. Je Konto eine Datei mit dem Passwort (Kontoname `privat` → Variable `POSTKAUZ_PASSWORD_PRIVAT`):
 
    ```bash
-   install -m 0640 -o root -g postkauz /dev/null /etc/postkauz/sync-privat.env
+   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-privat.env
    ```
 
-   Mit einem Editor eine Zeile hineinschreiben: `POSTKAUZ_PASSWORD_PRIVAT=<app-passwort>`.
+   Als `root` mit einem Editor eine Zeile hineinschreiben: `POSTKAUZ_PASSWORD_PRIVAT=<app-passwort>`.
 2. Konto anlegen (liest das Passwort aus der Umgebung, speichert es nicht):
 
    ```bash
-   sudo -u postkauz env $(cat /etc/postkauz/sync-privat.env) POSTKAUZ_CONFIG=/etc/postkauz/config.toml POSTKAUZ_DATA_DIR=/var/lib/postkauz /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
+   sudo -u postkauz env $(cat /etc/postkauz/credentials/sync-privat.env) POSTKAUZ_CONFIG=/etc/postkauz/config.toml POSTKAUZ_DATA_DIR=/var/lib/postkauz /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
    ```
 
    Erwartet: eine Zeile, die mit `account privat added (imap.gmail.com:993, tls …` beginnt.
@@ -548,7 +551,16 @@ Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos kommt aus e
 
    Erwartet: beide `active (running)`, dann `204`. Log: `journalctl -u postkauz-mcp-http.service` und `/var/lib/postkauz/postkauz.log`.
 
-Der MCP-Dienst hat keine `EnvironmentFile`-Zeile und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht: So kommt der Agent nie an ein Passwort.
+Der MCP-Dienst hat keine `EnvironmentFile`-Zeile, sieht `/etc/postkauz/credentials` gar nicht (`InaccessiblePaths=`) und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht.
+
+**Grenze, offen gesagt:** Beide Dienste laufen als derselbe Nutzer `postkauz`, weil sie dieselbe Datenbank und dieselben Mail-Dateien brauchen und PostKauz diese bei jedem Start auf „nur der Besitzer“ setzt (0600 und 0700). Ein Prozess darf die Umgebung eines anderen Prozesses desselben Nutzers lesen (`/proc/<pid>/environ`), also auch das Passwort des Sync-Dienstes. Dagegen hat der MCP-Dienst einen eigenen Prozessraum (`PrivatePIDs=yes`): Er sieht den Sync-Dienst gar nicht. Das wirkt erst ab **systemd 257** (zum Beispiel Debian 13); ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen die Zeile weg. Prüfen:
+
+```bash
+systemctl --version | head -n 1
+systemctl show -p PrivatePIDs postkauz-mcp-http.service
+```
+
+Erwartet: `systemd 257` oder höher und `PrivatePIDs=yes`. Bei einer älteren Version schützt den Sync-Dienst nur der Code (der MCP-Prozess fragt nie nach einem Passwort), nicht das Betriebssystem. Zwei getrennte Nutzer mit gemeinsamer Gruppe gehen erst nach einer Änderung im Programm (Rechte des Datenverzeichnisses). Beide Units haben außerdem `ProtectProc=invisible` (Prozesse anderer Nutzer bleiben unsichtbar).
 
 ### 4.5 Tailscale und `tailscale serve`
 
@@ -649,6 +661,8 @@ POSTKAUZ_VERSION=<version> docker compose up -d
 ### 4.9 Vorläufig: ein Windows-PC als Knoten (bis zum VPS)
 
 Bis über einen VPS entschieden ist, kann ein PC des Betreibers der Knoten sein (Abnahme D8, vorläufig): Tailscale für Windows installieren, Dauer-Sync wie in Abschnitt 1, `mcp --http` in einem eigenen Fenster wie in 4.2 (eine geplante Aufgabe dafür kommt mit dem Betriebsentscheid), dann in einer PowerShell als normaler Nutzer `tailscale serve --bg 8787` und `[http] resource` auf den Namen des PCs im Tailnet setzen. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS).
+
+**Grenze unter Windows:** Sync und `mcp --http` laufen hier unter **demselben Windows-Benutzer**. Das Betriebssystem trennt sie nicht; der HTTP-Prozess kommt nur deshalb nicht an ein Passwort, weil PostKauz ihm keins gibt (Secrets-Speicher `denied`, siehe 4.1). Getrennte Benutzer für Sync und HTTP-MCP unter Windows sind für später vorgemerkt.
 
 ## 5. Löschkonzept
 
