@@ -94,8 +94,9 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, er
 	if t := jwtType(raw); t != "at+jwt" && t != "application/at+jwt" {
 		return principal{}, errUnauthenticated
 	}
-	// Vorprüfung von iss und exp aus dem ungeprüften Inhalt: Fremde oder
-	// abgelaufene Token lösen so weder Discovery noch JWKS-Abruf aus.
+	// Vorprüfung von iss, exp, nbf und iat aus dem ungeprüften Inhalt:
+	// Fremde oder abgelaufene Token lösen so weder Discovery noch
+	// JWKS-Abruf aus; nbf und iat prüft nur diese Stelle (je 30 s).
 	if !precheckClaims(raw, a.issuer, a.now()) {
 		return principal{}, errUnauthenticated
 	}
