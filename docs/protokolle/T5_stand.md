@@ -206,3 +206,46 @@ Nur für die Abnahme D8, nicht für den Dauerbetrieb (Rahmen 5: Builds, die nich
 - Unter Windows Sync und HTTP-MCP unter getrennten Benutzern.
 - Auf dem VPS zwei Systemnutzer mit gemeinsamer Gruppe (braucht ein Rechtemodell für Datenbank, WAL und Blobs, Festlegung 26).
 - Größengrenze oder Rotation für `postkauz.log` (auch der Dauer-Sync schreibt dorthin).
+
+## Prüfläufe (Nachbesserung)
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün vor jedem Commit (in den Worktrees der Subagenten und am zusammengeführten Stand) |
+| `make race` | grün an `269fe18`, 38 Pakete ohne Datenrennen, 25:59 min gesamt; `internal/cli` **1.547 s (25:47 min, Grenze 45 min)**, `internal/ops` 761 s, `internal/httpmcp` 160 s, `internal/procguard` 2 s |
+| `make integration` | `IT=dovecot,stalwart,greenmail,authelia` an `269fe18`: 42 PASS, 0 FAIL, 0 SKIP (Images über `mirror.gcr.io` geholt und umgetaggt; Authelia frisch über das gehärtete `make testauth-up`). Ein Lauf vor 9 (l) an `ed44dcc`: 41 PASS, 1 SKIP (`TestIntegrationMailboxActions/greenmail`: „no mailbox with role trash“ im damaligen Zustand des GreenMail-Containers) |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make vuln` | nicht möglich: `vuln.go.dev` antwortet in der Cloud mit 403 (wie bisher); bitte in der Prüfsitzung. Keine neue Abhängigkeit (`internal/procguard` nutzt nur `syscall`) |
+| `systemd-analyze verify` | beide Units ohne Fehler (systemd 255, Programmdatei als Attrappe unter `/usr/local/bin/postkauz`, danach entfernt); einziger Hinweis „Unknown key name 'PrivatePIDs'“ (erst ab systemd 257, erwartet) |
+| `GOOS=windows go vet ./...` | sauber (u. a. `TestMCPHTTPChildProcess` mit `Kill` unter Windows) |
+| PowerShell | `abnahme_D8.ps1` nicht geparst und nicht gelaufen (kein `pwsh` im Container); geprüft: ASCII/BOM-Guard, Klammern, Diff Zeile für Zeile. Parsen in PS 5.1 und 7.6 und Lauf: Prüfsitzung auf dem Büro-PC |
+| Cloud-Skript D8 | Trockenlauf unter `dash` mit Stub-`tailscale`/`tailscaled` (Subagent C): Auth-Key nur über die 0600-Datei, nicht in argv und nicht in der Umgebung von `tailscaled`; Protokoll ohne Namen und Login |
+
+### Build 0.3.0-alpha.8b
+
+Gebaut an `269fe18` (enthält den ganzen Code; danach nur Protokoll und das Löschen der Wegwerf-Tests) in einem frischen Klon ohne Tags (`git clone --no-tags --branch claude/determined-fermi-1g8w63`, sauberer Arbeitsbaum), Nachbau in einem zweiten Klon ohne Tags: `SHA256SUMS` gleich (ohne die Zeile `VERSION`), `go version -m` in beiden `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029103511-269fe1854e83`, `vcs.revision=269fe1854e83ee97cd705ce87ab4fc3fbd548a10`, `vcs.modified=false`. Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`. `postkauz version` → `postkauz 0.3.0-alpha.8b (go1.27.3 linux/amd64)`.
+
+```
+7750a612604ddbeec3738cb679f55b0cb6fa2e0b6e486e3964e89d1835495c23  postkauz-linux-amd64
+c1c4eba1bb1223467fd1d4e69db4d7fbcb0aa75892bf4ee30e3cff3a2773d856  postkauz-windows-amd64.exe
+eb537353e6d881dd1b1c922b27f6b2eb59a0f44511e12be159bedb01c2a8235f  postkauz-darwin-arm64
+26043f606d050fd1095f31019e1a1e3d3ce68bdde402ab4b2b5ce1fe17abcdef  Register-AuditExport.ps1
+8a50ee74c064cc731446ed6f224d1d3ba8247d7abcea6cb9da834f2e40ec91c1  Register-SyncWatch.ps1
+6973c8473a8a244172530c9e926d4d2b854b2bbee05bc013bde1c700bcdf3de3  Run-SyncWatch.ps1
+9d40eb8aaef6b4c2cb68a8eea02651823ead6ac87c0a4917b29d9d3fc6a785e9  check-example.ps1
+4bf639c3a3a5e3dd66c759ac21d8b1f0b1be6e7174bf67072bfcad01ecececc5  check-example.sh
+72e69e32dd6f24f3e696d31aa0d4c932777a5aef2e6b9c3dbde00ad7fec41920  postkauz-sync@.service
+989ba16168765dac1a3f86f140e50d2b245e701ca8ff100e300d7ec41746368b  postkauz-mcp-http.service
+```
+
+Nur für die Abnahme D8, nicht für den Dauerbetrieb (Rahmen 5: Builds, die nicht von `main` stammen, nur in eigenen, frischen Datenverzeichnissen).
+
+## Offen und Fragen (Nachbesserung)
+
+- Prüfsitzung: `abnahme_D8.ps1` in PS 5.1/7.6 parsen und Teil A/B laufen lassen; `make vuln`; Teil C aus einer Cloud-Sitzung (neuer Ablauf mit Datei `$D8_WORK/go`).
+- Nach dem ersten Lauf mit dem gehärteten `setup.sh`: Ein alter Ordner `/tmp/postkauz-testauth` ohne Marke bricht den Lauf ab; dann einmal von Hand löschen.
+- Fragen an den Betreiber: roadmap.md, Offene Fragen 6 bis 8.
+
+## Commits (Nachbesserung)
+
+`e8b9039` … `2dcaffc` (Subagent B: `withVia`, Secrets-Speicher `denied`, Kindprozess-Test unter Windows, `params.via`, `[http]`-Fehler), `a5eda7e` … `9288367` (Subagent A: Discovery im Tailnet, JWKS, Discovery-Abbruch, Neuladen, `nbf`/`iat`, Rate-Begrenzung, `logPath`, `listen`-Grenzfälle), `1472200` (Aussteller als IP), `242ab05` … `ef486c9` (Subagent C: D8-Skripte, Units, Betriebsdoku, Images, `setup.sh`), `1800590` (`procguard`), `ed44dcc` (ADR-010 Nachtrag, Toolzahlen), `1e60c9e` (Protokoll), `fc2d484` (9 l Log-Flut), `8b5dd1a` (9 k Härtung), `269fe18` (Protokoll 9 l/9 k); danach dieser Eintrag und das Löschen von `auftraege/A03_T5nb_tests/`.
