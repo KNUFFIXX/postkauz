@@ -74,6 +74,9 @@ type DoctorReport struct {
 	// AuditArchivesUnregistered: Dateien audit-archive-*.db neben der
 	// Datenbank ohne Eintrag in audit_archives (T3-Nachbesserung 3b).
 	AuditArchivesUnregistered []string `json:"audit_archives_unregistered,omitempty"`
+	// AuditRotateRunning: Ein audit rotate hält gerade seine Sperre; Dateien
+	// ohne Eintrag gehören wohl zu ihm (Zweite Nachbesserung T3, Punkt 14).
+	AuditRotateRunning bool `json:"audit_rotate_running,omitempty"`
 	// RestoreLeftovers: Arbeitsordner abgebrochener Wiederherstellungen
 	// neben dem Datenverzeichnis (T3-Nachbesserung 4).
 	RestoreLeftovers []string        `json:"restore_leftovers,omitempty"`
