@@ -52,6 +52,29 @@ func realPath(p string) string {
 	}
 }
 
+// insideByID meldet, ob child oder einer seiner vorhandenen Vorfahren
+// dieselbe Datei ist wie dir (os.SameFile: Laufwerk und Dateinummer). Das
+// ergänzt realPath dort, wo EvalSymlinks einen Umweg nicht auflöst: Unter
+// Windows löst es seit Go 1.23 Junctions (Mount Points, mklink /J) nicht
+// mehr auf; unter Linux sieht es keine Bind-Mounts. os.Stat folgt beiden.
+func insideByID(child, dir string) bool {
+	want, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	p := filepath.Clean(child)
+	for {
+		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, want) {
+			return true
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return false
+		}
+		p = parent
+	}
+}
+
 // within meldet, ob child gleich parent ist oder darin liegt (beide
 // absolut; unter Windows ohne Unterschied der Groß- und Kleinschreibung,
 // wie filepath.Rel).

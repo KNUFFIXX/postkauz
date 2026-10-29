@@ -186,9 +186,9 @@ func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
 	abs = filepath.Clean(abs)
 	real, data := realPath(abs), realPath(r.DataDir)
 	switch {
-	case within(real, data):
+	case within(real, data), insideByID(abs, r.DataDir):
 		return "", nil, targetErr("the target folder %s lies inside the data directory; choose a folder outside it (best on another drive)", abs)
-	case within(data, real):
+	case within(data, real), insideByID(r.DataDir, abs):
 		return "", nil, targetErr("the target folder %s contains the data directory; choose another folder", abs)
 	}
 	fi, err := os.Stat(abs)

@@ -324,12 +324,12 @@ func checkRestoreTarget(from, to string, refuse []string) error {
 		if r == "" {
 			continue
 		}
-		if samePath(real, realPath(r)) || samePath(to, r) || within(real, realPath(r)) {
+		if samePath(real, realPath(r)) || samePath(to, r) || within(real, realPath(r)) || insideByID(to, r) {
 			return targetErr("%s is (or lies inside) the default or configured data directory; restore never writes there: "+
 				"restore into a new folder, then point --data-dir or data_dir in the configuration to it", to)
 		}
 	}
-	if within(real, realPath(from)) {
+	if within(real, realPath(from)) || insideByID(to, from) {
 		return targetErr("the new data directory %s lies inside the backup folder; choose a folder outside it", to)
 	}
 	fi, err := os.Stat(to)
