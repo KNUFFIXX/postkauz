@@ -795,7 +795,8 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						continue
 					}
 					rec, recorded := prev[t.f.Day]
-					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location == dir && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
+					// Ort in jeder Schreibweise (dritte Nachbesserung T3, Punkt 1).
+					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location != "" && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
 						list = append(list, d)
 					}
 				}
@@ -948,8 +949,9 @@ func legacyManifestMatches(m auditManifest, done []store.AuditExport) bool {
 }
 
 // checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
-// wenn der Nachweis rec dieses Tages genau diese Datei an diesem Ort
-// belegt (Prüfsumme schon vorher geprüft), wenn ein Merker eines
+// wenn der Nachweis rec dieses Tages genau diese Datei belegt (gleiche
+// Prüfsumme, Ort nicht leer, gleich in welcher Schreibweise: dritte
+// Nachbesserung T3, Punkt 1), wenn ein Merker eines
 // abgebrochenen Exports sie belegt (gleicher Tag, gleicher Ort) oder wenn
 // das Manifest am Ziel sie mit ihrer Prüfsumme nennt.
 func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditExport, dir string, pend auditPendingSet) error {
@@ -960,7 +962,7 @@ func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditE
 	if err != nil {
 		return err
 	}
-	if rec.Location == dir && rec.SHA256 == got {
+	if rec.Location != "" && rec.SHA256 == got {
 		return nil
 	}
 	if day, ok := auditDayOfFile(filepath.Base(path)); ok && pend.has(day, dir, got) {

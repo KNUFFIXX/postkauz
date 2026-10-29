@@ -243,7 +243,7 @@ Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein
 
 Meldet `verify` mehr als einen Tag als verändert, ist es kein Abbruch: nicht reparieren, sondern klären (Abschnitt 1.8 oben, `docs/sicherheit.md` Abschnitt 6).
 
-**Erster Export nach dem Update (seit 0.3.0-alpha.7b):** Der Exportordner darf anders geschrieben sein als bisher (z. B. `g:\my drive\…` statt `G:\My Drive\…` oder ein neuer Laufwerksbuchstabe von Google Drive), solange das Manifest dort zu den Nachweisen passt. Endet der Export trotzdem mit `the target directory belongs to another data directory: … last recorded at <ort>`, einmal genau mit diesem Ort exportieren: `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export --to "<ort>"`, danach läuft die Aufgabe wieder.
+**Erster Export nach dem Update (seit 0.3.0-alpha.7b):** Der Exportordner darf anders geschrieben sein als bisher (z. B. `g:\my drive\…` statt `G:\My Drive\…` oder ein neuer Laufwerksbuchstabe von Google Drive), solange das Manifest dort zu den Nachweisen passt. Endet der Export trotzdem mit `the target directory belongs to another data directory: … last recorded at <ort>`, einmal genau mit diesem Ort exportieren: `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export --to "<ort>"`, danach läuft die Aufgabe wieder. Bricht dieser erste Export unter der neuen Schreibweise ab, erkennt der nächste Lauf die schon vorhandenen Tagesdateien an ihrer Prüfsumme als eigene (seit 0.3.0-alpha.7c) und schließt ab; bis dahin kann `audit verify` für den alten und den neuen Ort `manifest does not match the recorded exports` melden.
 
 ### 1.9 MCP-Server ohne Passwort, Sync über Claude anstoßen
 
