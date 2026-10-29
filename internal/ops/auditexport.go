@@ -512,19 +512,22 @@ func (ps auditPendingSet) has(day, location, sum string) bool {
 }
 
 // auditDataDirID liefert die volle Kennung des Datenverzeichnisses (""
-// ohne Store, etwa in Testattrappen, oder ohne Kennung).
-func auditDataDirID(ctx context.Context, repo AuditRepo) string {
+// ohne Store, etwa in Testattrappen, oder ohne Kennung). Jeder andere
+// Fehler beim Lesen (etwa eine gesperrte Datenbank) bricht ab: Mit ""
+// entfiele still der Schutz vor dem Ordner eines anderen
+// Datenverzeichnisses (zweite Nachbesserung T3, Punkt 7a).
+func auditDataDirID(ctx context.Context, repo AuditRepo) (string, error) {
 	r, ok := repo.(interface {
 		DataDirIDFull(ctx context.Context) (string, error)
 	})
 	if !ok {
-		return ""
+		return "", nil
 	}
 	id, err := r.DataDirIDFull(ctx)
-	if err != nil {
-		return ""
+	if errors.Is(err, store.ErrNoDataDirID) {
+		return "", nil
 	}
-	return id
+	return id, err
 }
 
 // lockBesideDB holt die Sperrdatei name neben der Datenbank, ohne zu
@@ -659,7 +662,10 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
-			dataDirID := auditDataDirID(ctx, repo)
+			dataDirID, err := auditDataDirID(ctx, repo)
+			if err != nil {
+				return nil, err
+			}
 			own, err := ownExportFiles(dir, dataDirID, done)
 			if err != nil {
 				return nil, err
@@ -1104,7 +1110,10 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 	if err != nil {
 		return out, nil, err
 	}
-	dataDirID := auditDataDirID(ctx, src.base)
+	dataDirID, err := auditDataDirID(ctx, src.base)
+	if err != nil {
+		return out, nil, err
+	}
 	exported := map[string]store.AuditExport{}
 	// Manifest je Ort; nur geprüft, wenn dort ein Tag im Format 2 liegt.
 	manifests := map[string][]auditManifestDay{}

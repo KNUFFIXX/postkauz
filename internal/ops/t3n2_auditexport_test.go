@@ -1,8 +1,10 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,5 +103,56 @@ func TestT3N2AbortAfterFirstRecordKeepsManifest(t *testing.T) {
 				t.Errorf("verify after the next export = %+v", v)
 			}
 		})
+	}
+}
+
+// t3n2IDErr lässt das Lesen der Kennung scheitern (z. B. gesperrte
+// Datenbank).
+type t3n2IDErr struct{ *store.SQLite }
+
+func (t3n2IDErr) DataDirIDFull(context.Context) (string, error) {
+	return "", errors.New("database is locked")
+}
+
+type t3n2NoID struct{ *store.SQLite }
+
+func (t3n2NoID) DataDirIDFull(context.Context) (string, error) { return "", store.ErrNoDataDirID }
+
+// Punkt 7a: Ein Fehler beim Lesen der Kennung schaltet den Schutz von
+// Punkt 2 der ersten Nachbesserung nicht still ab: Der Export bricht ab,
+// bevor er etwas schreibt, verify meldet den Fehler.
+func TestT3N2DataDirIDErrorStopsExport(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "audit-export")
+	now := time.Now().UTC()
+	orig := t3nOpen(t, filepath.Join(base, "orig", "postkauz.db"))
+	t3nEvent(t, orig, now.Add(-time.Minute), "sync.run")
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	cp := t3nRestoredCopy(t, orig, base, now)
+	t3nEvent(t, orig, now, "keys.list")
+	if _, err := t3nExport(orig, dir); err != nil {
+		t.Fatal(err)
+	}
+	today := filepath.Join(dir, auditFileName(now.Format("2006-01-02")))
+	before, _ := os.ReadFile(today)
+	manifestBefore, _ := os.ReadFile(filepath.Join(dir, auditManifestName()))
+	t3nEvent(t, cp, now, "accounts.list")
+	if _, err := t3nExport(t3n2IDErr{cp}, dir); err == nil {
+		t.Error("export with a failing id lookup ran")
+	}
+	after, _ := os.ReadFile(today)
+	manifestAfter, _ := os.ReadFile(filepath.Join(dir, auditManifestName()))
+	if !bytes.Equal(before, after) || !bytes.Equal(manifestBefore, manifestAfter) {
+		t.Error("the copy wrote into the original's folder")
+	}
+	if _, err := AuditVerify(t3n2IDErr{orig}).Handler(context.Background(), Call{Input: json.RawMessage(`{}`)}); err == nil {
+		t.Error("verify with a failing id lookup ran")
+	}
+	// Ohne Kennung (Schema vor 8, store.ErrNoDataDirID) exportiert er wie
+	// bisher ohne Vergleich.
+	if _, err := t3nExport(t3n2NoID{orig}, dir); err != nil {
+		t.Errorf("export without an id = %v", err)
 	}
 }
