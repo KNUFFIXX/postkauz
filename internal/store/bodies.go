@@ -44,9 +44,11 @@ func upsertAttachments(ctx context.Context, q querier, mid int64, atts []NewAtta
 		if status == "" {
 			status = "pending"
 		}
-		if _, err := q.ExecContext(ctx, `INSERT INTO attachments(message_id, part_id, filename, content_type, declared_type, size,
+		// Neue Zeilen bekommen eine ID oberhalb des Höchststands (A14,
+		// store/ids.go); ein Konflikt behält die vorhandene ID.
+		if _, err := q.ExecContext(ctx, `INSERT INTO attachments(id, message_id, part_id, filename, content_type, declared_type, size,
 			sha256, inline, content_id, truncated, type_mismatch, mismatch_reason, executable, extract_status, extract_error)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			VALUES (`+nextAttachmentID+`,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(message_id, part_id) DO UPDATE SET filename = excluded.filename, content_type = excluded.content_type,
 			declared_type = excluded.declared_type, size = excluded.size, inline = excluded.inline, content_id = excluded.content_id,
 			truncated = excluded.truncated, type_mismatch = excluded.type_mismatch, mismatch_reason = excluded.mismatch_reason,

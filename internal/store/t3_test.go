@@ -138,17 +138,41 @@ func TestIDsAreNotReusedAfterDelete(t *testing.T) {
 
 // Laufzeit der Migration 0022 (Höchststand der IDs, Quellpfad je Ziel,
 // Archive der Audit-Rotation) an der synthetischen Datenbank, ausgehend
-// von Schema 21; nur mit POSTKAUZ_MEASURE_MIGRATION=1 (Rahmen 4).
+// von Schema 21; nur mit POSTKAUZ_MEASURE_MIGRATION=1 (Rahmen 4). Seit der
+// Nachbesserung T3 (Punkt 8) mit Threads, Anhängen, Aktionen und Entwürfen,
+// deren Verweise die Startwerte der Höchststände mitbestimmen.
 func TestMeasureMigration0022(t *testing.T) {
 	if os.Getenv("POSTKAUZ_MEASURE_MIGRATION") == "" {
 		t.Skip("set POSTKAUZ_MEASURE_MIGRATION=1 to measure migration 0022")
 	}
 	s, path := measureDB(t, 21)
 	defer s.Close()
-	took, links := measureFillAndMigrate(t, s, 22)
+	took, links := measureFillAndMigrate(t, s, 22,
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 50000)
+		 INSERT INTO threads(id,account_id,subject_norm,message_count) SELECT i, 1, 'betreff ' || i, 1 FROM n`,
+		`UPDATE messages SET thread_id = id`,
+		`INSERT INTO attachments(message_id,part_id,filename,content_type,size,extract_status) SELECT id, '2', 'a.pdf', 'application/pdf', 10, 'skipped' FROM messages WHERE id % 5 = 0`,
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 1000)
+		 INSERT INTO actions(id,account_id,kind,params,state,target_count,ids_hash,requested_by,created_at,updated_at)
+		 SELECT i, 1, 'move', '{"target_mailbox_id":1,"target_mailbox":"INBOX"}', CASE WHEN i % 10 = 0 THEN 'queued' ELSE 'done' END, 20, 'h', 'cli', 1, 1 FROM n`,
+		`INSERT INTO action_targets(action_id,message_id,mailbox_id,uid,uidvalidity,result)
+		 SELECT 1 + (id - 1) / 20, id, 2, id, 8, CASE WHEN (1 + (id - 1) / 20) % 10 = 0 THEN NULL ELSE 'ok' END FROM messages WHERE id <= 20000`,
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 500)
+		 INSERT INTO drafts(id,account_id,kind,in_reply_to_msg,message_id_header,remote_mailbox_id,remote_previous,created_at,updated_at)
+		 SELECT i, 1, 'reply', i * 10, 'd' || i || '@example.org', 2, '[{"mailbox_id":2,"uid":1,"uidvalidity":8}]', 1, 1 FROM n`,
+	)
 	fi, _ := os.Stat(path)
-	var floor string
-	_ = s.db.QueryRow(`SELECT value FROM meta WHERE key = 'id_floor_messages'`).Scan(&floor)
-	t.Logf("migration 0022 (incl. snapshot): %s; messages 50000, links %d, audit 20000; db %d bytes; id_floor_messages %s; snapshot %s",
-		took, links, fi.Size(), floor, filepath.Base(s.LastSnapshot))
+	floors := map[string]string{}
+	rows, err := s.db.Query(`SELECT key, value FROM meta WHERE key GLOB 'id_floor_*'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k, v string
+		_ = rows.Scan(&k, &v)
+		floors[k] = v
+	}
+	_ = rows.Close()
+	t.Logf("migration 0022 (incl. snapshot): %s; messages 50000, links %d, threads 50000, attachments 10000, actions 1000 with 20000 targets, drafts 500, audit 20000; db %d bytes; floors %v; snapshot %s",
+		took, links, fi.Size(), floors, filepath.Base(s.LastSnapshot))
 }

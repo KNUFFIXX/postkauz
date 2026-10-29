@@ -188,7 +188,9 @@ func selfAddresses(ctx context.Context, q querier, account int64) ([]string, err
 
 func (x *txIndex) Create(norm string) (int64, error) {
 	var id int64
-	err := x.q.QueryRowContext(x.ctx, `INSERT INTO threads(account_id, subject_norm) VALUES (?, ?) RETURNING id`,
+	// ID oberhalb des Höchststands (A14, store/ids.go): Threads werden beim
+	// Zusammenführen und von purge gelöscht.
+	err := x.q.QueryRowContext(x.ctx, `INSERT INTO threads(id, account_id, subject_norm) VALUES (`+nextThreadID+`, ?, ?) RETURNING id`,
 		x.account, norm).Scan(&id)
 	return id, err
 }

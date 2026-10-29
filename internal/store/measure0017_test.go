@@ -61,8 +61,9 @@ func measureDB(t *testing.T, version int) (*SQLite, string) {
 	return s, path
 }
 
-// measureFillAndMigrate füllt die Datenbank und migriert bis to (0 = alle).
-func measureFillAndMigrate(t *testing.T, s *SQLite, to int) (time.Duration, int) {
+// measureFillAndMigrate füllt die Datenbank (nach dem Grundbestand die
+// Anweisungen extra) und migriert bis to (0 = alle).
+func measureFillAndMigrate(t *testing.T, s *SQLite, to int, extra ...string) (time.Duration, int) {
 	t.Helper()
 	ctx := context.Background()
 	fill := []string{
@@ -77,9 +78,9 @@ func measureFillAndMigrate(t *testing.T, s *SQLite, to int) (time.Duration, int)
 		 INSERT INTO audit_events(ts,actor_type,api_key_id,scope,operation,params_redacted,targets,result,reason,dry_run,duration_ms)
 		 SELECT 1700000000000 + i*60000, 'agent', 'k1', 'mail:read', 'messages.search', '{"fields":["query"]}', '[]', 'ok', NULL, 0, 12 FROM n`,
 	}
-	for _, q := range fill {
+	for _, q := range append(fill, extra...) {
 		if _, err := s.db.Exec(q); err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", q, err)
 		}
 	}
 	var links int
