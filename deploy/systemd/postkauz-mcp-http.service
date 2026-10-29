@@ -18,7 +18,12 @@
 # trotzdem nicht in /proc/<pid>/environ (es kommt als Credential), und
 # jeder PostKauz-Prozess setzt unter Linux als erste Anweisung
 # PR_SET_DUMPABLE=0 (internal/procguard): /proc/<pid>/mem und ptrace nur
-# für root. Restrisiko: Wer diesen Dienst übernimmt, kann über die
+# für root. Restrisiko ohne PrivatePIDs: Kindprozesse des Syncs
+# (pdftotext, DOCX-Extraktor) sperren sich nicht; über ihr
+# /proc/<pid>/root wäre die Credential-Datei lesbar, und ein vor der
+# ersten Anweisung geöffnetes /proc/<pid>/mem bleibt erreichbar. Für den
+# VPS deshalb systemd >= 257 oder zwei Systemnutzer. Restrisiko auch
+# mit PrivatePIDs: Wer diesen Dienst übernimmt, kann über die
 # gemeinsame Datenbank accounts.host ändern und den Sync beim nächsten
 # Lauf an einen fremden Server schicken (docs/betrieb.md 4.4, Roadmap:
 # zwei Systemnutzer).

@@ -503,7 +503,7 @@ Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adres
 
 ### 4.3 VPS einrichten (Linux, einmalig)
 
-Für einen kleinen EU-VPS (Debian oder Ubuntu). Als `root`:
+Für einen kleinen EU-VPS (Debian oder Ubuntu). Empfohlen ist eine Version mit systemd 257 oder neuer (zum Beispiel Debian 13): Nur dann trennt `PrivatePIDs=` den HTTP-Dienst ganz vom Sync-Dienst (Restrisiko sonst in 4.4). Als `root`:
 
 1. Updates und automatische Sicherheitsupdates:
 
@@ -602,7 +602,9 @@ Die leere erste Zeile löscht die Ordner-Zeile der Vorlage. Beim Kontoanlegen in
 
 - **Kein Passwort in der Umgebung:** Es kommt als Credential, nicht über `/proc/<pid>/environ`.
 - **Im Programm (jede systemd-Version):** Jeder PostKauz-Prozess sperrt sich unter Linux als **erste Anweisung** gegen das Auslesen (`PR_SET_DUMPABLE=0`); dann können nur noch Prozesse von `root` seinen Speicher lesen oder ihn untersuchen, und es entsteht kein Speicherabbild mit dem Passwort. Vor dieser ersten Anweisung bleibt ein Fenster von wenigen Millisekunden nach dem Start (gemessen in der zweiten Nachbesserung T5); weil das Passwort nicht in der Umgebung steht, ist dort nichts zu holen.
-- **In der Unit:** Der MCP-Dienst sieht `/run/credentials` und die Passwortdateien nicht (`InaccessiblePaths=`). Ab systemd 257 (zum Beispiel Debian 13) hat er zusätzlich einen eigenen Prozessraum (`PrivatePIDs=yes`) und sieht den Sync-Dienst gar nicht. Ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen nur diese Zeile weg; dann kann der MCP-Dienst den Sync-Dienst zwar sehen und beenden (der startet nach 60 s neu), aber weder dessen Umgebung noch dessen Speicher noch dessen Credentials lesen.
+- **In der Unit:** Der MCP-Dienst sieht `/run/credentials` und die Passwortdateien nicht (`InaccessiblePaths=`). Ab systemd 257 (zum Beispiel Debian 13) hat er zusätzlich einen eigenen Prozessraum (`PrivatePIDs=yes`) und sieht den Sync-Dienst gar nicht. Ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen nur diese Zeile weg; dann kann der MCP-Dienst den Sync-Dienst sehen und beenden (der startet nach 60 s neu); Umgebung und Speicher des Sync-Prozesses selbst bleiben gesperrt, aber nicht ganz alles (Restrisiko unten).
+
+**Restrisiko ohne `PrivatePIDs` (systemd älter als 257, etwa Ubuntu 24.04 mit 255, Debian 12 mit 252):** Der MCP-Dienst sieht dann die Prozesse des Sync-Dienstes. Gesperrt ist nur der Sync-Prozess selbst, nicht seine Kindprozesse (`pdftotext`, der DOCX-Extraktor): Über deren `/proc/<pid>/root` sähe ein übernommener MCP-Dienst das Dateisystem des Sync-Dienstes und damit dessen Credential-Datei. Dazu bleibt ein `/proc/<pid>/mem`, das in den ersten Millisekunden nach dem Start (vor der ersten Anweisung) geöffnet wurde, für denselben Nutzer erreichbar. **Empfehlung für den VPS:** systemd 257 oder neuer (zum Beispiel Debian 13), oder zwei Systemnutzer, sobald das Programm sie kann (Roadmap).
 
 **Restrisiko:** Wer den MCP-Dienst übernimmt (Fehler im Programm), schreibt mit denselben Rechten in dieselbe Datenbank. Er könnte dort den Server eines Kontos (`accounts.host`) auf einen eigenen ändern; der Sync-Dienst meldete sich beim nächsten Lauf dort mit dem Passwort an. Dagegen hilft erst die Trennung in zwei Systemnutzer (Roadmap, braucht ein Rechtemodell für Datenbank und Mail-Dateien). Bis dahin: `accounts list` zeigt den Server je Konto; ein unerwarteter Name dort heißt sofort Passwort ändern.
 
@@ -709,7 +711,7 @@ cd deploy/docker && mkdir -p config && install -m 0600 /dev/null sync.env
 POSTKAUZ_VERSION=<version> docker compose up -d
 ```
 
-`config/config.toml` wie in 4.3, `sync.env` mit den Passwörtern wie in 4.4 (beide stehen in `.gitignore`). Ein Konto legst du mit `docker compose run --rm sync account add privat --imap … --user … --password-from-env` an; bis dahin startet der Dienst `sync` mit `no account configured yet` immer wieder neu. Die Wurzel der Container ist schreibgeschützt (nur `/data` und `/tmp`). Tailscale als Sidecar statt auf dem Host: zusätzlich `-f docker-compose.tailscale.yml` und eine Datei `tailscale.env` mit `TS_AUTHKEY=…`.
+`config/config.toml` wie in 4.3. `sync.env` enthält je Konto eine Zeile `POSTKAUZ_PASSWORD_<KONTO>=<passwort>` (Name in Großbuchstaben, `-` wird `_`); die Credential-Ordner aus 4.4 gelten nur für systemd, nicht für Docker (beide Dateien stehen in `.gitignore`). Im Container steht das Passwort in der Umgebung des Sync-Containers; der MCP-Container hat einen eigenen Prozessraum und sieht sie nicht. Ein Konto legst du mit `docker compose run --rm sync account add privat --imap … --user … --password-from-env` an; bis dahin startet der Dienst `sync` mit `no account configured yet` immer wieder neu. Die Wurzel der Container ist schreibgeschützt (nur `/data` und `/tmp`). Tailscale als Sidecar statt auf dem Host: zusätzlich `-f docker-compose.tailscale.yml` und eine Datei `tailscale.env` mit `TS_AUTHKEY=…`.
 
 ### 4.8 Updates und Sicherung auf dem VPS
 
