@@ -1,0 +1,21 @@
+import base64, json, sys, importlib.util
+spec = importlib.util.spec_from_file_location("probe", sys.argv[1])
+p = importlib.util.module_from_spec(spec); spec.loader.exec_module(p)
+b = lambda d: base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode()).rstrip(b"=").decode()
+hdr = b({"alg": "RS256", "kid": "a" * 64, "typ": "at+jwt"})
+for extra in (0, 100, 200, 300):
+    claims = {"aud": ["https://pc.tailnet.example.org/mcp"], "client_id": "claude-code", "exp": 1761740000, "iat": 1761736400,
+              "iss": "https://auth.tailnet.example.org:8443", "jti": "0" * 36, "nbf": 1761736400, "scp": ["openid", "offline_access"],
+              "sub": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0", "groups": ["x" * extra] if extra else []}
+    pay = b(claims)
+    at = hdr + "." + pay + "." + "S" * 342
+    body = json.dumps({"access_token": at, "expires_in": 3599, "refresh_token": "authelia_rt_" + "R" * 80, "token_type": "bearer"})
+    p.SECRETS[:] = [at, "authelia_rt_" + "R" * 80]
+    out = p.short(p.Resp(200, [("Content-Type", "application/json")], body).show())
+    i = out.find("eyJ")
+    leak = out[i:].split('"')[0].split("\n")[0] if i >= 0 else ""
+    dec = ""
+    if leak:
+        seg = leak.split(".")[1] if "." in leak else ""
+        dec = base64.urlsafe_b64decode(seg[: len(seg) // 4 * 4] + "==").decode("utf-8", "replace")[:90]
+    print(f"header+payload={len(hdr)+1+len(pay):4d} token={len(at):4d} leaked prefix={len(leak):4d} hostname visible={'tail1234' in dec} {dec!r}")

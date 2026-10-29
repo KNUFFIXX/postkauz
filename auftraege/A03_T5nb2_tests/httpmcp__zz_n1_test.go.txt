@@ -1,0 +1,149 @@
+package httpmcp
+
+import (
+	"encoding/base64"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+)
+
+// N1 (a)(b)(c)(d): gültige Aufrufe leeren den Vorrat für Fehlschläge.
+func TestZZN1ValidCallsDrainFailurePool(t *testing.T) {
+	e := newEnv(t)
+	ts, s := e.start(t, nil, nil)
+	t.Logf("tokens at start: %.2f", s.failures.Tokens())
+	ok := 0
+	for i := 0; i < failPerMinute+5; i++ {
+		res := post(t, ts.URL+PathMCP, initBody, bearer(e.keys["reader"]))
+		if res.StatusCode == http.StatusOK {
+			ok++
+		}
+		_ = res.Body.Close()
+	}
+	t.Logf("valid reader calls: %d x 200; failure pool tokens now: %.2f", ok, s.failures.Tokens())
+	// (b) Metadaten
+	r, err := http.Get(ts.URL + prmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Body.Close()
+	t.Logf("(b) GET PRM after valid traffic: %d", r.StatusCode)
+	// (b) ohne Token
+	r2 := post(t, ts.URL+PathMCP, initBody, nil)
+	t.Logf("(b) POST without token: %d (WWW-Authenticate=%q)", r2.StatusCode, r2.Header.Get("WWW-Authenticate"))
+	// (c) falscher Schlüssel, Audit
+	r3 := post(t, ts.URL+PathMCP, initBody, bearer(ops.KeyPrefix+"wrong-0123456789abcdef"))
+	n := 0
+	for _, a := range e.auditAll(t) {
+		if a.Operation == ops.OpAuthenticate && a.Reason == "key_invalid" {
+			n++
+		}
+	}
+	t.Logf("(c) wrong key: %d, key_invalid audit rows: %d", r3.StatusCode, n)
+	// (d) gültiger anderer Schlüssel
+	r4 := post(t, ts.URL+PathMCP, initBody, bearer(e.keys["assistant"]))
+	t.Logf("(d) valid assistant key with empty pool: %d", r4.StatusCode)
+	if r.StatusCode != http.StatusTooManyRequests || r2.StatusCode != http.StatusTooManyRequests || r3.StatusCode != http.StatusTooManyRequests || n != 0 {
+		t.Errorf("N1 not reproduced")
+	}
+	if r4.StatusCode != http.StatusOK {
+		t.Errorf("(d) valid key got %d", r4.StatusCode)
+	}
+}
+
+// N1 (a) Dauerbetrieb: 1 gültiger Aufruf je Sekunde (unter dem Standard
+// 120/min) hält den Vorrat leer; Unangemeldete kommen kaum durch.
+func TestZZN1SustainedValidTraffic(t *testing.T) {
+	if testing.Short() {
+		t.Skip()
+	}
+	e := newEnv(t)
+	ts, s := e.start(t, nil, nil)
+	for i := 0; i < failPerMinute; i++ {
+		_ = post(t, ts.URL+PathMCP, initBody, bearer(e.keys["reader"])).Body.Close()
+	}
+	codes := map[int]int{}
+	for i := 0; i < 8; i++ {
+		time.Sleep(time.Second)
+		_ = post(t, ts.URL+PathMCP, initBody, bearer(e.keys["reader"])).Body.Close()
+		time.Sleep(10 * time.Millisecond)
+		r, err := http.Get(ts.URL + prmPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codes[r.StatusCode]++
+		_ = r.Body.Close()
+	}
+	t.Logf("PRM during 1 valid call/s for 8 s: %v; pool %.2f", codes, s.failures.Tokens())
+}
+
+// N1 (e): GET an /mcp mit gültigem Bearer zieht aus dem Vorrat.
+func TestZZN1GetWithValidBearerUsesPool(t *testing.T) {
+	e := newEnv(t)
+	ts, s := e.start(t, nil, nil)
+	codes := map[int]int{}
+	for i := 0; i < failPerMinute+2; i++ {
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+PathMCP, nil)
+		req.Header.Set("Authorization", "Bearer "+e.keys["reader"])
+		req.Header.Set("Accept", "text/event-stream")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		codes[r.StatusCode]++
+		_ = r.Body.Close()
+	}
+	t.Logf("(e) GET /mcp with valid bearer: %v; pool %.2f", codes, s.failures.Tokens())
+}
+
+// N1 (b) Modus oauth: abgelaufenes Token nach gültigem Verkehr → 429 statt
+// 401 (kein invalid_token, Client erneuert nicht); (c) principal_unknown
+// ohne Audit.
+func TestZZN1OAuthExpiredAfterValidTraffic(t *testing.T) {
+	o := newOAuthEnv(t)
+	tok := o.token(t, "user-reader", nil)
+	for i := 0; i < failPerMinute+5; i++ {
+		if code, _, body := o.post(t, tok); code != http.StatusOK {
+			t.Fatalf("valid %d: %d %s", i, code, body)
+		}
+	}
+	t.Logf("pool after 35 valid oauth calls: %.2f", o.srv.failures.Tokens())
+	exp := o.token(t, "user-reader", func(c map[string]any) {
+		c["exp"] = time.Now().Add(-time.Hour).Unix()
+		c["iat"] = time.Now().Add(-2 * time.Hour).Unix()
+	})
+	code, hdr, _ := o.post(t, exp)
+	t.Logf("(b) expired token: %d, WWW-Authenticate=%q, Retry-After=%q", code, hdr.Get("WWW-Authenticate"), hdr.Get("Retry-After"))
+	code2, _, _ := o.post(t, o.token(t, "user-unknown", nil))
+	n := 0
+	for _, r := range o.auditAll(t) {
+		if r.Operation == ops.OpAuthenticate && r.Reason == "principal_unknown" {
+			n++
+		}
+	}
+	t.Logf("(c) unknown subject: %d, principal_unknown rows %d", code2, n)
+	if code != http.StatusTooManyRequests || !strings.Contains(hdr.Get("WWW-Authenticate"), "") {
+		t.Errorf("N1(b) oauth not reproduced: %d", code)
+	}
+}
+
+// N1 (f): 503 wegen unbekannter kid in der Neuladesperre. Gibt der Platz
+// wirklich zurück (unbegrenzt 503) oder nicht (Cancel no-op → 429)?
+func TestZZN1UnknownKidThrottled(t *testing.T) {
+	o := newOAuthEnv(t)
+	if code, _, body := o.post(t, o.token(t, "user-reader", nil)); code != http.StatusOK {
+		t.Fatalf("valid: %d %s", code, body)
+	}
+	codes := map[int]int{}
+	for i := 0; i < 2*failPerMinute; i++ {
+		// fremder Schlüssel, kid unbekannt (sign mit anderem Key setzt kid?)
+		j := o.junkToken(t)
+		j = strings.Replace(j, j[:strings.Index(j, ".")], base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"at+jwt","kid":"zz-unknown"}`)), 1)
+		code, _, _ := o.post(t, j)
+		codes[code]++
+	}
+	t.Logf("(f) 60 tokens signed by an unknown key within 10 s: %v; pool %.2f", codes, o.srv.failures.Tokens())
+}
