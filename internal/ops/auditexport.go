@@ -1219,13 +1219,38 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 			}
 		}
 	}
-	// Dateien abgebrochener Exporte (Merker), die noch so am Ort liegen.
+	// Dateien abgebrochener Exporte (Merker), die noch am Ort liegen.
+	// Zweite Nachbesserung T3: Ein Merker für einen Tag, dessen Nachweis an
+	// einem anderen Ort steht, gehört zu einem aufgegebenen Ordner und wird
+	// übergangen (Punkt 7b). Liegt am Ort eines Merkers eine Datei, die
+	// weder zu ihm noch zu einem anderen Merker dieses Tages und Ortes passt,
+	// und hat der Tag dort keinen Nachweis (den prüft die Schleife oben),
+	// ist sie verändert (Punkt 6).
+	seen := map[string]bool{}
 	for _, p := range pend {
+		e, recorded := exported[p.Day]
+		if recorded && e.Location != p.Location {
+			continue
+		}
 		file := filepath.Join(p.Location, auditFileName(p.Day))
-		if got, err := fileSHA256(file); err == nil && got == p.SHA256 {
-			if e, ok := exported[p.Day]; !ok || e.Location != p.Location || e.SHA256 != got {
+		if seen[file] {
+			continue
+		}
+		got, err := fileSHA256(file)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			continue // Abbruch vor dem Umbenennen der Datei
+		case err != nil:
+			return out, nil, err
+		}
+		seen[file] = true
+		switch {
+		case pend.has(p.Day, p.Location, got):
+			if !recorded || e.SHA256 != got {
 				out.Incomplete = append(out.Incomplete, AuditProblem{Day: p.Day, File: file, Problem: AuditExportIncomplete})
 			}
+		case !recorded:
+			add(p.Day, file, AuditFileChanged, 0)
 		}
 	}
 	stray, err := auditStrayRows(ctx, repo, plan, closedRows)
