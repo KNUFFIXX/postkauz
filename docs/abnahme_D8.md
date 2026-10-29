@@ -83,7 +83,12 @@ Während Teil B auf Enter wartet. Der Schlüssel `cloud-reader-c` (Datei aus B4,
 Das Bash-Werkzeug einer Cloud-Sitzung hat keine Eingabe. Darum: Skript **im Hintergrund** starten, das Protokoll mitlesen und die Weiter-Signale als Dateien im Arbeitsordner anlegen (der Pfad steht in der zweiten Zeile des Protokolls):
 
 ```bash
-TS_AUTHKEY=<geheim> D8_NODE=pc.<tailnet>.ts.net D8_KEY_FILE=/pfad/cloud-reader-c.txt D8_PRINCIPAL=cloud-reader-c sh docs/abnahme_D8_cloud.sh
+# im Hintergrund (&, oder die Hintergrund-Option des Bash-Werkzeugs); die
+# Ausgabe ist dasselbe maskierte Protokoll, dazu ABBRUCH-Meldungen
+TS_AUTHKEY=<geheim> D8_NODE=pc.<tailnet>.ts.net D8_KEY_FILE=/pfad/cloud-reader-c.txt D8_PRINCIPAL=cloud-reader-c \
+  sh docs/abnahme_D8_cloud.sh >"${TMPDIR:-/tmp}/d8-cloud.out" 2>&1 &
+# mitlesen (zweite Zeile: Arbeitsordner)
+cat "${TMPDIR:-/tmp}/d8-cloud.out"
 # später, nach B4.1 (Widerruf) auf dem PC:
 touch <Arbeitsordner>/go
 ```
@@ -102,7 +107,7 @@ touch <Arbeitsordner>/go
 | C5 | `[Du]` in Teil B Enter (Widerruf, B4.1), dann Datei `go` im Arbeitsordner anlegen | 403 `denied (key_revoked)` |
 | C6.1 | `tailscale logout` | Knoten verlässt das Tailnet |
 
-Danach von Hand: Auth-Key in der Tailscale-Konsole widerrufen, falls noch gültig. Im Modus `oauth` (`D8_MODE=oauth`) läuft statt C3 die Probe `oauth`: Die Anmelde-URL steht ungefiltert nur in `<Arbeitsordner>/login-url.txt` (Rechte 600) und, falls die Sitzung ein Terminal hat, auf `/dev/tty`, nie im Protokoll. Die Rückleitungs-URL aus dem Browser kommt als eine Zeile mit Zeilenende in `<Arbeitsordner>/callback` (erst `callback.tmp` schreiben, dann umbenennen); die Probe wartet darauf höchstens `D8_WAIT` Sekunden und löscht die Datei nach dem Lesen; die Messung des OAuth-Wegs gehört aber an den PC (Teil D, ADR-010 Folgen: aus einer Cloud-Sitzung bleibt OAuth unsicher, Risiko 3).
+Danach von Hand: Auth-Key in der Tailscale-Konsole widerrufen, falls noch gültig. Im Modus `oauth` (`D8_MODE=oauth`, dazu `D8_ISSUER=https://<authelia>`: dann steht der Aussteller im Protokoll nur als `<issuer>` bzw. `<issuer-host>`, wichtig bei einem eigenen Domainnamen auf dem VPS) läuft statt C3 die Probe `oauth`; ihre Hinweise erscheinen sofort im Protokoll (Filter zeilenweise): Die Anmelde-URL steht ungefiltert nur in `<Arbeitsordner>/login-url.txt` (Rechte 600) und, falls die Sitzung ein Terminal hat, auf `/dev/tty`, nie im Protokoll. Die Rückleitungs-URL aus dem Browser kommt als eine Zeile mit Zeilenende in `<Arbeitsordner>/callback` (erst `callback.tmp` schreiben, dann umbenennen); die Probe wartet darauf höchstens `D8_WAIT` Sekunden und löscht die Datei nach dem Lesen; die Messung des OAuth-Wegs gehört aber an den PC (Teil D, ADR-010 Folgen: aus einer Cloud-Sitzung bleibt OAuth unsicher, Risiko 3).
 
 ## Teil D: Modus oauth mit Anmeldung im Browser (Windows)
 

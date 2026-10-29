@@ -638,7 +638,6 @@ function Invoke-ProbeInteractive {
         Add-Skip 'D-Probe' 'kein Python; Teil D braucht die Probe (-Python angeben)'
         return
     }
-    $outFile = Join-Path $script:Run ('probe-' + (Get-Date -Format 'HHmmss') + '.txt')
     $old = $env:PYTHONIOENCODING
     $env:PYTHONIOENCODING = 'utf-8'
     $seen = New-Object System.Collections.Generic.List[string]

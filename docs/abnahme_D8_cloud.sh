@@ -22,10 +22,14 @@
 #                  andere Resource (Modus oauth, Schritt 3)
 #   D8_WAIT        Sekunden, die C5 (und im Modus oauth die Anmeldung) auf
 #                  das Weiter-Signal warten (Standard 1800)
+#   D8_ISSUER      Modus oauth: Aussteller ([http] issuer), z. B.
+#                  https://auth.example.org:8443; wird im Protokoll maskiert
+#                  (<issuer>, Host und Host:Port als <issuer-host>), etwa ein
+#                  eigener Domainname auf dem VPS
 #
 # Ohne Terminal (Bash-Werkzeug einer Cloud-Sitzung): Skript im Hintergrund
 # starten; es wartet nie auf eine Eingabe, sondern auf Dateien im
-# Arbeitsordner (Pfad steht in der ersten Zeile des Protokolls):
+# Arbeitsordner (Pfad steht in der zweiten Zeile des Protokolls):
 #   go         C5: nach dem Widerruf auf dem PostKauz-Knoten anlegen
 #              (Inhalt "s" überspringt C5)
 #   callback   Modus oauth: Rückleitungs-URL aus dem Browser, eine Zeile mit
@@ -35,9 +39,9 @@
 #
 # Jede Prüfung ist eine Zeile "OK <Nr> …", "FAIL <Nr> …" oder "SKIP <Nr> …";
 # letzte Zeile "D8 Teil C: <n> OK, <m> FAIL, <k> SKIP". Protokoll
-# $D8_WORK/D8_cloud.txt; Knotenname, Tailnet-Namen und -Adressen, Schlüssel
-# und Token sind darin maskiert; vom Tailnet steht nur die Zahl der Knoten
-# darin (keine Namen, kein Login). Rohe Ausgaben von tailscaled, tailscale up
+# $D8_WORK/D8_cloud.txt; Knotenname, Aussteller, Tailnet-Namen und
+# -Adressen, Schlüssel und Token sind darin maskiert; vom Tailnet steht nur
+# die Zahl der Knoten darin (keine Namen, kein Login). Rohe Ausgaben von tailscaled, tailscale up
 # und openssl löscht das Skript am Ende. Exit 0 nur ohne FAIL.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -54,6 +58,13 @@ die() { echo "ABBRUCH: $*" >&2; exit 2; }
 case "$MODE" in key|oauth) ;; *) die "D8_MODE muss key oder oauth sein";; esac
 case "$WAIT" in ''|*[!0-9]*) die "D8_WAIT muss eine Zahl (Sekunden) sein";; esac
 if [ "$MODE" = key ] && [ ! -f "${D8_KEY_FILE:-}" ]; then die "D8_KEY_FILE fehlt (Datei mit dem Schlüssel $PRINCIPAL)"; fi
+ISSUER=${D8_ISSUER:-}
+case "$ISSUER" in
+  '') ;;
+  *[!A-Za-z0-9.:/_-]*) die "D8_ISSUER: nur https://<name>[:port][/pfad]";;
+  https://?*) ;;
+  *) die "D8_ISSUER muss mit https:// beginnen";;
+esac
 for b in tailscale tailscaled curl openssl python3 mktemp; do
   command -v "$b" >/dev/null 2>&1 || die "$b fehlt im PATH (Tailscale: statisches Paket von pkgs.tailscale.com, siehe docs/abnahme_D8.md)"
 done
@@ -79,8 +90,31 @@ AUTHKEY_FILE="$WORK/authkey"
 printf '%s' "$TS_AUTHKEY" >"$AUTHKEY_FILE" || die "kann $AUTHKEY_FILE nicht schreiben"
 unset TS_AUTHKEY
 
+# Wörtliche Masken (Knotenname, Aussteller als URL, Host:Port und Host):
+# Sonderzeichen für sed maskieren, einmal vorab.
+sedlit() { printf '%s' "$1" | sed 's/[.[\*^$/]/\\&/g'; }
+NODE_RE=$(sedlit "$D8_NODE")
+ISS_URL_RE='' ISS_AUTH_RE='' ISS_HOST_RE=''
+if [ -n "$ISSUER" ]; then
+  iss=${ISSUER%/}; iauth=${iss#https://}; iauth=${iauth%%/*}; ihost=${iauth%%:*}
+  ISS_URL_RE=$(sedlit "$iss"); ISS_AUTH_RE=$(sedlit "$iauth"); ISS_HOST_RE=$(sedlit "$ihost")
+fi
+# Zeilenweise filtern (sed -u: GNU und BSD sed), damit Hinweise der Probe im
+# Modus oauth (Anmelde-Adresse, Warten auf callback) sofort im Protokoll
+# stehen; ohne -u Rückfall auf sed.
+if printf 'x\n' | sed -u 's/x/y/' >/dev/null 2>&1; then SED_U='sed -u'; else SED_U=sed; fi
+# Längste zuerst: Aussteller-URL und Host:Port vor dem Knotennamen (der
+# Aussteller kann auf demselben Knoten liegen), der blanke Host danach.
 mask() {
-  sed -e "s/$(printf '%s' "$D8_NODE" | sed 's/[.[\*^$/]/\\&/g')/<knoten>/g" \
+  set --
+  if [ -n "$ISS_URL_RE" ]; then
+    set -- -e "s/$ISS_URL_RE/<issuer>/g" -e "s/$ISS_AUTH_RE/<issuer-host>/g"
+  fi
+  set -- "$@" -e "s/$NODE_RE/<knoten>/g"
+  if [ -n "$ISS_HOST_RE" ]; then
+    set -- "$@" -e "s/$ISS_HOST_RE/<issuer-host>/g"
+  fi
+  $SED_U "$@" \
       -e 's/[A-Za-z0-9-]*\.[A-Za-z0-9-]*\.ts\.net/<name>.ts.net/g' \
       -e 's/100\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/<tailnet-ip>/g' \
       -e 's/fd7a:115c:a1e0:[0-9a-f:]*/<tailnet-ip6>/g' \
@@ -190,7 +224,7 @@ run_probe() {
   nr=D8; prev=
   for x in "$@"; do [ "$prev" = --nr ] && nr=$x; prev=$x; done
   rm -f "$WORK/probe.rc"
-  { python3 -I "$here/abnahme_D8_probe.py" "$@" 2>&1; echo $? >"$WORK/probe.rc"; } | mask | tee -a "$LOG" | tee "$WORK/probe.out"
+  { python3 -I -u "$here/abnahme_D8_probe.py" "$@" 2>&1; echo $? >"$WORK/probe.rc"; } | mask | tee -a "$LOG" | tee "$WORK/probe.out"
   rc=$(cat "$WORK/probe.rc" 2>/dev/null); rm -f "$WORK/probe.rc"
   n=$(grep -c '^OK ' "$WORK/probe.out"); f=$(grep -c '^FAIL ' "$WORK/probe.out"); s=$(grep -c '^SKIP ' "$WORK/probe.out")
   NOK=$((NOK+n)); NFAIL=$((NFAIL+f)); NSKIP=$((NSKIP+s))
