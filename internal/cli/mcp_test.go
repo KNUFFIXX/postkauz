@@ -26,6 +26,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("POSTKAUZ_TEST_RUN_CLI") == "1" {
 		os.Exit(Run(os.Args[1:], os.Stdout, os.Stderr, "test"))
 	}
+	// Der Testprozess selbst bleibt auslesbar (procguard nur in den
+	// Kindprozessen mit echtem Run).
+	denyInspection = func() error { return nil }
 	os.Exit(m.Run())
 }
 

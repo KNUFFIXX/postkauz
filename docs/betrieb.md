@@ -567,14 +567,20 @@ Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in ei
 
 Der MCP-Dienst hat keine `EnvironmentFile`-Zeile, sieht `/etc/postkauz/credentials` gar nicht (`InaccessiblePaths=`) und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht.
 
-**Grenze, offen gesagt:** Beide Dienste laufen als derselbe Nutzer `postkauz`, weil sie dieselbe Datenbank und dieselben Mail-Dateien brauchen und PostKauz diese bei jedem Start auf „nur der Besitzer“ setzt (0600 und 0700). Ein Prozess darf die Umgebung eines anderen Prozesses desselben Nutzers lesen (`/proc/<pid>/environ`), also auch das Passwort des Sync-Dienstes. Dagegen hat der MCP-Dienst einen eigenen Prozessraum (`PrivatePIDs=yes`): Er sieht den Sync-Dienst gar nicht. Das wirkt erst ab **systemd 257** (zum Beispiel Debian 13); ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen die Zeile weg. Prüfen:
+**Grenze, offen gesagt:** Beide Dienste laufen als derselbe Nutzer `postkauz`, weil sie dieselbe Datenbank und dieselben Mail-Dateien brauchen und PostKauz diese bei jedem Start auf „nur der Besitzer“ setzt (0600 und 0700). Normalerweise darf ein Prozess die Umgebung eines anderen Prozesses desselben Nutzers lesen (`/proc/<pid>/environ`), also auch das Passwort des Sync-Dienstes. Davor schützen zwei Dinge:
+
+- **Im Programm (jede systemd-Version):** Jeder PostKauz-Prozess mit Zugangsdaten (zum Beispiel `sync --watch`) sperrt sich unter Linux gleich beim Start gegen das Auslesen (`PR_SET_DUMPABLE=0`). Dann können nur noch Prozesse von `root` seine Umgebung und seinen Speicher lesen, und es entsteht kein Speicherabbild mit dem Passwort.
+- **In der Unit (ab systemd 257, zum Beispiel Debian 13):** Der MCP-Dienst hat einen eigenen Prozessraum (`PrivatePIDs=yes`) und sieht den Sync-Dienst gar nicht. Ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen nur diese Zeile weg.
+
+Prüfen:
 
 ```bash
 systemctl --version | head -n 1
 systemctl show -p PrivatePIDs postkauz-mcp-http.service
+sudo -u postkauz cat /proc/$(systemctl show -p MainPID --value postkauz-sync@<konto>.service)/environ
 ```
 
-Erwartet: `systemd 257` oder höher und `PrivatePIDs=yes`. Bei einer älteren Version schützt den Sync-Dienst nur der Code (der MCP-Prozess fragt nie nach einem Passwort), nicht das Betriebssystem. Zwei getrennte Nutzer mit gemeinsamer Gruppe gehen erst nach einer Änderung im Programm (Rechte des Datenverzeichnisses). Beide Units haben außerdem `ProtectProc=invisible` (Prozesse anderer Nutzer bleiben unsichtbar).
+Erwartet: die Version, `PrivatePIDs=yes` (bei systemd 257 oder höher) und beim dritten Befehl `Permission denied` (der Sync-Prozess ist für den eigenen Nutzer gesperrt). Zwei getrennte Nutzer mit gemeinsamer Gruppe gehen erst nach einer Änderung im Programm (Rechte des Datenverzeichnisses, in der Roadmap vorgemerkt). Beide Units haben außerdem `ProtectProc=invisible` (Prozesse anderer Nutzer bleiben unsichtbar).
 
 ### 4.5 Tailscale und `tailscale serve`
 

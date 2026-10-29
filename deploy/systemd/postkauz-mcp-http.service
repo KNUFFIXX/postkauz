@@ -13,8 +13,10 @@
 # systemd 257; dann sieht der Dienst /proc/<pid>/environ des Sync-Dienstes
 # nicht), /proc nur mit eigenen Prozessen (ProtectProc=), die
 # Passwortdateien unsichtbar (InaccessiblePaths=). Ältere systemd-Versionen
-# melden PrivatePIDs= als unbekannt und ignorieren es: dann kann dieser
-# Dienst die Umgebung des Sync-Dienstes lesen (docs/betrieb.md, 4.4).
+# melden PrivatePIDs= als unbekannt und ignorieren es. Die Umgebung des
+# Sync-Dienstes bleibt trotzdem gesperrt: Jeder PostKauz-Prozess mit
+# Zugangsdaten setzt unter Linux PR_SET_DUMPABLE=0 (internal/procguard,
+# docs/betrieb.md 4.4).
 #
 #   install -Dm644 postkauz-mcp-http.service -t /etc/systemd/system/
 #   systemctl daemon-reload

@@ -22,6 +22,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/procguard"
 	imapprov "github.com/KNUFFIXX/postkauz/internal/provider/imap"
 	"github.com/KNUFFIXX/postkauz/internal/retention"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -85,6 +86,10 @@ type app struct {
 	// Schlüsselbund-Einträge um.
 	noCredentials bool
 }
+
+// denyInspection schützt Prozesse mit Zugangsdaten (procguard); Tests
+// ersetzen es, damit der Testprozess unverändert bleibt.
+var denyInspection = procguard.DenyInspection
 
 func newApp(version string, stdin io.Reader, stdout, stderr io.Writer) *app {
 	a := &app{version: version, stdin: stdin, stdout: stdout, stderr: stderr,
@@ -159,6 +164,12 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	// nicht über einen Fehler im Code. Kein MCP-Tool braucht sie.
 	var sec secrets.Store = secrets.Denied{}
 	if !a.noCredentials {
+		// Mit Zugangsdaten: unter Linux nicht auslesbar für andere Prozesse
+		// desselben Nutzers (/proc/<pid>/environ, ptrace), etwa für
+		// mcp --http auf demselben VPS (Nachbesserung T5 Punkt 6).
+		if err := denyInspection(); err != nil {
+			a.log.Warn("could not protect the process from inspection", "error", err.Error())
+		}
 		if sec, err = openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir); err != nil {
 			return nil, err
 		}

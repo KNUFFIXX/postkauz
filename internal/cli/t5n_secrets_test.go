@@ -23,6 +23,12 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 		return orig(backend, dir)
 	}
 	t.Cleanup(func() { openSecrets = orig })
+	// Punkt 6: Nur ein Prozess mit Zugangsdaten schützt sich vor dem
+	// Auslesen (procguard); der MCP-Prozess braucht das nicht.
+	origDeny := denyInspection
+	denied := 0
+	denyInspection = func() error { denied++; return nil }
+	t.Cleanup(func() { denyInspection = origDeny })
 
 	a := newApp("test", strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 	a.noCredentials = true
@@ -35,8 +41,8 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 	if _, err := a.sec.Get(secrets.AccountRef("1a2b3c4d", "demo")); !errors.Is(err, secrets.ErrDenied) {
 		t.Errorf("Get = %v, want ErrDenied", err)
 	}
-	if opened != 0 {
-		t.Errorf("noCredentials opened the secrets backend %d times", opened)
+	if opened != 0 || denied != 0 {
+		t.Errorf("noCredentials opened the secrets backend %d times, process guard %d times", opened, denied)
 	}
 	a.close()
 
@@ -45,7 +51,7 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.close()
-	if _, ok := b.sec.(secrets.Denied); ok || opened != 1 {
-		t.Errorf("without noCredentials: store %T, opened %d", b.sec, opened)
+	if _, ok := b.sec.(secrets.Denied); ok || opened != 1 || denied != 1 {
+		t.Errorf("without noCredentials: store %T, opened %d, process guard %d", b.sec, opened, denied)
 	}
 }
