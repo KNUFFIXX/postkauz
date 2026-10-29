@@ -153,9 +153,15 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err := a.loadPolicy(ctx); err != nil {
 		return nil, err
 	}
-	sec, err := openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir)
-	if err != nil {
-		return nil, err
+	// Ohne Zugangsdaten (MCP-Server, stdio und HTTP) ein Speicher, der jeden
+	// Zugriff verweigert (Nachbesserung T5 Punkt 6): Der Prozess fasst
+	// weder Schlüsselbund noch Datei noch POSTKAUZ_PASSWORD_* an, auch
+	// nicht über einen Fehler im Code. Kein MCP-Tool braucht sie.
+	var sec secrets.Store = secrets.Denied{}
+	if !a.noCredentials {
+		if sec, err = openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir); err != nil {
+			return nil, err
+		}
 	}
 	a.sec = sec
 	if !a.noCredentials {

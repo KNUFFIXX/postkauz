@@ -83,6 +83,9 @@ var (
 	// Hintergrund weiter, ein Schreiben oder Löschen kann danach noch
 	// ankommen. Aufrufer dürfen daraus nicht „nicht geschrieben“ folgern.
 	ErrTimeout = fmt.Errorf("%w: no answer in time", ErrUnavailable)
+	// ErrDenied: Der Prozess darf keine Zugangsdaten anfassen (MCP-Server
+	// über stdio und HTTP; Denied).
+	ErrDenied = errors.New("secrets: this process may not use credentials (MCP server)")
 )
 
 // Store speichert Geheimnisse unter einem Verweis (credential_ref).
@@ -96,7 +99,7 @@ type Store interface {
 
 // Status ist die Selbstauskunft eines Speichers.
 type Status struct {
-	Backend   string `json:"backend"`   // keyring | insecure-file | none
+	Backend   string `json:"backend"`   // keyring | insecure-file | none | denied
 	Available bool   `json:"available"` // Lesen und Schreiben möglich
 	Insecure  bool   `json:"insecure"`  // nur für Tests geeignet
 	Detail    string `json:"detail,omitempty"`
@@ -207,4 +210,19 @@ func (u Unavailable) Set(string, Secret) error { return u.err() }
 func (u Unavailable) Delete(string) error      { return ErrNotFound }
 func (u Unavailable) Status() Status {
 	return Status{Backend: "none", Available: false, Detail: u.Reason}
+}
+
+// Denied ist der Speicher der Prozesse ohne Zugangsdaten (MCP-Server über
+// stdio und HTTP, Nachbesserung T5 Punkt 6): Jeder Zugriff liefert
+// ErrDenied. Er fasst weder Schlüsselbund noch Datei noch Umgebung an und
+// gehört deshalb nie unter WithEnv. Kein über MCP erreichbarer Aufruf
+// braucht Zugangsdaten (die brauchen nur sync.run, accounts.add/set/
+// remove/test/login, und die bindet kein MCP-Tool).
+type Denied struct{}
+
+func (Denied) Get(string) (Secret, error) { return "", ErrDenied }
+func (Denied) Set(string, Secret) error   { return ErrDenied }
+func (Denied) Delete(string) error        { return ErrDenied }
+func (Denied) Status() Status {
+	return Status{Backend: "denied", Available: false, Detail: "this process may not use credentials"}
 }
