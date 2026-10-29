@@ -47,7 +47,14 @@ identity_providers:
       - client_id: 'claude-code'
         client_name: 'Claude Code (PostKauz)'
         public: true
+        # Empfohlen für den Dauerbetrieb: 'two_factor' (zweiter Faktor wie TOTP
+        # oder WebAuthn, je Konto in Authelia einrichten). Der Spike P-AUTH hat
+        # mit 'one_factor' gemessen; für den ersten Test reicht das.
         authorization_policy: 'one_factor'
+        # Befund B3: Sobald offline_access angefragt wird (Refresh-Token), gilt
+        # 'implicit' im Code-Flow nicht; Authelia fragt dann einmal je Anmeldung
+        # nach Zustimmung ("Zustimmen" klicken). 'pre-configured' könnte sich die
+        # Zustimmung merken (Authelia 4.39 kennt den Wert; im Spike nicht gemessen).
         consent_mode: 'implicit'
         require_pkce: true
         pkce_challenge_method: 'S256'

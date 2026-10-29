@@ -7,7 +7,12 @@
 #   docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.tailscale.yml up -d
 services:
   tailscale:
-    image: tailscale/tailscale:${TAILSCALE_VERSION:-stable}
+    # Fest auf Version und Digest (Index für alle Plattformen), damit ein
+    # Neustart nie still eine andere Version holt. Stand 29.10.2026: v1.104.4
+    # = stable. Update: neuen Tag wählen, Digest mit
+    #   docker buildx imagetools inspect tailscale/tailscale:<tag>
+    # lesen und beides hier ersetzen.
+    image: tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c
     hostname: postkauz
     env_file:
       - path: ./tailscale.env

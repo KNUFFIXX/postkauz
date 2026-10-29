@@ -616,6 +616,8 @@ Für Claude Code am PC mit Browser. PostKauz selbst meldet niemanden an; das mac
    docker run --rm authelia/authelia:4.39.28 authelia crypto hash generate argon2
    ```
 
+   **Empfohlen:** ein zweiter Faktor. Dafür in `configuration.yml` beim Client `authorization_policy: 'two_factor'` setzen und für das Konto in Authelia einen zweiten Faktor einrichten (TOTP-App oder WebAuthn). Die Vorlage steht auf `one_factor`, weil der Spike damit gemessen hat; für den ersten Test reicht das.
+
 4. Starten und im Tailnet bereitstellen:
 
    ```bash
