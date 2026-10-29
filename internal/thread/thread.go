@@ -31,6 +31,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 )
 
 // Window ist das Zeitfenster des Betreff-Rückfalls.
@@ -59,7 +61,7 @@ func NormalizeAddress(s string) string {
 			s = s[i+1 : i+j]
 		}
 	}
-	s = strings.ToLower(strings.TrimSpace(s))
+	s = mailaddr.Lower(s) // nur ASCII (dritte Nachbesserung T3, Punkt 9a)
 	if !strings.Contains(s, "@") {
 		return ""
 	}
