@@ -214,10 +214,11 @@ Was sich für vorhandene API-Schlüssel ändert (Nachbesserung T2, V20):
 
 Eine geänderte `policy.toml` (z. B. `[move] agent_may = "none"` oder ein neuer Abschnitt `[keys.<name>]`) gilt
 
-- **für neue Anfragen sofort:** Jedes Kommando und jeder MCP-Server, der danach startet, liest sie neu (die Claude-App startet den MCP-Server je Sitzung; im Zweifel die App neu starten);
+- **für Kommandos sofort:** Jedes Kommando liest sie beim Start neu;
+- **für den MCP-Server erst nach seinem Neustart:** Er liest die Datei nur beim Start (Betreiber-Entscheid 29.10.2026: so gewollt). Also nach der Änderung die Claude-App ganz beenden und neu starten;
 - **für schon eingereihte Aktionen erst nach einem Neustart des Dauer-Syncs:** `sync --watch` liest die Datei nur beim Start und prüft jede wartende Aktion eines Schlüssels vor der Ausführung gegen die Regeln, die er geladen hat (V3). Was die neue Datei verbietet, scheitert dann mit dem Grund (z. B. `policy_forbids`, in `action show <nr>`), ohne den Server zu berühren.
 
-Also nach jeder Änderung: Dauer-Sync neu starten (1.6, `Stop-ScheduledTask …` und `Start-ScheduledTask …`). Prüfen: `C:\PostKauz\postkauz.exe doctor --data-dir C:\PostKauz\data` zeigt die neue Policy-Version.
+Also nach jeder Änderung: Dauer-Sync neu starten (1.6, `Stop-ScheduledTask …` und `Start-ScheduledTask …`) und die Claude-App neu starten (MCP-Server). Prüfen: `C:\PostKauz\postkauz.exe doctor --data-dir C:\PostKauz\data` zeigt die neue Policy-Version.
 
 Gut zu wissen (V8, Betreiber 28.10.2026): In Ordner mit Rolle Spam (`junk`), Entwürfe (`drafts`) oder Gesendet (`sent`) verschiebt nur der Mensch an der Kommandozeile ohne `--key`. Ein Agent bekommt `denied (target_role_human_only)`, auch wenn er den Ordner per Namen nennt.
 
