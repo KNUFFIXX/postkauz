@@ -971,7 +971,7 @@ func checkManifestOwner(dir, dataDirID string, restored bool, m auditManifest, d
 			"as after a restore; use an export directory of its own)", ErrAuditExportOtherInstance, dir)
 	}
 	return fmt.Errorf("%w: %s (its manifest has no data directory id and does not match the audit exports of this database, "+
-		"last recorded at %s; if that is the same folder, run audit export --to %q once, otherwise use an export directory of its own)",
+		"last recorded at %s; if that is the same folder, run audit export --to \"%s\" once, otherwise use an export directory of its own)",
 		ErrAuditExportOtherInstance, dir, last, last)
 }
 

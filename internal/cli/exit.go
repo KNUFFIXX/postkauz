@@ -108,7 +108,7 @@ func classify(err error) (int, ErrorInfo) {
 			Hint: "nothing was moved; wait until the other audit rotate has finished, run audit verify, then try again"}
 	case errors.Is(err, ops.ErrAuditExportOtherInstance):
 		return ExitError, ErrorInfo{Code: "audit_export_other_instance", Message: err.Error(),
-			Hint: "nothing was written; a restored copy needs an export directory of its own (audit export --to <dir>, see docs/betrieb.md, backup and restore)"}
+			Hint: "nothing was written; the folder belongs to another data directory, to another copy of this one, or this database has no export recorded there; see the message, and use an export directory of its own if in doubt (audit export --to <dir>, docs/betrieb.md)"}
 	case errors.Is(err, ops.ErrAuditExportForeign):
 		return ExitError, ErrorInfo{Code: "audit_export_foreign", Message: err.Error(),
 			Hint: "nothing was written; move the named file out of the export directory or choose another one"}
