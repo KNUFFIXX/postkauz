@@ -1,0 +1,73 @@
+package ops
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+// A5: Altbestand (Manifest ohne datadir_id, Nachweise mit location = bisheriger
+// Ort) und der erste Export nach dem Update mit anders geschriebenem Ort
+// (hier: Symlink = gleicher Ordner, andere Zeichenkette; unter Windows
+// Gross-/Kleinschreibung oder neuer Laufwerksbuchstabe von Google Drive).
+func TestZZA5FirstExportAfterUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		spell   func(base, dir string) string
+		wantErr bool // nur zur Ausgabe
+	}{
+		{"same-string", func(_, dir string) string { return dir }, false},
+		{"trailing-slash", func(_, dir string) string { return dir + string(os.PathSeparator) }, false},
+		{"dot-segment", func(base, _ string) string { return filepath.Join(base, "x", "..") + "/audit-export" }, false},
+		{"other-spelling-same-folder", func(base, dir string) string {
+			l := filepath.Join(base, "H-drive")
+			if err := os.Symlink(base, l); err != nil {
+				panic(err)
+			}
+			return filepath.Join(l, "audit-export")
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "audit-export")
+			now := time.Now().UTC()
+			st := t3nOpen(t, filepath.Join(base, "d", "postkauz.db"))
+			t3nEvent(t, st, now.Add(-24*time.Hour), "sync.run")
+			t3nEvent(t, st, now.Add(-time.Minute), "sync.run")
+			if _, err := t3nExport(st, dir); err != nil {
+				t.Fatal(err)
+			}
+			// Altbestand: Manifest ohne Kennung.
+			mpath := filepath.Join(dir, auditManifestName())
+			b, _ := os.ReadFile(mpath)
+			var m auditManifest
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(mpath, buildManifest(m.Days, ""), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t3nEvent(t, st, now, "keys.list")
+			target := tc.spell(base, dir)
+			_, err := t3nExport(st, target)
+			t.Logf("first export after update (%s): err=%v", tc.name, err)
+			if err != nil {
+				if errors.Is(err, ErrAuditExportOtherInstance) {
+					t.Errorf("A5: gleicher Ordner, andere Schreibweise -> %v", err)
+				} else {
+					t.Errorf("unexpected: %v", err)
+				}
+				// Ausweg 1: leerer neuer Ordner
+				_, err2 := t3nExport(st, filepath.Join(base, "fresh"))
+				t.Logf("  workaround fresh empty folder: err=%v", err2)
+				// Ausweg 2: Manifest beiseite legen
+				_ = os.Rename(mpath, mpath+".bak")
+				_, err3 := t3nExport(st, target)
+				t.Logf("  workaround manifest moved away: err=%v", err3)
+			}
+		})
+	}
+}

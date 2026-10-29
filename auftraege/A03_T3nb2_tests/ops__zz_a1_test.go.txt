@@ -1,0 +1,82 @@
+package ops
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// A1: Strg+C nach dem ersten gespeicherten Nachweis -> Manifest veraltet.
+type zzCancelAfterSave struct {
+	*store.SQLite
+	cancel context.CancelFunc
+	n      int
+}
+
+func (r *zzCancelAfterSave) SaveAuditExport(ctx context.Context, e store.AuditExport) error {
+	err := r.SQLite.SaveAuditExport(ctx, e)
+	r.n++
+	if r.cancel != nil && r.n == 1 {
+		r.cancel() // Strg+C kommt waehrend/nach dem ersten Nachweis an
+	}
+	return err
+}
+
+func TestZZA1AbortAfterFirstRecordLeavesStaleManifest(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		twoDays  bool
+		firstRun bool
+	}{{"two-days", true, true}, {"one-day-recorded", false, true}, {"first-export-ever", false, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "audit-export")
+			now := time.Now().UTC()
+			today := now.Truncate(24 * time.Hour)
+			st := t3nOpen(t, filepath.Join(base, "d", "postkauz.db"))
+			if tc.twoDays {
+				// Gestern: Eintrag, Export lief gestern (vor Mitternacht) -> Tag offen.
+				t3nEvent(t, st, today.Add(-2*time.Hour), "sync.run")
+				old := auditClock
+				auditClock = func() time.Time { return today.Add(-time.Hour) }
+				if _, err := t3nExport(st, dir); err != nil {
+					t.Fatal(err)
+				}
+				auditClock = old
+				// spaeter Eintrag gestern + heute
+				t3nEvent(t, st, today.Add(-30*time.Minute), "sync.run")
+				t3nEvent(t, st, now, "keys.list")
+			} else {
+				t3nEvent(t, st, now.Add(-time.Minute), "sync.run")
+				if tc.firstRun {
+					if _, err := t3nExport(st, dir); err != nil {
+						t.Fatal(err)
+					}
+				}
+				t3nEvent(t, st, now, "keys.list")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			repo := &zzCancelAfterSave{SQLite: st, cancel: cancel}
+			_, err := AuditExport(repo, dir).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+			t.Logf("aborted export: err=%v, records saved=%d", err, repo.n)
+			v := t3nVerify(t, st)
+			t.Logf("verify after abort: status=%s problems=%+v incomplete=%+v notExported=%v", v.Status, v.Problems, v.Incomplete, v.NotExported)
+			if v.Status != "ok" {
+				t.Errorf("A1 bestaetigt: verify nach Strg+C = %s %+v", v.Status, v.Problems)
+			}
+			if _, err := t3nExport(st, dir); err != nil {
+				t.Errorf("next export: %v", err)
+			}
+			if v := t3nVerify(t, st); v.Status != "ok" {
+				t.Errorf("verify after next export = %+v", v)
+			} else {
+				t.Logf("next export repairs the manifest: verify ok")
+			}
+		})
+	}
+}
