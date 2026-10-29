@@ -46,9 +46,6 @@ func TestMCPHTTPChildProcess(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a child process; skipped with -short")
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("stops the child with SIGINT")
-	}
 	dataDir, _ := setupEnv(t)
 	t.Setenv("POSTKAUZ_SECRETS_BACKEND", "insecure-file")
 	const pw = "kanarien-passwort-http-0815"
@@ -81,12 +78,20 @@ func TestMCPHTTPChildProcess(t *testing.T) {
 			return
 		}
 		stopped = true
-		_ = cmd.Process.Signal(syscall.SIGINT)
+		// Unter Windows gibt es kein SIGINT für einen Kindprozess
+		// (Nachbesserung T5 Punkt 6): Dort wird er hart beendet, und nur
+		// die Prüfung des geordneten Endes entfällt.
+		orderly := runtime.GOOS != "windows"
+		if orderly {
+			_ = cmd.Process.Signal(syscall.SIGINT)
+		} else {
+			_ = cmd.Process.Kill()
+		}
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
 		case err := <-done:
-			if err != nil {
+			if orderly && err != nil {
 				t.Errorf("mcp --http ended with %v (%s)", err, stderr.String())
 			}
 		case <-time.After(20 * time.Second):
