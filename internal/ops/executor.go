@@ -370,7 +370,10 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 			end.Result, end.Reason = audit.ResultDenied, de.Reason
 		}
 	}
-	if herr == nil && op.AuditCounts != nil {
+	// Zähler auch bei einem Fehler, wenn die Operation eine Teil-Ausgabe
+	// erklärt (OutputOnError): Ein abgebrochener purge oder gc nennt im
+	// Audit, was bis dahin gelöscht wurde (E8, Nachbesserung T3 Punkt 7).
+	if op.AuditCounts != nil && (herr == nil || op.OutputOnError && out != nil) {
 		end.ParamsRedacted = withCounts(end.ParamsRedacted, op.AuditCounts(out))
 	}
 	endAt := now()

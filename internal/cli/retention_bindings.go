@@ -13,12 +13,13 @@ import (
 
 // Löschkonzept (T3, S3.4, E8; docs/cli.md Abschnitt „Löschkonzept“,
 // docs/betrieb.md Abschnitt „Löschkonzept“): purge und blob gc, nur für
-// den Menschen; --dry-run zählt nur.
+// den Menschen; --dry-run zählt nur. Nach einem Abbruch zeigen beide den
+// Stand bis dahin (outputOnError, Nachbesserung T3 Punkt 7).
 func init() {
 	bindings = append(bindings,
 		binding{op: "retention.purge", path: []string{"purge"}, use: "--older-than <period> [--dry-run]", args: cobra.NoArgs,
-			flags: purgeFlags, input: purgeInput, human: renderPurge, covers: []string{"older_than", "account"}},
-		binding{op: "blobs.gc", path: []string{"blob", "gc"}, use: "[--dry-run]", args: cobra.NoArgs, human: renderBlobGC},
+			flags: purgeFlags, input: purgeInput, human: renderPurge, covers: []string{"older_than", "account"}, outputOnError: true},
+		binding{op: "blobs.gc", path: []string{"blob", "gc"}, use: "[--dry-run]", args: cobra.NoArgs, human: renderBlobGC, outputOnError: true},
 		binding{op: "audit.rotate", path: []string{"audit", "rotate"}, use: "[--dry-run]", args: cobra.NoArgs, human: renderAuditRotate},
 	)
 }

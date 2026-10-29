@@ -13,7 +13,8 @@ import (
 
 // Löschkonzept (S3.4, E8): retention.purge und blobs.gc. Beide nur für den
 // Menschen (HumanOnly, Scope admin, R2), mit Trockenlauf und Zählern im
-// Audit (AuditCounts); Agenten sehen keine davon (kein MCP-Tool). Die
+// Audit (AuditCounts, nach einem Abbruch der Stand bis dahin über
+// OutputOnError); Agenten sehen keine davon (kein MCP-Tool). Die
 // Fachlogik steht in internal/retention und store/retention.go.
 
 // RetentionConfig sind die Fristen aus der Konfiguration ([retention],
@@ -69,6 +70,8 @@ func RetentionPurge(d Deps) Operation {
 		Scope:     policy.ScopeAdmin,
 		Risk:      policy.R2,
 		HumanOnly: true,
+		// Bericht bis zum Abbruch, Zähler auch dann im Audit (Punkt 7).
+		OutputOnError: true,
 		Summary: "Delete messages from the local archive that were deleted on the server longer ago than a period " +
 			"(never imported archive messages, never messages a draft refers to); blobs stay until blob gc.",
 		InputSchema: json.RawMessage(`{
@@ -159,11 +162,22 @@ func RetentionPurge(d Deps) Operation {
 			out.GoneFromServer, out.KeptImported, out.KeptDrafts, out.Eligible = rep.GoneFromServer, rep.KeptImported, rep.KeptDrafts, rep.Eligible
 			out.Purged, out.Attachments, out.ThreadsRemoved = rep.Purged, rep.Attachments, rep.ThreadsRemoved
 			if err != nil {
-				return nil, retentionErr(err)
+				// Teil-Ausgabe (OutputOnError): Was bis zum Abbruch gelöscht
+				// wurde, steht so im Audit und in der Ausgabe (Punkt 7).
+				return partialOutput(out, err), retentionErr(err)
 			}
 			return out, nil
 		},
 	}
+}
+
+// partialOutput liefert die Ausgabe bis zu einem Abbruch (OutputOnError);
+// lehnte der Dienst vor jeder Arbeit ab (ein Sync läuft), keine.
+func partialOutput(out any, err error) any {
+	if errors.Is(err, retention.ErrBusy) {
+		return nil
+	}
+	return out
 }
 
 // BlobsGCOutput ist die Ausgabe von blobs.gc.
@@ -190,6 +204,8 @@ func BlobsGC(d Deps) Operation {
 		Scope:     policy.ScopeAdmin,
 		Risk:      policy.R2,
 		HumanOnly: true,
+		// Bericht bis zum Abbruch, Zähler auch dann im Audit (Punkt 7).
+		OutputOnError: true,
 		Summary: "Delete stored files (raw messages, attachments) nothing refers to any more and that are older than " +
 			"[retention] blob_gc_min_age; draft attachments always stay.",
 		InputSchema: json.RawMessage(`{
@@ -229,12 +245,13 @@ func BlobsGC(d Deps) Operation {
 				minAge = 24 * time.Hour
 			}
 			rep, err := svc.GC(ctx, minAge, call.DryRun)
-			if err != nil {
-				return nil, retentionErr(err)
-			}
-			return BlobsGCOutput{MinAge: formatDays(minAge), Files: rep.Files, Rows: rep.Rows, Referenced: rep.Referenced,
+			out := BlobsGCOutput{MinAge: formatDays(minAge), Files: rep.Files, Rows: rep.Rows, Referenced: rep.Referenced,
 				Unreferenced: rep.Unreferenced, KeptYoung: rep.KeptYoung, RemovedFiles: rep.RemovedFiles, RemovedRows: rep.RemovedRows,
-				Bytes: rep.Bytes, Skipped: rep.Skipped, DryRun: call.DryRun}, nil
+				Bytes: rep.Bytes, Skipped: rep.Skipped, DryRun: call.DryRun}
+			if err != nil {
+				return partialOutput(out, err), retentionErr(err)
+			}
+			return out, nil
 		},
 	}
 }
