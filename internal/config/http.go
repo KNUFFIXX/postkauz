@@ -40,8 +40,10 @@ type HTTP struct {
 	// Principals ordnet das Subjekt (sub) eines Tokens einem
 	// PostKauz-Schlüsselnamen zu ([http.principals], nur oauth).
 	Principals map[string]string `toml:"principals"`
-	// MaxRequestsPerMinute: Rate-Begrenzung für alle Anfragen
-	// zusammen (Standard 120).
+	// MaxRequestsPerMinute: Rate-Begrenzung je Schlüssel nach der
+	// Anmeldung (Standard 120). Anfragen ohne gültige Anmeldung teilen sich
+	// einen festen Vorrat von 30 je Minute (internal/httpmcp); /healthz
+	// zählt nie.
 	MaxRequestsPerMinute int `toml:"max_requests_per_minute"`
 
 	// resourceDefault: Resource stammt aus Listen (nicht aus der Datei);
@@ -115,6 +117,13 @@ func CheckHTTP(h *HTTP) error {
 		}
 		if err := checkHTTPURL("http.issuer", h.Issuer, true); err != nil {
 			return err
+		}
+		// Aussteller nur als DNS-Name (außer Loopback): tailscale serve stellt
+		// Zertifikate nur für MagicDNS-Namen aus, und die Discovery des SDK
+		// lehnt private und CGNAT-Adressen in der URL ab (Nachbesserung T5,
+		// Punkt 1). So meldet es schon doctor, nicht erst die erste Anfrage.
+		if u, err := url.Parse(h.Issuer); err == nil && net.ParseIP(u.Hostname()) != nil && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("config: http.issuer %q uses an IP address; use the DNS name of the authorization server (an IP address only on loopback)", h.Issuer)
 		}
 		if len(h.Principals) == 0 {
 			return fmt.Errorf("config: http.auth = \"oauth\" needs at least one entry in [http.principals] (subject = key name)")

@@ -131,9 +131,10 @@ const OpAuthenticate = "keys.authenticate"
 // (key_invalid, key_revoked, key_expired) im Audit, Akteur agent, Schlüssel
 // key:<name>, wenn er bekannt ist; Parameter nur der Weg als
 // {"via":{"transport":"stdio"}} (seit der Nachbesserung T5 wie bei OAuth
-// und im Executor). Ohne Writer (w == nil) kein Eintrag. Nie der Schlüssel selbst und kein Teil davon. Scheitert das
-// Schreiben, bleibt es bei der Ablehnung (die Anmeldung ist ohnehin
-// gescheitert); der Fehler der Anmeldung geht an den Aufrufer.
+// und im Executor). Ohne Writer (w == nil) kein Eintrag. Nie der Schlüssel
+// selbst und kein Teil davon. Scheitert das Schreiben, bleibt es bei der
+// Ablehnung (die Anmeldung ist ohnehin gescheitert); der Fehler der
+// Anmeldung geht an den Aufrufer.
 func AuthenticateKeyAudited(ctx context.Context, repo KeyRepo, w audit.Writer, transport string, plain string, now time.Time) (policy.Key, error) {
 	k, name, err := authenticateKey(ctx, repo, plain, now)
 	if err == nil || w == nil {
