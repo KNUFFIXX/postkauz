@@ -29,6 +29,23 @@ case "$TESTAUTH_DIR" in
   /*) ;;
   *) echo "setup: POSTKAUZ_TESTAUTH_DIR must be an absolute path (got $TESTAUTH_DIR)" >&2; exit 1;;
 esac
+# Nie einen Ordner nahe der Wurzel, das Heimverzeichnis oder das
+# Repository, keine Pfadteile "." oder ".." (der Pfad muss sagen, was
+# gelöscht wird).
+case "$TESTAUTH_DIR" in
+  */./*|*/.|*/../*|*/..|*//*) echo "setup: POSTKAUZ_TESTAUTH_DIR must not contain '.', '..' or '//' parts (got $TESTAUTH_DIR)" >&2; exit 1;;
+esac
+TESTAUTH_DIR=${TESTAUTH_DIR%/}
+case "$TESTAUTH_DIR" in
+  /*/*) ;;
+  *) echo "setup: POSTKAUZ_TESTAUTH_DIR must be at least two levels deep, e.g. /tmp/postkauz-testauth (got $TESTAUTH_DIR)" >&2; exit 1;;
+esac
+if [ "$TESTAUTH_DIR" = "${HOME:-/nonexistent}" ]; then
+  echo "setup: refusing POSTKAUZ_TESTAUTH_DIR=$TESTAUTH_DIR (the home directory)" >&2; exit 1
+fi
+case "$TESTAUTH_DIR/" in
+  "$here"/*) echo "setup: POSTKAUZ_TESTAUTH_DIR must be outside the repository" >&2; exit 1;;
+esac
 if [ -L "$TESTAUTH_DIR" ]; then
   echo "setup: $TESTAUTH_DIR is a symlink; refusing to use it" >&2; exit 1
 fi
@@ -41,7 +58,14 @@ if [ -e "$TESTAUTH_DIR" ]; then
   fi
 fi
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-if [ -f "$TESTAUTH_DIR/$MARK" ]; then rm -rf "$TESTAUTH_DIR"; fi
+# Löschen nur mit eigener Marke, und nur wenn Ordner und Marke dem
+# eigenen Nutzer gehören und die Marke keine Verknüpfung ist.
+if [ -f "$TESTAUTH_DIR/$MARK" ]; then
+  if [ -L "$TESTAUTH_DIR/$MARK" ] || [ ! -O "$TESTAUTH_DIR" ] || [ ! -O "$TESTAUTH_DIR/$MARK" ]; then
+    echo "setup: $TESTAUTH_DIR or its $MARK marker is not ours; not deleting it" >&2; exit 1
+  fi
+  rm -rf "$TESTAUTH_DIR"
+fi
 mkdir -p "$TESTAUTH_DIR"
 echo 'postkauz testauth work dir (deploy/testauth/setup.sh); deleted on the next run' > "$TESTAUTH_DIR/$MARK"
 mkdir -p "$TESTAUTH_DIR/tls" "$TESTAUTH_DIR/data"
