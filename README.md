@@ -323,6 +323,15 @@ powershell -ExecutionPolicy Bypass -File .\Register-SyncWatch.ps1 -DataDir C:\Po
 
 Agents cannot sync themselves (the MCP server has no mail password); the MCP tool `mail_sync_now` (CLI `sync request`) queues a sync that the running watcher starts within about 10 s. Step-by-step guide (German): [docs/betrieb.md](docs/betrieb.md).
 
+## Remote access (HTTP-MCP)
+
+`postkauz mcp --http` serves the same MCP tools over HTTP for agents on other machines, for example a Claude Code cloud session in your Tailscale network (ADR-010). It is stateless Streamable HTTP (only `POST /mcp`), listens on `127.0.0.1:8787` by default and knows no mail password; TLS and the private network come from `tailscale serve`, never from a public port or funnel. Every request brings its own credential:
+
+- `[http] auth = "key"` (default): `Authorization: Bearer <API key>`, loopback and Tailscale addresses only. Claude Code: `claude mcp add --transport http postkauz https://<node>/mcp --header "Authorization: Bearer ${POSTKAUZ_KEY}"`.
+- `[http] auth = "oauth"`: an access token of your own authorization server (Authelia 4.39.x recommended, example in `deploy/docker/auth/`); PostKauz checks it (`at+jwt`, signature, issuer, expiry, audience) and maps its subject to an API key in `[http.principals]`. Rights always come from the API key.
+
+Every call is audited with `transport: http` and the key name, never a token. Linux services (`deploy/systemd/`), Docker (`deploy/docker/`) and the step-by-step guide (German): [docs/betrieb.md](docs/betrieb.md), section 4.
+
 ## Daily audit export
 
 The audit log is append-only; its real tamper protection is a daily export to a **second location** (another disk, a network share or a synced folder such as Google Drive). Each day becomes one JSONL file whose lines form a SHA-256 hash chain across all days, plus a manifest (`postkauz-audit-manifest.json`) with checksum and chain head per file. `postkauz audit verify` compares the export with the database and the chain and names the first changed line (`mismatch`, exit code 1). Set the target once in the configuration (`postkauz doctor` shows its path), for example:
