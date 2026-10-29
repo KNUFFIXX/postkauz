@@ -335,14 +335,16 @@ func TestDraftDryRun(t *testing.T) {
 // Anhänge (E10, Entscheid 39) und Ablehnungsgründe des Nachrichtenbaus.
 func TestDraftAttachmentsAndReasons(t *testing.T) {
 	e := newDraftEnv(t, false)
-	// Text, der sich als PDF ausgibt: erlaubt, mit Warnung.
+	// Text, der sich als PDF ausgibt: erlaubt, mit Warnung. Beide Anhänge
+	// gehen per Put in den Blob-Store, auch der aus dem Spiegel (zweite
+	// Nachbesserung T3, Punkt 5: Schutz gegen blob gc).
 	if err := os.WriteFile(filepath.Join(e.attach, "rechnung.pdf"), []byte("nur Text"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out := e.must(t, assistant, "drafts.create", map[string]any{"account": "demo", "kind": "new", "to": []string{"a@example.org"},
 		"attachments": []map[string]any{{"file": "rechnung.pdf"}, {"attachment_id": 1, "filename": "Notiz-neu.txt"}}}).(DraftsWriteOutput)
 	if len(out.Attachments) != 2 || len(out.Warnings) != 1 || !strings.HasPrefix(out.Warnings[0], "attachments[0]") ||
-		out.Attachments[0].ContentType != "text/plain" || out.Attachments[1].Filename != "Notiz-neu.txt" || e.blobs.puts != 1 {
+		out.Attachments[0].ContentType != "text/plain" || out.Attachments[1].Filename != "Notiz-neu.txt" || e.blobs.puts != 2 {
 		t.Fatalf("attachments = %+v warnings %v puts %d", out.Attachments, out.Warnings, e.blobs.puts)
 	}
 	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID}).(DraftDetail)

@@ -627,8 +627,7 @@ func (o *draftOps) original(ctx context.Context, acc *store.Account, id int64, m
 
 // loadedAttachment ist ein aufgelöster Anhang der Eingabe.
 type loadedAttachment struct {
-	att  compose.Attachment
-	file bool // aus attach_dir: kommt beim Speichern in den Blob-Store
+	att compose.Attachment
 }
 
 // attachments löst die Anhänge der Eingabe auf: IDs aus dem Spiegel
@@ -668,7 +667,7 @@ func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []Draf
 			if a.Filename != "" {
 				name = a.Filename
 			}
-			out = append(out, loadedAttachment{att: compose.Attachment{Filename: name, Data: data}, file: true})
+			out = append(out, loadedAttachment{att: compose.Attachment{Filename: name, Data: data}})
 		}
 	}
 	return out, nil
@@ -688,13 +687,14 @@ func (o *draftOps) storedAttachments(atts []store.DraftAttachment, budget *attac
 	return out, nil
 }
 
-// putFiles legt Dateianhänge in den Blob-Store (nicht im Trockenlauf).
-// Anhänge aus dem Spiegel liegen schon dort.
+// putFiles legt die Anhänge in den Blob-Store (nicht im Trockenlauf), auch
+// die aus dem Spiegel und die schon gespeicherten eines Entwurfs: Put
+// erneuert das Dateidatum eines vorhandenen Blobs und legt einen
+// inzwischen entfernten neu an. Sonst könnten purge (Quelle weg) und
+// blob gc zwischen Einlesen und Speichern den Blob löschen, und der
+// Entwurf verwiese ins Leere (zweite Nachbesserung T3, Punkt 5).
 func (o *draftOps) putFiles(atts []loadedAttachment) error {
 	for _, a := range atts {
-		if !a.file {
-			continue
-		}
 		if _, err := o.blobs.Put(bytes.NewReader(a.att.Data)); err != nil {
 			return fmt.Errorf("store attachment: %w", err)
 		}
@@ -941,7 +941,14 @@ func DraftsCreate(d Deps) Operation {
 				if err := o.putFiles(atts); err != nil {
 					return nil, err
 				}
-				// Weitergeleitete Anhänge stammen aus dem Blob-Store und liegen dort schon.
+				// Ebenso die übernommenen Anhänge einer Weiterleitung.
+				if orig != nil {
+					for _, a := range orig.Attachments {
+						if _, err := o.blobs.Put(bytes.NewReader(a.Data)); err != nil {
+							return nil, fmt.Errorf("store attachment: %w", err)
+						}
+					}
+				}
 			}
 			derived := derivedOnBuild(msg, in.Attachments)
 			opts.Derived = &derived
