@@ -74,7 +74,16 @@ Nicht übernommen (Auftrag „Kein Handlungsbedarf“ bzw. Messtest): `store__g1
 
 ## 4. Release `0.3.0-alpha.7`
 
-PLATZHALTER_RELEASE
+Gebaut nach der neuen Regel (Punkt 14, `docs/betrieb.md` Abschnitt 7) an **`c07a6f8`** (Code- und Doku-Stand dieser Nachbesserung; dieser Abschnitt und das Löschen von `auftraege/A03_T3_tests/` kamen danach und ändern das Programm nicht): zwei frische Klone ohne Tags (`git clone --no-tags`, je `git tag` leer, `git status --short` leer), je `make release VERSION=0.3.0-alpha.7` mit go1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`.
+
+- **Nachbau bytegleich:** `dist/SHA256SUMS` beider Klone gleich bis auf die Zeile `VERSION` (Bauzeit). `go version -m` beider Windows-Programme gleich bis auf den Dateipfad in der ersten Zeile: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029051918-c07a6f816f6e`, `vcs.revision=c07a6f816f6eb50ea61aa51f9034b0adfab34849`, `vcs.modified=false`, `CGO_ENABLED=0`.
+- `postkauz-linux-amd64 version` → `postkauz 0.3.0-alpha.7 (go1.27.3 linux/amd64)`.
+- SHA-256:
+  - `postkauz-windows-amd64.exe` `9df61254d3543948ae1cedb75dac1afc5a27290d517ebc56445bfe35550790d9` (21.614.080 Bytes)
+  - `postkauz-linux-amd64` `2d3ed8cdcd694a890b895087adf48cb8c2f9610313f85b7bd21206e7b5861b53` (21.635.232 Bytes)
+  - `postkauz-darwin-arm64` `4b21d37737071c32d156da21328bfe8616ce9987e32f08f471020220679651cd` (20.178.418 Bytes)
+  - `Register-AuditExport.ps1` `26043f606d050fd1095f31019e1a1e3d3ce68bdde402ab4b2b5ce1fe17abcdef`, `Register-SyncWatch.ps1` `8a50ee74c064cc731446ed6f224d1d3ba8247d7abcea6cb9da834f2e40ec91c1`, `Run-SyncWatch.ps1` `6973c8473a8a244172530c9e926d4d2b854b2bbee05bc013bde1c700bcdf3de3`, `check-example.ps1` `9d40eb8aaef6b4c2cb68a8eea02651823ead6ac87c0a4917b29d9d3fc6a785e9`, `check-example.sh` `4bf639c3a3a5e3dd66c759ac21d8b1f0b1be6e7174bf67072bfcad01ecececc5`
+- Kein Tag, kein GitHub-Release (Auftrag). Abnahme D7 mit `-ExpectVersion 0.3.0-alpha.7` (Standard im Skript).
 
 ## 5. Offen und Restfenster
 
