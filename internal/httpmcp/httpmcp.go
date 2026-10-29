@@ -59,6 +59,11 @@ const (
 	prmPath    = "/.well-known/oauth-protected-resource"
 	// shutdownGrace: so lange laufen offene Anfragen nach dem Stopp weiter.
 	shutdownGrace = 10 * time.Second
+	// authTimeout: Frist einer Anmeldung (Discovery, JWKS, Datenbank);
+	// danach 503 mit Retry-After. Nötig, weil mcpGate den Inhalt vor der
+	// Anmeldung nicht liest und net/http eine Trennung des Clients dann
+	// nicht bemerkt.
+	authTimeout = 15 * time.Second
 )
 
 // Deps sind die Teile, die der HTTP-Server braucht.
@@ -252,7 +257,9 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 			s.challenge(w, false)
 			return
 		}
-		p, err := s.auth.authenticate(r.Context(), tok)
+		actx, cancel := context.WithTimeout(r.Context(), authTimeout)
+		p, err := s.auth.authenticate(actx, tok)
+		cancel()
 		if err != nil {
 			var de *deniedError
 			switch {

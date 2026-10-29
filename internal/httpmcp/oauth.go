@@ -99,9 +99,14 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, er
 		return principal{}, errUnavailable
 	}
 	// 2. bis 4. Signatur, iss genau gleich, exp mit höchstens 30 s
-	// Uhrabweichung (go-oidc).
-	tok, err := v.Verify(ctx, raw)
+	// Uhrabweichung (go-oidc). War die JWKS nicht abrufbar (keySet), liegt
+	// es nicht am Token: 503 statt 401.
+	st := &verifyState{}
+	tok, err := v.Verify(context.WithValue(ctx, verifyStateKey{}, st), raw)
 	if err != nil {
+		if st.unavailable || ctx.Err() != nil {
+			return principal{}, errUnavailable
+		}
 		return principal{}, errUnauthenticated
 	}
 	// 5. aud enthält die eigene Resource-URL (Akzeptanzkriterium 5:
@@ -159,9 +164,9 @@ func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, err
 		return nil, err
 	}
 	// Der Schlüsselsatz lebt so lange wie der Server (go-oidc nutzt den
-	// Kontext nur für den HTTP-Client).
-	keyCtx := oidc.ClientContext(context.Background(), a.client)
-	a.verifier = oidc.NewVerifier(a.issuer, oidc.NewRemoteKeySet(keyCtx, jwks), &oidc.Config{
+	// Kontext nur für den HTTP-Client, newJWKSClient mit Frist).
+	keyCtx := oidc.ClientContext(context.Background(), newJWKSClient(a.client))
+	a.verifier = oidc.NewVerifier(a.issuer, &keySet{inner: oidc.NewRemoteKeySet(keyCtx, jwks)}, &oidc.Config{
 		SkipClientIDCheck:    true, // aud prüft authenticate gegen die Resource-URL
 		SupportedSigningAlgs: signingAlgs,
 		Now:                  func() time.Time { return a.now().Add(-ClockSkew) },
@@ -173,7 +178,8 @@ func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, err
 // discoverJWKS liefert jwks_uri des Ausstellers: zuerst RFC 8414
 // (/.well-known/oauth-authorization-server mit dem Pfad des Ausstellers),
 // dann OpenID-Discovery. Der Aussteller in den Metadaten muss genau
-// passen (oauthex.GetAuthServerMeta). c = nil: newASClient.
+// passen (oauthex.GetAuthServerMeta), jwks_uri muss https sein
+// (checkJWKSURI). c = nil: newASClient.
 func discoverJWKS(ctx context.Context, issuer string, c *http.Client) (string, error) {
 	u, err := url.Parse(issuer)
 	if err != nil {
@@ -200,6 +206,8 @@ func discoverJWKS(ctx context.Context, issuer string, c *http.Client) (string, e
 			last = fmt.Errorf("no metadata at %s", m)
 		case meta.JWKSURI == "":
 			last = fmt.Errorf("metadata at %s has no jwks_uri", m)
+		case checkJWKSURI(meta.JWKSURI) != nil:
+			return "", checkJWKSURI(meta.JWKSURI)
 		default:
 			return meta.JWKSURI, nil
 		}
