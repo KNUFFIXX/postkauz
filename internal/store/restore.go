@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
@@ -170,6 +171,14 @@ func (s *SQLite) PrepareRestored(ctx context.Context, p RestorePrep) (RestoreFix
 		return fx, err
 	}
 
+	// Merker „wiederhergestellt“ (dritte Nachbesserung T3, Punkt 5), auch
+	// bei --keep-identity: Für den Audit-Export gilt die Altbestand-Regel
+	// (Manifest ohne Kennung) dann nicht mehr (ops.checkManifestOwner).
+	if _, err = exec(`INSERT INTO meta(key, value) VALUES ('restored_at', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, strconv.FormatInt(ms, 10)); err != nil {
+		return fx, err
+	}
+
 	// 2. Kennung und Schlüsselbund-Verweise.
 	if p.DataDirID != "" {
 		fx.NewIdentity = true
@@ -284,4 +293,12 @@ func (s *SQLite) DataDirIDFull(ctx context.Context) (string, error) {
 		return "", ErrNoDataDirID
 	}
 	return v, err
+}
+
+// Restored meldet, ob diese Datenbank aus einer Sicherung wiederhergestellt
+// wurde (meta.restored_at, seit der dritten Nachbesserung T3).
+func (s *SQLite) Restored(ctx context.Context) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM meta WHERE key = 'restored_at'`).Scan(&n)
+	return n > 0, err
 }

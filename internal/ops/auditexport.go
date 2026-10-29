@@ -544,6 +544,19 @@ func auditDataDirID(ctx context.Context, repo AuditRepo) (string, error) {
 	return id, err
 }
 
+// auditRestored meldet, ob die Datenbank aus einer Sicherung
+// wiederhergestellt wurde (store.Restored; false ohne Store, etwa in
+// Testattrappen). Ein Lesefehler bricht ab.
+func auditRestored(ctx context.Context, repo AuditRepo) (bool, error) {
+	r, ok := repo.(interface {
+		Restored(ctx context.Context) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return r.Restored(ctx)
+}
+
 // lockBesideDB holt die Sperrdatei name neben der Datenbank, ohne zu
 // warten (flock: fällt mit dem Prozess). Ohne Datenbankdatei (Attrappen)
 // gibt es keine Sperre. Belegt → busy.
@@ -680,7 +693,11 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
-			own, err := ownExportFiles(dir, dataDirID, done)
+			restored, err := auditRestored(ctx, repo)
+			if err != nil {
+				return nil, err
+			}
+			own, err := ownExportFiles(dir, dataDirID, restored, done)
 			if err != nil {
 				return nil, err
 			}
@@ -887,7 +904,7 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 // (Punkt 2) muss das Manifest auch zu diesem Datenverzeichnis gehören
 // (dataDirID, checkManifestOwner), sonst ErrAuditExportOtherInstance. Ohne
 // bekannte Kennung (Attrappen) entfällt der Vergleich.
-func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]auditManifestDay, error) {
+func ownExportFiles(dir, dataDirID string, restored bool, done []store.AuditExport) (map[string]auditManifestDay, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]auditManifestDay{}, nil
@@ -900,7 +917,7 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
 	}
 	if dataDirID != "" {
-		if err := checkManifestOwner(dir, dataDirID, m, done); err != nil {
+		if err := checkManifestOwner(dir, dataDirID, restored, m, done); err != nil {
 			return nil, err
 		}
 	}
@@ -924,8 +941,11 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 //     und einem Ort entspricht, gleich in welcher Schreibweise (unter
 //     Windows Groß- und Kleinschreibung, ein neuer Laufwerksbuchstabe von
 //     Google Drive). Eine wiederhergestellte Kopie hat nur Nachweise ohne
-//     Ort und bleibt abgewiesen.
-func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.AuditExport) error {
+//     Ort und bleibt abgewiesen. Dritte Nachbesserung T3, Punkt 5: Hat
+//     sie schon anderswo exportiert, haben ihre Nachweise wieder einen
+//     Ort; die zweite Regel gilt deshalb nur für eine Datenbank, die nie
+//     wiederhergestellt wurde (restored, meta.restored_at).
+func checkManifestOwner(dir, dataDirID string, restored bool, m auditManifest, done []store.AuditExport) error {
 	recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
 	switch {
 	case m.DataDirID != "" && m.DataDirID != dataDirID:
@@ -937,7 +957,7 @@ func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.Aud
 				"use an export directory of its own)", ErrAuditExportOtherInstance, dir)
 		}
 		return nil
-	case recordedHere || legacyManifestMatches(m, done):
+	case recordedHere || (!restored && legacyManifestMatches(m, done)):
 		return nil
 	}
 	last := ""
