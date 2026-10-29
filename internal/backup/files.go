@@ -57,20 +57,61 @@ func realPath(p string) string {
 // ergänzt realPath dort, wo EvalSymlinks einen Umweg nicht auflöst: Unter
 // Windows löst es seit Go 1.23 Junctions (Mount Points, mklink /J) nicht
 // mehr auf; unter Linux sieht es keine Bind-Mounts. os.Stat folgt beiden.
+//
+// Zeigt der Umweg auf einen Unterordner von dir, ist keiner der Vorfahren
+// dir selbst (T3-Nachbesserung 2, Punkt 11). Deshalb zusätzlich: Vorfahren,
+// die ein symbolischer Link oder ein Mount Point sind (ModeSymlink,
+// ModeIrregular), per os.Readlink auflösen und den Rest erneut prüfen; und
+// den endgültigen Pfad des tiefsten vorhandenen Vorfahren und von dir beim
+// System erfragen (finalPath: Windows GetFinalPathNameByHandle, Linux
+// /proc/self/mountinfo für Bind-Mounts) und mit within vergleichen.
 func insideByID(child, dir string) bool {
 	want, err := os.Stat(dir)
 	if err != nil {
 		return false
 	}
-	p := filepath.Clean(child)
+	child = filepath.Clean(child)
+	budget := maxLinkHops
+	if insideVia(child, want, &budget) {
+		return true
+	}
+	c, ok := finalPath(child)
+	if !ok {
+		return false
+	}
+	d, ok := finalPath(dir)
+	return ok && within(c, d)
+}
+
+// maxLinkHops begrenzt die Zahl der aufgelösten Links je Prüfung
+// (Schleifen, sehr lange Ketten).
+const maxLinkHops = 32
+
+// insideVia prüft child und seine vorhandenen Vorfahren gegen want und
+// folgt dabei Vorfahren, die ein Link oder Mount Point sind, zu ihrem Ziel
+// (mit dem Rest des Pfads dahinter); budget zählt die aufgelösten Links.
+func insideVia(child string, want fs.FileInfo, budget *int) bool {
+	p, rest := child, ""
 	for {
 		if fi, err := os.Stat(p); err == nil && os.SameFile(fi, want) {
 			return true
+		}
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 && *budget > 0 {
+			*budget--
+			if target, err := os.Readlink(p); err == nil {
+				if !filepath.IsAbs(target) {
+					target = filepath.Join(filepath.Dir(p), target)
+				}
+				if insideVia(filepath.Join(target, rest), want, budget) {
+					return true
+				}
+			}
 		}
 		parent := filepath.Dir(p)
 		if parent == p {
 			return false
 		}
+		rest = filepath.Join(filepath.Base(p), rest)
 		p = parent
 	}
 }
