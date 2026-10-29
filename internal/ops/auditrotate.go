@@ -58,6 +58,9 @@ type auditArchiveState struct {
 type auditSource struct {
 	repo     AuditRepo
 	archives []*auditArchiveState
+	// base ist der Store selbst (für Merker und Kennung; repo kann eine
+	// Hülle mit Archiven sein).
+	base AuditRepo
 }
 
 // archiveOf liefert das Archiv, das einen Exporttag enthält.
@@ -82,7 +85,7 @@ func (s auditSource) lastArchivedDay() string {
 // openAuditSource prüft jedes Archiv (Datei vorhanden, Prüfsumme, lesbar)
 // und baut die gemeinsame Sicht. close schließt die Archive.
 func openAuditSource(ctx context.Context, repo AuditRepo) (src auditSource, closeFn func(), err error) {
-	src.repo = repo
+	src.repo, src.base = repo, repo
 	closeFn = func() {
 		for _, a := range src.archives {
 			if a.db != nil {

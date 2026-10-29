@@ -316,6 +316,10 @@ func renderAuditVerify(w io.Writer, out any) error {
 	if o.LegacyDays > 0 {
 		fmt.Fprintf(w, "%s without hash chain (exported before 0.1.0); the next audit export rewrites them\n", plural(o.LegacyDays, "day", "days"))
 	}
+	for _, p := range o.Incomplete {
+		fmt.Fprintf(w, "  %s: not exported completely (an earlier audit export stopped before it recorded the file; the next audit export completes it): %s\n",
+			p.Day, termLine(p.File))
+	}
 	if o.Status == "ok" && o.ChainHead != "" {
 		fmt.Fprintf(w, "chain head: %s\n", o.ChainHead)
 	}

@@ -208,6 +208,11 @@ func (s *SQLite) PrepareRestored(ctx context.Context, p RestorePrep) (RestoreFix
 	if fx.AuditExports, err = exec(`UPDATE audit_exports SET location = '' WHERE location != ''`); err != nil {
 		return fx, err
 	}
+	// Ein Merker eines abgebrochenen Exports (Nachbesserung T3, Punkt 1)
+	// zeigt auf einen Ort des Originals.
+	if _, err = exec(`DELETE FROM meta WHERE key = ?`, metaAuditExportPending); err != nil {
+		return fx, err
+	}
 
 	// Jobs, die auf den Server schreiben würden.
 	if fx.Jobs, err = exec(`UPDATE jobs SET state = 'failed', last_error = ?, locked_by = NULL, locked_at = NULL

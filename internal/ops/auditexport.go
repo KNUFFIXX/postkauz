@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -408,12 +409,17 @@ func firstDiffLine(a, b []byte) int {
 // Aus den Nachweisen in der Datenbank ergibt es sich Byte für Byte, so kann
 // verify es vergleichen.
 type auditManifest struct {
-	Format  int                `json:"format"`
-	Program string             `json:"program"`
-	Chain   string             `json:"chain"`
-	Genesis string             `json:"genesis"`
-	Head    string             `json:"head"`
-	Days    []auditManifestDay `json:"days"`
+	Format  int    `json:"format"`
+	Program string `json:"program"`
+	// DataDirID ist die volle Kennung des Datenverzeichnisses, das den
+	// Ordner beschreibt (Nachbesserung T3, Punkt 2): Eine wiederhergestellte
+	// Kopie (neue Kennung) erkennt so den Ordner des Originals. Fehlt in
+	// Manifesten vor 0.3.0-alpha.7.
+	DataDirID string             `json:"datadir_id,omitempty"`
+	Chain     string             `json:"chain"`
+	Genesis   string             `json:"genesis"`
+	Head      string             `json:"head"`
+	Days      []auditManifestDay `json:"days"`
 }
 
 type auditManifestDay struct {
@@ -428,8 +434,8 @@ type auditManifestDay struct {
 
 const auditChainRule = `each line {"event":E,"prev":P,"chain":C} with C = hex(SHA-256(P + "\n" + E)); P of the first line = chain of the last line of the previous day, at the very start the genesis value = hex(SHA-256("` + auditChainSeed + `"))`
 
-func buildManifest(days []auditManifestDay) []byte {
-	m := auditManifest{Format: AuditExportFormat, Program: brand.Name, Chain: auditChainRule, Genesis: auditChainGenesis,
+func buildManifest(days []auditManifestDay, dataDirID string) []byte {
+	m := auditManifest{Format: AuditExportFormat, Program: brand.Name, DataDirID: dataDirID, Chain: auditChainRule, Genesis: auditChainGenesis,
 		Head: auditChainGenesis, Days: days}
 	if m.Days == nil {
 		m.Days = []auditManifestDay{}
@@ -469,6 +475,75 @@ type AuditExportOutput struct {
 // ihrer Prüfsumme; der Export überschreibt sie nicht (sonst verschwände der
 // Beleg einer Manipulation).
 var ErrAuditExportChanged = errors.New("audit export file does not match its recorded checksum")
+
+// ErrAuditExportRunning: Ein anderer Export dieses Datenverzeichnisses
+// läuft (Sperrdatei audit-export.lock neben der Datenbank).
+var ErrAuditExportRunning = errors.New("another audit export of this data directory is running")
+
+// ErrAuditExportOtherInstance: Das Manifest am Ziel stammt von einem
+// anderen Datenverzeichnis, etwa dem Original einer Wiederherstellung
+// (Nachbesserung T3, Punkt 2). Der Export bricht ab, bevor er etwas
+// schreibt.
+var ErrAuditExportOtherInstance = errors.New("audit export: the target directory belongs to another data directory")
+
+// auditExportJournal ist der Teil des Stores für die Merker eines
+// laufenden Exports (store.SQLite; Nachbesserung T3, Punkt 1). Ein
+// AuditRepo ohne ihn (Testattrappen) schreibt ohne Merker.
+type auditExportJournal interface {
+	AuditExportPending(ctx context.Context) ([]store.AuditExportPending, error)
+	AddAuditExportPending(ctx context.Context, p store.AuditExportPending) error
+}
+
+// auditPendingSet sind die Merker abgebrochener Exporte: Eine Datei mit
+// genau dieser Prüfsumme an diesem Ort für diesen Tag hat dieses
+// Programm geschrieben, ihr Nachweis fehlt nur.
+type auditPendingSet []store.AuditExportPending
+
+func loadAuditPending(ctx context.Context, repo AuditRepo) (auditPendingSet, error) {
+	j, ok := repo.(auditExportJournal)
+	if !ok {
+		return nil, nil
+	}
+	return j.AuditExportPending(ctx)
+}
+
+func (ps auditPendingSet) has(day, location, sum string) bool {
+	return sum != "" && slices.Contains(ps, store.AuditExportPending{Day: day, Location: location, SHA256: sum})
+}
+
+// auditDataDirID liefert die volle Kennung des Datenverzeichnisses (""
+// ohne Store, etwa in Testattrappen, oder ohne Kennung).
+func auditDataDirID(ctx context.Context, repo AuditRepo) string {
+	r, ok := repo.(interface {
+		DataDirIDFull(ctx context.Context) (string, error)
+	})
+	if !ok {
+		return ""
+	}
+	id, err := r.DataDirIDFull(ctx)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// lockBesideDB holt die Sperrdatei name neben der Datenbank, ohne zu
+// warten (flock: fällt mit dem Prozess). Ohne Datenbankdatei (Attrappen)
+// gibt es keine Sperre. Belegt → busy.
+func lockBesideDB(repo any, name string, busy error) (func(), error) {
+	r, ok := repo.(interface{ Path() string })
+	if !ok || r.Path() == "" {
+		return func() {}, nil
+	}
+	l, err := flock.TryLock(filepath.Join(filepath.Dir(r.Path()), name))
+	if errors.Is(err, flock.ErrLocked) {
+		return nil, busy
+	}
+	if err != nil {
+		return nil, err
+	}
+	return l.Release, nil
+}
 
 // AuditExport schreibt das Audit tageweise als JSONL mit Hash-Kette an einen
 // zweiten Ort, dazu das Manifest, und hält Prüfsumme und Ort in
@@ -528,6 +603,15 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
+			// Nur ein Export je Datenverzeichnis zugleich (Nachbesserung T3,
+			// Punkt 1d); der Trockenlauf schreibt nichts und sperrt nicht.
+			if !call.DryRun {
+				unlock, err := lockBesideDB(repo, "audit-export.lock", ErrAuditExportRunning)
+				if err != nil {
+					return nil, err
+				}
+				defer unlock()
+			}
 			// Archivierte Tage (audit rotate) liest der Export aus ihrem
 			// Archiv, als stünden sie noch in der Datenbank.
 			src, closeArchives, err := openAuditSource(ctx, repo)
@@ -571,7 +655,12 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			}
 			var todo []pending
 			var manifest []auditManifestDay
-			own, err := ownExportFiles(dir)
+			pend, err := loadAuditPending(ctx, repo)
+			if err != nil {
+				return nil, err
+			}
+			dataDirID := auditDataDirID(ctx, repo)
+			own, err := ownExportFiles(dir, dataDirID, done)
 			if err != nil {
 				return nil, err
 			}
@@ -585,13 +674,19 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					// bleibt sie stehen, ohne die Datenbank zu lesen.
 					file := filepath.Join(dir, auditFileName(day))
 					b, ferr := os.ReadFile(file)
+					sum := ""
+					if ferr == nil {
+						sum = sha256Hex(b)
+					}
 					switch {
-					case ferr == nil && sha256Hex(b) != p.SHA256:
+					case ferr == nil && sum != p.SHA256 && !pend.has(day, dir, sum):
+						// Weder Nachweis noch Merker eines abgebrochenen
+						// Exports (der wird unten neu geschrieben).
 						return nil, fmt.Errorf("%w: %s (run audit verify)", ErrAuditExportChanged, file)
 					case ferr != nil && !errors.Is(ferr, fs.ErrNotExist):
 						return nil, ferr
 					}
-					if ferr == nil && looksLikeChain(b) {
+					if ferr == nil && sum == p.SHA256 && looksLikeChain(b) {
 						if fh, bad := checkChain(b, head); bad == 0 {
 							f := AuditExportFile{Day: day, File: file, Events: bytes.Count(b, []byte{'\n'}), FirstEventID: p.FirstEventID,
 								LastEventID: p.LastEventID, SHA256: p.SHA256, ChainHead: fh, State: "unchanged"}
@@ -627,12 +722,14 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					f.State = "updated"
 				} else if recorded {
 					// Die frühere Datei muss unverändert sein, bevor sie ersetzt wird.
+					// Eine Datei mit der Prüfsumme eines Merkers stammt von
+					// einem abgebrochenen Export dieses Programms (Punkt 1).
 					old := filepath.Join(p.Location, auditFileName(day))
 					got, err := fileSHA256(old)
 					switch {
-					case err == nil && got != p.SHA256:
+					case err == nil && got != p.SHA256 && !pend.has(day, p.Location, got):
 						return nil, fmt.Errorf("%w: %s (run audit verify)", ErrAuditExportChanged, old)
-					case err == nil && got == f.SHA256 && p.Location == dir:
+					case err == nil && got == f.SHA256 && got == p.SHA256 && p.Location == dir:
 						f.State = "unchanged"
 					case err != nil && !errors.Is(err, fs.ErrNotExist):
 						return nil, err
@@ -644,7 +741,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				// die weder der Nachweis dieses Tages an diesem Ort noch das
 				// Manifest dort als eigene ausweist, bleibt unberührt.
 				if f.State != "unchanged" {
-					if err := checkOwnFile(f.File, own, p, dir); err != nil {
+					if err := checkOwnFile(f.File, own, p, dir, pend); err != nil {
 						return nil, err
 					}
 				}
@@ -658,16 +755,33 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				if call.DryRun || p.f.State == "unchanged" {
 					continue
 				}
+				// Erst der Merker, dann die Datei, dann Nachweis und Löschen
+				// des Merkers in einer Transaktion (Punkt 1a): Bricht der
+				// Lauf dazwischen ab, weist der Merker die Datei als eigene
+				// aus.
+				if j, ok := repo.(auditExportJournal); ok {
+					if err := j.AddAuditExportPending(ctx, store.AuditExportPending{Day: p.f.Day, Location: dir, SHA256: p.f.SHA256}); err != nil {
+						return nil, err
+					}
+				}
 				if err := writeFileAtomic(p.f.File, p.content); err != nil {
 					return nil, err
 				}
-				if err := repo.SaveAuditExport(ctx, store.AuditExport{Day: p.f.Day, FirstEventID: p.f.FirstEventID, LastEventID: p.f.LastEventID,
-					SHA256: p.f.SHA256, Location: dir, ExportedAt: auditClock()}); err != nil {
+				// Der Nachweis zur geschriebenen Datei kommt auch nach
+				// Strg+C noch in die Datenbank, mit eigener Frist (Punkt 1c).
+				sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGrace)
+				err := repo.SaveAuditExport(sctx, store.AuditExport{Day: p.f.Day, FirstEventID: p.f.FirstEventID, LastEventID: p.f.LastEventID,
+					SHA256: p.f.SHA256, Location: dir, ExportedAt: auditClock()})
+				cancel()
+				if err != nil {
+					return nil, err
+				}
+				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
 			}
 			if !call.DryRun {
-				if err := writeFileAtomic(out.Manifest, buildManifest(manifest)); err != nil {
+				if err := writeFileAtomic(out.Manifest, buildManifest(manifest, dataDirID)); err != nil {
 					return nil, err
 				}
 			}
@@ -683,8 +797,14 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 
 // ownExportFiles liest das Manifest am Ziel: Tag-Dateien, die es mit
 // Prüfsumme nennt, gelten als eigene. Ein Manifest, das nicht von diesem
-// Programm stammt, ist ErrAuditExportForeign.
-func ownExportFiles(dir string) (map[string]string, error) {
+// Programm stammt, ist ErrAuditExportForeign. Seit der Nachbesserung T3
+// (Punkt 2) muss das Manifest auch zu diesem Datenverzeichnis gehören
+// (dataDirID): mit Kennung dieselbe, ohne Kennung (Manifest vor
+// 0.3.0-alpha.7) nur, wenn diese Datenbank schon einen Nachweis an diesem
+// Ort hat; eine wiederhergestellte Kopie hat keinen (Orte geleert, A10).
+// Sonst ErrAuditExportOtherInstance. Ohne bekannte Kennung (Attrappen)
+// entfällt der Vergleich.
+func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]string, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]string{}, nil
@@ -696,6 +816,12 @@ func ownExportFiles(dir string) (map[string]string, error) {
 	if json.Unmarshal(b, &m) != nil || m.Program != brand.Name || m.Format < 2 {
 		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
 	}
+	if dataDirID != "" {
+		recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
+		if (m.DataDirID != "" && m.DataDirID != dataDirID) || (m.DataDirID == "" && !recordedHere) {
+			return nil, fmt.Errorf("%w: %s (use an export directory of its own for each data directory)", ErrAuditExportOtherInstance, dir)
+		}
+	}
 	own := map[string]string{}
 	for _, d := range m.Days {
 		own[d.File] = d.SHA256
@@ -705,9 +831,10 @@ func ownExportFiles(dir string) (map[string]string, error) {
 
 // checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
 // wenn der Nachweis rec dieses Tages genau diese Datei an diesem Ort
-// belegt (Prüfsumme schon vorher geprüft) oder wenn das Manifest am Ziel
-// sie mit ihrer Prüfsumme nennt.
-func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir string) error {
+// belegt (Prüfsumme schon vorher geprüft), wenn ein Merker eines
+// abgebrochenen Exports sie belegt (gleicher Tag, gleicher Ort) oder wenn
+// das Manifest am Ziel sie mit ihrer Prüfsumme nennt.
+func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir string, pend auditPendingSet) error {
 	got, err := fileSHA256(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -718,10 +845,22 @@ func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir
 	if rec.Location == dir && rec.SHA256 == got {
 		return nil
 	}
+	if day, ok := auditDayOfFile(filepath.Base(path)); ok && pend.has(day, dir, got) {
+		return nil
+	}
 	if sum, ok := own[filepath.Base(path)]; ok && sum == got {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrAuditExportForeign, filepath.Base(path))
+}
+
+// auditDayOfFile liest den Tag aus dem Namen einer Exportdatei.
+func auditDayOfFile(name string) (string, bool) {
+	prefix, suffix := brand.Name+"-audit-", ".jsonl"
+	if len(name) != len(prefix)+10+len(suffix) || name[:len(prefix)] != prefix || name[len(name)-len(suffix):] != suffix {
+		return "", false
+	}
+	return name[len(prefix) : len(prefix)+10], true
 }
 
 // writeFileAtomic schreibt über eine Temporärdatei im selben Verzeichnis.
@@ -757,6 +896,10 @@ const (
 	AuditChainBroken     = "chain_broken"     // Hash-Kette in der Datei gebrochen
 	AuditManifestMissing = "manifest_missing" // Manifest fehlt
 	AuditManifestChanged = "manifest_changed" // Manifest passt nicht zu den Nachweisen
+	// AuditExportIncomplete: Die Datei stammt von einem Export, der vor
+	// seinem Nachweis abbrach (Merker, Nachbesserung T3, Punkt 1). Kein
+	// Manipulationsbefund; der nächste audit export schließt ihn ab.
+	AuditExportIncomplete = "export_incomplete"
 )
 
 // AuditProblem ist ein Befund von audit.verify.
@@ -785,6 +928,10 @@ type AuditVerifyOutput struct {
 	// exportiert hat (A10, Ort geleert): Nur die Datenbank wird gegen die
 	// Prüfsumme des Nachweises geprüft; die Dateien liegen beim Original.
 	OriginDays int `json:"origin_days,omitempty"`
+	// Incomplete nennt Dateien eines abgebrochenen Exports (Problemcode
+	// export_incomplete): nicht vollständig exportiert, kein Befund; der
+	// Status bleibt ok, der nächste audit export schließt sie ab.
+	Incomplete []AuditProblem `json:"incomplete,omitempty"`
 }
 
 // AuditVerify vergleicht die exportierten Dateien mit ihren Prüfsummen, mit
@@ -815,7 +962,10 @@ func AuditVerify(repo AuditRepo) Operation {
     "not_exported": {"type": "array", "items": {"type": "string"}},
     "chain_head": {"type": "string"},
     "legacy_days": {"type": "integer"},
-    "origin_days": {"type": "integer"}
+    "origin_days": {"type": "integer"},
+    "incomplete": {"type": "array", "items": {"type": "object", "properties": {
+      "day": {"type": "string"}, "file": {"type": "string"}, "problem": {"type": "string", "enum": ["export_incomplete"]}},
+      "required": ["day", "file", "problem"]}}
   },
   "required": ["status", "days_checked", "problems", "not_exported"]
 }`),
@@ -864,6 +1014,11 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 	if err != nil {
 		return out, nil, err
 	}
+	pend, err := loadAuditPending(ctx, src.base)
+	if err != nil {
+		return out, nil, err
+	}
+	dataDirID := auditDataDirID(ctx, src.base)
 	exported := map[string]store.AuditExport{}
 	// Manifest je Ort; nur geprüft, wenn dort ein Tag im Format 2 liegt.
 	manifests := map[string][]auditManifestDay{}
@@ -966,6 +1121,8 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 		switch {
 		case ferr != nil:
 			add(e.Day, file, AuditFileMissing, 0)
+		case !fileOK && pend.has(e.Day, e.Location, sha256Hex(fileBytes)):
+			// Abgebrochener Export (Merker): unten als export_incomplete.
 		case !fileOK:
 			add(e.Day, file, AuditFileChanged, firstDiffLine(fileBytes, db.content))
 		}
@@ -1028,8 +1185,20 @@ func verifyAudit(ctx context.Context, src auditSource) (AuditVerifyOutput, map[s
 		case err != nil:
 			return out, nil, err
 		default:
-			if want := buildManifest(manifests[loc]); !bytes.Equal(b, want) {
+			// Ein Manifest ohne Kennung (vor 0.3.0-alpha.7) gilt bis zum
+			// nächsten Export weiter.
+			want := buildManifest(manifests[loc], dataDirID)
+			if !bytes.Equal(b, want) && !bytes.Equal(b, buildManifest(manifests[loc], "")) {
 				add("", path, AuditManifestChanged, firstDiffLine(b, want))
+			}
+		}
+	}
+	// Dateien abgebrochener Exporte (Merker), die noch so am Ort liegen.
+	for _, p := range pend {
+		file := filepath.Join(p.Location, auditFileName(p.Day))
+		if got, err := fileSHA256(file); err == nil && got == p.SHA256 {
+			if e, ok := exported[p.Day]; !ok || e.Location != p.Location || e.SHA256 != got {
+				out.Incomplete = append(out.Incomplete, AuditProblem{Day: p.Day, File: file, Problem: AuditExportIncomplete})
 			}
 		}
 	}

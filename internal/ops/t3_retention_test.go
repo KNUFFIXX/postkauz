@@ -71,7 +71,7 @@ func seedRetention(t *testing.T, e *contractEnv) {
 	if err := os.WriteFile(filepath.Join(dir, md.File), d.content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, auditManifestName()), buildManifest([]auditManifestDay{md}), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, auditManifestName()), buildManifest([]auditManifestDay{md}, ""), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.st.SaveAuditExport(ctx, store.AuditExport{Day: name, FirstEventID: d.first, LastEventID: d.last, SHA256: md.SHA256,

@@ -231,6 +231,17 @@ powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -DataDir C:\
 
 Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein `sync --watch`, der über Mitternacht (UTC) läuft, schreibt seinen Abschluss erst am Ende; der Export ordnet ihn dem nächsten offenen Tag zu (`docs/cli.md`, Abschnitt 2f). `audit verify` bleibt dabei `ok`.
 
+**Abgebrochener Export (seit 0.3.0-alpha.7):** Bricht ein Export ab (Strg+C, Rechner aus), merkt sich PostKauz die halb fertige Tagesdatei. `audit verify` zeigt dann `ok` und eine Zeile `<tag>: not exported completely (…)`; der nächste `audit export` (spätestens die tägliche Aufgabe) schließt ihn ab. Laufen zwei Exporte zugleich (Aufgabe und Hand), endet der zweite mit `error: another audit export of this data directory is running`; einfach später noch einmal.
+
+**Altfall (Abbruch mit einer Version vor 0.3.0-alpha.7):** `audit export` endet mit `audit export file does not match its recorded checksum` oder `the target directory holds a file this program did not write`, und `audit verify` meldet `export file was changed` für den jüngsten Tag. Reparatur:
+
+1. `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit verify` — merke dir die Datei, die in der Zeile mit `export file was changed` steht (die jüngste Tagesdatei).
+2. Im Exportordner einen Unterordner anlegen, z. B. `abgebrochen-2026-10-29`, und genau diese Datei hineinschieben (nicht löschen; sie bleibt als Beleg).
+3. `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export` — erwartet: die Liste der Tage, der jüngste mit `updated` oder `written`.
+4. `audit verify` wie in Schritt 1 — erwartet eine Zeile, die mit `ok:` beginnt.
+
+Meldet `verify` mehr als einen Tag als verändert, ist es kein Abbruch: nicht reparieren, sondern klären (Abschnitt 1.8 oben, `docs/sicherheit.md` Abschnitt 6).
+
 ### 1.9 MCP-Server ohne Passwort, Sync über Claude anstoßen
 
 Der MCP-Server, den die Claude-App startet, kennt **kein** Mailpasswort (ADR-009). Er liest den Spiegel und schreibt Entwürfe nur lokal. Ein Agent kann deshalb nicht selbst synchronisieren. Er kann aber mit dem Tool `mail_sync_now` einen Sync **anfordern**: Das legt einen Auftrag (Job `sync`) in der Datenbank an, und der Dauer-Sync führt ihn binnen etwa 10 Sekunden aus.
@@ -327,11 +338,23 @@ Erwartet: `backup written as a tar stream to standard output` und die Warnung. W
 Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverzeichnis, das gerade benutzt wird (aus `config.toml`, der Umgebung oder dem Standardort), schreibt `restore` nie.
 
 1. Aus einem Tar-Strom erst entpacken, z. B. `mkdir wieder && age -d -i schluessel.txt postkauz-2026-10-28.tar.age | tar -x -C wieder`. Ein Sicherungsordner aus 2.2 braucht das nicht.
-2. Wiederherstellen:
+2. Wiederherstellen (`--config` nennt hier die Live-Konfiguration nur, damit `restore` deren Datenverzeichnis sicher meidet):
 
    ```powershell
    C:\PostKauz\postkauz.exe restore --from E:\PostKauz-Sicherung --data-dir C:\PostKauz\data-neu --config C:\PostKauz\config.toml
    ```
+
+   Für alles Weitere bekommt die Kopie eine **eigene** Konfiguration `C:\PostKauz\config-neu.toml` (Kopie der Live-Konfiguration) mit eigenem Exportordner, nie dem des Originals:
+
+   ```toml
+   [paths]
+   data_dir = 'C:\PostKauz\data-neu'
+
+   [audit]
+   export_dir = 'G:\My Drive\PostKauz-Audit-neu'
+   ```
+
+   Exportiert die Kopie doch in den Ordner des Originals, bricht der Export seit 0.3.0-alpha.7 ab, ohne etwas zu schreiben (`error: audit export: the target directory belongs to another data directory`).
 
    Erwartet (Auszug):
 
@@ -350,7 +373,7 @@ Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverz
 3. **Passwörter neu hinterlegen.** Die Kopie benutzt die gespeicherten Passwörter des Originals absichtlich nicht (`doctor` meldet `account privat has no password`):
    `C:\PostKauz\postkauz.exe account set privat --password-stdin --data-dir C:\PostKauz\data-neu` (bei Microsoft-Konten `account login privat`).
 4. Prüfen: `C:\PostKauz\postkauz.exe doctor --blobs=all --data-dir C:\PostKauz\data-neu` — erwartet `result:  ok`; eine Suche, die du kennst, liefert dieselben Treffer wie vorher.
-5. Soll die Kopie ab jetzt dein Datenverzeichnis sein: alles anhalten wie in 1.7 (Schritte 1 bis 3), dann die Aufgaben mit `-DataDir C:\PostKauz\data-neu` neu registrieren (1.3, 1.8) und in der Claude-Konfiguration `--data-dir` anpassen. Das alte Verzeichnis erst löschen, wenn alles läuft.
+5. Soll die Kopie ab jetzt dein Datenverzeichnis sein: alles anhalten wie in 1.7 (Schritte 1 bis 3), dann die Aufgaben mit `-DataDir C:\PostKauz\data-neu` neu registrieren (1.3) und den Audit-Export mit dem **neuen** Exportordner der Kopie (1.8: `-DataDir C:\PostKauz\data-neu -ExportDir "G:\My Drive\PostKauz-Audit-neu"`), in der Claude-Konfiguration `--data-dir` anpassen. Der alte Exportordner bleibt als Beleg des Originals liegen. Das alte Verzeichnis erst löschen, wenn alles läuft.
 
 ### 2.6 Was die Kopie absichtlich anders macht
 
@@ -358,7 +381,7 @@ Eine Wiederherstellung ist eine **neue Instanz** (A10). Nichts darin schreibt vo
 
 - **Neue Kennung:** Die Kopie sucht ihre Passwörter unter eigenen Namen im Schlüsselbund; die Einträge des Originals liest, verschiebt und löscht sie nie. Mit `--keep-identity` behält sie die Kennung des Originals und benutzt dessen Passwörter. Das ist nur gedacht, wenn das Original verloren ist und du auf demselben Rechner weiterarbeiten willst; Original und Kopie dürfen dann nicht beide laufen.
 - **Offene Aufträge sind geschlossen:** Entwürfe ablegen, markieren, verschieben, angeforderte Syncs (`failed`, Grund `restored`); offene Anträge auf den Papierkorb sind abgelehnt. Entwürfe, die noch in den Entwürfe-Ordner sollten, hält die Kopie zurück: `draft show <id>` sagt warum; `draft edit` oder `draft request` gibt sie frei (vorher prüfen, ob das Original sie schon abgelegt hat).
-- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …`), nie den des Originals.
+- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …` bzw. `export_dir` in ihrer Konfiguration, 2.5 Schritt 2), nie den des Originals, auch mit `--keep-identity` nicht. Ohne `--keep-identity` verweigert der Export den Ordner des Originals seit 0.3.0-alpha.7 selbst (das Manifest dort trägt die Kennung des Originals).
 
 ### 2.7 Original und Kopie auf demselben Rechner
 

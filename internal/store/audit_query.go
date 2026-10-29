@@ -395,13 +395,113 @@ type AuditExport struct {
 }
 
 // SaveAuditExport trägt einen Export ein oder ersetzt den Eintrag desselben
-// Tages (ein Tag wird erneut exportiert, solange er noch läuft).
+// Tages (ein Tag wird erneut exportiert, solange er noch läuft). In
+// derselben Transaktion fallen die Merker dieses Tages an diesem Ort weg
+// (AuditExportPending): Ab jetzt belegt der Nachweis die Datei.
 func (s *SQLite) SaveAuditExport(ctx context.Context, e AuditExport) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO audit_exports(day, first_event_id, last_event_id, sha256, location, exported_at)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_exports(day, first_event_id, last_event_id, sha256, location, exported_at)
 		VALUES (?,?,?,?,?,?) ON CONFLICT(day) DO UPDATE SET first_event_id = excluded.first_event_id,
 		last_event_id = excluded.last_event_id, sha256 = excluded.sha256, location = excluded.location,
-		exported_at = excluded.exported_at`, e.Day, e.FirstEventID, e.LastEventID, e.SHA256, e.Location, e.ExportedAt.UnixMilli())
+		exported_at = excluded.exported_at`, e.Day, e.FirstEventID, e.LastEventID, e.SHA256, e.Location, e.ExportedAt.UnixMilli()); err != nil {
+		return err
+	}
+	list, err := auditExportPending(ctx, tx)
+	if err != nil {
+		return err
+	}
+	keep := list[:0]
+	for _, p := range list {
+		if p.Day != e.Day || p.Location != e.Location {
+			keep = append(keep, p)
+		}
+	}
+	if err := setAuditExportPending(ctx, tx, keep); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// metaAuditExportPending ist der Schlüssel der Export-Merker in meta.
+const metaAuditExportPending = "audit_export_pending"
+
+// AuditExportPending ist der Merker einer Exportdatei, die geschrieben
+// wird, bevor ihr Nachweis in audit_exports steht (Nachbesserung T3,
+// Punkt 1): Bricht der Export zwischen Datei und Nachweis ab (Strg+C,
+// Sperre der Datenbank), weist der Merker die Datei weiter als eigene aus.
+// Kein Schema: eine JSON-Liste in meta.
+type AuditExportPending struct {
+	Day      string `json:"day"`
+	Location string `json:"location"`
+	SHA256   string `json:"sha256"`
+}
+
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func auditExportPending(ctx context.Context, q queryer) ([]AuditExportPending, error) {
+	var v string
+	err := q.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, metaAuditExportPending).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var list []AuditExportPending
+	if err := json.Unmarshal([]byte(v), &list); err != nil {
+		return nil, fmt.Errorf("store: meta %s: %w", metaAuditExportPending, err)
+	}
+	return list, nil
+}
+
+func setAuditExportPending(ctx context.Context, q queryer, list []AuditExportPending) error {
+	if len(list) == 0 {
+		_, err := q.ExecContext(ctx, `DELETE FROM meta WHERE key = ?`, metaAuditExportPending)
+		return err
+	}
+	b, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, metaAuditExportPending, string(b))
 	return err
+}
+
+// AuditExportPending liefert die offenen Merker (leer = keiner).
+func (s *SQLite) AuditExportPending(ctx context.Context) ([]AuditExportPending, error) {
+	return auditExportPending(ctx, s.db)
+}
+
+// AddAuditExportPending setzt einen Merker, bevor die Datei geschrieben
+// wird. Frühere Merker desselben Tages und Ortes bleiben: Bricht auch
+// dieser Lauf vor dem Schreiben ab, liegt dort noch die Datei des früheren.
+func (s *SQLite) AddAuditExportPending(ctx context.Context, p AuditExportPending) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	list, err := auditExportPending(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, q := range list {
+		if q == p {
+			return nil
+		}
+	}
+	if err := setAuditExportPending(ctx, tx, append(list, p)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AuditExports liefert alle Export-Nachweise nach Tag.

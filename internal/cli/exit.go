@@ -96,6 +96,15 @@ func classify(err error) (int, ErrorInfo) {
 		return ExitDenied, ErrorInfo{Code: "denied", Message: err.Error(), Hint: "create a key with: key create --name <name> --role reader"}
 	case errors.Is(err, errAuditMismatch), errors.Is(err, ops.ErrAuditExportChanged):
 		return ExitError, ErrorInfo{Code: "mismatch", Message: err.Error(), Hint: "the audit log or its export was changed; see audit verify"}
+	case errors.Is(err, ops.ErrAuditExportRunning):
+		return ExitError, ErrorInfo{Code: "audit_export_running", Message: err.Error(),
+			Hint: "wait until the other audit export (e.g. the daily task) has finished, then run the command again"}
+	case errors.Is(err, ops.ErrAuditExportOtherInstance):
+		return ExitError, ErrorInfo{Code: "audit_export_other_instance", Message: err.Error(),
+			Hint: "nothing was written; a restored copy needs an export directory of its own (audit export --to <dir>, see docs/betrieb.md, backup and restore)"}
+	case errors.Is(err, ops.ErrAuditExportForeign):
+		return ExitError, ErrorInfo{Code: "audit_export_foreign", Message: err.Error(),
+			Hint: "nothing was written; move the named file out of the export directory or choose another one"}
 	case errors.Is(err, policy.ErrInvalidFile):
 		return ExitError, ErrorInfo{Code: "policy_invalid", Message: err.Error(), Hint: "fix the policy file (see docs/sicherheit.md, section 5) or check it with: doctor"}
 	case errors.Is(err, backup.ErrTarget):
