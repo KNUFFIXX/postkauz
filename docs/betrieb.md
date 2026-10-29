@@ -563,7 +563,7 @@ Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in ei
    curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/healthz
    ```
 
-   Erwartet: beide `active (running)`, dann `204`. Log: `journalctl -u postkauz-mcp-http.service` und `/var/lib/postkauz/postkauz.log`.
+   Erwartet: beide `active (running)`, dann `204`. Log: `journalctl -u postkauz-mcp-http.service` und `/var/lib/postkauz/postkauz.log`. Abgewiesene Anfragen (falscher Schlüssel, zu viele Anfragen, fremder Host) stehen dort höchstens einmal je 10 Sekunden als eine Zeile `http requests rejected` mit Zählern; viele davon heißen: Jemand im Tailnet probiert etwas, oder ein Client hat einen alten Schlüssel.
 
 Der MCP-Dienst hat keine `EnvironmentFile`-Zeile, sieht `/etc/postkauz/credentials` gar nicht (`InaccessiblePaths=`) und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht.
 

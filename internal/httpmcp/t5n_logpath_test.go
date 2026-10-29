@@ -45,7 +45,9 @@ func TestT5NLogPath(t *testing.T) {
 		}
 		_ = res.Body.Close()
 	}
-	if l := e.log.String(); strings.Contains(l, "canary-x9q") || !strings.Contains(l, `"path":"other"`) {
+	// Unangemeldete Anfragen stehen nur noch in der Sammelzeile (Punkt 9 l),
+	// ganz ohne Pfad.
+	if l := e.log.String(); strings.Contains(l, "canary-x9q") || !strings.Contains(l, "http requests rejected") {
 		t.Errorf("request path in the log:\n%s", l)
 	}
 }

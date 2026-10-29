@@ -115,6 +115,9 @@ type Server struct {
 
 	mu         sync.Mutex
 	principals map[string]*rate.Limiter // Schlüssel-ID → Vorrat
+
+	// rejects fasst abgewiesene Anfragen im Log zusammen (Punkt 9 l).
+	rejects *rejectLog
 }
 
 type ctxKey struct{}
@@ -221,6 +224,7 @@ func New(d Deps) (*Server, error) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { plain(w, http.StatusNotFound, "not found") })
+	s.rejects = &rejectLog{log: d.Log}
 	s.handler = s.outer(mux)
 	return s, nil
 }
@@ -242,14 +246,20 @@ func (s *Server) outer(next http.Handler) http.Handler {
 		hd := rw.Header()
 		hd.Set("Cache-Control", "no-store")
 		hd.Set("X-Content-Type-Options", "nosniff")
-		// Platz für den Principal, den mcpGate nach der Anmeldung einträgt.
-		slot := new(*principal)
+		// Platz für Principal und Grund, die mcpGate einträgt.
+		info := &reqInfo{}
 		defer func() {
-			args := []any{"method", r.Method, "path", s.logPath(r.URL.Path), "status", rw.code(), "ms", s.d.Now().Sub(start).Milliseconds()}
-			if p := *slot; p != nil {
-				args = append(args, "key", p.key.ID)
+			now := s.d.Now()
+			code := rw.code()
+			// Einzeln nur angemeldete Anfragen (je Schlüssel begrenzt);
+			// alles andere, auch /healthz, zusammengefasst (Punkt 9 l).
+			if info.p == nil || code == http.StatusTooManyRequests {
+				s.rejects.add(now, code, info.reason)
+				return
 			}
-			s.d.Log.Info("http request", args...)
+			s.rejects.tick(now)
+			s.d.Log.Info("http request", "method", r.Method, "path", s.logPath(r.URL.Path), "status", code,
+				"ms", now.Sub(start).Milliseconds(), "key", info.p.key.ID)
 		}()
 		if r.URL.Path != PathHealth {
 			if !s.hosts[normHost(r.Host)] {
@@ -263,7 +273,7 @@ func (s *Server) outer(next http.Handler) http.Handler {
 			}
 		}
 		r.Body = http.MaxBytesReader(rw, r.Body, MaxRequestBytes)
-		next.ServeHTTP(rw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, slot)))
+		next.ServeHTTP(rw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, info)))
 	})
 }
 
@@ -310,7 +320,7 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 		}
 		if err != nil && !held && authStatus(err) != "unavailable" {
 			tooMany(w, failPerMinute)
-			s.d.Log.Warn("http mcp: authentication failed", "status", authStatus(err), "limited", true)
+			setReason(r, authStatus(err))
 			return
 		}
 		if err != nil {
@@ -330,11 +340,11 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 				w.Header().Set("Retry-After", "10")
 				plain(w, http.StatusServiceUnavailable, "service unavailable")
 			}
-			s.d.Log.Warn("http mcp: authentication failed", "status", authStatus(err))
+			setReason(r, authStatus(err))
 			return
 		}
-		if slot, ok := r.Context().Value(ctxKey{}).(**principal); ok {
-			*slot = &p
+		if info, ok := r.Context().Value(ctxKey{}).(*reqInfo); ok {
+			info.p = &p
 		}
 		if !s.principalLimiter(p.key.ID).Allow() {
 			tooMany(w, s.perMin)
@@ -345,6 +355,19 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 }
 
 type principalKey struct{}
+
+// reqInfo trägt, was outer fürs Log braucht: den Principal nach der
+// Anmeldung und den festen Grund einer gescheiterten (authStatus).
+type reqInfo struct {
+	p      *principal
+	reason string
+}
+
+func setReason(r *http.Request, reason string) {
+	if info, ok := r.Context().Value(ctxKey{}).(*reqInfo); ok {
+		info.reason = reason
+	}
+}
 
 // allowFailure nimmt einen Platz aus dem Vorrat für Anfragen ohne gültige
 // Anmeldung; ist er leer, antwortet es 429 und meldet false.
@@ -446,6 +469,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	sctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	err := hs.Shutdown(sctx)
+	s.rejects.flush(s.d.Now())
 	if e := <-errc; e != nil && !errors.Is(e, http.ErrServerClosed) && err == nil {
 		err = e
 	}
