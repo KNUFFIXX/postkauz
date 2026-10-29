@@ -1,0 +1,17 @@
+package drafts
+
+import (
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
+)
+
+// C6: fromAddress schreibt per strings.ToLower klein (Unicode) und hebt so
+// die ASCII-Härtung von mailaddr auf: Kelvin-Zeichen U+212A wird "k".
+func TestZZC6FromAddressKelvin(t *testing.T) {
+	own := mailaddr.NewSet("owner@kanzlei.example.org")
+	foreign := "Fremd <owner@Kanzlei.example.org>"
+	if own.Has(fromAddress(foreign)) {
+		t.Errorf("foreign sender %q counts as own after fromAddress = %q", foreign, fromAddress(foreign))
+	}
+}

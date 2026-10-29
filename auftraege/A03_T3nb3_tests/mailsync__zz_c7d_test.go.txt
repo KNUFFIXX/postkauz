@@ -1,0 +1,35 @@
+package mailsync
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
+)
+
+// C7d: Ein dauerhafter, inhaltsbezogener Ablagefehler eines Anhangs (hier:
+// Datei am Platz des Blob-Verzeichnisses; unter Windows vermutlich auch ein
+// Virenscanner, der das Schreiben eines Schadanhangs verweigert) verhindert
+// das Spiegeln der ganzen Mail in jedem Lauf. Erwartet (Vorschlag): nur
+// ErrBusy/Kontextende verschieben, sonst "not stored" wie vor der
+// Nachbesserung.
+func TestZZC7dPermanentAttachmentErrorEveryRun(t *testing.T) {
+	root := t.TempDir()
+	bs, err := blob.Open(root, blob.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockAttachment(t, root, t3n2Raw)
+	e := &Engine{Blobs: bs}
+	for run := 1; run <= 3; run++ {
+		nm, _, err := e.mirrorRaw(strings.NewReader(t3n2Raw), provider.Header{UID: 7, Size: int64(len(t3n2Raw))})
+		if err != nil {
+			t.Errorf("run %d: message not mirrored: %v", run, err)
+			continue
+		}
+		if nm.BlobSHA256 == "" {
+			t.Errorf("run %d: no raw blob", run)
+		}
+	}
+}
