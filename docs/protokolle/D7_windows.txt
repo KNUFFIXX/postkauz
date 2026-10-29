@@ -1,0 +1,299 @@
+Abnahme D7 2026-10-29 10:40:06, PowerShell 5.1.26100.9711
+Programm: <ExeDir>\postkauz.exe
+DataDir <DataDir>, Config <Config>, Laufordner <Lauf>
+OK 0.1 version nennt 0.3.0-alpha.7c
+      postkauz 0.3.0-alpha.7c (go1.27.3 windows/amd64)
+      SHA-256 postkauz.exe: 2A41BAFB4B060023C28B70BCF646F12C0B5457E5B26A744487BEF501CFD57B3C
+
+===== Schritt 0: Vorbereitung (offline, synthetische Testdaten)
+OK 0.2 Konto demo ohne Server angelegt (Passwort nur aus der Umgebung, nicht gespeichert)
+      account demo added (127.0.0.1:1, tls none, user <adresse>); password read from POSTKAUZ_PASSWORD_DEMO at runtime (not stored)
+      tip: the first sync fetches every message; to skip very large ones (e.g. in a big Sent folder), set max_message_bytes = 10485760 (10 MiB) under [imap] in the configuration file (path: see doctor); sync --full fetches them once you raise the limit
+OK 0.3 import mbox: 3 neue Nachrichten
+      > postkauz import mbox <Lauf>\input\d7-korpus.mbox -a demo --mailbox INBOX --quiet
+      import mbox into account demo (0.1s, 1.8 KB, 25.3 KB/s)
+      SOURCE          FOLDER  MODE     NEW  EXISTING  SKIPPED  ERRORS
+      d7-korpus.mbox  INBOX   content  3    0         0        0
+      attachment text: 2 attachments extracted
+      search index: 4 messages indexed
+      new: 3, existing: 0, skipped: 0, errors: 0
+      [exit 0, 399 ms]
+OK 0.4 lokale IDs der drei Mails
+      Rechnung 1, Verein 2, Programm 3
+OK 0.5 Schluessel test-agent (reader) und test-operator (operator) angelegt
+      test-agent (reader): exit 0
+      test-operator (operator): exit 0
+OK 0.6 tag add rechnung (fuer den Vergleich nach dem Restore)
+      > postkauz tag add rechnung 1
+      1 tags added, 0 removed in account demo
+        1	rechnung
+      [exit 0, 313 ms]
+OK 0.7 doctor: Datenverzeichnis von D7; export: <DataDir>\export (Standard von [paths] export_dir)
+      > postkauz doctor
+      version:   0.3.0-alpha.7c
+      config:    <Config> (exists: true)
+      data dir:  <DataDir>
+      log:       <DataDir>\postkauz.log
+      database:  ok (<DataDir>\postkauz.db)
+      schema:    22 (program knows 22)
+      keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+      policy:    <WorkDir>\policy.toml (not found, built-in defaults; version 1)
+      attach:    <DataDir>\attach [paths.attach_dir]
+      export:    <DataDir>\export [paths.export_dir]
+      pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+      search:    0 messages waiting for the index (index version 2)
+      extract:   0 attachments waiting for text extraction
+      ...[gekuerzt]
+
+===== Schritt 4 (D7.4): attach save, export eml und mbox, Rundlauf
+OK 4.1 attach list: je Mail ein Anhang
+      PDF 1, CON.txt 2, Programm 3
+OK 4.2 attach save <PDF> --subdir rechnungen -> rechnungen/Rechnung-2026-117.pdf unter export_dir, Bytes wie im Original
+      > postkauz attach save 1 --subdir rechnungen
+      saved attachment 1 of message 1 as rechnungen/Rechnung-2026-117.pdf below export_dir (45 B, sha256 5a838678058f6de375e8635b5f2fea47a4e5f07cb1a882a44b10f39abc6f34ff)
+      export_dir: see doctor
+      [exit 0, 320 ms]
+OK 4.3 zweimal dasselbe -> Rechnung-2026-117-2.pdf (nie ueberschreiben)
+      > postkauz attach save 1 --subdir rechnungen
+      saved attachment 1 of message 1 as rechnungen/Rechnung-2026-117-2.pdf below export_dir (45 B, sha256 5a838678058f6de375e8635b5f2fea47a4e5f07cb1a882a44b10f39abc6f34ff)
+      export_dir: see doctor
+      [exit 0, 312 ms]
+OK 4.4 attach save <CON.txt> -> _CON.txt (Geraetename von Windows entschaerft)
+      > postkauz attach save 2
+      saved attachment 2 of message 2 as _CON.txt below export_dir (20 B, sha256 be1375e99a3e427dc85ebdfddb8070bf1293e4b77f9530c576c698d7e1c8bfb7)
+      export_dir: see doctor
+      [exit 0, 310 ms]
+OK 4.5 attach save <werkzeug.pdf.exe> -> werkzeug.pdf.exe.blocked mit Warnung
+      > postkauz attach save 3
+      saved attachment 3 of message 3 as werkzeug.pdf.exe.blocked below export_dir (105 B, sha256 eb03b9254de625d486364738a9bfa60bc748e6b8e97b05fb06590e218c9db68c)
+      warning: an executable type (program, script or shortcut): saved with the ending .blocked; do not open it
+      export_dir: see doctor
+      [exit 0, 316 ms]
+OK 4.6 attach save --subdir ..\ausserhalb -> denied (outside_export_dir), Exit 3, nichts angelegt
+      > postkauz attach save 1 --subdir ..\ausserhalb
+      [stderr] error: denied (outside_export_dir): subdir must stay below export_dir: no .., no absolute path, no symbolic link
+      hint: save only below export_dir: give --subdir as a relative folder without .. and without symbolic links (see: doctor)
+      [exit 3, 309 ms]
+OK 4.7 attach save mit --key: reader -> denied (missing_scope); operator (mail:export) -> erlaubt, als Trockenlauf
+      > postkauz attach save 1 --key test-agent
+      [stderr] error: denied (missing_scope): attachments.save needs the scope mail:export, which the key does not have
+      hint: the key lacks the required scope; see what it may do with: policy show --key <name>
+      [exit 3, 309 ms]
+      > postkauz attach save 1 --key test-operator
+      dry run: would save attachment 1 of message 1 as Rechnung-2026-117.pdf below export_dir (45 B, sha256 5a838678058f6de375e8635b5f2fea47a4e5f07cb1a882a44b10f39abc6f34ff)
+      export_dir: see doctor
+      [exit 0, 312 ms]
+OK 4.8 export eml: 3 Dateien (Name = Anfang des SHA-256 des Inhalts), index.csv ohne Betreff
+      > postkauz export eml --to <Lauf>\export-eml -a demo
+      export eml of account demo to <Lauf>\export-eml (1.7 KB)
+      FOLDER           PATH             MESSAGES  SKIPPED
+      _imported/INBOX  _imported/INBOX  3         0
+      messages: 3, skipped: 0
+      [stderr]   _imported/INBOX: 3 of 3 messages
+      [exit 0, 316 ms]
+      Dateien: 1-8dce67342da7.eml, 2-c989b94852e7.eml, 3-3c79d2e999b5.eml
+      id,message_id,date,folder,size,sha256,file
+      1,<adresse>,2026-10-19T07:00:00Z,_imported/INBOX,597,8dce67342da7426a5f475596a0fddece9f817db49bd23d47acb9eb11556b2926,_imported/INBOX/1-8dce67342da7.eml
+      2,<adresse>,2026-10-20T08:15:00Z,_imported/INBOX,468,c989b94852e71f03784120940d3661934ebbf1d196a28f752c84cf0d491bc149,_imported/INBOX/2-c989b94852e7.eml
+      3,<adresse>,2026-10-21T09:30:00Z,_imported/INBOX,623,3c79d2e999b50c4c1f38f7975184e0624c333329928142d50050ae1b92ad7f07,_imported/INBOX/3-3c79d2e999b5.eml
+OK 4.9 export mbox: eine Datei je Ordner (_imported.sbd\INBOX), 3 Trennzeilen "From "
+      > postkauz export mbox --to <Lauf>\export-mbox -a demo
+      export mbox of account demo to <Lauf>\export-mbox (1.7 KB)
+      FOLDER           PATH                 MESSAGES  SKIPPED
+      _imported/INBOX  _imported.sbd/INBOX  3         0
+      messages: 3, skipped: 0
+      [stderr]   _imported/INBOX: 3 of 3 messages
+      [exit 0, 324 ms]
+      Dateien: <Lauf>\export-mbox\_imported.sbd\INBOX
+OK 4.10 export eml in denselben (nicht leeren) Ordner -> denied (target_not_fresh), Exit 3
+      > postkauz export eml --to <Lauf>\export-eml -a demo
+      [stderr] error: denied (target_not_fresh): it is not empty
+      hint: export only into a new or empty folder; choose another --to
+      [exit 3, 305 ms]
+OK 4.11 export mit --key test-operator -> denied (human_only), Exit 3 (nur der Mensch kopiert das Archiv)
+      > postkauz export mbox --to <Lauf>\export-key -a demo --key test-operator
+      [stderr] error: denied (human_only): messages.export is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 298 ms]
+OK 4.12 Rundlauf: export mbox -> import mbox in Konto zwei: new: 3; zweiter Import new: 0
+      > postkauz import mbox <Lauf>\export-mbox -a zwei --quiet
+      import mbox into account zwei (0.0s, 1.8 KB, 40.9 KB/s)
+      SOURCE               FOLDER           MODE     NEW  EXISTING  SKIPPED  ERRORS
+      _imported.sbd/INBOX  _imported/INBOX  content  3    0         0        0
+      attachment text: 2 attachments extracted
+      search index: 4 messages indexed
+      new: 3, existing: 0, skipped: 0, errors: 0
+      [exit 0, 355 ms]
+      > postkauz import mbox <Lauf>\export-mbox -a zwei --quiet
+      import mbox into account zwei (0.0s, 0 B)
+      SOURCE               FOLDER           MODE     NEW        EXISTING  SKIPPED  ERRORS
+      _imported.sbd/INBOX  _imported/INBOX  content  unchanged                     
+      1 sources unchanged since the last import, not read again (--rescan reads them)
+      new: 0, existing: 0, skipped: 0, errors: 0
+      [exit 0, 306 ms]
+SKIP 4.13 Thunderbird prueft der Betreiber (Datei: <Lauf>\export-mbox\_imported.sbd\INBOX; mit -Interactive fragt das Skript danach)
+
+===== Schritt 5 (D7.5): audit export, backup create, restore, Vergleich
+OK 5.1 audit export vor der Sicherung (damit die Kopie Tage des Originals kennt, A10)
+      > postkauz audit export --to <Lauf>\audit-export
+      DAY         EVENTS  STATE    FILE
+      2026-10-29  49      written  <Lauf>\audit-export\postkauz-audit-2026-10-29.jsonl
+      manifest: <Lauf>\audit-export\postkauz-audit-manifest.json
+      chain head: 62e50fdd4f7326edf09e91a3fd2c1a25e67a5da337011b1265804668a478eb06
+      1 day in <Lauf>\audit-export; check with: audit verify
+      [exit 0, 318 ms]
+OK 5.2 backup create --to <ordner>: manifest.json, ENCRYPT-ME.txt, alle Blobs kopiert, Warnung "not encrypted" (Akzeptanzkriterium 6)
+      > postkauz backup create --to <Lauf>\sicherung
+      backup written to <Lauf>\sicherung
+        database:  postkauz-20261029T094016Z.db (schema 22)
+        blobs:     6 (copied 6, already there 0; 1.9 KB copied)
+        manifest:  <Lauf>\sicherung\manifest.json, 7 files (411.5 KB), sha256 88db632386c24347a4081b1b60019fb7cbb4eee8c87404d2af3d499a36e3fcad
+        restore:   restore --from <backup folder> --data-dir <new folder>
+      [stderr] warning: the backup is not encrypted; keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or encrypt it (age, restic); see ENCRYPT-ME.txt
+      [exit 0, 358 ms]
+OK 5.3 zweites backup create in denselben Ordner -> copied 0 (inkrementell), alter Schnappschuss ersetzt
+      > postkauz backup create --to <Lauf>\sicherung
+      backup written to <Lauf>\sicherung
+        database:  postkauz-20261029T094016Z-2.db (schema 22)
+        blobs:     6 (copied 0, already there 6; 0 B copied)
+        manifest:  <Lauf>\sicherung\manifest.json, 7 files (411.5 KB), sha256 2cc33d95bdb500e737950f317db5e729db006067c2c2378718e18e9525b64e72
+        replaced:  1 database snapshot of the earlier backup
+        restore:   restore --from <backup folder> --data-dir <new folder>
+      [stderr] warning: the backup is not encrypted; keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or encrypt it (age, restic); see ENCRYPT-ME.txt
+      [exit 0, 334 ms]
+OK 5.4 backup create mit --key -> denied (human_only), Exit 3
+      > postkauz backup create --to <Lauf>\sicherung-key --key test-operator
+      [stderr] error: denied (human_only): backup.create is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 313 ms]
+OK 5.5 backup create in das Datenverzeichnis -> abgelehnt (backup_target), Exit 1
+      > postkauz backup create --to <DataDir>\sicherung
+      [stderr] error: backup: target not allowed: the target folder <DataDir>\sicherung lies inside the data directory; choose a folder outside it (best on another drive)
+      hint: nothing was written; choose a new or empty folder outside the data directory (see docs/betrieb.md, backup and restore)
+      [exit 1, 310 ms]
+OK 5.6 Referenz geschrieben (Suche, IDs, doctor --blobs=all des Originals)
+      blobs: ok 6, corrupt 0, missing 0, unreadable 0
+      Datei: <Lauf>\D7_reference.json
+OK 5.7 restore --from <sicherung> --data-dir <neu>: "restored:", neue Identitaet, doctor --blobs=all "result: ok"
+      restored:  backup of 2026-10-29T09:40:16Z (program 0.3.0-alpha.7c, schema 22) from <Lauf>\sicherung
+      into:      <Lauf>\wiederhergestellt (schema 22)
+      manifest:  sha256 2cc33d95bdb500e737950f317db5e729db006067c2c2378718e18e9525b64e72; 7 files (411.5 KB) checked: database, 6 blobs, 0 audit archives
+      identity:  new data directory id; the keyring entries of the original are not used here
+                 store the passwords again: account set <name> --password-stdin (OAuth2: account login <name>)
+      accounts:  check each server and user before you store a password (only restore your own backups):
+                 demo: 127.0.0.1:1 (none), user <adresse>, password
+                 zwei: 127.0.0.1:1 (none), user <adresse>, password
+      stopped:   0 open jobs, 0 mailbox actions, 0 requests rejected, 0 drafts held back (draft show <id>), 0 push attempts cleared
+      audit:     1 unfinished call closed, 1 export location cleared (they belong to the original), event backup.restore written
+                 nothing in this copy writes to a mail server on its own
+      
+      version:   0.3.0-alpha.7c
+      config:    <Config> (exists: true)
+      data dir:  <Lauf>\wiederhergestellt
+      log:       <Lauf>\wiederhergestellt\postkauz.log
+      database:  ok (<Lauf>\wiederhergestellt\postkauz.db)
+      schema:    22 (program knows 22)
+      keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+      policy:    <WorkDir>\policy.toml (not found, built-in defaults; version 1)
+      ...[gekuerzt]
+OK 5.8 Kopie: Suche und Nachrichten-IDs identisch (Akzeptanzkriterium 3)
+      Rechnung: Original [1,4], Kopie [1,4]
+      Verein: Original [2,5], Kopie [2,5]
+      Werkzeug: Original [3,6], Kopie [3,6]
+      Heizungswartung: Original [1,4], Kopie [1,4]
+      tag:rechnung: Original [1], Kopie [1]
+      <adresse>: Original 1, Kopie 1
+      <adresse>: Original 2, Kopie 2
+      <adresse>: Original 3, Kopie 3
+OK 5.9 Kopie: doctor --blobs=all wie im Original
+      Original: ok 6, corrupt 0, missing 0, unreadable 0
+      Kopie: ok 6, corrupt 0, missing 0, unreadable 0
+OK 5.10 audit verify in Original und Kopie -> ok, ohne Befund (A10: kein "changed")
+      > postkauz audit verify --json
+      {"status":"ok","days_checked":1,"problems":[],"not_exported":["2026-10-29"],"chain_head":"62e50fdd4f7326edf09e91a3fd2c1a25e67a5da337011b1265804668a478eb06"}
+      [exit 0, 303 ms]
+      > postkauz audit verify --json
+      {"status":"ok","days_checked":1,"problems":[],"not_exported":["2026-10-29"],"chain_head":"62e50fdd4f7326edf09e91a3fd2c1a25e67a5da337011b1265804668a478eb06","origin_days":1}
+      [exit 0, 305 ms]
+OK 5.11 Kopie: doctor meldet fehlende Passwoerter (Schluesselbund des Originals wird nicht benutzt)
+      > postkauz doctor
+      version:   0.3.0-alpha.7c
+      config:    <Config> (exists: true)
+      data dir:  <Kopie>
+      log:       <Kopie>\postkauz.log
+      database:  ok (<Kopie>\postkauz.db)
+      schema:    22 (program knows 22)
+      keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+      policy:    <WorkDir>\policy.toml (not found, built-in defaults; version 1)
+      attach:    <Kopie>\attach [paths.attach_dir]
+      export:    <Kopie>\export [paths.export_dir]
+      pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+      search:    0 messages waiting for the index (index version 2)
+      extract:   0 attachments waiting for text extraction
+      audit:     last export 2026-10-29T09:40:16Z to the location of the data directory this one was restored from; 1 day not exported yet [audit.export_dir = not set]
+      accounts:
+        demo: password missing, status new (env override: POSTKAUZ_PASSWORD_DEMO)
+        zwei: password missing, status new (env override: POSTKAUZ_PASSWORD_ZWEI)
+      warnings:
+        - account demo has no password (keyring entry account/3b2486c4/demo or POSTKAUZ_PASSWORD_DEMO)
+      ...[gekuerzt]
+OK 5.12 restore einer manipulierten Sicherung (ein Byte eines Blobs) -> Exit 1, "nothing was restored", kein Zielordner
+      error: backup: invalid backup: blobs/3c/79/3c79d2e999b50c4c1f38f7975184e0624c333329928142d50050ae1b92ad7f07 does not match the manifest (sha256 or size); nothing was restored
+      hint: the backup is incomplete or was changed; nothing was restored; use another backup or run backup create again
+OK 5.13 Paket D7_sicherung.tar (Sicherung und Referenz) fuer den Restore im Linux-Container und auf dem Heim-PC
+      SHA-256 F5900182D36156BEA749DD6B0725F8832A3BF54243684D5D961B342881478608
+
+===== Schritt 7 (D7.7): purge, blob gc, audit rotate (nur Trockenlauf)
+OK 7.1 purge --dry-run --older-than 0s: alle Kandidaten sind importiert und bleiben (kept_imported), 0 wuerden geloescht (A13.2; abweichend von A03 D7.7)
+      > postkauz purge --older-than 0s --dry-run --json
+      {"older_than":"0s","cutoff":"2026-10-29T09:40:25Z","gone_from_server":6,"kept_imported":6,"kept_drafts":0,"kept_tagged":0,"eligible":0,"purged":0,"attachments":0,"threads_removed":0,"dry_run":true}
+      [exit 0, 308 ms]
+OK 7.2 purge --older-than 0s (echt): loescht nichts aus dem importierten Archiv
+      > postkauz purge --older-than 0s
+      all accounts, deleted on the server before 2026-10-29T09:40:25Z (older than 0s):
+        gone from the server: 6
+        kept (imported archive): 6
+        kept (a draft refers to them): 0
+        kept (tagged): 0
+      deleted: 0 messages, 0 attachment entries, 0 threads that became empty
+      the stored files stay until: blob gc
+      [exit 0, 307 ms]
+OK 7.3 blob gc --dry-run: 0 ohne Verweis, nichts geaendert
+      > postkauz blob gc --dry-run
+      blob store: 6 files, 6 rows in table blobs, 6 referenced
+        without reference: 0, of these younger than 1d (kept): 0
+      would delete: 0 files (0 B), 0 rows
+      dry run: nothing changed
+      [exit 0, 309 ms]
+OK 7.4 audit rotate --dry-run: nichts aelter als [audit] retain (365d)
+      > postkauz audit rotate --dry-run
+      nothing to rotate: no exported day ended before 2025-10-29T09:40:26Z (retain 365d)
+      [exit 0, 311 ms]
+OK 7.5 purge, blob gc, audit rotate mit --key test-operator -> denied (human_only), Exit 3
+      > postkauz purge --older-than 0s --key test-operator
+      [stderr] error: denied (human_only): retention.purge is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 301 ms]
+      > postkauz blob gc --key test-operator
+      [stderr] error: denied (human_only): blobs.gc is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 309 ms]
+      > postkauz audit rotate --key test-operator
+      [stderr] error: denied (human_only): audit.rotate is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 311 ms]
+
+===== Schritt 6 (D7.6): Audit des Laufs
+OK 6.1 audit --since 30m: neue Operationen mit Endergebnis, ohne Betreff und Dateinamen
+      attachments.save: 7
+      messages.export: 4
+      backup.create: 4
+      retention.purge: 4
+      blobs.gc: 2
+      audit.rotate: 2
+OK 6.2 audit verify am Ende -> ok
+      > postkauz audit verify --json
+      {"status":"ok","days_checked":1,"problems":[],"not_exported":["2026-10-29"],"chain_head":"62e50fdd4f7326edf09e91a3fd2c1a25e67a5da337011b1265804668a478eb06"}
+      [exit 0, 314 ms]
+
+D7: 39 OK, 0 FAIL, 1 SKIP

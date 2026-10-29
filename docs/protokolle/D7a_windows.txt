@@ -1,0 +1,260 @@
+Abnahme D7a 2026-10-29 10:40:47, PowerShell 5.1.26100.9711
+Programm: <ExeDir>\postkauz.exe
+Teil A: DataDir <DataDir>, Config <Config>, Laufordner <WorkDir>\lauf-20261029-104047
+Teil B: nein (nur mit -LiveAccount <konto> und -AllowRealMailbox (dazu -AccountDataDir, -AccountConfig, -Label, -LivePath))
+
+===== Teil A, Schritt 0: Vorbereitung (offline, synthetische Testdaten)
+OK A0.1 version nennt 0.3.0-alpha.7c
+      postkauz 0.3.0-alpha.7c (go1.27.3 windows/amd64)
+      SHA-256 postkauz.exe: 2A41BAFB4B060023C28B70BCF646F12C0B5457E5B26A744487BEF501CFD57B3C
+OK A0.2 Konto demo ohne Server angelegt (Passwort nur aus der Umgebung, nicht gespeichert)
+      account demo added (127.0.0.1:1, tls none, user <adresse>); password read from POSTKAUZ_PASSWORD_DEMO at runtime (not stored)
+      tip: the first sync fetches every message; to skip very large ones (e.g. in a big Sent folder), set max_message_bytes = 10485760 (10 MiB) under [imap] in the configuration file (path: see doctor); sync --full fetches them once you raise the limit
+OK A0.3 import mbox: 2 neue Nachrichten
+      > postkauz import mbox <WorkDir>\lauf-20261029-104047\input\d7a-korpus.mbox -a demo --mailbox INBOX --quiet
+      import mbox into account demo (0.0s, 695 B, 22.4 KB/s)
+      SOURCE           FOLDER  MODE     NEW  EXISTING  SKIPPED  ERRORS
+      d7a-korpus.mbox  INBOX   content  2    0         0        0
+      search index: 2 messages indexed
+      new: 2, existing: 0, skipped: 0, errors: 0
+      [exit 0, 341 ms]
+OK A0.4 lokale IDs der beiden Mails
+      Rechnung: 1, Verein: 2
+OK A0.5 Schluessel test-agent, test-assistant, test-triage, test-operator angelegt; triage = lesen + Entwurf + Tag; key list zeigt keinen Schluessel
+      test-agent (reader): angelegt, Datei <WorkDir>\lauf-20261029-104047\keys\test-agent.key
+      test-assistant (assistant): angelegt, Datei <WorkDir>\lauf-20261029-104047\keys\test-assistant.key
+      test-triage (triage): angelegt, Datei <WorkDir>\lauf-20261029-104047\keys\test-triage.key
+      test-operator (operator): angelegt, Datei <WorkDir>\lauf-20261029-104047\keys\test-operator.key
+      > postkauz key list
+      NAME            ROLE       SCOPES                                                                                                     STATUS  DRY RUN  CREATED     EXPIRES     LAST USED
+      test-agent      reader     mail:read,mail:search,audit:read                                                                           active  default  2026-10-29  2026-10-31  never
+      test-assistant  assistant  mail:read,mail:search,audit:read,mail:draft,mail:tag,mail:sync                                             active  default  2026-10-29  2026-10-31  never
+      test-operator   operator   mail:read,mail:search,audit:read,mail:draft,mail:tag,mail:mark,mail:sync,mail:move,mail:trash,mail:export  active  default  2026-10-29  2026-10-31  never
+      test-triage     triage     mail:read,mail:search,mail:draft,mail:tag                                                                  active  default  2026-10-29  2026-10-31  never
+      [exit 0, 305 ms]
+OK A0.6 doctor: Datenverzeichnis von Teil A (nicht umgeleitet)
+      > postkauz doctor
+      version:   0.3.0-alpha.7c
+      config:    <Config> (exists: true)
+      data dir:  <DataDir>
+      log:       <DataDir>\postkauz.log
+      database:  ok (<DataDir>\postkauz.db)
+      schema:    22 (program knows 22)
+      keyring:   available (Windows Credential Manager) [secrets.backend = auto]
+      policy:    <WorkDir>\policy.toml (not found, built-in defaults; version 1)
+      attach:    <DataDir>\attach [paths.attach_dir]
+      export:    <DataDir>\export [paths.export_dir]
+      pdftotext: C:\Program Files\Git\mingw64\bin\pdftotext.exe
+      ...[gekuerzt]
+
+===== Teil A, Schritt 1 (D7.1): tag add, search tag:, tag list, mark
+OK A1.1 tag add rechnung 1 -> "1 tags added", Nachricht mit Tag rechnung
+      > postkauz tag add rechnung 1
+      1 tags added, 0 removed in account demo
+        1	rechnung
+      [exit 0, 310 ms]
+OK A1.2 search tag:rechnung -> genau die ID 1
+      Treffer: 1
+OK A1.3 tag list -> rechnung mit 1 Nachricht
+      > postkauz tag list
+      TAG       MESSAGES
+      rechnung  1
+      [exit 0, 306 ms]
+OK A1.4 show 1 nennt "tags: rechnung"
+      > postkauz show 1
+      id:                1
+      account:           demo
+      mailboxes:         INBOX (imported)
+      message-id:        <adresse>
+      date:              2026-10-19T07:00:00Z
+      from:              Muster Handwerk <<adresse>>
+      to:                Demo Buero <<adresse>>
+      subject:           Rechnung 2026-117 Heizungswartung
+      size:              314
+      flags:             
+      tags:              rechnung
+      attachments:       no
+      deleted on server: not on the server (imported only)
+      ...[gekuerzt]
+OK A1.5 mark 1 --seen ohne Serverkopie -> denied (no_server_copy), Exit 3 (offline erwartet; "pending" prueft Teil B)
+      > postkauz mark 1 --seen
+      [stderr] error: denied (no_server_copy): messages 1 have no copy on the server (imported only or deleted there)
+      hint: nothing was changed; see the reason in the message
+      [exit 3, 300 ms]
+OK A1.6 danach unveraendert: nicht gelesen, nichts pending
+      flags: , pending_flags: False
+
+===== Teil A, Schritt 2 (D7.2): trash und action approve ohne Server
+OK A2.1 trash 1 ohne Server -> denied (no_trash_mailbox), Exit 3; kein Antrag (offline erwartet; Antrag und Freigabe prueft Teil B)
+      > postkauz trash 1
+      [stderr] error: denied (no_trash_mailbox): the account has no mailbox with role trash in the mirror; run sync first
+      hint: nothing was changed; see the reason in the message
+      [exit 3, 301 ms]
+OK A2.2 action approve 999 --key test-agent -> denied (human_only), Exit 3 (vor jeder anderen Pruefung)
+      > postkauz action approve 999 --key test-agent
+      [stderr] error: denied (human_only): actions.approve is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 298 ms]
+OK A2.3 action reject 999 --key test-operator -> denied (human_only), Exit 3 (auch die Rolle operator nicht)
+      > postkauz action reject 999 --key test-operator
+      [stderr] error: denied (human_only): actions.reject is for a human without a key
+      hint: run it without --key; no API key may do this, whatever its role
+      [exit 3, 299 ms]
+OK A2.4 action approve 999 ohne Schluessel -> "error: action not found", Exit 1 (Code not_found)
+      > postkauz action approve 999
+      [stderr] error: action not found
+      hint: list actions with: action list
+      [exit 1, 305 ms]
+OK A2.5 action list -> "no actions" (offline entsteht keine Aktion)
+      > postkauz action list
+      no actions
+      [exit 0, 311 ms]
+
+===== Teil A, Schritt 3 (D7.3): policy show je Rolle, Grenzen mit Schluessel, MCP
+OK A3.1 policy show --key test-assistant: tag, sync.request ja; messages.mark/move/trash nein (mark braucht mail:mark, V20); actions.approve: human_only
+      > postkauz policy show --key test-assistant
+      key:             key:test-assistant
+      role:            assistant
+      scopes:          audit:read, mail:draft, mail:read, mail:search, mail:sync, mail:tag
+      dry-run default: true
+      expires:         2026-10-31
+      max chars:       20000 per text for agents
+      draft-only:      true (nothing is ever sent)
+      operations:
+        accounts.list         mail:read    R0  
+        sync.run              mail:sync    R2  
+        sync.request          mail:sync    R1  
+        mailboxes.list        mail:read    R0  
+        mailboxes.overview    mail:read    R0  
+        messages.get          mail:read    R0  
+        messages.search       mail:search  R0  
+        threads.get           mail:read    R0  
+        attachments.list      mail:read    R0  
+        attachments.text      mail:read    R0  
+        audit.list            audit:read   R0  
+      ...[gekuerzt]
+OK A3.2 policy show --key test-operator: messages.trash R3 needs_approval, messages.move, messages.mark (mail:mark), actions.approve: human_only
+      > postkauz policy show --key test-operator
+      key:             key:test-operator
+      role:            operator
+      scopes:          audit:read, mail:draft, mail:export, mail:mark, mail:move, mail:read, mail:search, mail:sync, mail:tag, mail:trash
+      dry-run default: true
+      expires:         2026-10-31
+      max chars:       20000 per text for agents
+      draft-only:      true (nothing is ever sent)
+      operations:
+        accounts.list         mail:read    R0  
+        sync.run              mail:sync    R2  
+        sync.request          mail:sync    R1  
+        mailboxes.list        mail:read    R0  
+        mailboxes.overview    mail:read    R0  
+        messages.get          mail:read    R0  
+        messages.search       mail:search  R0  
+        threads.get           mail:read    R0  
+        attachments.list      mail:read    R0  
+        attachments.text      mail:read    R0  
+        attachments.save      mail:export  R1  
+      ...[gekuerzt]
+OK A3.3 policy show --key test-triage (Nacht-Triage): lesen + Entwurf + Tag, kein move/trash/sync
+      > postkauz policy show --key test-triage
+      key:             key:test-triage
+      role:            triage
+      scopes:          mail:draft, mail:read, mail:search, mail:tag
+      dry-run default: true
+      expires:         2026-10-31
+      max chars:       20000 per text for agents
+      draft-only:      true (nothing is ever sent)
+      operations:
+        accounts.list         mail:read    R0  
+        mailboxes.list        mail:read    R0  
+        mailboxes.overview    mail:read    R0  
+        messages.get          mail:read    R0  
+        messages.search       mail:search  R0  
+        threads.get           mail:read    R0  
+        attachments.list      mail:read    R0  
+        attachments.text      mail:read    R0  
+        policy.get            any          R0  
+        drafts.create         mail:draft   R2  
+        drafts.update         mail:draft   R2  
+      ...[gekuerzt]
+OK A3.4 move und trash mit --key test-triage -> denied (missing_scope), Exit 3
+      > postkauz move 1 --role archive --key test-triage
+      [stderr] error: denied (missing_scope): messages.move needs the scope mail:move, which the key does not have
+      hint: the key lacks the required scope; see what it may do with: policy show --key <name>
+      [exit 3, 295 ms]
+      > postkauz trash 1 --key test-triage
+      [stderr] error: denied (missing_scope): messages.trash needs the scope mail:trash, which the key does not have
+      hint: the key lacks the required scope; see what it may do with: policy show --key <name>
+      [exit 3, 307 ms]
+OK A3.5 tag add mit --key test-triage -> erlaubt, als Trockenlauf ("dry run:"), nichts gespeichert
+      > postkauz tag add rechnung 2 --key test-triage
+      dry run: 1 tags added, 0 removed in account demo
+        2	rechnung
+      [exit 0, 404 ms]
+OK A3.6 trash mit 51 IDs, --key test-operator, ohne --confirm-count -> denied (confirm_count_required), Exit 3
+      > postkauz trash 1,2,...,51 --key test-operator
+      [stderr] error: denied (confirm_count_required): messages.trash
+      hint: the key lacks the required scope or the policy forbids this
+      [exit 3, 290 ms]
+OK A3.7 sync request: triage -> denied (missing_scope); assistant -> Trockenlauf "would queue a sync"
+      > postkauz sync request -a demo --key test-triage
+      [stderr] error: denied (missing_scope): sync.request needs the scope mail:sync, which the key does not have
+      hint: the key lacks the required scope; see what it may do with: policy show --key <name>
+      [exit 3, 303 ms]
+      > postkauz sync request -a demo --key test-assistant
+      dry run: would queue a sync of account demo (all mailboxes); nothing was queued
+      note: the sync is queued: a running sync --watch of this account runs it within its jobs interval (10 s by default); without one, the next postkauz sync of the account does it
+      [exit 0, 314 ms]
+OK A3.8 sync request -a demo (Mensch) -> "queued as job <n>" (bleibt ohne Server liegen)
+      > postkauz sync request -a demo
+      sync of account demo (all mailboxes) queued as job 2
+      note: the sync is queued: a running sync --watch of this account runs it within its jobs interval (10 s by default); without one, the next postkauz sync of the account does it
+      [exit 0, 318 ms]
+      Python: <USERPROFILE>\AppData\Local\Programs\Python\Python312\python.exe, Probe SHA-256 53AEB7A39E6DA4EAC6C5B5D285C62A0313BACC38F2D4DEF65248FA4E63B28010
+OK A3.10 MCP assistant: mail_tag, mail_sync_now ja; mail_mark, mail_move, mail_trash nein
+      server postkauz 0.3.0-alpha.7c
+      tools: 20: mail_audit_log, mail_create_draft, mail_get_action, mail_get_approval, mail_get_attachment_text, mail_get_draft, mail_get_message, mail_get_policy, mail_get_thread, mail_list_accounts, mail_list_actions, mail_list_attachments, mail_list_drafts, mail_list_mailboxes, mail_list_tags, mail_request_ready, mail_search, mail_sync_now, mail_tag, mail_update_draft
+      fehlend: []
+      zu viel: []
+OK A3.11 MCP operator: mail_mark, mail_move und mail_trash vorhanden (dazu mail_tag, mail_sync_now)
+      tools: 24: mail_audit_log, mail_create_draft, mail_get_action, mail_get_approval, mail_get_attachment_text, mail_get_draft, mail_get_message, mail_get_policy, mail_get_thread, mail_list_accounts, mail_list_actions, mail_list_attachments, mail_list_drafts, mail_list_mailboxes, mail_list_tags, mail_mark, mail_move, mail_request_ready, mail_save_attachment, mail_search, mail_sync_now, mail_tag, mail_trash, mail_update_draft
+      fehlend: []
+OK A3.12 mail_trash mit 51 IDs ohne confirm_count -> denied (confirm_count_required), kein Antrag
+      isError True, status denied, Grund confirm_count_required, action_id None, Aktionen vorher 0, nachher 0
+      {"status":"denied","reason":"confirm_count_required","audit_id":57}
+OK A3.9 MCP-Probe lief vollstaendig (3 Pruefungen A3.10 bis A3.12, Exit 0)
+      exit 0, Pruefungen 3
+
+===== Teil A, Schritt 6 (D7.6): audit, audit --raw, audit export, audit verify
+OK A6.1 audit --since 10m laeuft (Exit 0) und zeigt die Aufrufe dieses Laufs
+      > postkauz audit --since 10m --limit 1000
+      ID  TIME                 ACTOR  KEY                 OPERATION        RESULT                                   TARGETS                                                                                                                                                                                                             PARAMS
+      1   2026-10-29 10:40:47  human  cli                 accounts.add     ok 2ms                                   account:demo                                                                                                                                                                                                        {"fields":["auth_type","host","insecure_test_server","name","password_from_env","port","tls","username"]}
+      3   2026-10-29 10:40:48  human  cli                 import.run       ok 35ms                                  account:demo                                                                                                                                                                                                        {"fields":["account","format","mailbox","path"]}
+      5   2026-10-29 10:40:48  human  cli                 messages.get     ok 4ms                                   -                                                                                                                                                                                                                   {"fields":["message_id"]}
+      7   2026-10-29 10:40:48  human  cli                 messages.get     ok 5ms                                   -                                                                                                                                                                           
+      ...[gekuerzt]
+OK A6.2 audit --since 10m --json: je Aufruf eine Zeile mit Endergebnis (kein "started" ausser dem laufenden audit.list)
+      Zeilen: 35, mit Abschluss (end_id): 27, offen: 0, messages.tag ok: 2, actions.approve denied (human_only): 1
+OK A6.3 audit --raw: Start "started" und Abschluss mit ref_id je erlaubtem Aufruf; Policy-Ablehnung nur ein Eintrag
+      Starts: 29, Abschluesse: 28, Abschluesse ohne Start: 0, messages.tag Start/ok: 2/2, Start fuer actions.approve mit key:test-agent: 0 (0 erwartet)
+OK A6.4 Audit (--raw --json) ohne Mailinhalt (Betreff, Absender, Text)
+      gesucht: Heizungswartung, Vereinsnachrichten, <adresse>, <adresse>, Neuigkeiten; Treffer: [] (leer = gut)
+OK A6.5 audit export --to <neuer Ordner> -> Tagesdatei(en) und Manifest geschrieben
+      > postkauz audit export --to <WorkDir>\lauf-20261029-104047\audit-export
+      DAY         EVENTS  STATE    FILE
+      2026-10-29  66      written  <WorkDir>\lauf-20261029-104047\audit-export\postkauz-audit-2026-10-29.jsonl
+      manifest: <WorkDir>\lauf-20261029-104047\audit-export\postkauz-audit-manifest.json
+      chain head: 5c67d2fb9fb66237cd6fa7d188136762cbcc51bb745676b12bdf4fc1121810b3
+      1 day in <WorkDir>\lauf-20261029-104047\audit-export; check with: audit verify
+      [exit 0, 308 ms]
+      Dateien: postkauz-audit-2026-10-29.jsonl, postkauz-audit-manifest.json
+OK A6.6 audit verify -> status ok
+      > postkauz audit verify --json
+      {"status":"ok","days_checked":1,"problems":[],"not_exported":["2026-10-29"],"chain_head":"5c67d2fb9fb66237cd6fa7d188136762cbcc51bb745676b12bdf4fc1121810b3"}
+      [exit 0, 316 ms]
+
+===== Teil B: am echten Konto (nur mit Zustimmung je Schritt)
+SKIP B Teil B nicht ausgefuehrt: nur mit -LiveAccount <konto> und -AllowRealMailbox (dazu -AccountDataDir, -AccountConfig, -Label, -LivePath)
+
+D7a: 35 OK, 0 FAIL, 1 SKIP
