@@ -288,3 +288,46 @@ Nur für die Abnahme D8, nicht für den Dauerbetrieb (Rahmen 5: Builds, die nich
 - Größengrenze oder Rotation für `postkauz.log` (Sync und HTTP schreiben dorthin).
 - Zwei Systemnutzer auf dem VPS (Rechtemodell; schließt auch das Restrisiko `accounts.host`).
 - GreenMail-Integrationstest ohne Reihenfolge-Abhängigkeit.
+
+## Prüfläufe (zweite Nachbesserung)
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün nach dem Merge (`e5c24d1`) und vor jedem Commit (in einem eigenen Prüf-Worktree bzw. im Worktree des Subagenten), zuletzt am vollständigen Stand `78be5f7`/`a641160` |
+| `make race` | grün an `a641160`, 39 Pakete ohne Datenrennen, 21:33 min gesamt; `internal/cli` **1.291 s (21:31 min, Grenze 45 min)**. `internal/ops`, `internal/httpmcp`, `internal/secrets`, `internal/procguard` u. a. aus dem Go-Testcache eines ersten Laufs an `97941ee` (gleicher Code dieser Pakete; der erste Lauf endete an der 30-min-Grenze der Hintergrundaufgabe der Sitzung, nicht am Test) |
+| `make integration` | `IT=dovecot,stalwart,greenmail,authelia` an `78be5f7` (Code wie `a641160`): 41 PASS, 1 SKIP (`TestIntegrationMailboxActions/greenmail`, bekannte Reihenfolge-Abhängigkeit); danach `TestIntegrationCapabilitiesAndRoles` und `TestIntegrationMailboxActions` gegen GreenMail einzeln: PASS. Images über `mirror.gcr.io` geholt und umgetaggt; Authelia über das gehärtete `make testauth-up` (Ordner neu mit 700) |
+| `make cross` | grün (linux/amd64, windows/amd64, darwin/arm64); `GOOS=windows go vet ./...` sauber |
+| `make vuln` | nicht möglich: `vuln.go.dev` antwortet in der Cloud mit 403 (wie bisher); bitte in der Prüfsitzung. Keine neue Abhängigkeit |
+| `systemd-analyze verify` | beide Units ohne Fehler (systemd 255, Programmdatei als Attrappe unter `/usr/local/bin/postkauz`, danach entfernt); einziger Hinweis „Unknown key name 'PrivatePIDs'“ (erwartet) |
+| Python-Test der Probe | `python3 -m unittest -v docs/abnahme_D8_probe_t5n2_test.py`: 9 Tests OK (gegen die alte Probe rot) |
+| Messung `/proc/<pid>/environ` | als `nobody`, je 15 Starts: alt bis 190–220 ms lesbar, neu bis 10–23 ms; mit Credential steht das Passwort gar nicht in der Umgebung |
+| PowerShell | kein `pwsh` im Container: `abnahme_D8.ps1` nicht geparst (Klammer-/String-Prüfer des Subagenten und ASCII/BOM-Guard grün). Parsen in PS 5.1 und Lauf: Prüfsitzung (besonders `Test-ProbeEnd` und `$LASTEXITCODE` in `Invoke-ProbeInteractive`) |
+
+### Build 0.3.0-alpha.8c
+
+Gebaut an `a641160` (enthält den ganzen Code; danach nur dieses Protokoll und das Löschen der Wegwerf-Tests) in einem frischen Klon ohne Tags (`git clone --no-tags --branch claude/determined-fermi-1g8w63`, sauberer Arbeitsbaum, 0 Tags), Nachbau in einem zweiten Klon ohne Tags: `SHA256SUMS` gleich (ohne die Zeile `VERSION`), `go version -m`: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029124141-a641160cce07`, `vcs.revision=a641160cce07802e15d51e43ff2d097f08d43b73`, `vcs.modified=false`. Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`. `postkauz version` → `postkauz 0.3.0-alpha.8c (go1.27.3 linux/amd64)`.
+
+```
+18261272dd5ff5b09ee7dfca665247eb942bc912382480369a761062951a70e5  postkauz-linux-amd64
+3cbca56aca93c33183ecf8321afa5392053c0cdfc5afb07fad0c388256dfb1cd  postkauz-windows-amd64.exe
+dcfe8efa7cca026cb3c66a96562b9639eae2a3b385e2837fb465c1e4ca1ae04f  postkauz-darwin-arm64
+26043f606d050fd1095f31019e1a1e3d3ce68bdde402ab4b2b5ce1fe17abcdef  Register-AuditExport.ps1
+8a50ee74c064cc731446ed6f224d1d3ba8247d7abcea6cb9da834f2e40ec91c1  Register-SyncWatch.ps1
+6973c8473a8a244172530c9e926d4d2b854b2bbee05bc013bde1c700bcdf3de3  Run-SyncWatch.ps1
+9d40eb8aaef6b4c2cb68a8eea02651823ead6ac87c0a4917b29d9d3fc6a785e9  check-example.ps1
+4bf639c3a3a5e3dd66c759ac21d8b1f0b1be6e7174bf67072bfcad01ecececc5  check-example.sh
+84af4fb2c005c1655cfbb22dd680aa6b286137ac9fe044ff3684b61c4aa63408  postkauz-sync@.service
+55989ca4bfe408cacbba9ee4662ce3baa1f3ad698f80f9f65b71ea4b8a10f96b  postkauz-mcp-http.service
+```
+
+Nur für die Abnahme D8, nicht für den Dauerbetrieb (Rahmen 5). Nach bestandener D8 kann dieser Build laut Auftrag direkt nach `main`.
+
+## Offen und Fragen (zweite Nachbesserung)
+
+- Prüfsitzung: `abnahme_D8.ps1` in PS 5.1 parsen, Teil A erneut (29 OK erwartet, dazu keine `.ende`-Zeile); `make vuln`; Teil C aus einer Cloud-Sitzung mit `D8_ISSUER` im Modus `oauth`.
+- VPS: vor dem ersten echten Konto `systemctl --version` prüfen (Verzeichnisform von `LoadCredential=` ab 251, sonst Drop-in aus `betrieb.md` 4.4).
+- Fragen an den Betreiber: roadmap.md, Offene Fragen 6 bis 8 (8 mit dem Restrisiko `accounts.host` ergänzt).
+
+## Commits (zweite Nachbesserung)
+
+`e5c24d1` (Merge `main`), `d1ef60b` (Punkt 1), `ae8b446` (5b), `c300375` (5a), `8ef0f3a` (4a), `97941ee` (4b), `22a78b8` … `54beb01` (Subagent: 2, 3, 5c, 5e, `-ExpectVersion`), `78be5f7` (`.gitignore`), `a641160` (Protokoll, Roadmap, CHANGELOG); danach dieser Eintrag und das Löschen von `auftraege/A03_T5nb2_tests/`.
