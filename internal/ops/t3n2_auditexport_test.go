@@ -156,3 +156,67 @@ func TestT3N2DataDirIDErrorStopsExport(t *testing.T) {
 		t.Errorf("export without an id = %v", err)
 	}
 }
+
+// t3n2FailPending lässt den Export vor der Datei scheitern: Der Merker
+// steht schon, die Datei wird nicht mehr geschrieben (wie Strg+C genau
+// dazwischen). Auf Wunsch scheitert er nach der Datei (t3nFailSaveRepo).
+type t3n2FailPending struct {
+	*t3nFailSaveRepo
+	failPending bool
+}
+
+func (r *t3n2FailPending) AddAuditExportPending(ctx context.Context, p store.AuditExportPending) error {
+	if err := r.SQLite.AddAuditExportPending(ctx, p); err != nil {
+		return err
+	}
+	if r.failPending {
+		return errors.New("simulated abort after the marker, before the file")
+	}
+	return nil
+}
+
+// Punkt 7d (ersetzt TestT3NAuditExportTwoAborts, Festlegung 2 der ersten
+// Nachbesserung): zwei Abbrüche hintereinander, der erste zwischen Datei und
+// Nachweis, der zweite nach seinem Merker, aber vor dem Schreiben der Datei.
+// Der neue Merker ersetzt den alten nicht: Die Datei des ersten bleibt eine
+// eigene, der nächste Export schließt ab.
+func TestT3N2TwoAbortsSecondBeforeFile(t *testing.T) {
+	e := newAdminEnv(t)
+	repo := &t3n2FailPending{t3nFailSaveRepo: &t3nFailSaveRepo{SQLite: e.st}}
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(e.dir, auditFileName(time.Now().UTC().Format("2006-01-02")))
+	repo.fail = true // 1. Abbruch nach der Datei
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err == nil {
+		t.Fatal("abort 1 did not happen")
+	}
+	first, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.fail, repo.failPending = false, true // 2. Abbruch vor der Datei
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err == nil {
+		t.Fatal("abort 2 did not happen")
+	}
+	if second, _ := os.ReadFile(file); !bytes.Equal(first, second) {
+		t.Fatal("abort 2 changed the file")
+	}
+	if pend, _ := e.st.AuditExportPending(context.Background()); len(pend) != 2 {
+		t.Errorf("markers after two aborts = %+v, want both", pend)
+	}
+	if v := t3nVerify(t, repo); v.Status != "ok" || len(v.Incomplete) != 1 {
+		t.Errorf("verify after two aborts = %+v (want ok with the file of abort 1 as incomplete)", v)
+	}
+	repo.failPending = false
+	e.run(t, adminKey, "keys.list", map[string]any{})
+	if _, err := t3nExport(repo, e.dir); err != nil {
+		t.Fatalf("export after two aborts = %v", err)
+	}
+	if v := t3nVerify(t, repo); v.Status != "ok" || len(v.Incomplete) != 0 {
+		t.Fatalf("verify = %+v", v)
+	}
+}
