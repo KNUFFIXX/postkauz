@@ -232,7 +232,7 @@ powershell -ExecutionPolicy Bypass -File .\Register-AuditExport.ps1 -DataDir C:\
 
 Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein `sync --watch`, der über Mitternacht (UTC) läuft, schreibt seinen Abschluss erst am Ende; der Export ordnet ihn dem nächsten offenen Tag zu (`docs/cli.md`, Abschnitt 2f). `audit verify` bleibt dabei `ok`.
 
-**Abgebrochener Export (seit 0.3.0-alpha.7):** Bricht ein Export ab (Strg+C, Rechner aus), merkt sich PostKauz die halb fertige Tagesdatei. `audit verify` zeigt dann `ok` und eine Zeile `<tag>: not exported completely (…)`; der nächste `audit export` (spätestens die tägliche Aufgabe) schließt ihn ab. Laufen zwei Exporte zugleich (Aufgabe und Hand), endet der zweite mit `error: another audit export of this data directory is running`; einfach später noch einmal.
+**Abgebrochener Export (seit 0.3.0-alpha.7):** Bricht ein Export ab (Strg+C, Rechner aus, Google Drive nicht erreichbar, Zeitlimit der Aufgabe), merkt sich PostKauz die halb fertige Tagesdatei; das Manifest passt seit 0.3.0-alpha.7b nach jedem fertigen Tag zum erreichten Stand. `audit verify` zeigt dann `ok` und eine Zeile `<tag>: not exported completely (…)`; der nächste `audit export` (spätestens die tägliche Aufgabe) schließt ihn ab. Laufen zwei Exporte zugleich (Aufgabe und Hand), endet der zweite mit `error: another audit export of this data directory is running`; einfach später noch einmal.
 
 **Altfall (Abbruch mit einer Version vor 0.3.0-alpha.7):** `audit export` endet mit `audit export file does not match its recorded checksum` oder `the target directory holds a file this program did not write`, und `audit verify` meldet `export file was changed` für den jüngsten Tag. Reparatur:
 

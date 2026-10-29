@@ -750,7 +750,26 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					FirstEventID: d.first, LastEventID: d.last, SHA256: f.SHA256, ChainHead: d.head})
 			}
 			out.ChainHead = head
-			for _, p := range todo {
+			// partial ist das Manifest nach dem Nachweis von todo[upTo]: Tage
+			// bis dahin und unveränderte Tage mit den neuen Werten, noch
+			// nicht geschriebene mit ihrem Eintrag im bisherigen Manifest,
+			// wenn ihr Nachweis an diesem Ort genau diese Datei belegt (so
+			// rechnet audit verify das Manifest aus den Nachweisen nach).
+			partial := func(upTo int) []auditManifestDay {
+				var list []auditManifestDay
+				for j, t := range todo {
+					if j <= upTo || t.f.State == "unchanged" {
+						list = append(list, manifest[j])
+						continue
+					}
+					rec, recorded := prev[t.f.Day]
+					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location == dir && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
+						list = append(list, d)
+					}
+				}
+				return list
+			}
+			for i, p := range todo {
 				out.Files = append(out.Files, p.f)
 				if call.DryRun || p.f.State == "unchanged" {
 					continue
@@ -774,6 +793,13 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 					SHA256: p.f.SHA256, Location: dir, ExportedAt: auditClock()})
 				cancel()
 				if err != nil {
+					return nil, err
+				}
+				// Manifest des Stands nach diesem Nachweis (Nachbesserung
+				// T3 2, Punkt 1): Bricht der Lauf danach ab (Strg+C, Fehler,
+				// Rechner aus), passt das Manifest trotzdem zu den
+				// Nachweisen, und audit verify bleibt ok.
+				if err := writeFileAtomic(out.Manifest, buildManifest(partial(i), dataDirID)); err != nil {
 					return nil, err
 				}
 				if err := ctx.Err(); err != nil {
@@ -804,10 +830,10 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 // Ort hat; eine wiederhergestellte Kopie hat keinen (Orte geleert, A10).
 // Sonst ErrAuditExportOtherInstance. Ohne bekannte Kennung (Attrappen)
 // entfällt der Vergleich.
-func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]string, error) {
+func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]auditManifestDay, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
-		return map[string]string{}, nil
+		return map[string]auditManifestDay{}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -822,9 +848,9 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 			return nil, fmt.Errorf("%w: %s (use an export directory of its own for each data directory)", ErrAuditExportOtherInstance, dir)
 		}
 	}
-	own := map[string]string{}
+	own := map[string]auditManifestDay{}
 	for _, d := range m.Days {
-		own[d.File] = d.SHA256
+		own[d.File] = d
 	}
 	return own, nil
 }
@@ -834,7 +860,7 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 // belegt (Prüfsumme schon vorher geprüft), wenn ein Merker eines
 // abgebrochenen Exports sie belegt (gleicher Tag, gleicher Ort) oder wenn
 // das Manifest am Ziel sie mit ihrer Prüfsumme nennt.
-func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir string, pend auditPendingSet) error {
+func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditExport, dir string, pend auditPendingSet) error {
 	got, err := fileSHA256(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -848,7 +874,7 @@ func checkOwnFile(path string, own map[string]string, rec store.AuditExport, dir
 	if day, ok := auditDayOfFile(filepath.Base(path)); ok && pend.has(day, dir, got) {
 		return nil
 	}
-	if sum, ok := own[filepath.Base(path)]; ok && sum == got {
+	if d, ok := own[filepath.Base(path)]; ok && d.SHA256 == got {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrAuditExportForeign, filepath.Base(path))
