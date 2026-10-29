@@ -144,7 +144,7 @@ func AttachmentsSave(d Deps) Operation {
 			}
 			res, err := export.SaveAttachment(export.SaveRequest{ExportDir: d.ExportDir, Subdir: in.Subdir, Filename: a.Filename,
 				Fallback: "attachment-" + itoa(a.ID) + ext, DeclaredType: a.DeclaredType, Executable: a.Executable, SHA256: a.SHA256,
-				Open: func() (io.ReadCloser, error) { return d.Blobs.Get(a.SHA256) }, DryRun: call.DryRun})
+				Open: func() (io.ReadCloser, error) { return d.Blobs.Get(a.SHA256) }, DryRun: call.DryRun, Log: d.Log})
 			switch {
 			case errors.Is(err, export.ErrOutside):
 				return nil, deniedErr("outside_export_dir", "subdir must stay below export_dir: no .., no absolute path, no symbolic link")
@@ -300,6 +300,7 @@ func MessagesExport(d Deps) Operation {
 				},
 				Open:       d.Blobs.Get,
 				IsNotFound: func(err error) bool { return errors.Is(err, blob.ErrNotFound) },
+				Log:        d.Log,
 				Progress: func(e export.Event) {
 					call.progress(Progress{Event: "export_folder", Mailbox: e.Folder, Done: e.Done, Total: e.Total})
 				}})

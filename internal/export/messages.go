@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -99,6 +100,9 @@ type Options struct {
 	IsNotFound func(error) bool
 	// Progress empfängt eine Meldung nach jedem Ordner (darf nil sein).
 	Progress func(Event)
+	// Log nimmt die Warnung auf, wenn die Herkunft von Dateien nicht
+	// gesetzt werden konnte (nil = keine Ausgabe).
+	Log *slog.Logger
 }
 
 // FolderReport ist das Ergebnis eines Ordners.
@@ -134,6 +138,10 @@ type Report struct {
 	// mbox eines geben muss (nur mbox; ihr content_hash ändert sich, der
 	// Import findet sie trotzdem über die Varianten am Zeilenende).
 	NewlineAdded int
+	// Unmarked zählt abgelegte Dateien, deren Herkunft „aus dem Internet“
+	// (unter Windows Zone.Identifier) sich nicht setzen ließ (eine Warnung
+	// im Log je Export).
+	Unmarked int
 }
 
 func (r *Report) skip(id int64, reason string) {
@@ -173,8 +181,10 @@ func CheckTarget(dir string) (exists bool, err error) {
 // Run exportiert die Ordner nach Dir: mboxrd mit einer Datei je Ordner
 // (Thunderbird-Ablage: Unterordner in "<name>.sbd/") oder ein
 // EML-Verzeichnis (je Ordner ein Unterordner, Dateien "<id>-<sha256
-// kurz>.eml" Byte für Byte wie im Blob-Store, dazu index.csv). Der
-// Trockenlauf prüft das Ziel und zählt nur.
+// kurz>.eml" Byte für Byte wie im Blob-Store, dazu index.csv). Jede
+// abgelegte Datei bekommt nach dem Schreiben die Herkunft „aus dem
+// Internet“ (mark; nur Windows). Der Trockenlauf prüft das Ziel und zählt
+// nur.
 func Run(ctx context.Context, o Options) (Report, error) {
 	rep := Report{SkippedBy: map[string]int{}}
 	if o.Format != FormatMbox && o.Format != FormatEML {
@@ -214,6 +224,11 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	defer root.Close()
 	w := &writer{o: o, root: root, rep: &rep}
+	defer func() {
+		if rep.Unmarked > 0 {
+			logger(o.Log).Warn(markWarning, "files", rep.Unmarked, "error", w.markErr.Error())
+		}
+	}()
 	if o.Format == FormatEML {
 		if err := w.openIndex(); err != nil {
 			return rep, err
@@ -236,7 +251,8 @@ func Run(ctx context.Context, o Options) (Report, error) {
 			o.Progress(Event{Folder: f.Name, Done: fr.Messages, Total: f.Count})
 		}
 	}
-	return rep, w.closeIndex()
+	err = w.closeIndex() // vor dem Rückgabewert: closeIndex zählt Unmarked
+	return rep, err
 }
 
 // layout bestimmt je Ordner die Ablage relativ zum Ziel. Jeder Pfadteil
@@ -317,6 +333,19 @@ type writer struct {
 	rep   *Report
 	index *os.File
 	csv   *csv.Writer
+	// markErr ist der erste Fehler beim Setzen der Herkunft (ohne Pfad).
+	markErr error
+}
+
+// mark gibt der abgelegten Datei rel (relativ zum Ziel) die Herkunft „aus
+// dem Internet“; ein Fehler zählt nur (Report.Unmarked).
+func (w *writer) mark(rel string) {
+	if err := mark(filepath.Join(w.o.Dir, rel)); err != nil {
+		w.rep.Unmarked++
+		if w.markErr == nil {
+			w.markErr = err
+		}
+	}
 }
 
 func (w *writer) openIndex() error {
@@ -341,6 +370,7 @@ func (w *writer) closeIndex() error {
 		err = cerr
 	}
 	w.index = nil
+	w.mark(IndexFile)
 	return err
 }
 
@@ -413,6 +443,7 @@ func (w *writer) mboxFolder(ctx context.Context, fr FolderReport, items []Item, 
 	fail := func(err error) (FolderReport, error) {
 		if file != nil {
 			_ = file.Close()
+			w.mark(osRel) // die Datei bleibt liegen
 		}
 		return fr, err
 	}
@@ -473,6 +504,7 @@ func (w *writer) mboxFolder(ctx context.Context, fr FolderReport, items []Item, 
 	if cerr := file.Close(); err == nil {
 		err = cerr
 	}
+	w.mark(osRel)
 	return fr, err
 }
 
@@ -531,6 +563,7 @@ func (w *writer) eml(osDir, dir string, f Folder, it Item) (int64, string, error
 	if werr != nil {
 		return 0, "", werr
 	}
+	w.mark(filepath.Join(osDir, name))
 	rel := name
 	if dir != "" {
 		rel = dir + "/" + name

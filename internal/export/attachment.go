@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +51,9 @@ type SaveRequest struct {
 	Open func() (io.ReadCloser, error)
 	// DryRun: nur prüfen und den Namen bestimmen, nichts anlegen.
 	DryRun bool
+	// Log nimmt die Warnung auf, wenn die Herkunft der Datei nicht gesetzt
+	// werden konnte (nil = keine Ausgabe).
+	Log *slog.Logger
 }
 
 // SaveResult ist das Ergebnis von SaveAttachment.
@@ -61,13 +65,18 @@ type SaveResult struct {
 	Size    int64
 	SHA256  string
 	Blocked bool
+	// Unmarked: Die Herkunft „aus dem Internet“ (unter Windows der
+	// Datenstrom Zone.Identifier) ließ sich nicht setzen; die Datei liegt
+	// trotzdem da (Warnung im Log).
+	Unmarked bool
 }
 
 // SaveAttachment legt einen Anhang unter ExportDir/Subdir ab: Name
 // bereinigt, ausführbare Typen mit ".blocked", nie überschreibend (O_EXCL,
 // bei einem Doppel "name-2.pdf", "-3", …), Datei 0600, Ordner 0700. Der
 // Unterordner wird über os.Root geöffnet: ".." und Symlinks führen nie aus
-// ExportDir hinaus (ErrOutside).
+// ExportDir hinaus (ErrOutside). Nach dem Schreiben bekommt die Datei die
+// Herkunft „aus dem Internet“ (mark; nur Windows).
 func SaveAttachment(req SaveRequest) (SaveResult, error) {
 	parts, err := SplitSubdir(req.Subdir)
 	if err != nil {
@@ -134,6 +143,10 @@ func SaveAttachment(req SaveRequest) (SaveResult, error) {
 		if err := writeContent(f, req.Open, sum, size); err != nil {
 			_ = root.Remove(target)
 			return SaveResult{}, err
+		}
+		if err := mark(filepath.Join(req.ExportDir, target)); err != nil {
+			res.Unmarked = true
+			logger(req.Log).Warn(markWarning, "files", 1, "error", err.Error())
 		}
 		return res, nil
 	}
