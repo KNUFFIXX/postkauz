@@ -84,6 +84,11 @@ type Result struct {
 	// mehr zu ihrer Prüfsumme passen ("<name> (archive_missing)" bzw.
 	// "(archive_changed)"); sie sind nicht in der Sicherung (Warnung).
 	AuditArchivesSkipped []string `json:"audit_archives_skipped,omitempty"`
+	// MissingBlobs: Hashes der Blobs, auf die die Datenbank verweist, die
+	// aber schon vor der Sicherung im Blob-Store fehlten (etwa in der
+	// Quarantäne eines Virenscanners); sie sind nicht in der Sicherung und
+	// stehen auch im Manifest (Warnung; T3-Nachbesserung 2, Punkt 4).
+	MissingBlobs []string `json:"missing_blobs,omitempty"`
 	// SnapshotsRemoved: ältere Schnappschüsse im Ordner, die das neue
 	// Manifest ersetzt hat.
 	SnapshotsRemoved int    `json:"snapshots_removed"`
@@ -106,7 +111,9 @@ type Runner struct {
 	// Now ist in Tests ersetzbar.
 	Now func() time.Time
 	// hook ist ein Test-Haken: Er läuft an benannten Stellen einer
-	// Sicherung (stage "snapshot": Schnappschuss liegt, Blobs folgen).
+	// Sicherung (stage "snapshot-taken": Schnappschuss geschrieben, Abgleich
+	// mit dem Blob-Store folgt; "snapshot": Schnappschuss liegt, Blobs
+	// folgen).
 	hook func(stage string)
 }
 
@@ -161,7 +168,8 @@ func (r *Runner) Create(ctx context.Context, o Options) (Result, error) {
 	params, _ := json.Marshal(map[string]any{"call_audit_id": o.CallAuditID, "mode": res.Mode, "target_hash": targetHash(res),
 		"manifest_sha256": res.ManifestSHA256, "schema_version": res.SchemaVersion, "files": res.Files, "bytes": res.Bytes,
 		"blobs": res.Blobs, "blobs_copied": res.BlobsCopied, "blobs_existing": res.BlobsExisting, "bytes_copied": res.BytesCopied,
-		"audit_archives": res.AuditArchives, "audit_archives_skipped": len(res.AuditArchivesSkipped)})
+		"audit_archives": res.AuditArchives, "audit_archives_skipped": len(res.AuditArchivesSkipped),
+		"missing_blobs": len(res.MissingBlobs)})
 	if aerr := r.Store.AuditWriter().Append(ctx, audit.Event{TS: r.now().UTC(), ActorType: audit.ActorSystem, KeyID: "system",
 		Operation: OpDone, Result: audit.ResultOK, ParamsRedacted: params}); aerr != nil {
 		return res, fmt.Errorf("backup: written, but the audit entry %s failed: %w", OpDone, aerr)
@@ -251,29 +259,71 @@ func (r *Runner) listBlobs() ([]blobFile, error) {
 	return out, err
 }
 
+// blobsBefore hält fest, was vor dem Schnappschuss galt (T3-Nachbesserung
+// 2, Punkt 4): die Blob-Verweise der Datenbank und danach die vorhandenen
+// Blob-Dateien. Ein Blob, auf den schon vorher verwiesen wurde und dessen
+// Datei schon vorher fehlte, ist kein Fehler dieser Sicherung (Quarantäne
+// eines Virenscanners, verlorene Datei); er blockiert sie deshalb nicht.
+type blobsBefore struct {
+	refs  map[string]bool
+	files map[string]bool
+}
+
+// blobsBeforeSnapshot liest erst die Verweise, dann den Blob-Store (Put
+// schreibt die Datei vor der Zeile: Was hier verwiesen ist und fehlt,
+// fehlte schon, bevor die Sicherung begann).
+func (r *Runner) blobsBeforeSnapshot(ctx context.Context) (blobsBefore, error) {
+	refs, err := r.Store.BlobReferences(ctx)
+	if err != nil {
+		return blobsBefore{}, err
+	}
+	list, err := r.listBlobs()
+	if err != nil {
+		return blobsBefore{}, err
+	}
+	return blobsBefore{refs: refs, files: blobSet(list)}, nil
+}
+
+func blobSet(blobs []blobFile) map[string]bool {
+	have := make(map[string]bool, len(blobs))
+	for _, b := range blobs {
+		have[b.sum] = true
+	}
+	return have
+}
+
 // checkComplete prüft, dass jeder Blob, auf den der Schnappschuss
 // verweist (refs), unter den gelesenen Blobs ist (T3-Nachbesserung 5b):
 // listBlobs liest nur, was gerade da ist; laufen zwischen Schnappschuss und
 // Verzeichnislauf purge und blob gc, fehlte ein Blob sonst still. Werte, die
 // kein gültiger Hash sind, können keine Datei sein und zählen nicht
 // (doctor --blobs meldet sie).
-func checkComplete(refs map[string]bool, blobs []blobFile) error {
-	have := make(map[string]bool, len(blobs))
-	for _, b := range blobs {
-		have[b.sum] = true
-	}
-	var missing []string
+//
+// Seit der T3-Nachbesserung 2 (Punkt 4) bricht die Sicherung nur noch für
+// Blobs ab, die während der Sicherung verschwunden sind. Fehlte ein Blob
+// schon vorher (before), kommt er sortiert in missing: Die Sicherung läuft
+// mit Warnung weiter und hält ihn im Manifest fest (missing_blobs); sonst
+// blockierte eine einzige verlorene Datei jede weitere Sicherung.
+func checkComplete(refs map[string]bool, blobs []blobFile, before blobsBefore) (missing []string, err error) {
+	have := blobSet(blobs)
+	var vanished []string
 	for h := range refs {
-		if blob.ValidHash(h) && !have[h] {
+		if !blob.ValidHash(h) || have[h] {
+			continue
+		}
+		if before.refs[h] && !before.files[h] {
 			missing = append(missing, h)
+		} else {
+			vanished = append(vanished, h)
 		}
 	}
-	if len(missing) == 0 {
-		return nil
-	}
 	sort.Strings(missing)
-	return fmt.Errorf("%w: %d blob(s) the database refers to are missing from the blob store (first: %s)",
-		ErrIncomplete, len(missing), missing[0])
+	if len(vanished) == 0 {
+		return missing, nil
+	}
+	sort.Strings(vanished)
+	return nil, fmt.Errorf("%w: %d blob(s) the database refers to disappeared from the blob store during the backup (first: %s)",
+		ErrIncomplete, len(vanished), vanished[0])
 }
 
 // archiveFile ist ein Archiv von audit.rotate, das in die Sicherung kommt:
@@ -383,6 +433,10 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	}
 	tmpDB := filepath.Join(to, "."+name+".tmp")
 	_ = os.Remove(tmpDB)
+	before, err := r.blobsBeforeSnapshot(ctx)
+	if err != nil {
+		return res, err
+	}
 	if err := r.Store.SnapshotTo(ctx, tmpDB); err != nil {
 		_ = os.Remove(tmpDB)
 		return res, err
@@ -392,9 +446,10 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		_ = os.Remove(tmpDB)
 		return res, err
 	}
+	r.at("snapshot-taken")
 	// 2. Verweise des Schnappschusses gegen den Blob-Store, bevor er an
-	// seinen Platz kommt: Fehlt ein Blob, bleibt die frühere Sicherung im
-	// Ordner unberührt.
+	// seinen Platz kommt: Verschwindet ein Blob während der Sicherung,
+	// bleibt die frühere Sicherung im Ordner unberührt.
 	contents, err := store.ReadSnapshot(ctx, tmpDB)
 	if err != nil {
 		_ = os.Remove(tmpDB)
@@ -402,7 +457,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	}
 	blobs, err := r.listBlobs()
 	if err == nil {
-		err = checkComplete(contents.Blobs, blobs)
+		res.MissingBlobs, err = checkComplete(contents.Blobs, blobs, before)
 	}
 	if err != nil {
 		_ = os.Remove(tmpDB)
@@ -415,7 +470,8 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	res.Database = name
 	r.at("snapshot")
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
-		CreatedAt: res.CreatedAt, Database: name, Files: []File{{Path: name, Kind: KindDatabase, Size: dbSize, SHA256: dbSum}}}
+		CreatedAt: res.CreatedAt, Database: name, MissingBlobs: res.MissingBlobs,
+		Files: []File{{Path: name, Kind: KindDatabase, Size: dbSize, SHA256: dbSum}}}
 
 	// 3. Blobs: nur fehlende kopieren.
 	for _, b := range blobs {
@@ -530,10 +586,11 @@ func (r *Runner) syncBlob(b blobFile, dst string, prev map[string]File) (File, b
 	return File{Path: b.rel, Kind: KindBlob, Size: n, SHA256: sum}, true, nil
 }
 
-// dryRunFolder zählt, was eine Sicherung in den Ordner kopieren würde. Wie
-// die Sicherung bricht er ab, wenn ein Blob fehlt, auf den die Datenbank
-// verweist (erst die Verweise, dann das Verzeichnis: Put schreibt die Datei
-// vor der Zeile).
+// dryRunFolder zählt, was eine Sicherung in den Ordner kopieren würde.
+// Blobs, auf die die Datenbank verweist und die fehlen, nennt er wie die
+// Sicherung in MissingBlobs (erst die Verweise, dann das Verzeichnis: Put
+// schreibt die Datei vor der Zeile; ohne Schnappschuss fehlten sie alle
+// schon vorher).
 func (r *Runner) dryRunFolder(ctx context.Context, to string, prev map[string]File, now time.Time, res Result) (Result, error) {
 	res.Database = snapshotName(now, 1)
 	res.Files = 1
@@ -548,7 +605,7 @@ func (r *Runner) dryRunFolder(ctx context.Context, to string, prev map[string]Fi
 	if err != nil {
 		return res, err
 	}
-	if err := checkComplete(refs, blobs); err != nil {
+	if res.MissingBlobs, err = checkComplete(refs, blobs, blobsBefore{refs: refs, files: blobSet(blobs)}); err != nil {
 		return res, err
 	}
 	for _, b := range blobs {
@@ -643,9 +700,14 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	}
 	snap := filepath.Join(sdir, "snapshot-"+tag+".db")
 	defer os.Remove(snap)
+	before, err := r.blobsBeforeSnapshot(ctx)
+	if err != nil {
+		return res, err
+	}
 	if err := r.Store.SnapshotTo(ctx, snap); err != nil {
 		return res, err
 	}
+	r.at("snapshot-taken")
 	r.at("snapshot")
 	// Verweise des Schnappschusses gegen den Blob-Store, bevor das erste
 	// Byte in den Strom geht (wie im Ordner-Modus).
@@ -657,7 +719,7 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	if err != nil {
 		return res, err
 	}
-	if err := checkComplete(contents.Blobs, blobs); err != nil {
+	if res.MissingBlobs, err = checkComplete(contents.Blobs, blobs, before); err != nil {
 		return res, err
 	}
 	archives, skipped, err := r.listArchives(contents.Archives)
@@ -668,7 +730,7 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	name := snapshotName(now, 1)
 	res.Database = name
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
-		CreatedAt: res.CreatedAt, Database: name}
+		CreatedAt: res.CreatedAt, Database: name, MissingBlobs: res.MissingBlobs}
 
 	tw := tar.NewWriter(o.Tar)
 	tarw := &tarWriter{tw: tw, now: now, dirs: map[string]bool{}}

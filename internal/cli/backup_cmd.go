@@ -61,6 +61,17 @@ func backupWarnings(out any) []string {
 	for _, s := range o.AuditArchivesSkipped {
 		w = append(w, "audit archive "+s+" is not in this backup: it is missing or no longer matches its recorded checksum; see audit verify")
 	}
+	if n := len(o.MissingBlobs); n > 0 {
+		// T3-Nachbesserung 2, Punkt 4: schon vor der Sicherung fehlende
+		// Blobs (nur Hashes; die ganze Liste steht im Manifest).
+		was, is := "were", "are"
+		if n == 1 {
+			was, is = "was", "is"
+		}
+		w = append(w, fmt.Sprintf("%s the database refers to %s already missing from the blob store before this backup "+
+			"and %s not in it (listed in the manifest as missing_blobs): %s; check the data directory with doctor --blobs=all",
+			plural(n, "blob", "blobs"), was, is, hashList(o.MissingBlobs)))
+	}
 	if !o.DryRun {
 		w = append(w, o.Warning)
 	}
@@ -89,6 +100,9 @@ func renderBackupCreate(w io.Writer, out any) error {
 	}
 	fmt.Fprintf(w, "  database:  %s (schema %d)\n", o.Database, o.SchemaVersion)
 	fmt.Fprintf(w, "  blobs:     %d (copied %d, already there %d; %s copied)\n", o.Blobs, o.BlobsCopied, o.BlobsExisting, humanBytes(o.BytesCopied))
+	if len(o.MissingBlobs) > 0 {
+		fmt.Fprintf(w, "  missing:   %s already missing before the backup (see the warning)\n", plural(len(o.MissingBlobs), "blob", "blobs"))
+	}
 	if o.AuditArchives > 0 {
 		fmt.Fprintf(w, "  archives:  %s\n", plural(o.AuditArchives, "audit archive", "audit archives"))
 	}
@@ -144,6 +158,7 @@ func restoreCmd(a *app) *cobra.Command {
 				}
 				_, err := fmt.Fprintf(a.stdout, "dry run: the backup of %s is complete and unchanged (%s, %s, manifest sha256 %s); %s would be created; nothing was written\n",
 					res.BackupCreatedAt, plural(res.Files, "file", "files"), humanBytes(res.Bytes), res.ManifestSHA256, termLine(res.DataDir))
+				printMissingBlobs(a.stdout, res.MissingBlobs)
 				printLeftovers(a.stdout, res.Leftovers)
 				return err
 			}
@@ -161,6 +176,10 @@ func restoreCmd(a *app) *cobra.Command {
 				printDoctorBlobs(a.stdout, d.Blobs)
 			}
 			if d.Blobs.Problems > 0 {
+				if n := len(res.MissingBlobs); n > 0 {
+					return fmt.Errorf("%w: %d problems in the restored data directory (see the section blobs); %s already missing when the backup was made",
+						errBlobCheck, d.Blobs.Problems, plural(n, "blob was", "blobs were"))
+				}
 				return fmt.Errorf("%w: %d problems in the restored data directory (see the section blobs)", errBlobCheck, d.Blobs.Problems)
 			}
 			return nil
@@ -195,6 +214,7 @@ func printRestore(w io.Writer, r backup.RestoreResult) {
 	fmt.Fprintf(w, "into:      %s (schema %d)\n", termLine(r.DataDir), r.SchemaVersion)
 	fmt.Fprintf(w, "manifest:  sha256 %s; %s (%s) checked: database, %s, %s\n", r.ManifestSHA256, plural(r.Files, "file", "files"),
 		humanBytes(r.Bytes), plural(r.Blobs, "blob", "blobs"), plural(r.AuditArchives, "audit archive", "audit archives"))
+	printMissingBlobs(w, r.MissingBlobs)
 	if r.MigrationSnapshot != "" {
 		fmt.Fprintf(w, "migrated:  copy before the migration: %s\n", termLine(r.MigrationSnapshot))
 	}
@@ -227,6 +247,25 @@ func printRestore(w io.Writer, r backup.RestoreResult) {
 	fmt.Fprintf(w, "audit:     %s closed, %s cleared (they belong to the original), event %s written\n",
 		plural(fx.AuditStarts, "unfinished call", "unfinished calls"), plural(fx.AuditExports, "export location", "export locations"), backup.OpRestore)
 	fmt.Fprintln(w, "           nothing in this copy writes to a mail server on its own")
+}
+
+// printMissingBlobs nennt Blobs, die schon beim Anlegen der Sicherung
+// fehlten (Manifest missing_blobs, T3-Nachbesserung 2, Punkt 4): Die Kopie
+// übernimmt diesen Zustand, doctor --blobs nennt sie weiter.
+func printMissingBlobs(w io.Writer, missing []string) {
+	if len(missing) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "missing:   %s already missing when the backup was made (manifest missing_blobs); the copy lacks them too: %s\n",
+		plural(len(missing), "blob was", "blobs were"), hashList(missing))
+}
+
+// hashList nennt höchstens blobExamples Hashes, den Rest als Zahl.
+func hashList(list []string) string {
+	if len(list) <= blobExamples {
+		return strings.Join(list, ", ")
+	}
+	return strings.Join(list[:blobExamples], ", ") + fmt.Sprintf(" and %d more", len(list)-blobExamples)
 }
 
 // printLeftovers nennt Arbeitsordner abgebrochener Wiederherstellungen

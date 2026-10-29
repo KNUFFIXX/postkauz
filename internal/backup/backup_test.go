@@ -446,6 +446,18 @@ func TestRestoreRejectsManipulation(t *testing.T) {
 		"unknown":    bytes.Replace(orig, []byte(`"format"`), []byte(`"extra": 1, "format"`), 1),
 		"not json":   []byte("{"),
 		"wrong kind": edit(func(c *Manifest) { c.Files[blobIdx].Kind = KindAuditArchive }),
+		// missing_blobs (T3-Nachbesserung 2, Punkt 4): nur gültige Hashes,
+		// sortiert, keiner zugleich als Datei in der Liste.
+		"missing invalid": edit(func(c *Manifest) { c.MissingBlobs = []string{"xyz"} }),
+		"missing unsorted": edit(func(c *Manifest) {
+			c.MissingBlobs = []string{strings.Repeat("b", 64), strings.Repeat("a", 64)}
+		}),
+		"missing twice": edit(func(c *Manifest) {
+			c.MissingBlobs = []string{strings.Repeat("a", 64), strings.Repeat("a", 64)}
+		}),
+		"missing but listed": edit(func(c *Manifest) {
+			c.MissingBlobs = []string{c.Files[zstIdx].Path[len("blobs/ab/cd/") : len("blobs/ab/cd/")+64]}
+		}),
 	}
 	for name, b := range cases {
 		t.Run(name, func(t *testing.T) {

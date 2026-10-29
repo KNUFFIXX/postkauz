@@ -66,6 +66,7 @@ func BackupCreate(r BackupRunner, stdout io.Writer) Operation {
     "bytes_copied": {"type": "integer"},
     "audit_archives": {"type": "integer"},
     "audit_archives_skipped": {"type": "array", "items": {"type": "string"}},
+    "missing_blobs": {"type": "array", "items": {"type": "string"}},
     "snapshots_removed": {"type": "integer"},
     "encrypt_note": {"type": "string"},
     "warning": {"type": "string"},

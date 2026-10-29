@@ -317,7 +317,16 @@ Ohne neue Mails steht dort `copied 0`. Wer mehrere Stände aufheben will, nimmt 
 
 Es läuft immer nur **eine** Sicherung je Datenverzeichnis. Startest du eine zweite, während die erste noch kopiert (z. B. von Hand neben einer geplanten Aufgabe), bricht die zweite ab, ohne etwas zu schreiben: `error: backup: another backup of this data directory is running` (Code `backup_running`). Warte, bis die erste fertig ist, und starte dann neu.
 
-Fehlt während der Sicherung eine Mail-Datei, auf die die Datenbank zeigt (etwa weil gleichzeitig `purge` und `blob gc` liefen), bricht die Sicherung ab: `error: backup: incomplete: … blob(s) the database refers to are missing from the blob store …` (Code `backup_incomplete`). Eine frühere Sicherung im Ordner bleibt dann gültig. Starte die Sicherung einfach noch einmal; kommt der Fehler wieder, prüfe das Datenverzeichnis mit `doctor --blobs=all`.
+Verschwindet **während** der Sicherung eine Mail-Datei, auf die die Datenbank zeigt (etwa weil gleichzeitig `purge` und `blob gc` liefen), bricht die Sicherung ab: `error: backup: incomplete: … blob(s) the database refers to disappeared from the blob store during the backup …` (Code `backup_incomplete`). Eine frühere Sicherung im Ordner bleibt dann gültig. Starte die Sicherung einfach noch einmal.
+
+Fehlte eine Mail-Datei **schon vor** der Sicherung (zum Beispiel, weil ein Virenscanner eine Mail mit Schadanhang in die Quarantäne verschoben hat), läuft die Sicherung trotzdem durch, damit eine einzige verlorene Datei nicht jede weitere Sicherung blockiert. Sie nennt die Datei dann nur mit ihrer Prüfsumme (Hash), nie mit Inhalt, zum Beispiel:
+
+```
+  missing:   1 blob already missing before the backup (see the warning)
+warning: 1 blob the database refers to was already missing from the blob store before this backup and is not in it (listed in the manifest as missing_blobs): 3f6c…; check the data directory with doctor --blobs=all
+```
+
+Die Liste steht auch im Manifest (`missing_blobs`) und als Zahl im Audit (`backup.done`). Prüfe dann das Datenverzeichnis mit `doctor --blobs=all` (die Zeile `rows without file` nennt denselben Hash) und hole die Datei, wenn möglich, aus der Quarantäne zurück; die nächste Sicherung nimmt sie dann wieder mit. Eine Wiederherstellung aus so einer Sicherung übernimmt den Zustand: `restore` nennt die fehlenden Dateien (`missing: … already missing when the backup was made`), `doctor --blobs` in der Kopie ebenso, und `restore` endet deshalb mit Exit 1 (`blob check failed: … already missing when the backup was made`); die übrigen Daten sind vollständig wiederhergestellt.
 
 Ab und zu prüfen, ob die Sicherung noch vollständig und unverändert ist (liest alles, schreibt nichts):
 

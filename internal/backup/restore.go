@@ -65,6 +65,10 @@ type RestoreResult struct {
 	Blobs                int    `json:"blobs"`
 	AuditArchives        int    `json:"audit_archives"`
 	MigrationSnapshot    string `json:"migration_snapshot,omitempty"`
+	// MissingBlobs: Blobs, die schon beim Anlegen der Sicherung fehlten
+	// (Manifest missing_blobs; T3-Nachbesserung 2, Punkt 4). Die Kopie
+	// übernimmt diesen Zustand; doctor --blobs nennt sie weiter.
+	MissingBlobs []string `json:"missing_blobs,omitempty"`
 	// Leftovers: Arbeitsordner abgebrochener Wiederherstellungen neben dem
 	// Ziel (RestoreLeftovers); löschen.
 	Leftovers []string `json:"leftovers,omitempty"`
@@ -152,6 +156,7 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 	}
 	res.BackupCreatedAt, res.BackupProgramVersion, res.BackupSchemaVersion = m.CreatedAt, m.ProgramVersion, m.SchemaVersion
 	res.Files, res.Bytes, res.Blobs, res.AuditArchives = m.Counts.Files, m.Counts.Bytes, m.Counts.Blobs, m.Counts.AuditArchives
+	res.MissingBlobs = m.MissingBlobs
 	if err := checkRestoreTarget(from, to, o.Refuse); err != nil {
 		return res, err
 	}
@@ -344,7 +349,8 @@ func restoreEvent(res RestoreResult, fx store.RestoreFixes, now time.Time) audit
 	p := map[string]any{"source_hash": PathHash(res.Source), "manifest_sha256": res.ManifestSHA256,
 		"backup_created_at": res.BackupCreatedAt, "backup_program_version": res.BackupProgramVersion,
 		"backup_schema_version": res.BackupSchemaVersion, "schema_version": res.SchemaVersion,
-		"files": res.Files, "bytes": res.Bytes, "blobs": res.Blobs, "audit_archives": res.AuditArchives}
+		"files": res.Files, "bytes": res.Bytes, "blobs": res.Blobs, "audit_archives": res.AuditArchives,
+		"missing_blobs": len(res.MissingBlobs)}
 	var fixes map[string]any
 	if b, err := json.Marshal(fx); err == nil && json.Unmarshal(b, &fixes) == nil {
 		maps.Copy(p, fixes)
