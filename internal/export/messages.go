@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/magic"
 )
 
 // Formate von messages.export.
@@ -243,7 +245,8 @@ func Run(ctx context.Context, o Options) (Report, error) {
 // Knoten des Baums behält seinen Namen für alle Ordner darunter.
 //
 // mbox: Ordner "A/B" liegt in "A.sbd/B" (wie Thunderbird); für jeden
-// Knoten sind Name und Name+".sbd" zugleich reserviert. eml: "A/B/" mit
+// Knoten sind Name und Name+".sbd" zugleich reserviert; ein ausführbarer
+// Name (magic.ExecutableName) bekommt ein "_" angehängt. eml: "A/B/" mit
 // den Dateien; "index.csv" ist im Ziel reserviert.
 func layout(format string, folders []Folder) []string {
 	used := map[string]map[string]bool{} // Ordner → belegte Namen (klein)
@@ -273,8 +276,12 @@ func layout(format string, folders []Folder) []string {
 				base := SafeFileName(seg)
 				// Ein Knoten, der wie eine Thunderbird-Unterordnerablage
 				// (".sbd") oder wie eine EML-Datei (".eml") hieße, würde beim
-				// Import bzw. neben den Dateien missverstanden.
-				if l := strings.ToLower(base); strings.HasSuffix(l, ".sbd") || strings.HasSuffix(l, ".eml") {
+				// Import bzw. neben den Dateien missverstanden. In mbox wird
+				// der Knoten zur Datei mit Mailinhalt: Ein Ordner wie
+				// "Rechnung.cmd" bekäme sonst einen ausführbaren Namen
+				// (Nachbesserung T3, Punkt 11a).
+				if l := strings.ToLower(base); strings.HasSuffix(l, ".sbd") || strings.HasSuffix(l, ".eml") ||
+					format == FormatMbox && magic.ExecutableName(base) {
 					base += "_"
 				}
 				for n := 1; ; n++ {

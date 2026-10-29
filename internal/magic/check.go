@@ -65,6 +65,13 @@ var riskyExt = map[string]bool{
 	".msc": true, ".inf": true, ".ws": true, ".wsc": true, ".sct": true, ".shb": true, ".ps1xml": true, ".psd1": true,
 	".xll": true, ".xlam": true, ".ppam": true, ".dotm": true, ".xltm": true, ".potm": true, ".ppsm": true,
 	".command": true, ".appref-ms": true, ".settingcontent-ms": true,
+	// Seit der Nachbesserung T3 (Punkt 11b): OneNote, Remotedesktop,
+	// ClickOnce, Access, Internet-Verknüpfungen, Bibliotheks- und
+	// Suchverknüpfungen, Diagnosepakete, XAML-Browseranwendungen,
+	// WinHelp und Monad-Skripte.
+	".one": true, ".rdp": true, ".application": true, ".accde": true, ".mde": true, ".website": true,
+	".library-ms": true, ".search-ms": true, ".diagcab": true, ".xbap": true, ".hlp": true,
+	".msh": true, ".msh1": true, ".msh2": true, ".mshxml": true, ".msh1xml": true, ".msh2xml": true,
 }
 
 // EffectiveExt liefert die Dateiendung, nach der Windows einen Namen
