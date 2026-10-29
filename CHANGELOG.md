@@ -4,6 +4,21 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+Nichts seit 0.3.0-rc1.
+
+## [0.3.0-rc1] – 2026-10-29 (Release-Kandidat, Tag erst nach D10)
+
+Abschluss von Schnitt 3 (A03 S3.0 bis S3.8, gebaut in den Teilen T1a, T1b, T1c, T2, T3, T4, T5). Schema 22. Build-Commit, Nachbau und Prüfsummen: `docs/protokolle/S38_abschluss.md`. Abnahmen: D7a und D7 bestanden, D8 Teile A bis C bestanden; offen D8 Teil D (OAuth mit Authelia, VPS) und D9 (Microsoft-Postfach, zurückgestellt).
+
+### Kurzfassung
+
+- **Added:** Tags (lokal, optional als IMAP-Keywords), `mark`, `move`, `trash` (Papierkorb nur mit Freigabe durch den Menschen, kein Expunge), Aktionen mit Freigabe (`action approve|reject|show|list`), `sync request`/`mail_sync_now`, `sync --watch --all`; Anhänge sichern (`attach save`, `mail_save_attachment`), Export als mbox/EML; Sicherung und Wiederherstellung (`backup create`, `restore`); Löschkonzept (`purge`, `blob gc`, `audit rotate`); Microsoft-Postfächer per OAuth2 (`account add --auth oauth2`, `account login`); `mcp --http` (Streamable HTTP zustandslos, Modi `key` und `oauth`, ADR-010); systemd-Units, Docker-Image und Compose, Windows-Aufgabe für `sync --watch --all`.
+- **Changed:** Audit mit Start- und Abschlusseintrag je Aufruf (ADR-004 Nachtrag); Policy prüft Eingaben zentral; Jobs mit Herkunft und Widerrufsprüfung; verdeckte Passwortabfrage unter Windows; Exit 6 für abgelehnte Anmeldung.
+- **Security:** Prozesse ohne Zugangsdaten (MCP) mit Secrets-Speicher `denied`; jeder Prozess unter Linux als erste Anweisung nicht auslesbar; auf dem VPS Passwort als systemd-Credential; Rate-Begrenzung und Host-Allowlist für HTTP-MCP; Exportschutz des Audits.
+- **Docs:** Stand S3.8 in `architektur.md`, `sicherheit.md`, `mcp.md`, `cli.md`, `datenmodell.md`, `betrieb.md`, README; ADR-010 Status, Nachträge ADR-003 (Löschkonzept) und ADR-004 (Audit `started`).
+
+Die Einträge unten beschreiben jeden Teil im Einzelnen. Sie enthalten auch Schnitt 2 (veröffentlicht als 0.2.0-rc1 bis 0.2.0-rc8 ohne eigenen Abschnitt in dieser Datei).
+
 ### Docs
 
 - Abnahme D8 (29.10.2026, Prüfsitzung DRACO-PK10): Protokolle `docs/protokolle/D8_windows.txt` (Teil A, 0.3.0-alpha.8c, 29 OK), `D8_windows_AB_alpha8b.txt` (Teile A und B, 47 OK, 1 FAIL B2.2), `D8_cloud.txt` (Teil C, 17 OK, 1 FAIL C1.2, 1 SKIP); Teil D offen bis zum VPS. T5 Phase 2 auf `main`.
