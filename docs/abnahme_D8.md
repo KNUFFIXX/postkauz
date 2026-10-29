@@ -1,6 +1,6 @@
 # Abnahme D8: HTTP-MCP mit Schlüssel und OAuth über das private Netz
 
-Stand: 29.10.2026 (A03 Teil T5 Phase 2 mit Nachbesserung, Build `0.3.0-alpha.8b`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T5, Haltepunkt „Abnahme D8“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D8, **vorläufig mit einem PC des Betreibers als Knoten im privaten Netz**, bis über einen VPS entschieden ist. Skripte: [abnahme_D8.ps1](abnahme_D8.ps1) (Windows, Teile A, B, D), [abnahme_D8_cloud.sh](abnahme_D8_cloud.sh) (Cloud-Sitzung, Teil C), gemeinsame Probe [abnahme_D8_probe.py](abnahme_D8_probe.py) (nur Python-Standardbibliothek). Ausgeführt von der Prüfsitzung; der Betreiber übernimmt nur Tailnet, Auth-Key und die Anmeldung im Browser.
+Stand: 29.10.2026 (A03 Teil T5 Phase 2 mit zweiter Nachbesserung, Build `0.3.0-alpha.8c`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T5, Haltepunkt „Abnahme D8“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D8, **vorläufig mit einem PC des Betreibers als Knoten im privaten Netz**, bis über einen VPS entschieden ist. Skripte: [abnahme_D8.ps1](abnahme_D8.ps1) (Windows, Teile A, B, D), [abnahme_D8_cloud.sh](abnahme_D8_cloud.sh) (Cloud-Sitzung, Teil C), gemeinsame Probe [abnahme_D8_probe.py](abnahme_D8_probe.py) (nur Python-Standardbibliothek). Ausgeführt von der Prüfsitzung; der Betreiber übernimmt nur Tailnet, Auth-Key und die Anmeldung im Browser.
 
 ## Zweck
 
@@ -42,7 +42,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d8\abnahme_D8.ps1 
 
 | Nr | Schritt | Erwartet |
 |---|---|---|
-| A0.1 | `version` | `0.3.0-alpha.8b` (`-ExpectVersion`) |
+| A0.1 | `version` | `0.3.0-alpha.8c` (`-ExpectVersion`; `alpha.8` passt nicht auf `alpha.8b`/`alpha.8c`) |
 | A1.1 | `doctor --json` | `http.listen` `127.0.0.1:<Port>`, `auth` `key`, `listen_allowed` true |
 | A1.2 | `key create --name cloud-reader --role reader --expires 1d` | Schlüssel in einer Datei im Laufordner |
 | A1.3 | `mcp --http --listen 0.0.0.0:<Port>` | Exit 2, Meldung nennt `allow_non_loopback`, kein Server |

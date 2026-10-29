@@ -89,7 +89,9 @@
     Ein Datei-Eintrag schuetzt auch den Ordner, in dem die Datei liegt.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.8b).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.8c). Verglichen
+    wird bis zum Ende der Versionsangabe: 0.3.0-alpha.8 passt nicht auf
+    0.3.0-alpha.8b oder 0.3.0-alpha.8c.
 
 .PARAMETER Port
     Port fuer mcp --http auf 127.0.0.1 (Standard 18787; nicht der
@@ -136,7 +138,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [Parameter(Mandatory = $true)] [string[]] $LivePath,
-    [string] $ExpectVersion = '0.3.0-alpha.8b',
+    [string] $ExpectVersion = '0.3.0-alpha.8c',
     [int] $Port = 18787,
     [string] $Python = '',
     [string] $Probe = '',
