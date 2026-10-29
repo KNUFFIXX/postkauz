@@ -51,11 +51,27 @@ Jeder Wegwerf-Test aus `auftraege/A03_T3nb2_tests/` ist als `t3n2_<thema>_test.g
 
 ## 3. Prüfläufe
 
-(folgt nach den Prüfläufen am Endstand)
+- **Während der Arbeit:** Vier Subagenten teilten sich 4 Kerne. Die Zwischen-Commits sind deshalb mit gofmt, `go vet ./...` (für die berührten Pakete auch mit `GOOS=windows` und `darwin/arm64`), den Tests der berührten Pakete (ganze Pakete mit `-timeout 40m`, u. a. `internal/ops` 310–500 s, `internal/cli` 202–394 s), Guard und PII-Gate geprüft; der volle Lauf folgte am zusammengeführten Stand. Gegenproben am Ausgangsstand in Kopien von `7e3a70f` (`git archive`). Die Gegenprobe zu Punkt 13 hat die Hauptsitzung am Endstand wiederholt (Kopie von `04fb1c1`, `retryFS` ohne Wiederholung): beide Tests rot (`calls: remove 1, rename 0`), weil die Kopie des Backup-Subagenten von einem anderen Subagenten überschrieben worden war.
+- **`make check`** am zusammengeführten Stand `d9c86be` (Doku danach unverändert für den Code): **grün** in 7:12 min (gofmt, vet, `go test ./...` ohne `-short`, Guard, PII-Gate).
+- **`make race`** (allein, Grenze 45 min) an `04fb1c1`: **alle Pakete grün** in 31:36 min; längste Pakete `internal/cli` 1793 s, `internal/importer` 1178 s, `internal/mailsync` 949 s, `internal/ops` 900 s. Zum Vergleich erste Nachbesserung: `internal/cli` 1408 s. Der Abstand zur Grenze von 45 min bleibt ausreichend; ein Teil des Zuwachses fällt in die Minuten, in denen nebenher `make vuln` und eine Gegenprobe liefen.
+- **`make integration`** gegen **Dovecot 2.4.5, Stalwart 0.11.8 und GreenMail 2.1.14** (Images über `mirror.gcr.io`, auf die Namen aus `docker-compose.yml` umbenannt; `dockerd` von Hand gestartet; `make testmail-up testmail-setup integration` an `04fb1c1`): **41 PASS, 0 SKIP, 0 FAIL** in 3:59 min. `TestIntegrationMailboxActions/greenmail` lief diesmal schon im frischen Container grün (keine Wiederholung nötig).
+- **`make cross`:** grün (linux/amd64 29,7 MB, windows/amd64 29,5 MB, darwin/arm64 27,9 MB, ohne `-s -w`).
+- **`make vuln`:** in dieser Cloud-Umgebung gesperrt (`vuln.go.dev` → 403 vom Proxy). `go.mod`/`go.sum` sind seit `7e3a70f` unverändert; die Prüfsitzung meldete an `9d2fc69` keinen Fund. Nachholen in der Prüfsitzung bzw. im CI-Job.
+- **Migration 0022 (Punkt 12), gemessen** an der synthetischen Datenbank (50.000 Nachrichten, 80.000 Ordnerkopien, 50.000 Threads, 10.000 Anhänge, 1.000 Aktionen mit 20.000 Zielen, 500 Entwürfe, **40.000 Audit-Zeilen, davon 20.000 mit `thread:`/`attachment:`-Zielen**; der Messtest hatte vorher nur Ziele `[]`, die neuen Zeilen wären nie gelaufen): `POSTKAUZ_MEASURE_MIGRATION=1 go test ./internal/store/ -run TestMeasureMigration0022 -v`, mit Snapshot. Hauptsitzung am Endstand (Last 3,6 aus den Builds davor): **0,48–0,50 s**; Subagent unter Last um 3: alte Fassung 0,39–0,49 s, neue 0,49–0,52 s; die beiden Audit-Abfragen allein 76–92 ms. Startwerte neu: Threads 59.995, Anhänge 12.000 (aus dem Audit; vorher 50.000/10.000).
+- **PowerShell (Punkt 15):** nur Lesetest und Trockenlauf von Hand (kein PowerShell im Container). `ProcessStartInfo.EnvironmentVariables` ist unter .NET Framework ein `StringDictionary` mit kleinen Schlüsseln; `-like 'POSTKAUZ_*'` vergleicht ohne Groß-/Kleinschreibung, `Remove` ebenso; die Schlüssel werden vor dem Entfernen in ein Feld kopiert (keine Änderung während der Aufzählung). Markersuche, Trockenlauf mit `-LivePath C:\PostKauz\data,C:\PostKauz\config.toml`: `C:\PostKauz\data` rekursiv (`markerPlaces`), `C:\PostKauz` nur flach (`markerShallow`, `Test-Path` auf `C:\PostKauz\<marker>`); ein `-DataDir` als Junction auf `C:\PostKauz` fällt weiter auf, eine auf `C:\PostKauz\data` über die rekursive Suche. `abnahme_D7_restore.sh`: `sh -n` ohne Befund; Pfadprüfung ausgeführt (Abbruch mit Exit 2 für einen Symlink auf `~/.local/share`, für `XDG_DATA_HOME/postkauz`, für `…/../…`-Pfade; Rückfall ohne `realpath -m` per `cd -P`/`pwd -P` liefert dasselbe wie `realpath -m`, auch mit `link/..`); `POSTKAUZ_DATA_DIR` gesetzt → entfernt.
 
 ## 4. Release `0.3.0-alpha.7b`
 
-(folgt nach dem Bau)
+Gebaut nach `docs/betrieb.md` Abschnitt 7 an **`04fb1c1`** (Zweigspitze mit dem ganzen Code und der Doku dieser Nachbesserung; danach kamen nur dieser Nachtrag und das Löschen von `auftraege/A03_T3nb2_tests/`, beides ohne Programmänderung): zwei frische Klone ohne Tags (`git clone --no-tags`, je `git tag` leer, `git status --short` leer), je `make release VERSION=0.3.0-alpha.7b` mit go1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`.
+
+- **Nachbau bytegleich:** `dist/SHA256SUMS` beider Klone gleich bis auf die Zeile `VERSION` (Bauzeit). `go version -m` beider Windows-Programme gleich bis auf den Dateipfad in der ersten Zeile: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029064913-04fb1c15f73a`, `vcs.revision=04fb1c15f73a09c8ee46a5a900feb74e0b9df112`, `vcs.modified=false`, `CGO_ENABLED=0`.
+- `postkauz-linux-amd64 version` → `postkauz 0.3.0-alpha.7b (go1.27.3 linux/amd64)`.
+- SHA-256:
+  - `postkauz-windows-amd64.exe` `848ed374a20b5b6a43747a795388b293560221182d8b3ebda39322a79525ff66` (21.657.600 Bytes)
+  - `postkauz-linux-amd64` `372fe7480efc027e37ae573bb8bd442983f00518c762798f39dd005cbcd9670c` (21.680.288 Bytes)
+  - `postkauz-darwin-arm64` `28dfed3cf5b0bbf61588006b284aa4c51b25ac3e20cc075e030a63cde46ccad8` (20.211.938 Bytes)
+  - Skripte unverändert gegenüber `0.3.0-alpha.7`: `Register-AuditExport.ps1` `26043f60…`, `Register-SyncWatch.ps1` `8a50ee74…`, `Run-SyncWatch.ps1` `6973c847…`, `check-example.ps1` `9d40eb8a…`, `check-example.sh` `4bf639c3…`
+- Kein Tag, kein GitHub-Release (Auftrag). Abnahme D7 und D7a mit `-ExpectVersion 0.3.0-alpha.7b` (Standard in beiden Skripten).
 
 ## 5. Offen und Restfenster
 
