@@ -2,8 +2,6 @@ package httpmcp
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -94,6 +92,11 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, er
 	// 1. JOSE-Typ at+jwt (RFC 9068): Ein ID-Token mit passender aud geht
 	// sonst als Access-Token durch (Befund B5).
 	if t := jwtType(raw); t != "at+jwt" && t != "application/at+jwt" {
+		return principal{}, errUnauthenticated
+	}
+	// Vorprüfung von iss und exp aus dem ungeprüften Inhalt: Fremde oder
+	// abgelaufene Token lösen so weder Discovery noch JWKS-Abruf aus.
+	if !precheckClaims(raw, a.issuer, a.now()) {
 		return principal{}, errUnauthenticated
 	}
 	v, err := a.getVerifier(ctx)
@@ -202,7 +205,7 @@ func (a *oauthAuth) discover(ctx context.Context, done chan struct{}) {
 	}
 	// Der Schlüsselsatz lebt so lange wie der Server (go-oidc nutzt den
 	// Kontext nur für den HTTP-Client, newJWKSClient mit Frist).
-	keyCtx := oidc.ClientContext(context.Background(), newJWKSClient(a.client))
+	keyCtx := oidc.ClientContext(context.Background(), newJWKSClient(a.client, func() time.Time { return a.now() }))
 	a.verifier = oidc.NewVerifier(a.issuer, &keySet{inner: oidc.NewRemoteKeySet(keyCtx, jwks)}, &oidc.Config{
 		SkipClientIDCheck:    true, // aud prüft authenticate gegen die Resource-URL
 		SupportedSigningAlgs: signingAlgs,
@@ -264,22 +267,9 @@ func checkIssuerHost(u *url.URL) error {
 	return fmt.Errorf("httpmcp: issuer %q uses an IP address; use the DNS name of the authorization server (tailscale serve certificates are issued for MagicDNS names only)", u.Redacted())
 }
 
-// jwtType liest den JOSE-Kopf ohne Prüfung, nur für die typ-Regel (kein
-// Krypto-Code; die Signatur prüft go-oidc).
+// jwtType liest den Typ aus dem JOSE-Kopf ohne Prüfung, nur für die
+// typ-Regel.
 func jwtType(raw string) string {
-	h, _, ok := strings.Cut(raw, ".")
-	if !ok || len(h) > 4096 {
-		return ""
-	}
-	b, err := base64.RawURLEncoding.DecodeString(h)
-	if err != nil {
-		return ""
-	}
-	var hdr struct {
-		Typ string `json:"typ"`
-	}
-	if json.Unmarshal(b, &hdr) != nil {
-		return ""
-	}
-	return strings.ToLower(hdr.Typ)
+	h, _ := parseHeader(raw)
+	return strings.ToLower(h.Typ)
 }

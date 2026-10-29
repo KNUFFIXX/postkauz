@@ -11,6 +11,8 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
@@ -23,15 +25,39 @@ const maxJWKSBytes = 1 << 20
 // nicht 401: Am Token liegt es nicht.
 var errJWKSFetch = errors.New("httpmcp: fetching the JWKS failed")
 
-// jwksTransport ist der RoundTripper des JWKS-Clients. Er macht aus jedem
-// Fehlschlag einen Fehler mit errJWKSFetch und liest die Antwort selbst
-// (höchstens maxJWKSBytes), damit auch ein Lesefehler so ankommt: go-oidc
-// reicht Fehler des HTTP-Clients mit %w weiter, Lesefehler aber nicht.
+// jwksRefetch: Die JWKS wird höchstens einmal je jwksRefetch abgerufen
+// (Nachbesserung T5, Punkt 9 c). go-oidc lädt sie bei jeder gescheiterten
+// Signaturprüfung neu; ohne Grenze löste jedes gefälschte Token einen
+// Abruf beim AS aus. Eine neue kid nach einem Schlüsselwechsel gilt damit
+// spätestens jwksRefetch nach dem letzten Abruf.
+const jwksRefetch = 10 * time.Second
+
+// errJWKSThrottled: Abruf ausgelassen, der letzte liegt weniger als
+// jwksRefetch zurück. go-oidc behält dann seinen Cache.
+var errJWKSThrottled = errors.New("httpmcp: JWKS fetched less than 10 s ago")
+
+// jwksTransport ist der RoundTripper des JWKS-Clients. Er lässt höchstens
+// einen Abruf je jwksRefetch durch, macht aus jedem Fehlschlag einen Fehler
+// mit errJWKSFetch und liest die Antwort selbst (höchstens maxJWKSBytes),
+// damit auch ein Lesefehler so ankommt: go-oidc reicht Fehler des
+// HTTP-Clients mit %w weiter, Lesefehler aber nicht.
 type jwksTransport struct {
 	base http.RoundTripper
+	now  func() time.Time
+
+	mu   sync.Mutex
+	last time.Time // letzter Abrufversuch
 }
 
 func (t *jwksTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	now := t.now()
+	if !t.last.IsZero() && now.Sub(t.last) < jwksRefetch && !now.Before(t.last) {
+		t.mu.Unlock()
+		return nil, errJWKSThrottled
+	}
+	t.last = now
+	t.mu.Unlock()
 	res, err := t.base.RoundTrip(r)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errJWKSFetch, err)
@@ -57,13 +83,14 @@ func (t *jwksTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // newJWKSClient: Client für die JWKS auf dem Transport des Clients für den
 // Autorisierungsserver, mit Frist asTimeout und ohne Umleitungen (eine
-// Umleitung ist für jwksTransport ein Status ungleich 200).
-func newJWKSClient(c *http.Client) *http.Client {
+// Umleitung ist für jwksTransport ein Status ungleich 200). now ist die
+// Uhr für die Grenze jwksRefetch.
+func newJWKSClient(c *http.Client, now func() time.Time) *http.Client {
 	base := c.Transport
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return &http.Client{Transport: &jwksTransport{base: base}, Timeout: asTimeout,
+	return &http.Client{Transport: &jwksTransport{base: base, now: now}, Timeout: asTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errASRedirect }}
 }
 
@@ -75,18 +102,41 @@ type verifyState struct {
 
 type verifyStateKey struct{}
 
+// maxKnownKids begrenzt die Liste der bewährten kid (danach geleert).
+const maxKnownKids = 32
+
 // keySet hüllt den Schlüsselsatz von go-oidc ein und merkt sich, ob eine
-// Prüfung an der JWKS (nicht am Token) scheiterte.
+// Prüfung an der JWKS (nicht am Token) scheiterte. Dazu kennt es die kid,
+// mit denen schon eine Signatur gültig war: Ist der Abruf gerade
+// ausgelassen (errJWKSThrottled), ist eine falsche Signatur mit bekannter
+// kid ein schlechtes Token (401); eine unbekannte kid kann ein
+// Schlüsselwechsel sein (503 mit Retry-After, der Client versucht es
+// wieder, statt sich neu anzumelden).
 type keySet struct {
 	inner oidc.KeySet
+
+	mu   sync.Mutex
+	good map[string]bool
 }
 
 func (k *keySet) VerifySignature(ctx context.Context, jwt string) ([]byte, error) {
 	b, err := k.inner.VerifySignature(ctx, jwt)
-	if err != nil && fetchFailed(err) {
-		if st, ok := ctx.Value(verifyStateKey{}).(*verifyState); ok {
-			st.unavailable = true
+	h, _ := parseHeader(jwt)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if err == nil {
+		if k.good == nil || len(k.good) >= maxKnownKids {
+			k.good = map[string]bool{}
 		}
+		k.good[h.Kid] = true
+		return b, nil
+	}
+	unavailable := fetchFailed(err)
+	if errors.Is(err, errJWKSThrottled) {
+		unavailable = !k.good[h.Kid]
+	}
+	if st, ok := ctx.Value(verifyStateKey{}).(*verifyState); ok && unavailable {
+		st.unavailable = true
 	}
 	return b, err
 }

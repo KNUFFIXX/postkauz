@@ -318,9 +318,11 @@ func TestOAuthRevokedKey(t *testing.T) {
 }
 
 // JWKS-Cache mit Neuladen bei unbekannter kid (S3.6; Spike, offener Punkt
-// 3): Nach einem Schlüsselwechsel im AS gelten neue Token ohne Neustart.
+// 3): Nach einem Schlüsselwechsel im AS gelten neue Token ohne Neustart,
+// spätestens jwksRefetch nach dem letzten Abruf (TestT5NJWKSRotationWithin10s).
 func TestOAuthKeyRotation(t *testing.T) {
 	o := newOAuthEnv(t)
+	advance := o.fakeClock()
 	if code, _, body := o.post(t, o.token(t, "user-reader", nil)); code != http.StatusOK {
 		t.Fatalf("before rotation: %d %s", code, body)
 	}
@@ -329,6 +331,7 @@ func TestOAuthKeyRotation(t *testing.T) {
 		t.Errorf("second token fetched the JWKS again (%d → %d)", hits, o.as.jwksHits.Load())
 	}
 	o.as.rotate(t)
+	advance(jwksRefetch)
 	if code, _, body := o.post(t, o.token(t, "user-reader", nil)); code != http.StatusOK {
 		t.Fatalf("after rotation: %d %s", code, body)
 	}
