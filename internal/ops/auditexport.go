@@ -685,6 +685,9 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 				return nil, err
 			}
 			head := auditChainGenesis
+			// vhead ist das Kettenende, wie audit verify es aus den
+			// bisherigen Nachweisen rechnet (dritte Nachbesserung T3, Punkt 2).
+			vhead := auditChainGenesis
 			for _, day := range days {
 				p, recorded := prev[day]
 				_, closed := plan.asg.closed(day)
@@ -710,7 +713,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						if fh, bad := checkChain(b, head); bad == 0 {
 							f := AuditExportFile{Day: day, File: file, Events: bytes.Count(b, []byte{'\n'}), FirstEventID: p.FirstEventID,
 								LastEventID: p.LastEventID, SHA256: p.SHA256, ChainHead: fh, State: "unchanged"}
-							head = fh
+							head, vhead = fh, fh
 							todo = append(todo, pending{f, nil})
 							manifest = append(manifest, auditManifestDay{Day: day, File: auditFileName(day), Events: f.Events,
 								FirstEventID: f.FirstEventID, LastEventID: f.LastEventID, SHA256: f.SHA256, ChainHead: fh})
@@ -739,6 +742,30 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						return nil, fmt.Errorf("%w: day %s should hold entries %d to %d, found %d to %d; nothing was written "+
 							"(an audit rotate may have run meanwhile; run audit verify, then audit export again)",
 							ErrAuditExportSourceChanged, day, p.FirstEventID, p.LastEventID, first, last)
+					}
+					// Dritte Absicherung (dritte Nachbesserung T3, Punkt 2):
+					// Die Einträge müssen den Nachweis ergeben wie in audit
+					// verify (Format 2 mit der Kette, sonst Format 1). Sonst
+					// ist die Datenbank verändert, und die neue Datei würde die
+					// Änderung legitimieren: Abbruch vor dem ersten Schreiben.
+					c2, err := auditDayContent(evs, p.LastEventID, 2, vhead)
+					if err != nil {
+						return nil, err
+					}
+					c1, err := auditDayContent(evs, p.LastEventID, 1, "")
+					if err != nil {
+						return nil, err
+					}
+					switch {
+					case sha256Hex(c2.content) == p.SHA256:
+						vhead = c2.head
+					case sha256Hex(c1.content) == p.SHA256:
+						if p.Location == "" {
+							vhead = c2.head // wie verify für Tage des Originals
+						}
+					default:
+						return nil, fmt.Errorf("%w: day %s no longer gives the recorded checksum; nothing was written "+
+							"(the database was changed; run audit verify)", ErrAuditExportSourceChanged, day)
 					}
 				}
 				d, err := auditDayContent(evs, 0, AuditExportFormat, head)
