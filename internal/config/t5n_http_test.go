@@ -54,11 +54,8 @@ func TestT5NHTTPErrorDoesNotStopLoad(t *testing.T) {
 		t.Fatalf("unknown key outside [http]: %v", err)
 	}
 
-	// Grenze (bewusst): Ein falscher Typ ist ein Fehler der ganzen Datei.
-	write("[http]\nlisten = 8787\n")
-	if _, _, err = Load(); err == nil {
-		t.Fatal("wrong type in [http] loaded")
-	}
+	// Falsche Typen in [http]: seit der zweiten Nachbesserung ebenfalls nur
+	// HTTPErr (TestT5N2HTTPTypeErrorDoesNotStopLoad).
 
 	write("[http]\nlisten = \"127.0.0.1:8788\"\n")
 	if cfg, _, err = Load(); err != nil || cfg.HTTPErr != nil || cfg.HTTP.Listen != "127.0.0.1:8788" {

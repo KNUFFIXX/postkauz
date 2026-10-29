@@ -67,11 +67,20 @@ type Config struct {
 	// HTTP: Abschnitt [http] (seit T5, ADR-010: mcp --http).
 	HTTP HTTP `toml:"http"`
 	// HTTPErr: Fehler in [http] beim Laden (unbekannter Schlüssel unter
-	// http., Prüfung von CheckHTTP; Nachbesserung T5, Punkt 9h). Er hält
+	// http., falscher Typ, Prüfung von CheckHTTP; Nachbesserung T5,
+	// Punkt 9h, und zweite Nachbesserung, Punkt 5a). Er hält
 	// nur `mcp --http` auf und steht in `doctor`; alle anderen Kommandos
 	// laufen, damit ein Tippfehler den Dauerbetrieb (sync --watch) beim
 	// nächsten Start nicht stoppt. HTTP ist dann nicht verlässlich.
 	HTTPErr error `toml:"-" json:"-"`
+}
+
+// fileConfig ist die Form beim Lesen der Datei: [http] erst als
+// toml.Primitive (das äußere Feld verdeckt Config.HTTP), damit ein Fehler
+// dort nur HTTPErr setzt.
+type fileConfig struct {
+	Config
+	HTTP toml.Primitive `toml:"http"`
 }
 
 // Retention: Abschnitt [retention] der Konfiguration (E8, A11). Gelöscht
@@ -366,7 +375,19 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		path = filepath.Join(filepath.Dir(path), "profiles", profile, "config.toml")
 	}
 	p.ConfigFile = path
-	md, err := toml.DecodeFile(path, &cfg)
+	// [http] als toml.Primitive lesen und gesondert dekodieren: Ein
+	// falscher Typ dort (max_requests_per_minute = "60") hält nur
+	// mcp --http auf (HTTPErr), nicht jedes Kommando (zweite Nachbesserung
+	// T5, Punkt 5a). Syntaxfehler der Datei bleiben global.
+	var fc fileConfig
+	md, err := toml.DecodeFile(path, &fc)
+	cfg = fc.Config
+	if err == nil && md.IsDefined("http") {
+		if herr := md.PrimitiveDecode(fc.HTTP, &cfg.HTTP); herr != nil {
+			cfg.HTTP = HTTP{}
+			cfg.HTTPErr = fmt.Errorf("config: %s: [http]: %w", path, herr)
+		}
+	}
 	switch {
 	case err == nil:
 		p.ConfigExists = true
@@ -387,7 +408,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 				return cfg, p, fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(keys, ", "))
 			}
 			sort.Strings(httpKeys)
-			cfg.HTTPErr = fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(httpKeys, ", "))
+			if cfg.HTTPErr == nil {
+				cfg.HTTPErr = fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(httpKeys, ", "))
+			}
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		// keine Datei: Standards
