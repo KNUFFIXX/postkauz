@@ -1,6 +1,6 @@
 # Betrieb von PostKauz
 
-Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: T2 (0.3.0-alpha.3, 28.10.2026); Abschnitt 2 seit T3, Abschnitt 4 seit T5 (0.3.0-alpha.8, 29.10.2026).
+Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: S3.8 (0.3.0-rc1, 29.10.2026; Schnitt 3 komplett). Abschnitte 1 bis 1.7 seit T2, 2, 5 und 6 seit T3, 4 seit T5 (zuletzt zweite Nachbesserung: Passwort auf dem VPS als systemd-Credential, Empfehlung systemd ≥ 257), Microsoft-Konten in [betrieb_microsoft.md](betrieb_microsoft.md).
 
 Die Beispiele nehmen an:
 
