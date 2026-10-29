@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ func TestT3NPutWaitsForGCLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock, err := s.LockForGC(time.Second)
+	lock, err := s.LockForGC(context.Background(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +67,7 @@ func TestT3NPutWaitsForGCLock(t *testing.T) {
 	// Grenze: Nach putLockWait gibt Put auf.
 	defer func(w time.Duration) { putLockWait = w }(putLockWait)
 	putLockWait = 50 * time.Millisecond
-	lock, err = s.LockForGC(time.Second)
+	lock, err = s.LockForGC(context.Background(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,11 +77,11 @@ func TestT3NPutWaitsForGCLock(t *testing.T) {
 	lock.Release()
 
 	// Umgekehrt: Eine geteilte Sperre (ein Put legt gerade ab) hält GC auf.
-	shared, err := s.lockWait(false, time.Second)
+	shared, err := s.lockWait(context.Background(), false, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.LockForGC(20 * time.Millisecond); !errors.Is(err, ErrBusy) {
+	if _, err := s.LockForGC(context.Background(), 20*time.Millisecond); !errors.Is(err, ErrBusy) {
 		t.Fatalf("gc lock while a Put holds the shared lock = %v, want ErrBusy", err)
 	}
 	shared.Release()

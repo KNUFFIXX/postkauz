@@ -21,6 +21,7 @@
 package blob
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -56,6 +57,9 @@ type Options struct {
 	Compress bool
 	// MaxSize begrenzt die unkomprimierte Größe; 0 = DefaultMaxSize.
 	MaxSize int64
+	// LockWait begrenzt, wie lange Put auf die Sperre des Blob-Ordners
+	// wartet (lock.go); 0 = 10 s. Nur für Tests kürzer.
+	LockWait time.Duration
 }
 
 // Store ist ein Blob-Verzeichnis.
@@ -142,8 +146,16 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 // inhaltlich unverändert (Existed=true); nur ihr Dateidatum wird erneuert.
 // Nachsehen und Ablegen geschehen unter der geteilten Sperre des
 // Blob-Ordners (lock.go); hält blobs.gc sie gerade, wartet Put bis zu
-// putLockWait und liefert danach ErrBusy.
+// putLockWait und liefert danach ErrBusy. Put wartet ohne Kontext; wer
+// einen hat, nimmt PutContext.
 func (s *Store) Put(r io.Reader) (Info, error) {
+	return s.PutContext(context.Background(), r)
+}
+
+// PutContext ist Put; das Warten auf die Sperre endet zusätzlich, sobald
+// ctx beendet ist (Fehler mit ctx.Err(), nichts abgelegt). Das Lesen von r
+// bricht ctx nicht ab; das ist Sache des Lesers.
+func (s *Store) PutContext(ctx context.Context, r io.Reader) (Info, error) {
 	tmp, err := os.CreateTemp(filepath.Join(s.root, "tmp"), "put-*")
 	if err != nil {
 		return Info{}, fmt.Errorf("blob: temp file: %w", err)
@@ -187,7 +199,7 @@ func (s *Store) Put(r io.Reader) (Info, error) {
 	// Ab hier geteilt gesperrt (lock.go): blobs.gc löscht nichts, solange
 	// Put nachsieht und ablegt; läuft gerade ein Lösch-Paket, wartet Put
 	// kurz (putLockWait), statt zu scheitern.
-	lock, err := s.lockWait(false, putLockWait)
+	lock, err := s.lockWait(ctx, false, s.putWait())
 	if err != nil {
 		return Info{}, err
 	}

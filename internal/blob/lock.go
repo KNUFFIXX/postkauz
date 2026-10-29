@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -26,14 +27,19 @@ import (
 const LockName = "gc.lock"
 
 // ErrBusy: Die Sperre war innerhalb der Wartezeit nicht zu bekommen (für
-// Put: blobs.gc löscht gerade; für GC: ein Put legt gerade ab).
+// Put: blobs.gc löscht gerade; für GC: ein Put legt gerade ab). Scheiterte
+// zuletzt schon das Öffnen der Sperrdatei (Nachbesserung 2, Punkt 8: etwa
+// eine Sharing-Violation durch Virenscanner oder Sicherungsprogramm unter
+// Windows), hängt jener Fehler mit an (errors.Is findet beide).
+// CLI und MCP melden den Code blob_busy („try again“).
 var ErrBusy = errors.New("blob: store busy (blob gc or another write holds the lock); try again")
 
 // Wartezeiten (Festlegung Nachbesserung T3, Punkt 6): Put wartet höchstens
 // putLockWait (10 s) auf ein laufendes Lösch-Paket von blobs.gc. Ein Paket hält
 // die Sperre nur Millisekunden (gcBatch in internal/retention, danach eine
 // Pause länger als lockPoll), Put scheitert also praktisch nie daran;
-// die Grenze fängt nur einen hängenden Datenträger ab.
+// die Grenze fängt nur einen hängenden Datenträger ab. Options.LockWait
+// ersetzt putLockWait je Store (Tests anderer Pakete).
 var (
 	putLockWait = 10 * time.Second
 	lockPoll    = 5 * time.Millisecond
@@ -41,33 +47,61 @@ var (
 
 func (s *Store) lockPath() string { return filepath.Join(s.root, LockName) }
 
+// putWait ist die Wartezeit von Put auf die Sperre.
+func (s *Store) putWait() time.Duration {
+	if s.opts.LockWait > 0 {
+		return s.opts.LockWait
+	}
+	return putLockWait
+}
+
 // lockWait holt die Sperre (geteilt oder exklusiv) und versucht es bis
-// wait erneut; danach ErrBusy.
-func (s *Store) lockWait(exclusive bool, wait time.Duration) (*flock.Lock, error) {
+// wait erneut; danach ErrBusy. Nachbesserung 2, Punkt 8: Wiederholt wird
+// nicht nur bei belegter Sperre, sondern auch, wenn das Öffnen der
+// Sperrdatei scheitert (unter Windows hält ein Virenscanner oder ein
+// Sicherungsprogramm sie kurz ohne Freigabe zum Mitbenutzen); bleibt das
+// bis zur Frist so, kommt ErrBusy mit dem letzten Fehler. Wird ctx
+// beendet, endet das Warten sofort mit ctx.Err().
+func (s *Store) lockWait(ctx context.Context, exclusive bool, wait time.Duration) (*flock.Lock, error) {
 	try := flock.TryLockShared
 	if exclusive {
 		try = flock.TryLock
 	}
 	deadline := time.Now().Add(wait)
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
 		l, err := try(s.lockPath())
 		if err == nil {
 			return l, nil
 		}
-		if !errors.Is(err, flock.ErrLocked) {
-			return nil, fmt.Errorf("blob: %w", err)
-		}
 		if !time.Now().Before(deadline) {
-			return nil, ErrBusy
+			if errors.Is(err, flock.ErrLocked) {
+				return nil, ErrBusy
+			}
+			return nil, fmt.Errorf("%w (last error: %w)", ErrBusy, err)
 		}
-		time.Sleep(lockPoll)
+		if timer == nil {
+			timer = time.NewTimer(lockPoll)
+		} else {
+			timer.Reset(lockPoll)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("blob: waiting for the lock: %w", ctx.Err())
+		case <-timer.C:
+		}
 	}
 }
 
 // LockForGC holt die exklusive Sperre des Blob-Ordners (nur blobs.gc, nur
 // für ein Lösch-Paket). Solange sie besteht, wartet jedes Put; ein Put, das
-// gerade ablegt, hält GC höchstens wait auf (dann ErrBusy). Freigeben mit
-// Release.
-func (s *Store) LockForGC(wait time.Duration) (*flock.Lock, error) {
-	return s.lockWait(true, wait)
+// gerade ablegt, hält GC höchstens wait auf (dann ErrBusy), ein beendetes
+// ctx sofort. Freigeben mit Release.
+func (s *Store) LockForGC(ctx context.Context, wait time.Duration) (*flock.Lock, error) {
+	return s.lockWait(ctx, true, wait)
 }

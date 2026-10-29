@@ -309,7 +309,7 @@ func (s *Service) removeFiles(ctx context.Context, hs []string, limit time.Time,
 }
 
 func (s *Service) removeBatch(ctx context.Context, hs []string, limit time.Time, sizes map[string]int64, rep *GCReport) error {
-	lock, err := s.Blobs.LockForGC(gcLockWait)
+	lock, err := s.Blobs.LockForGC(ctx, gcLockWait)
 	if err != nil {
 		return err
 	}
