@@ -1,0 +1,44 @@
+# PostKauz: MCP über HTTP (mcp --http, A03 S3.5, ADR-010), Vorlage für einen
+# VPS. Dieser Dienst kennt kein Postfachpasswort (ADR-009): kein
+# EnvironmentFile, kein Schlüsselbund. Er lauscht nur auf 127.0.0.1:8787
+# ([http] listen); TLS und das private Netz kommen von tailscale serve.
+# Anleitung: docs/betrieb.md, Abschnitt „VPS“.
+#
+#   install -Dm644 postkauz-mcp-http.service -t /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now postkauz-mcp-http.service
+#   curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/healthz   # erwartet: 204
+[Unit]
+Description=PostKauz MCP over HTTP (no mailbox credentials)
+Documentation=https://github.com/KNUFFIXX/postkauz/blob/main/docs/betrieb.md
+After=network.target
+
+[Service]
+Type=simple
+User=postkauz
+Group=postkauz
+Environment=POSTKAUZ_CONFIG=/etc/postkauz/config.toml
+Environment=POSTKAUZ_DATA_DIR=/var/lib/postkauz
+ExecStart=/usr/local/bin/postkauz mcp --http
+Restart=on-failure
+RestartSec=10
+StateDirectory=postkauz
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

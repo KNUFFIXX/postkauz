@@ -168,7 +168,9 @@ cross:
 # Debug-Informationen (-s -w), dem Windows-Skript für den täglichen
 # Audit-Export, seit T2 den Skripten für den Dauerbetrieb (Register-SyncWatch.ps1,
 # Run-SyncWatch.ps1), seit S2.9 den Beispiel-Hooks für die Prüfung vor der
-# Freigabe (Entscheid 42: check-example.ps1, check-example.sh), VERSION und
+# Freigabe (Entscheid 42: check-example.ps1, check-example.sh), seit T5 den
+# systemd-Units für den VPS (postkauz-sync@.service, postkauz-mcp-http.service),
+# VERSION und
 # SHA256SUMS. Beispiel:
 #   make release VERSION=0.2.0-rc1
 # Den Git-Tag setzt der Betreiber erst nach der Abnahme. Andere Dateien
@@ -178,7 +180,7 @@ SHA256 = $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 
 release:
 	@case "$(VERSION)" in [0-9]*.[0-9]*.[0-9]*) ;; *) echo "release: give a version, e.g. make release VERSION=0.1.0-rc1 (got $(VERSION))"; exit 1;; esac
 	@mkdir -p dist
-	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION dist/*.ps1 dist/check-example.sh
+	@rm -f dist/$(BINARY)-linux-* dist/$(BINARY)-windows-* dist/$(BINARY)-darwin-* dist/SHA256SUMS dist/VERSION dist/*.ps1 dist/check-example.sh dist/*.service
 	@set -e; for p in $(PLATFORMS); do \
 	  os=$${p%/*}; arch=$${p#*/}; ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 	  echo "build $$os/$$arch ($(VERSION))"; \
@@ -199,7 +201,10 @@ release:
 	@# ausführbar.
 	@sed 's/\r*$$/\r/' deploy/hooks/check-example.ps1 > dist/check-example.ps1
 	@sed 's/\r*$$//' deploy/hooks/check-example.sh > dist/check-example.sh && chmod 755 dist/check-example.sh
-	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 Register-SyncWatch.ps1 Run-SyncWatch.ps1 check-example.ps1 check-example.sh VERSION > SHA256SUMS
+	@# Dauerbetrieb auf Linux (T5, S3.5): systemd-Units für sync --watch je
+	@# Konto und mcp --http ohne Zugangsdaten (docs/betrieb.md, Abschnitt 4).
+	@cp deploy/systemd/postkauz-sync@.service deploy/systemd/postkauz-mcp-http.service dist/
+	@cd dist && $(SHA256) $(BINARY)-linux-* $(BINARY)-windows-* $(BINARY)-darwin-* Register-AuditExport.ps1 Register-SyncWatch.ps1 Run-SyncWatch.ps1 check-example.ps1 check-example.sh postkauz-sync@.service postkauz-mcp-http.service VERSION > SHA256SUMS
 	@cat dist/VERSION; echo; cat dist/SHA256SUMS; echo
 	@ls -l dist/ | awk 'NR>1 {printf "%-32s %10d bytes %6.1f MB\n", $$NF, $$5, $$5/1048576}'
 

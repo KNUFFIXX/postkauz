@@ -26,6 +26,11 @@ blobs/
 *.key
 config.toml
 secrets/
+# Betrieb mit Docker (T5): Passwörter, Auth-Key, Authelia-Konfiguration
+/deploy/docker/*.env
+/deploy/docker/config/
+/deploy/docker/auth/configuration.yml
+/deploy/docker/auth/users.yml
 # internal/secrets ist das Go-Paket für den Schlüsselbund, kein Geheimnis
 !/internal/secrets/
 

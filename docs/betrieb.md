@@ -1,6 +1,6 @@
 # Betrieb von PostKauz
 
-Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: T2 (0.3.0-alpha.3, 28.10.2026); Abschnitt 2 seit T3.
+Für: den Betreiber. Diese Anleitung erklärt, wie PostKauz im Alltag läuft: Schritt für Schritt, je Schritt ein Kommando und die Ausgabe, die du erwarten kannst. Programmierkenntnisse brauchst du nicht. Stand: T2 (0.3.0-alpha.3, 28.10.2026); Abschnitt 2 seit T3, Abschnitt 4 seit T5 (0.3.0-alpha.8, 29.10.2026).
 
 Die Beispiele nehmen an:
 
@@ -409,9 +409,235 @@ Erwartet jeweils eine Zeile, die mit `ok:` beginnt.
 
 Folgt beim Zusammenführen von Teil T4. Bis dahin: [betrieb_microsoft.md](betrieb_microsoft.md).
 
-## 4. Betrieb auf einem VPS
+## 4. Fernzugriff über HTTP-MCP und Betrieb auf einem VPS
 
-Folgt mit Teil T5 (Linux-Server, systemd, Fernzugriff über HTTP-MCP).
+Seit T5 (S3.5, S3.6; ADR-010). Ziel: Ein Agent erreicht PostKauz auch von außerhalb des Rechners mit dem Datenverzeichnis, zuerst aus einer Claude-Code-Cloud-Sitzung, nur über dein privates Netz (Tailscale). Die Schritte zu Tailscale und Authelia sind **Stand Oktober 2026, ungeprüft**; die Abnahme D8 prüft sie.
+
+### 4.1 Was läuft wo
+
+- **Zwei Dienste** auf dem Dauerläufer (VPS oder PC):
+  - `postkauz sync --watch` kennt die Mailpasswörter und spiegelt die Postfächer (wie in Abschnitt 1).
+  - `postkauz mcp --http` kennt **kein** Mailpasswort. Er lauscht nur auf `127.0.0.1:8787` und beantwortet MCP-Anfragen über HTTP.
+- **Tailscale** verbindet deine Geräte zu einem privaten Netz (Tailnet). `tailscale serve` macht aus `http://127.0.0.1:8787` die Adresse `https://<knoten>.<tailnet>.ts.net` mit gültigem Zertifikat, **nur im Tailnet**. Kein Funnel, kein Cloudflare-Tunnel, kein offener Port im Internet.
+- **Anmeldung** an `mcp --http`, eine von zwei Arten (`[http] auth`):
+  - `key`: Der Client schickt einen PostKauz-Schlüssel mit (`Authorization: Bearer pk_key_…`). Einfach, geht auch ohne Browser, also aus einer Cloud-Sitzung. Nur auf Loopback oder einer Tailnet-Adresse.
+  - `oauth`: Der Client meldet sich bei einem **eigenen Anmeldedienst** (Authelia) an und schickt dessen kurzlebiges Token mit. Der Standard für Claude Code am PC (mit Browser).
+
+Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Rolle, Scopes). Jeder Aufruf steht im Audit mit `transport: http` und dem Schlüsselnamen, nie mit dem Token.
+
+### 4.2 Erst lokal ausprobieren (Modus `key`, ohne Tailscale)
+
+1. Einen Schlüssel für den Test anlegen (nur lesen, einen Tag gültig):
+
+   ```powershell
+   C:\PostKauz\postkauz.exe key create --name http-test --role reader --expires 1d --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+   ```
+
+   Erwartet: `key http-test created (…)` und darunter eingerückt der Schlüssel `pk_key_…`. Er erscheint nur dieses eine Mal; kopiere ihn.
+2. Den Server starten (das Fenster bleibt offen):
+
+   ```powershell
+   C:\PostKauz\postkauz.exe mcp --http --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+   ```
+
+   Erwartet: `mcp --http: listening on 127.0.0.1:8787 (auth key, resource http://127.0.0.1:8787/mcp); stop with Ctrl+C`
+3. In einem **zweiten** PowerShell-Fenster prüfen, dass er antwortet:
+
+   ```powershell
+   (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8787/healthz).StatusCode
+   ```
+
+   Erwartet: `204`
+4. Ohne Schlüssel wird abgewiesen:
+
+   ```powershell
+   try { Invoke-WebRequest -UseBasicParsing -Method Post -ContentType application/json -Body '{}' http://127.0.0.1:8787/mcp } catch { $_.Exception.Response.StatusCode.value__ }
+   ```
+
+   Erwartet: `401`
+5. Claude Code am selben PC anbinden (statt `<schlüssel>` den kopierten Wert):
+
+   ```powershell
+   claude mcp add --transport http postkauz-http http://127.0.0.1:8787/mcp --header "Authorization: Bearer <schlüssel>"
+   ```
+
+   In Claude Code zeigt `/mcp` dann `postkauz-http` mit 9 Tools (Rolle `reader`).
+6. Beenden: im ersten Fenster Strg+C. Den Testschlüssel widerrufen: `postkauz.exe key revoke http-test`.
+
+Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt. `doctor` zeigt die Einstellungen in der Zeile `http:`.
+
+### 4.3 VPS einrichten (Linux, einmalig)
+
+Für einen kleinen EU-VPS (Debian oder Ubuntu). Als `root`:
+
+1. Updates und automatische Sicherheitsupdates:
+
+   ```bash
+   apt-get update && apt-get -y upgrade && apt-get -y install unattended-upgrades
+   ```
+
+2. Nutzer ohne Anmeldung für PostKauz:
+
+   ```bash
+   useradd --system --home-dir /var/lib/postkauz --shell /usr/sbin/nologin postkauz
+   ```
+
+3. Datenträgerverschlüsselung: Wähle beim Anbieter eine verschlüsselte Platte oder lege `/var/lib/postkauz` auf ein LUKS-Volume. Die Datenbank enthält deine Mails.
+4. Keine offenen Ports außer SSH: Die Firewall des Anbieters lässt nur Port 22 zu (besser auch den nur aus dem Tailnet, sobald Tailscale läuft). PostKauz und Authelia lauschen nur auf `127.0.0.1`.
+5. Programm aus `dist/` (Release) hochladen und einrichten:
+
+   ```bash
+   install -m 0755 postkauz-linux-amd64 /usr/local/bin/postkauz
+   install -d -m 0750 -o root -g postkauz /etc/postkauz
+   ```
+
+6. Konfiguration `/etc/postkauz/config.toml` (Rechte 0640, root:postkauz), Beispiel:
+
+   ```toml
+   [http]
+   listen = "127.0.0.1:8787"
+   auth = "key"
+   resource = "https://postkauz.<tailnet>.ts.net/mcp"
+   ```
+
+   `resource` ist die Adresse, die die Clients benutzen (aus 4.5). Ohne sie nimmt PostKauz nur Anfragen an `127.0.0.1:8787` an (Host-Prüfung, sonst 421).
+
+### 4.4 Konten und Dienste (systemd)
+
+Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos kommt aus einer Datei, die nur der Sync-Dienst liest (Rückfrage R2; Microsoft-Konten mit OAuth2 bleiben auf den Windows-PCs).
+
+1. Je Konto eine Datei mit dem Passwort (Kontoname `privat` → Variable `POSTKAUZ_PASSWORD_PRIVAT`):
+
+   ```bash
+   install -m 0640 -o root -g postkauz /dev/null /etc/postkauz/sync-privat.env
+   ```
+
+   Mit einem Editor eine Zeile hineinschreiben: `POSTKAUZ_PASSWORD_PRIVAT=<app-passwort>`.
+2. Konto anlegen (liest das Passwort aus der Umgebung, speichert es nicht):
+
+   ```bash
+   sudo -u postkauz env $(cat /etc/postkauz/sync-privat.env) POSTKAUZ_CONFIG=/etc/postkauz/config.toml POSTKAUZ_DATA_DIR=/var/lib/postkauz /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
+   ```
+
+   Erwartet: eine Zeile, die mit `account privat added (imap.gmail.com:993, tls …` beginnt.
+3. Units aus `deploy/systemd/` (im Release-Paket neben den Programmen) installieren und starten (statt `<konto>` den Kontonamen, z. B. `privat`; je Konto ein `postkauz-sync@<konto>.service`):
+
+   ```bash
+   install -m 0644 postkauz-sync@.service postkauz-mcp-http.service /etc/systemd/system/
+   systemctl daemon-reload
+   systemctl enable --now postkauz-sync@<konto>.service postkauz-mcp-http.service
+   ```
+
+4. Prüfen:
+
+   ```bash
+   systemctl --no-pager status postkauz-sync@<konto>.service postkauz-mcp-http.service
+   curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/healthz
+   ```
+
+   Erwartet: beide `active (running)`, dann `204`. Log: `journalctl -u postkauz-mcp-http.service` und `/var/lib/postkauz/postkauz.log`.
+
+Der MCP-Dienst hat keine `EnvironmentFile`-Zeile und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht: So kommt der Agent nie an ein Passwort.
+
+### 4.5 Tailscale und `tailscale serve`
+
+1. Tailscale auf dem VPS installieren und anmelden (Anleitung auf tailscale.com, „Linux“); den Knoten `postkauz` nennen.
+2. HTTPS im Tailnet einschalten (Admin-Konsole von Tailscale: DNS → MagicDNS an, „HTTPS Certificates“ an).
+3. Weiterleitung einrichten (bleibt nach einem Neustart):
+
+   ```bash
+   tailscale serve --bg 8787
+   ```
+
+   Erwartet: eine Zeile mit `https://postkauz.<tailnet>.ts.net/` → `http://127.0.0.1:8787`. **Nie** `tailscale funnel`.
+4. Von einem anderen Gerät im Tailnet:
+
+   ```bash
+   curl -sS https://postkauz.<tailnet>.ts.net/.well-known/oauth-protected-resource
+   ```
+
+   Erwartet: JSON mit `"resource":"https://postkauz.<tailnet>.ts.net/mcp"`.
+5. ACL in der Admin-Konsole: Cloud-Sitzungen bekommen einen Tag (z. B. `tag:cloud`) und dürfen nur Port 443 des Knotens `postkauz` erreichen.
+
+**Eine Cloud-Sitzung im Tailnet:** Sie tritt mit einem **ephemeren, zeitlich begrenzten Auth-Key** mit Tag bei (der Key kommt als Geheimnis in die Sitzung, nie ins Repository) und läuft ohne Root im Userspace-Modus (`tailscaled --tun=userspace-networking`); Programme in der Sitzung erreichen das Tailnet dann über den lokalen Proxy von `tailscaled`. Die Abnahme D8 (`docs/abnahme_D8.md`) zeigt die Kommandos. Claude Code bindet PostKauz dort im Modus `key` an: `claude mcp add --transport http postkauz https://postkauz.<tailnet>.ts.net/mcp --header "Authorization: Bearer ${POSTKAUZ_KEY}"`; der Schlüssel (Rolle passend wählen, kurze Laufzeit) kommt ebenfalls als Geheimnis in die Sitzung.
+
+### 4.6 Anmeldedienst Authelia (Modus `oauth`)
+
+Für Claude Code am PC mit Browser. PostKauz selbst meldet niemanden an; das macht Authelia (Apache-2.0), PostKauz prüft nur das Token. Vorlagen: `deploy/docker/auth/` (Docker Compose, Konfiguration und Benutzerdatei mit Platzhaltern). Authelia läuft nur auf Linux (VPS, oder WSL2 auf einem Windows-PC).
+
+1. Geheimnisse und Signaturschlüssel erzeugen (im Ordner mit den Vorlagen):
+
+   ```bash
+   openssl genrsa -out jwks.pem 2048
+   for n in jwt session storage hmac; do echo "$n: $(openssl rand -hex 32)"; done
+   ```
+
+2. `configuration.example.yml` nach `configuration.yml` kopieren und die Platzhalter ersetzen: `<auth-host>` (z. B. `postkauz.<tailnet>.ts.net`), `<auth-url>` (z. B. `https://postkauz.<tailnet>.ts.net:8443`, das ist später `[http] issuer`), `<resource>` (genau `[http] resource`), `<callback-port>` (ein fester Port, z. B. `33418`), die vier Zufallswerte.
+3. Ein Konto in `users.yml` (aus `users.example.yml`); den Passwort-Hash erzeugt:
+
+   ```bash
+   docker run --rm authelia/authelia:4.39.28 authelia crypto hash generate argon2
+   ```
+
+4. Starten und im Tailnet bereitstellen:
+
+   ```bash
+   docker compose -f deploy/docker/auth/docker-compose.yml up -d
+   tailscale serve --bg --https=8443 9091
+   ```
+
+   Authelia ist dann unter `https://postkauz.<tailnet>.ts.net:8443` erreichbar, nur im Tailnet.
+5. PostKauz umstellen, `/etc/postkauz/config.toml`:
+
+   ```toml
+   [http]
+   listen = "127.0.0.1:8787"
+   auth = "oauth"
+   resource = "https://postkauz.<tailnet>.ts.net/mcp"
+   issuer = "https://postkauz.<tailnet>.ts.net:8443"
+   [http.principals]
+   "platzhalter" = "cloud-reader"
+   ```
+
+   und `systemctl restart postkauz-mcp-http.service`.
+6. Claude Code am PC:
+
+   ```powershell
+   claude mcp add --transport http --client-id claude-code --callback-port 33418 postkauz https://postkauz.<tailnet>.ts.net/mcp
+   ```
+
+   In Claude Code `/mcp` → `postkauz` → anmelden. Der Browser zeigt Authelia; anmelden und „Zustimmen“ klicken (einmal je Anmeldung, Befund B3).
+7. **Subjekt zuordnen:** Beim ersten Mal antwortet PostKauz mit `403 forbidden`, weil das Subjekt noch unbekannt ist. Das Subjekt steht im Audit:
+
+   ```bash
+   sudo -u postkauz env POSTKAUZ_CONFIG=/etc/postkauz/config.toml POSTKAUZ_DATA_DIR=/var/lib/postkauz /usr/local/bin/postkauz audit --operation keys.authenticate --since 1h --json
+   ```
+
+   Den Wert von `params.via.sub` statt `platzhalter` in `[http.principals]` eintragen, Dienst neu starten, in Claude Code neu verbinden. Danach: `tools/list` nach der Rolle des Schlüssels.
+
+Token leben 5 Minuten; Claude Code erneuert sie selbst mit dem Refresh-Token. Ein widerrufener Schlüssel (`key revoke cloud-reader`) sperrt den Zugang sofort, auch mit gültigem Token (`403 denied (key_revoked)`).
+
+### 4.7 Docker statt systemd
+
+`deploy/docker/` enthält ein statisches Image (nur die Programmdatei, Nutzer ohne Rechte) und eine Compose-Datei mit den beiden Diensten und einem gemeinsamen Volume:
+
+```bash
+make release VERSION=<version>
+docker build -f deploy/docker/Dockerfile -t postkauz:<version> .
+cd deploy/docker && mkdir -p config && install -m 0600 /dev/null sync.env
+POSTKAUZ_VERSION=<version> docker compose up -d
+```
+
+`config/config.toml` wie in 4.3, `sync.env` mit den Passwörtern wie in 4.4 (beide stehen in `.gitignore`). Ein Konto legst du mit `docker compose run --rm sync account add privat --imap … --user … --password-from-env` an; bis dahin startet der Dienst `sync` mit `no account configured yet` immer wieder neu. Die Wurzel der Container ist schreibgeschützt (nur `/data` und `/tmp`). Tailscale als Sidecar statt auf dem Host: zusätzlich `-f docker-compose.tailscale.yml` und eine Datei `tailscale.env` mit `TS_AUTHKEY=…`.
+
+### 4.8 Updates und Sicherung auf dem VPS
+
+- Update: neue Programmdatei nach `/usr/local/bin/postkauz`, dann `systemctl restart postkauz-sync@<konto>.service postkauz-mcp-http.service`. Vor Updates mit neuer Schemaversion eine Sicherung (Abschnitt 2).
+- Sicherung: `postkauz backup create --to /pfad/auf/verschluesseltem/ziel` regelmäßig (Abschnitt 2), Audit-Export als Timer (`deploy/systemd/postkauz-audit-export.*`).
+
+### 4.9 Vorläufig: ein Windows-PC als Knoten (bis zum VPS)
+
+Bis über einen VPS entschieden ist, kann ein PC des Betreibers der Knoten sein (Abnahme D8, vorläufig): Tailscale für Windows installieren, Dauer-Sync wie in Abschnitt 1, `mcp --http` in einem eigenen Fenster wie in 4.2 (eine geplante Aufgabe dafür kommt mit dem Betriebsentscheid), dann in einer PowerShell als normaler Nutzer `tailscale serve --bg 8787` und `[http] resource` auf den Namen des PCs im Tailnet setzen. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS).
 
 ## 5. Löschkonzept
 

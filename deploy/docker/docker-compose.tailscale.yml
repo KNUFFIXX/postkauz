@@ -1,0 +1,27 @@
+# Zusatz zu docker-compose.yml: Tailscale als Sidecar statt auf dem Host
+# (E10). mcp-http teilt das Netz des Sidecars; tailscale serve terminiert
+# TLS für den MagicDNS-Namen und reicht an 127.0.0.1:8787 weiter. Kein
+# Funnel, kein offener Port.
+#
+#   install -m 0600 /dev/null tailscale.env    # TS_AUTHKEY=tskey-... (Tag, z. B. tag:postkauz)
+#   docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.tailscale.yml up -d
+services:
+  tailscale:
+    image: tailscale/tailscale:${TAILSCALE_VERSION:-stable}
+    hostname: postkauz
+    env_file:
+      - path: ./tailscale.env
+        required: true
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /serve/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./serve.json:/serve/serve.json:ro
+    restart: unless-stopped
+  mcp-http:
+    network_mode: service:tailscale
+    depends_on: [sync, tailscale]
+volumes:
+  tailscale-state:

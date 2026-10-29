@@ -1,0 +1,57 @@
+# PostKauz: Dauerläufer je Konto (sync --watch), Vorlage für einen VPS
+# (A03 S3.5, E9). Nur dieser Dienst kennt die Zugangsdaten; der HTTP-MCP
+# (postkauz-mcp-http.service) läuft ohne. Anleitung: docs/betrieb.md,
+# Abschnitt „VPS“.
+#
+# Als System-Unit für den Nutzer postkauz (root richtet ein):
+#   install -Dm644 postkauz-sync@.service -t /etc/systemd/system/
+#   install -d -m 0750 -o root -g postkauz /etc/postkauz
+#   install -m 0640 -o root -g postkauz /dev/null /etc/postkauz/sync-<konto>.env
+#   # in die Datei: POSTKAUZ_PASSWORD_<KONTO>=<passwort> (Name in Großbuchstaben)
+#   systemctl daemon-reload
+#   systemctl enable --now postkauz-sync@<konto>.service
+#   journalctl -u postkauz-sync@<konto>.service
+#
+# %i ist der Kontoname (z. B. postkauz-sync@<konto>.service, also für das Konto privat: privat statt <konto>).
+# Programm unter /usr/local/bin/postkauz, Daten unter /var/lib/postkauz,
+# Konfiguration unter /etc/postkauz/config.toml.
+[Unit]
+Description=PostKauz sync --watch for account %i (holds the mailbox credentials)
+Documentation=https://github.com/KNUFFIXX/postkauz/blob/main/docs/betrieb.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=postkauz
+Group=postkauz
+# Zugangsdaten nur hier (Rechte 0640, root:postkauz); nie in der Unit selbst.
+EnvironmentFile=/etc/postkauz/sync-%i.env
+Environment=POSTKAUZ_CONFIG=/etc/postkauz/config.toml
+Environment=POSTKAUZ_DATA_DIR=/var/lib/postkauz
+ExecStart=/usr/local/bin/postkauz sync --watch -a %i
+Restart=on-failure
+RestartSec=60
+# Nach einer abgelehnten Anmeldung (Exit-Code 6) nicht sofort neu: der
+# Anbieter könnte das Konto sperren.
+RestartPreventExitStatus=6
+StateDirectory=postkauz
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
