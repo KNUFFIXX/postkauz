@@ -38,6 +38,11 @@ var policyInputCases = map[string][]struct {
 		{`{"account":"demo","ids":` + idList(51) + `,"role":"archive"}`, opKey, "confirm_count_required"},
 		{`{"account":"demo","ids":[1],"role":"archive"}`, opKey, ""},
 	},
+	"accounts.remove": {
+		{`{"name":"leer","force":true}`, adminAgentKey, "human_only"},
+		{`{"name":"leer","force":true}`, humanKey, ""},
+		{`{"name":"leer"}`, adminAgentKey, ""},
+	},
 	"messages.trash": {
 		{`{"account":"demo","ids":` + idList(51) + `,"confirm_count":52}`, opKey, "confirm_count_mismatch"},
 		{`{"account":"demo","ids":[1]}`, opKey, ""},
@@ -47,7 +52,16 @@ var policyInputCases = map[string][]struct {
 var (
 	opKey    = policy.Key{ID: "key:op", Name: "op", Scopes: policy.Roles["operator"]}
 	humanKey = policy.Key{ID: "cli", Human: true, Scopes: policy.Roles["admin"]}
+	// adminAgentKey: Schlüssel mit Rolle admin (accounts.remove).
+	adminAgentKey = policy.Key{ID: "key:adm", Name: "adm", Scopes: policy.Roles["admin"]}
 )
+
+// defaultRulesForTest sind die Standardregeln für Executoren in Tests
+// (ohne Regeln lehnt der Executor Operationen mit PolicyInput ab).
+func defaultRulesForTest() *policy.Rules {
+	r := policy.DefaultRules()
+	return &r
+}
 
 // idList schreibt die IDs 1..n als JSON-Liste.
 func idList(n int) string {

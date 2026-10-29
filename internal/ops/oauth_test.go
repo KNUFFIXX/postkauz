@@ -60,7 +60,7 @@ func newOAuthEnv(t *testing.T) *oauthEnv {
 			t.Fatal(err)
 		}
 	}
-	e.x = &Executor{Registry: reg, Audit: e.au}
+	e.x = &Executor{Registry: reg, Audit: e.au, Rules: defaultRulesForTest()}
 	return &oauthEnv{accountsEnv: e, as: as, sys: sys, creds: creds}
 }
 
@@ -340,7 +340,7 @@ func TestOAuth2InsecureFileNeedsLocalSignIn(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		e.x = &Executor{Registry: reg, Audit: e.au}
+		e.x = &Executor{Registry: reg, Audit: e.au, Rules: defaultRulesForTest()}
 		run := func(op string, in map[string]any) error {
 			_, err := e.run(op, in, "", false)
 			return err

@@ -46,6 +46,10 @@ type PolicyOutput struct {
 	// gleich welche Rolle). Sichtbar, damit klar ist, was der Schlüssel nie
 	// darf (Entscheid 40); für den Menschen leer (sie stehen in operations).
 	HumanOnly []PolicyOperation `json:"human_only"`
+	// HumanOnlyOptions nennt für einen Schlüssel die Eingaben, die nur der
+	// Mensch ohne Schlüssel nutzen darf (policy.HumanOnlyOptions, z. B.
+	// accounts.remove mit force); für den Menschen leer.
+	HumanOnlyOptions []string `json:"human_only_options,omitempty"`
 }
 
 // PolicyGet beschreibt die Richtlinie des aufrufenden Schlüssels: Scopes,
@@ -90,7 +94,8 @@ func PolicyGet(maxChars int, file *policy.File) Operation {
       "items": {"type": "object", "properties": {
       "name": {"type": "string"}, "scope": {"type": "string"}, "risk": {"type": "string", "enum": ["R0", "R1", "R2", "R3"]},
       "read_only": {"type": "boolean"}},
-      "required": ["name", "scope", "risk", "read_only"]}}
+      "required": ["name", "scope", "risk", "read_only"]}},
+    "human_only_options": {"type": "array", "description": "inputs only a human without a key may use (decision human_only)", "items": {"type": "string"}}
   },
   "required": ["key", "scopes", "dry_run_default", "max_chars", "draft_only", "operations", "limits", "human_only"]
 }`),
@@ -108,6 +113,9 @@ func PolicyGet(maxChars int, file *policy.File) Operation {
 				if !k.IsHuman() {
 					out.MaxChars = file.MaxCharsFor(k.Name)
 				}
+			}
+			if !k.IsHuman() {
+				out.HumanOnlyOptions = slices.Clone(policy.HumanOnlyOptions)
 			}
 			r := rules.For(k)
 			out.Limits = PolicyLimits{MoveAgentMay: r.MoveAgentMay, DeleteAgentMay: r.DeleteAgentMay,

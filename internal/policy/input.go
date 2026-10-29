@@ -46,7 +46,15 @@ type Facts struct {
 	TargetRole string
 	// CrossAccount: Ziel liegt in einem anderen Konto als die Nachrichten.
 	CrossAccount bool
+	// HumanOnlyOption: Die Eingabe nutzt eine Option, die nur der Mensch
+	// ohne Schlüssel nutzen darf (accounts.remove mit force; Nachbesserung
+	// T3, A9). Mit Schlüssel: deny human_only.
+	HumanOnlyOption bool
 }
+
+// HumanOnlyOptions nennt die Eingaben, die nur der Mensch ohne Schlüssel
+// nutzen darf, gleich welche Rolle (policy.get, für einen Schlüssel).
+var HumanOnlyOptions = []string{"accounts.remove with force", "messages.move to a folder with role junk, drafts or sent"}
 
 // Rules sind die Regeln der Policy-Datei, die CheckInput auswertet.
 type Rules struct {
@@ -144,6 +152,9 @@ func CheckInput(key Key, f Facts, r Rules) Decision {
 	}
 	if key.IsHuman() {
 		return Decision{Outcome: Allow, Reason: "ok"}
+	}
+	if f.HumanOnlyOption {
+		return deny("human_only")
 	}
 	if f.Action == ActionMove && slices.Contains(HumanOnlyMoveRoles, f.TargetRole) {
 		return deny("target_role_human_only")

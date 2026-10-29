@@ -39,6 +39,8 @@ func TestCheckInput(t *testing.T) {
 		{"cross account", agent, Facts{Action: ActionMove, Targets: 1, CrossAccount: true}, def, "cross_account"},
 		{"mark below", agent, Facts{Action: ActionMark, Targets: 10}, Rules{BulkConfirmThreshold: 10}, ""},
 		{"mark above own threshold", agent, Facts{Action: ActionMark, Targets: 11}, Rules{BulkConfirmThreshold: 10}, "confirm_count_required"},
+		{"human only option, human", human, Facts{HumanOnlyOption: true}, def, ""},
+		{"human only option, key", agent, Facts{HumanOnlyOption: true}, def, "human_only"},
 	}
 	for _, c := range cases {
 		d := CheckInput(c.key, c.f, c.r)

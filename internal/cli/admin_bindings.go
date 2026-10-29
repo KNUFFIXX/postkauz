@@ -373,6 +373,9 @@ func renderPolicy(w io.Writer, out any) error {
 		for _, op := range o.HumanOnly {
 			fmt.Fprintf(w, "  %s: human_only\n", op.Name)
 		}
+		for _, opt := range o.HumanOnlyOptions {
+			fmt.Fprintf(w, "  %s: human_only\n", opt)
+		}
 	}
 	return nil
 }

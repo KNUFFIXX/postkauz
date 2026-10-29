@@ -95,7 +95,7 @@ func newAccountsEnv(t *testing.T) *accountsEnv {
 			t.Fatal(err)
 		}
 	}
-	e.x = &Executor{Registry: reg, Audit: e.au}
+	e.x = &Executor{Registry: reg, Audit: e.au, Rules: defaultRulesForTest()}
 	return e
 }
 
@@ -243,7 +243,7 @@ func TestAccountsAddPasswordFromEnv(t *testing.T) {
 	reg := NewRegistry()
 	sec := secrets.WithEnv(e.sec)
 	_ = reg.Register(AccountsAdd(e.st, sec, oauth.Microsoft{}))
-	x := &Executor{Registry: reg, Audit: e.au}
+	x := &Executor{Registry: reg, Audit: e.au, Rules: defaultRulesForTest()}
 	t.Setenv(secrets.EnvName(e.ref(t, "demo")), canary)
 	in := demoInput()
 	in["password_from_env"] = true

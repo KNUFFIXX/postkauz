@@ -766,7 +766,9 @@ type AccountsRemoveOutput struct {
 // offene Postfach-Aktionen fielen per ON DELETE CASCADE still weg; ohne
 // force lehnt die Operation dann ab (open_drafts bzw. open_actions). force
 // darf nur der Mensch ohne Schlüssel (sonst human_only), auch im
-// Trockenlauf.
+// Trockenlauf. Seit der Nachbesserung T3 entscheidet das die Policy
+// (PolicyInput → policy.CheckInput, A9): ein Eintrag denied, kein Start,
+// kein Handler; die Prüfung im Handler bleibt als zweite Absicherung.
 func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
 	return Operation{
 		Name:    "accounts.remove",
@@ -793,6 +795,15 @@ func AccountsRemove(repo AccountRepo, sec secrets.Store) Operation {
   "required": ["removed", "dry_run", "secret_deleted", "secret_kind"]
 }`),
 		Redact: redactAccountInput,
+		PolicyInput: func(_ context.Context, raw json.RawMessage) (policy.Facts, error) {
+			var in struct {
+				Force bool `json:"force"`
+			}
+			if err := json.Unmarshal(raw, &in); err != nil {
+				return policy.Facts{}, inputErr("invalid input")
+			}
+			return policy.Facts{HumanOnlyOption: in.Force}, nil
+		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
 			var in struct {
 				Name  string `json:"name"`
