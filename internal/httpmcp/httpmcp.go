@@ -105,6 +105,8 @@ type Server struct {
 	auth    authenticator
 	hosts   map[string]bool
 	prmURL  string
+	// logPaths: Pfade, die das Log wörtlich nennt (sonst "other").
+	logPaths map[string]bool
 	// failures: Vorrat für Anfragen ohne gültige Anmeldung (failPerMinute).
 	failures *rate.Limiter
 	// perMin: Vorrat je Schlüssel nach der Anmeldung
@@ -152,6 +154,7 @@ func New(d Deps) (*Server, error) {
 	}
 	resPath := strings.TrimSuffix(res.Path, "/")
 	s.prmURL = res.Scheme + "://" + res.Host + prmPath + resPath
+	s.logPaths = map[string]bool{PathMCP: true, PathHealth: true, prmPath: true, prmPath + resPath: true}
 	perMin := h.MaxRequestsPerMinute
 	if perMin <= 0 {
 		perMin = config.DefaultMaxRequestsPerMin
@@ -242,7 +245,7 @@ func (s *Server) outer(next http.Handler) http.Handler {
 		// Platz für den Principal, den mcpGate nach der Anmeldung einträgt.
 		slot := new(*principal)
 		defer func() {
-			args := []any{"method", r.Method, "path", logPath(r.URL.Path), "status", rw.code(), "ms", s.d.Now().Sub(start).Milliseconds()}
+			args := []any{"method", r.Method, "path", s.logPath(r.URL.Path), "status", rw.code(), "ms", s.d.Now().Sub(start).Milliseconds()}
 			if p := *slot; p != nil {
 				args = append(args, "key", p.key.ID)
 			}
@@ -477,11 +480,11 @@ func normHost(h string) string {
 	return strings.TrimSuffix(h, ".")
 }
 
-// logPath nennt nur bekannte Pfade, sonst "other" (kein Freitext aus der
-// Anfrage im Log).
-func logPath(p string) string {
-	switch {
-	case p == PathMCP, p == PathHealth, strings.HasPrefix(p, prmPath):
+// logPath nennt nur die bekannten Pfade wörtlich (/mcp, /healthz, die
+// beiden Pfade der Metadaten), sonst "other": kein Freitext aus der
+// Anfrage im Log, auch nicht hinter /.well-known/oauth-protected-resource.
+func (s *Server) logPath(p string) string {
+	if s.logPaths[p] {
 		return p
 	}
 	return "other"
