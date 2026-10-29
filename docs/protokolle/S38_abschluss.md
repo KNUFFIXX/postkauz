@@ -56,3 +56,10 @@ Die Programme unterscheiden sich von 0.3.0-alpha.8c nur durch die Versionskennun
 ## 5. Haltepunkt
 
 Gegenprüfung durch die Prüfsitzung (Doku, Nachbau, `make vuln`), danach D10 beim Betreiber (Offene Fragen 1 bis 3 in `docs/roadmap.md`).
+
+## 6. Gegenprüfung (Prüfsitzung DRACO-PK10, 29.10.2026)
+
+1. Diff `24d70a7..dce96df`: nur Doku (11 Dateien, kein Code, keine Unit, kein Skript). Stichproben gegen den Code: 24 Tools in `internal/mcp/tools.go`, `policy.MaxTargets` 1000 und `DefaultBulkConfirmThreshold` 50 (ab 51 Zielen `confirm_count`), `[retention] blob_gc_min_age`, offene Starts älter als 10 Minuten (`AuditOpenStarts`): stimmen. **Kein BLOCKER, kein WICHTIG.** Die Funde 1 und 2 oben bleiben KLEIN; Fund 1 (Compose-Dateien und Audit-Units fehlen in `dist/`) weicht vom Kriterium der Zeile S3.8 ab und geht als Hinweis in die Entscheidung D10.
+2. Nachbau `0.3.0-rc1` an `502da91` in einem Klon ohne Tags: alle zehn Zeilen von `SHA256SUMS` (ohne `VERSION`) gleich, Windows `e307fad6…`, Linux `06ddbaef…`, darwin `7790391a…`.
+3. `make vuln` an `502da91`: govulncheck v1.9.0 ohne Fund.
+4. Abnahme D8 Teil A mit `0.3.0-rc1` (`-ExpectVersion 0.3.0-rc1`) auf dem Büro-PC: **29 OK, 0 FAIL, 0 SKIP**.
