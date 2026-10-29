@@ -537,10 +537,14 @@ Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in ei
    ```
 
    Als `root` mit einem Editor eine Zeile hineinschreiben: `POSTKAUZ_PASSWORD_PRIVAT=<app-passwort>`.
-2. Konto anlegen (liest das Passwort aus der Umgebung, speichert es nicht):
+2. Konto anlegen (liest das Passwort aus der Umgebung, speichert es nicht). Als `root`, über `systemd-run`: systemd liest die Passwortdatei selbst, wie später beim Sync-Dienst, und startet das Programm als Nutzer `postkauz`. So steht das Passwort nie in einer Befehlszeile (`ps`, Befehlsverlauf, das Protokoll von `sudo`). `StateDirectory=` legt dabei `/var/lib/postkauz` für den Nutzer `postkauz` an, wie es die Units später auch tun:
 
    ```bash
-   sudo -u postkauz env $(cat /etc/postkauz/credentials/sync-privat.env) POSTKAUZ_CONFIG=/etc/postkauz/config.toml POSTKAUZ_DATA_DIR=/var/lib/postkauz /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
+   systemd-run --pipe --wait --quiet --uid=postkauz --gid=postkauz \
+     -p EnvironmentFile=/etc/postkauz/credentials/sync-privat.env \
+     -p StateDirectory=postkauz -p StateDirectoryMode=0700 -p UMask=0077 \
+     -E POSTKAUZ_CONFIG=/etc/postkauz/config.toml -E POSTKAUZ_DATA_DIR=/var/lib/postkauz \
+     /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
    ```
 
    Erwartet: eine Zeile, die mit `account privat added (imap.gmail.com:993, tls …` beginnt.
