@@ -68,7 +68,7 @@ func ThreadsGet(msgs MessageRepo) Operation {
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "id": {"type": "integer", "minimum": 1, "description": "thread id"},
+    "id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "thread id"},
     "message": {"type": "integer", "minimum": 1, "description": "local message id; shows the thread of this message"},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the thread belongs to this account (else not found)"},
     "text": {"type": "boolean", "description": "include each message's text without quotes"},
@@ -323,7 +323,7 @@ func AttachmentsText(accounts AccountRepo, msgs MessageRepo, blobs BlobReader, e
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
-    "id": {"type": "integer", "minimum": 1, "description": "attachment id from attachments.list"},
+    "id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "attachment id from attachments.list"},
     "message": {"type": "integer", "minimum": 1, "description": "only if the attachment belongs to this message (else not found)"},
     "account": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "only if the attachment belongs to this account (else not found)"},
     "max_chars": {"type": "integer", "minimum": 1, "description": "cut the text after this many characters (text_truncated=true)"}

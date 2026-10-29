@@ -36,6 +36,12 @@
 --      Fremdschlüssel verweist sonst nicht auf sie). Archive der Audit-
 --      Rotation kann es vor 0022 nicht geben (audit_archives entsteht erst
 --      unten).
+--      Dritte Nachbesserung T3, Punkt 3: Die Ziele stammen aus der Eingabe
+--      und stehen auch bei abgelehnten oder gescheiterten Aufrufen im Audit
+--      (threads.get mit erfundener ID 9223372036854775807 ergab sonst den
+--      Startwert INT64_MAX, nextIDExpr lief über, jedes neue INSERT
+--      scheiterte mit datatype mismatch). Gezählt werden nur Ziele mit
+--      result = 'ok' und einer ID zwischen 1 und 2^53-1.
 -- 2. action_targets.source_path (A03_teile.md T3, Nachprüfung zu fd70f19):
 --    Pfad des Quellordners beim Anlegen des Ziels; vor dem Kommando vergleicht
 --    der Runner ihn mit dem Pfad unter mailbox_id (wie beim Zielordner, V1).
@@ -64,13 +70,15 @@ INSERT INTO meta(key, value) VALUES ('id_floor_attachments', CAST((SELECT coales
         SELECT max(id) AS v FROM attachments
         UNION ALL SELECT max(CAST(substr(j.value, 12) AS INTEGER))
                     FROM audit_events, json_each(CASE WHEN json_valid(targets) THEN targets ELSE '[]' END) AS j
-                    WHERE j.value LIKE 'attachment:%')) AS TEXT))
+                    WHERE j.value LIKE 'attachment:%' AND audit_events.result = 'ok'
+                      AND CAST(substr(j.value, 12) AS INTEGER) BETWEEN 1 AND 9007199254740991)) AS TEXT))
     ON CONFLICT(key) DO NOTHING;
 INSERT INTO meta(key, value) VALUES ('id_floor_threads', CAST((SELECT coalesce(max(v), 0) FROM (
         SELECT max(id) AS v FROM threads
         UNION ALL SELECT max(CAST(substr(j.value, 8) AS INTEGER))
                     FROM audit_events, json_each(CASE WHEN json_valid(targets) THEN targets ELSE '[]' END) AS j
-                    WHERE j.value LIKE 'thread:%')) AS TEXT))
+                    WHERE j.value LIKE 'thread:%' AND audit_events.result = 'ok'
+                      AND CAST(substr(j.value, 8) AS INTEGER) BETWEEN 1 AND 9007199254740991)) AS TEXT))
     ON CONFLICT(key) DO NOTHING;
 
 CREATE TRIGGER messages_id_floor AFTER DELETE ON messages
@@ -134,3 +142,4 @@ CREATE TRIGGER audit_archives_no_update BEFORE UPDATE ON audit_archives
 BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;
 CREATE TRIGGER audit_archives_no_delete BEFORE DELETE ON audit_archives
 BEGIN SELECT RAISE(ABORT, 'audit_archives ist append-only'); END;
+
