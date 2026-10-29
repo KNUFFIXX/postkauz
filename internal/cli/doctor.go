@@ -19,6 +19,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/flock"
+	"github.com/KNUFFIXX/postkauz/internal/httpmcp"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -91,10 +92,28 @@ type DoctorReport struct {
 	AttachDir string `json:"attach_dir"`
 	// ExportDir: Ziel von attach save ([paths] export_dir, S3.3).
 	ExportDir string `json:"export_dir"`
+	// HTTP: Einstellungen für mcp --http ([http], T5); nie Geheimnisse
+	// (Principals nur als Zahl).
+	HTTP *DoctorHTTP `json:"http,omitempty"`
 	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
 	Warnings []string       `json:"warnings"`
+}
+
+// DoctorHTTP zeigt [http] ohne Geheimnisse (S3.8: doctor zeigt die
+// HTTP-Konfiguration).
+type DoctorHTTP struct {
+	Listen            string   `json:"listen"`
+	ListenAllowed     bool     `json:"listen_allowed"`
+	ListenProblem     string   `json:"listen_problem,omitempty"`
+	AllowNonLoopback  bool     `json:"allow_non_loopback"`
+	Auth              string   `json:"auth"`
+	Resource          string   `json:"resource"`
+	Issuer            string   `json:"issuer,omitempty"`
+	AllowedHosts      []string `json:"allowed_hosts,omitempty"`
+	Principals        int      `json:"principals"`
+	MaxRequestsPerMin int      `json:"max_requests_per_minute"`
 }
 
 // DoctorAccount meldet je Konto, woher das Passwort käme.
@@ -205,6 +224,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
 	rep.AttachDir = a.paths.AttachDir
 	rep.ExportDir = a.paths.ExportDir
+	rep.HTTP = doctorHTTP(a.cfg.HTTP)
 	pf := doctorPolicy(&rep, a.paths.ConfigFile)
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
@@ -627,6 +647,17 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if r.ExportDir != "" {
 		fmt.Fprintf(w, "export:    %s [paths.export_dir]\n", r.ExportDir)
 	}
+	if h := r.HTTP; h != nil {
+		listen := h.Listen
+		if !h.ListenAllowed {
+			listen += " (NOT ALLOWED: " + h.ListenProblem + ")"
+		}
+		fmt.Fprintf(w, "http:      mcp --http on %s, auth %s, resource %s", listen, h.Auth, h.Resource)
+		if h.Auth == config.HTTPAuthOAuth {
+			fmt.Fprintf(w, ", issuer %s, %s", h.Issuer, plural(h.Principals, "principal", "principals"))
+		}
+		fmt.Fprintln(w, " [http]")
+	}
 	if r.PDFTool != "" {
 		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)
 	} else {
@@ -682,4 +713,14 @@ func printDoctor(w io.Writer, r DoctorReport) {
 			fmt.Fprintln(w, "  - "+strings.TrimSpace(x))
 		}
 	}
+}
+
+// doctorHTTP fasst [http] zusammen und prüft die Adresse wie mcp --http.
+func doctorHTTP(h config.HTTP) *DoctorHTTP {
+	d := &DoctorHTTP{Listen: h.Listen, ListenAllowed: true, AllowNonLoopback: h.AllowNonLoopback, Auth: h.Auth, Resource: h.Resource,
+		Issuer: h.Issuer, AllowedHosts: h.AllowedHosts, Principals: len(h.Principals), MaxRequestsPerMin: h.MaxRequestsPerMinute}
+	if err := httpmcp.CheckListen(h); err != nil {
+		d.ListenAllowed, d.ListenProblem = false, strings.TrimPrefix(err.Error(), httpmcp.ErrListenNotAllowed.Error()+": ")
+	}
+	return d
 }

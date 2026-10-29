@@ -260,6 +260,7 @@ Durchsucht den lokalen Spiegel (ohne Serverkontakt). Ohne `-a` alle Konten. Mehr
 - Jeder Tool-Aufruf und jedes Lesen einer Resource steht im Audit mit `key:<name>` und Akteur `agent`, ohne Mailtext (`postkauz audit --key-id key:<name>`).
 - `--profile` und `POSTKAUZ_DATA_DIR` wählen die Datenbank wie bei jedem Kommando. Der Server synct nicht; aktuell hält die Daten `sync` bzw. `sync --watch`.
 - Log: Start, Ende und je Aufruf Tool, Schlüssel und Audit-ID in `postkauz.log` (ohne Inhalte); stdout gehört allein dem Protokoll.
+- **Über HTTP** (seit T5, S3.5; ADR-010): `postkauz mcp --http [--listen <ip>:<port>]` spricht dieselben Tools über Streamable HTTP, zustandslos (nur `POST /mcp`, keine Session-ID; Einzelheiten und Antworten: [mcp.md](mcp.md), Abschnitt 1, „HTTP“). Einstellungen aus `[http]` (Abschnitt 5); `--listen` ersetzt `[http] listen` für diesen Aufruf. Jede Anfrage bringt ihren eigenen Zugang mit (`Authorization: Bearer …`): im Modus `key` (Standard) einen PostKauz-Schlüssel; `POSTKAUZ_KEY`/`POSTKAUZ_KEY_FILE` werden dann ignoriert (Hinweis auf stderr). Eine Adresse außerhalb von Loopback ohne `[http] allow_non_loopback = true`, im Modus `key` jede Adresse außer Loopback und Tailnet, bricht vor dem Start ab: Exit 2, die Meldung nennt den Grund. Nach dem Start steht auf stderr `mcp --http: listening on <adresse> (auth <modus>, resource <url>); stop with Ctrl+C`; Strg+C (bzw. das Ende des Dienstes) beendet den Server, offene Anfragen laufen höchstens 10 s weiter. Der Prozess fasst keine Postfachpasswörter an. Log: je Anfrage Methode, Pfad, Status, Dauer und `key:<name>`, nie ein Token.
 
 ## 2i. Import aus mbox und Maildir (S1.10)
 
@@ -430,6 +431,13 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   ttl = "168h"              # neuer Name für [draft] approval_ttl (der alte bleibt gültig; beide verschieden gesetzt ist ein Fehler)
   [tags]                    # seit T2 (E5)
   sync_keywords = false     # true: Tags zusätzlich als IMAP-Keywords auf den Server (nur in Ordnern mit PERMANENTFLAGS \*)
+  [http]                    # seit T5 (S3.5, ADR-010): mcp --http; keine Geheimnisse
+  listen = "127.0.0.1:8787" # IP-Adresse oder localhost mit Port; andere als Loopback nur mit allow_non_loopback
+  allow_non_loopback = false # true: andere Adressen erlauben (Modus key: nur Tailnet 100.64.0.0/10, fd7a:115c:a1e0::/48)
+  auth = "key"              # key (Bearer = PostKauz-Schlüssel) | oauth (Bearer = Access-Token eines externen Autorisierungsservers, S3.6)
+  resource = ""             # eigene URL, wie Clients sie nutzen, z. B. "https://<knoten>/mcp"; leer = http://<listen>/mcp (bei oauth Pflicht)
+  allowed_hosts = []        # erlaubte Host-Köpfe (host oder host:port); leer = Host aus resource (ohne resource auch localhost/127.0.0.1/[::1] mit Port)
+  max_requests_per_minute = 120  # alle Anfragen zusammen (1 bis 10000); darüber 429
   ```
 
 - **Zitatzeile auf Deutsch** (`[draft] quote_line`, Platzhalter `{date_numeric}` seit S2.4): Programmausgaben sind Englisch, deshalb beginnt ein Zitat standardmäßig mit `On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel <erika@example.org> wrote:`. Die Vorlage kennt drei Platzhalter: `{date}` (Datum der Ausgangsnachricht englisch, wie oben), `{date_numeric}` (dasselbe Datum als `21.10.2026 09:15`, in derselben Zeitzone wie `{date}`, also der der Ausgangsnachricht, siehe unten; fehlt das Datum, steht `??.??.???? ??:??`) und `{from}` (Absender als `Name <adresse>`). Für Deutsch:

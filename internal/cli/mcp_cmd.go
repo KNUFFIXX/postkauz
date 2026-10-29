@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/httpmcp"
 	"github.com/KNUFFIXX/postkauz/internal/mcp"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
@@ -37,17 +39,30 @@ const mcpScopesText = "The tools follow the scopes of the key: a reader key only
 // mcpCmd startet den MCP-Server über stdio (S1.9). Er ist kein
 // Registerbefehl: Jeder Tool-Aufruf läuft einzeln durch den Executor.
 func mcpCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	var httpMode bool
+	var listen string
+	c := &cobra.Command{
 		Use:   "mcp",
 		Short: "Run the MCP server over stdio for an agent: read mail, write drafts, more as the key's scopes allow; never sends (key from " + EnvKey + ")",
 		Long: "Run the MCP server over standard input/output, for Claude Code and other MCP clients.\n" +
 			"The API key comes from the environment variable " + EnvKey + " (or a file named in " + EnvKeyFile +
 			", readable only by you), never from the command line. Create a key with: key create --name <name> --role reader.\n" +
-			mcpScopesText,
+			mcpScopesText + "\n\n" +
+			"With --http it serves MCP over HTTP instead (stateless Streamable HTTP, POST /mcp; settings in [http] of the " +
+			"configuration). Then every request brings its own credential as \"Authorization: Bearer ...\": an API key " +
+			"(auth = \"key\", loopback and Tailscale addresses only) or an access token of an external authorization server " +
+			"(auth = \"oauth\"). The HTTP server knows no mailbox password; TLS and the private network come from in front " +
+			"(tailscale serve), see docs/betrieb.md.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name, _ := cmd.Flags().GetString("key"); name != "" {
 				return usageError{fmt.Errorf("mcp takes its key from %s or %s, not from --key", EnvKey, EnvKeyFile)}
+			}
+			if httpMode {
+				return runMCPHTTP(cmd.Context(), a, listen)
+			}
+			if listen != "" {
+				return usageError{errors.New("--listen needs --http")}
 			}
 			plain, err := keyFromEnv()
 			if err != nil {
@@ -77,6 +92,46 @@ func mcpCmd(a *app) *cobra.Command {
 			return err
 		},
 	}
+	c.Flags().BoolVar(&httpMode, "http", false, "serve MCP over HTTP ([http] in the configuration) instead of stdio")
+	c.Flags().StringVar(&listen, "listen", "", "with --http: address and port instead of [http] listen, e.g. 127.0.0.1:8787")
+	return c
+}
+
+// runMCPHTTP startet den HTTP-MCP-Server (S3.5, ADR-010) und läuft, bis
+// der Prozess beendet wird (Strg+C, Dienst gestoppt).
+func runMCPHTTP(ctx context.Context, a *app, listen string) error {
+	if os.Getenv(EnvKey) != "" || os.Getenv(EnvKeyFile) != "" {
+		fmt.Fprintf(a.stderr, "mcp --http: %s/%s is ignored; every HTTP request brings its own credential\n", EnvKey, EnvKeyFile)
+	}
+	a.noCredentials = true
+	x, err := a.open(ctx)
+	if err != nil {
+		return err
+	}
+	h := a.cfg.HTTP
+	if listen != "" {
+		h.Listen = listen
+		if err := config.CheckHTTP(&h); err != nil {
+			return usageError{err}
+		}
+	}
+	if err := httpmcp.CheckListen(h); err != nil {
+		return usageError{err}
+	}
+	srv, err := httpmcp.New(httpmcp.Deps{HTTP: h, Executor: x, Keys: a.st, Audit: a.st.AuditWriter(), Version: a.version,
+		Log: a.log, MaxChars: a.policy.MaxCharsFor})
+	if err != nil {
+		return err
+	}
+	err = srv.ListenAndServe(ctx, func(addr string) {
+		a.log.Info("mcp http server started", "listen", addr, "auth", h.Auth, "resource", h.Resource)
+		fmt.Fprintf(a.stderr, "mcp --http: listening on %s (auth %s, resource %s); stop with Ctrl+C\n", addr, h.Auth, h.Resource)
+	})
+	a.log.Info("mcp http server stopped")
+	if err == nil || errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 // keyFromEnv liest den Schlüssel aus POSTKAUZ_KEY oder der Datei in
