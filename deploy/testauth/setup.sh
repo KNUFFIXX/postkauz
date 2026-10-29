@@ -3,14 +3,21 @@
 # [http] auth = "oauth" (S3.6): Authelia im Docker, nur auf 127.0.0.1,
 # eingerichtet aus dem Beispiel deploy/docker/auth/configuration.example.yml
 # (prüft so auch das Beispiel). Test-CA, Schlüssel, Geheimnisse und das
-# Passwort des Testkontos entstehen zufällig in $WORK, nie im Repository.
+# Passwort des Testkontos entstehen zufällig in $POSTKAUZ_TESTAUTH_DIR, nie im
+# Repository. Das Skript löscht diesen Ordner vor jedem Lauf, aber nur, wenn
+# er leer ist oder seine eigene Marke .postkauz-testauth trägt (sonst Abbruch,
+# etwa bei einem Tippfehler im Pfad).
 #
-#   make testauth-up            # WORK=/tmp/postkauz-testauth (Standard)
+#   make testauth-up            # POSTKAUZ_TESTAUTH_DIR=/tmp/postkauz-testauth (Standard)
 #   POSTKAUZ_IT=authelia POSTKAUZ_TESTAUTH_DIR=/tmp/postkauz-testauth make integration
 #   make testauth-down
 set -eu
 here=$(cd "$(dirname "$0")/../.." && pwd)
-WORK=${WORK:-/tmp/postkauz-testauth}
+# Eigener Name statt WORK: eine WORK aus der Umgebung (etwa einer anderen
+# Werkzeugkette) darf nie gelöscht werden. Derselbe Name wie im
+# Integrationstest (internal/httpmcp/integration_test.go).
+TESTAUTH_DIR=${POSTKAUZ_TESTAUTH_DIR:-/tmp/postkauz-testauth}
+MARK=.postkauz-testauth
 IMAGE=${AUTHELIA_IMAGE:-authelia/authelia:4.39.28}
 NAME=postkauz-testauth
 PORT=${TESTAUTH_PORT:-19091}
@@ -18,10 +25,27 @@ HOST=auth.postkauz.test
 RESOURCE=https://node.postkauz.test/mcp
 CALLBACK=33418
 
+case "$TESTAUTH_DIR" in
+  /*) ;;
+  *) echo "setup: POSTKAUZ_TESTAUTH_DIR must be an absolute path (got $TESTAUTH_DIR)" >&2; exit 1;;
+esac
+if [ -L "$TESTAUTH_DIR" ]; then
+  echo "setup: $TESTAUTH_DIR is a symlink; refusing to use it" >&2; exit 1
+fi
+if [ -e "$TESTAUTH_DIR" ]; then
+  if [ ! -d "$TESTAUTH_DIR" ]; then
+    echo "setup: $TESTAUTH_DIR exists and is not a directory" >&2; exit 1
+  fi
+  if [ ! -f "$TESTAUTH_DIR/$MARK" ] && [ -n "$(ls -A "$TESTAUTH_DIR")" ]; then
+    echo "setup: $TESTAUTH_DIR is not empty and has no $MARK marker; not deleting it (choose another POSTKAUZ_TESTAUTH_DIR)" >&2; exit 1
+  fi
+fi
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-rm -rf "$WORK"
-mkdir -p "$WORK/tls" "$WORK/data"
-cd "$WORK"
+if [ -f "$TESTAUTH_DIR/$MARK" ]; then rm -rf "$TESTAUTH_DIR"; fi
+mkdir -p "$TESTAUTH_DIR"
+echo 'postkauz testauth work dir (deploy/testauth/setup.sh); deleted on the next run' > "$TESTAUTH_DIR/$MARK"
+mkdir -p "$TESTAUTH_DIR/tls" "$TESTAUTH_DIR/data"
+cd "$TESTAUTH_DIR"
 rnd() { openssl rand -hex 32; }
 
 # Test-CA und Zertifikat für $HOST (nur dieser Test).
@@ -54,8 +78,8 @@ chmod 644 users.yml configuration.yml
 chmod 777 data
 
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:9091" -e X_AUTHELIA_CONFIG_FILTERS=template \
-  -v "$WORK/configuration.yml:/config/configuration.yml:ro" -v "$WORK/users.yml:/config/users.yml:ro" \
-  -v "$WORK/jwks.pem:/config/jwks.pem:ro" -v "$WORK/tls:/config/tls:ro" -v "$WORK/data:/data" "$IMAGE" >/dev/null
+  -v "$TESTAUTH_DIR/configuration.yml:/config/configuration.yml:ro" -v "$TESTAUTH_DIR/users.yml:/config/users.yml:ro" \
+  -v "$TESTAUTH_DIR/jwks.pem:/config/jwks.pem:ro" -v "$TESTAUTH_DIR/tls:/config/tls:ro" -v "$TESTAUTH_DIR/data:/data" "$IMAGE" >/dev/null
 
 cat > env <<ENV
 TESTAUTH_ISSUER=https://$HOST:$PORT
@@ -72,4 +96,4 @@ until curl --noproxy '*' -fsS --cacert tls/ca.crt --resolve "$HOST:$PORT:127.0.0
   if [ $i -gt 60 ]; then docker logs "$NAME" >&2; echo "setup: authelia did not come up" >&2; exit 1; fi
   sleep 1
 done
-echo "testauth: ok ($WORK, $(docker inspect -f '{{.Config.Image}}' "$NAME"))"
+echo "testauth: ok ($TESTAUTH_DIR, $(docker inspect -f '{{.Config.Image}}' "$NAME"))"
