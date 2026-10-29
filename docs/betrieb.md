@@ -530,3 +530,37 @@ Thunderbird liest mbox-Dateien nicht ohne Zusatz ein. Der übliche Weg ist das A
 4. Ein paar Nachrichten öffnen: Betreff, Text und Anhänge müssen lesbar sein.
 
 Die Menünamen können je nach Version abweichen; geprüft wird das in der Abnahme D7.
+
+## 7. Release bauen und nachbauen
+
+Ein Release (`make release VERSION=…`) ist erst belastbar, wenn ein zweiter Bau aus einem frischen Klon Byte für Byte dieselben Programmdateien ergibt. Die Programmdatei trägt die Modulversion von Go (`mod … v0.0.0-<Zeit>-<Hash>`, sichtbar mit `go version -m`). Diese **Pseudoversion hängt von den Tags im Klon ab**: In einem Klon mit dem Tag `v0.2.0-rc8` entsteht `v0.2.0-rc8.0.<Zeit>-<Hash>`, ohne Tags `v0.0.0-<Zeit>-<Hash>`; die Dateien unterscheiden sich dann (Prüfsitzung 29.10.2026: `0.3.0-alpha.6` war erst nach dem Löschen der Tags bytegleich).
+
+Regel (seit der Nachbesserung T3):
+
+1. Bauen und Nachbauen jeweils in einem frischen Klon **ohne Tags**, auf dem Release-Commit, mit sauberem Arbeitsbaum:
+
+   ```bash
+   git clone --no-tags --branch <zweig> https://github.com/KNUFFIXX/postkauz.git pk-release
+   ```
+
+   ```bash
+   cd pk-release && git checkout <commit> && git status --short
+   ```
+
+   Erwartet: `git status --short` gibt nichts aus.
+2. Bauen mit der Toolchain aus `go.mod` (go1.27.3):
+
+   ```bash
+   make release VERSION=<version>
+   ```
+
+3. Den Nachbau genauso in einem **zweiten** frischen Klon ohne Tags.
+4. Vergleichen: `dist/SHA256SUMS` beider Klone gleich (die Zeile `VERSION` darf abweichen, sie enthält die Bauzeit), dazu je Programm
+
+   ```bash
+   go version -m dist/postkauz-linux-amd64
+   ```
+
+   Erwartet in beiden: dieselbe Zeile `mod github.com/KNUFFIXX/postkauz v0.0.0-<Zeit>-<Hash>` und dieselben `build`-Zeilen.
+
+**Festlegung (Einspruch möglich):** Auch die Cloud-Sitzung baut Releases so, in einem Klon ohne Tags; Prüfsummen und `go version -m` stehen im Protokoll der Sitzung.

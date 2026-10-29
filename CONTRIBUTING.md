@@ -17,6 +17,7 @@ PostKauz (Arbeitstitel) ist pre-alpha. Beiträge sind willkommen, aber die Archi
 - Commit-Nachrichten **Englisch** mit Präfix: `feat:`, `fix:`, `docs:`, `test:`, `chore:`. Sign-off per `git commit -s` (Developer Certificate of Origin); keine CLA.
 - Kommentare im Code und Dokumentation unter `docs/` **Deutsch**; `README.md` Englisch. Programmausgaben und Fehlermeldungen Englisch.
 - Doku und `CHANGELOG.md` gehören zum Beitrag; ein Verhalten ohne Test und ohne Doku ist nicht fertig.
+- Releases und ihr Nachbau entstehen je in einem frischen Klon **ohne Tags** (`git clone --no-tags`) mit sauberem Arbeitsbaum: Die Pseudoversion, die Go in die Programmdatei schreibt (`go version -m`), hängt von den Tags im Klon ab, mit Tags ist der Nachbau nicht bytegleich. Vergleich: `dist/SHA256SUMS` (außer `VERSION`) und `go version -m` beider Bauten; Einzelheiten in [`docs/betrieb.md`](docs/betrieb.md), Abschnitt 7.
 
 ## Sicherheitsprobleme
 
