@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/KNUFFIXX/postkauz/internal/backup"
+	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -126,6 +127,12 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, backup.ErrBusy):
 		return ExitError, ErrorInfo{Code: "backup_running", Message: err.Error(),
 			Hint: "nothing was written; wait until the other backup (e.g. a scheduled task) has finished, then run backup create again"}
+	case errors.Is(err, blob.ErrBusy):
+		// Nachbesserung 2, Punkt 8: Die Sperre des Blob-Ordners war in der
+		// Wartezeit nicht zu bekommen (blob gc löscht, oder ein anderes
+		// Programm hält gc.lock offen).
+		return ExitError, ErrorInfo{Code: "blob_busy", Message: err.Error(),
+			Hint: "the blob store is locked by blob gc, a running write or another program (e.g. a virus scanner or backup software); wait a moment, then run the command again"}
 	case errors.Is(err, store.ErrSchemaTooNew):
 		return ExitError, ErrorInfo{Code: "schema_too_new", Message: err.Error()}
 	case errors.Is(err, store.ErrMigrationBlocked):
