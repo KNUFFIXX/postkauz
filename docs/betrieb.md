@@ -342,6 +342,8 @@ Erwartet: `backup written as a tar stream to standard output` und die Warnung. W
 
 Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverzeichnis, das gerade benutzt wird (aus `config.toml`, der Umgebung oder dem Standardort), schreibt `restore` nie.
 
+**Stelle nur deine eigenen Sicherungen wieder her, die sicher (verschlüsselt, nur für dich zugänglich) lagen.** Eine Sicherung ist nicht signiert: Wer sie verändern konnte, kann darin den Server eines Kontos auf seinen eigenen umlenken; das Passwort, das du danach eintippst, ginge dann dorthin. Deshalb zeigt `restore` je Konto Server und Benutzer (Zeilen unter `accounts:`) und die Stildateien (`style:`). **Prüfe den Server, bevor du in Schritt 3 ein Passwort eingibst**; stimmt etwas nicht, lösche die Kopie und nimm eine andere Sicherung.
+
 1. Aus einem Tar-Strom erst entpacken, z. B. `mkdir wieder && age -d -i schluessel.txt postkauz-2026-10-28.tar.age | tar -x -C wieder`. Ein Sicherungsordner aus 2.2 braucht das nicht.
 2. Wiederherstellen (`--config` nennt hier die Live-Konfiguration nur, damit `restore` deren Datenverzeichnis sicher meidet):
 
@@ -368,6 +370,9 @@ Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverz
    into:      C:\PostKauz\data-neu (schema 22)
    manifest:  sha256 4f0c…; 52312 files (4.5 GB) checked: database, 52311 blobs, 0 audit archives
    identity:  new data directory id; the keyring entries of the original are not used here
+   …
+   accounts:  check each server and user before you store a password (only restore your own backups):
+              privat: imap.example.org:993 (tls), user ich@example.org, password
    …
    blobs:
      …

@@ -205,6 +205,21 @@ func printRestore(w io.Writer, r backup.RestoreResult) {
 	} else {
 		fmt.Fprintln(w, "identity:  kept (--keep-identity): this copy uses the keyring entries of the original")
 	}
+	// Sichtprüfung (T3-Nachbesserung): wohin die Konten sich verbinden und
+	// welche Dateien als Stildatei gelesen werden; Werte aus der Sicherung.
+	if len(r.Accounts) > 0 {
+		fmt.Fprintln(w, "accounts:  check each server and user before you store a password (only restore your own backups):")
+		for _, a := range r.Accounts {
+			fmt.Fprintf(w, "           %s: %s:%d (%s), user %s, %s\n", termLine(a.Name), termLine(a.Host), a.Port, termLine(a.TLS),
+				termLine(a.Username), termLine(a.AuthType))
+		}
+	}
+	if len(r.StyleFiles) > 0 {
+		fmt.Fprintln(w, "style:     files this copy reads as style guide (mail://style); check that they are yours:")
+		for _, s := range r.StyleFiles {
+			fmt.Fprintf(w, "           %s (%s): %s\n", termLine(s.Identity), termLine(s.Account), termLine(s.Path))
+		}
+	}
 	fmt.Fprintf(w, "stopped:   %s, %s, %s, %s held back (draft show <id>), %s cleared\n",
 		plural(fx.Jobs, "open job", "open jobs"), plural(fx.Actions, "mailbox action", "mailbox actions"),
 		plural(fx.Requests, "request rejected", "requests rejected"), plural(fx.DraftsHeld, "draft", "drafts"),

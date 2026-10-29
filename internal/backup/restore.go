@@ -67,9 +67,35 @@ type RestoreResult struct {
 	MigrationSnapshot    string `json:"migration_snapshot,omitempty"`
 	// Leftovers: Arbeitsordner abgebrochener Wiederherstellungen neben dem
 	// Ziel (RestoreLeftovers); löschen.
-	Leftovers []string           `json:"leftovers,omitempty"`
-	DryRun    bool               `json:"dry_run"`
-	Fixes     store.RestoreFixes `json:"fixes"`
+	Leftovers []string `json:"leftovers,omitempty"`
+	// Accounts und StyleFiles zur Sichtprüfung (T3-Nachbesserung): Eine
+	// Sicherung ist nicht signiert; wer sie verändern konnte, kann den
+	// Server eines Kontos umlenken (das nächste account set schickte das
+	// Passwort dorthin) oder eine Stildatei auf eine fremde Datei zeigen
+	// lassen (ein Agent läse sie über mail://style). Keine Geheimnisse.
+	Accounts   []RestoredAccount  `json:"accounts"`
+	StyleFiles []RestoredStyle    `json:"style_files"`
+	DryRun     bool               `json:"dry_run"`
+	Fixes      store.RestoreFixes `json:"fixes"`
+}
+
+// RestoredAccount ist ein Konto der wiederhergestellten Kopie: wohin es
+// sich verbindet und als wer.
+type RestoredAccount struct {
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	TLS      string `json:"tls"`
+	Username string `json:"username"`
+	AuthType string `json:"auth_type"`
+}
+
+// RestoredStyle ist eine Identität mit Stildatei (Pfad, den die Kopie
+// liest).
+type RestoredStyle struct {
+	Account  string `json:"account"`
+	Identity string `json:"identity"`
+	Path     string `json:"path"`
 }
 
 // Restore prüft eine Sicherung und stellt sie in ein neues
@@ -249,8 +275,37 @@ func prepareDB(ctx context.Context, path string, schema int, keepIdentity bool, 
 		}
 		prep.CredentialRef = secrets.AccountRef
 	}
-	res.Fixes, err = st.PrepareRestored(ctx, prep)
-	return err
+	if res.Fixes, err = st.PrepareRestored(ctx, prep); err != nil {
+		return err
+	}
+	return readForReview(ctx, st, res)
+}
+
+// readForReview liest Konten (Server, Benutzer) und Stildateien der Kopie
+// für die Sichtprüfung nach der Wiederherstellung.
+func readForReview(ctx context.Context, st *store.SQLite, res *RestoreResult) error {
+	accs, err := st.ListAccounts(ctx)
+	if err != nil {
+		return err
+	}
+	names := map[int64]string{}
+	res.Accounts = []RestoredAccount{}
+	for _, a := range accs {
+		names[a.ID] = a.Name
+		res.Accounts = append(res.Accounts, RestoredAccount{Name: a.Name, Host: a.Host, Port: a.Port, TLS: a.TLS,
+			Username: a.Username, AuthType: a.AuthType})
+	}
+	ids, err := st.Identities(ctx, 0)
+	if err != nil {
+		return err
+	}
+	res.StyleFiles = []RestoredStyle{}
+	for _, i := range ids {
+		if i.StyleFile != "" {
+			res.StyleFiles = append(res.StyleFiles, RestoredStyle{Account: names[i.AccountID], Identity: i.Name, Path: i.StyleFile})
+		}
+	}
+	return nil
 }
 
 // verifyFiles liest jede Datei der Sicherung und vergleicht sie mit dem
