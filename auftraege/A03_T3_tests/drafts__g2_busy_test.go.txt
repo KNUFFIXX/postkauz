@@ -1,0 +1,65 @@
+package drafts
+
+// G2-10 (Nachprüfung): Wie TestConcurrentWritersOnOneFile, aber mit der
+// Frist des Betriebs (store.DefaultBusyTimeout, 5 s) und gemessener
+// längster Wartezeit je Aufruf. Zeigt, ob die Testlast allein (ohne
+// Fremdlast) die 5 s erreicht.
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+func TestG2ConcurrentWritersWithProductionBusyTimeout(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "pk.db")
+	open := func() *store.SQLite {
+		st, err := store.Open(path) // DefaultBusyTimeout wie im Betrieb
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	e := setupEnv(t, open())
+	other := &Service{Store: open(), Now: e.svc.Now, Rand: zeroRand{}}
+	d := e.create()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var worst time.Duration
+	errs := make(chan error, 40)
+	for i, svc := range []*Service{e.svc, other} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				s := time.Now()
+				if _, err := svc.Update(ctx, d.ID, content(fmt.Sprintf("v%d-%d", i, j)), ""); err != nil {
+					errs <- err
+				}
+				if _, err := svc.Create(ctx, NewDraft{AccountID: e.acc, Kind: KindNew}); err != nil {
+					errs <- err
+				}
+				el := time.Since(s)
+				mu.Lock()
+				worst = max(worst, el)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	t.Logf("longest update+create pair: %v (busy timeout %v)", worst, store.DefaultBusyTimeout)
+	for err := range errs {
+		t.Fatal(err)
+	}
+}

@@ -1,0 +1,30 @@
+package backup
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
+
+// G1-6: Die Sicherung darf nicht als vollständig gelten, wenn ein Blob,
+// auf den der Datenbank-Schnappschuss verweist, im Manifest fehlt (z. B.
+// purge + blob gc zwischen Schnappschuss und listBlobs). Hier fehlt die
+// Datei schon vorher; der Abgleich Manifest gegen Verweise ist derselbe.
+func TestG1BackupFailsWhenReferencedBlobIsMissing(t *testing.T) {
+	e := newEnv(t)
+	sum := e.sums[1]
+	if err := e.st.ExecForTest(`INSERT OR IGNORE INTO blobs(sha256, size, created_at) VALUES (?, 12, 1)`, sum); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.ExecForTest(`UPDATE messages SET blob_sha256 = ? WHERE id = 1`, sum); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := e.blobs.Remove(sum); err != nil || !removed {
+		t.Fatalf("remove blob: %v %v", removed, err)
+	}
+	to := filepath.Join(t.TempDir(), "backup")
+	res, err := e.r.Create(context.Background(), Options{To: to})
+	if err == nil {
+		t.Fatalf("backup without a referenced blob succeeded: %d blobs, manifest %s", res.Blobs, res.ManifestSHA256)
+	}
+}

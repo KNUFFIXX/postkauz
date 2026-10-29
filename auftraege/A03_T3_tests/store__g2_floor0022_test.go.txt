@@ -1,0 +1,72 @@
+package store_test
+
+// G2-4 (Nachprüfung): Der Höchststand aus Migration 0022 ist max(id) beim
+// Migrieren. Ein vor 0022 gelöschter Ordner mit der größten ID, auf den ein
+// offenes Aktionsziel (source_path danach NULL) noch zeigt, darf seine ID
+// nach 0022 nicht an einen neuen Ordner abgeben.
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+func TestG2Floor0022CoversOpenActionTargets(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "pk.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.MigrateToForTest(ctx, 21); err != nil {
+		t.Fatal(err)
+	}
+	acct, err := st.CreateAccount(ctx, store.Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143,
+		TLS: "none", Username: "demo@example.org", AuthType: "password", CredentialRef: "account/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+		{Path: "Rechnungen", Name: "Rechnungen"}}); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := st.QueryIntForTest(`SELECT id FROM mailboxes WHERE path = 'Rechnungen'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ExecForTest(`INSERT INTO messages(id, account_id, subject, created_at) VALUES (1, ?1, 'x', 1);
+		INSERT INTO actions(id, account_id, kind, state, target_count, ids_hash, requested_by, created_at, updated_at)
+		VALUES (1, ?1, 'mark', 'queued', 1, 'h', 'cli', 1, 1);
+		INSERT INTO action_targets(action_id, message_id, mailbox_id, uid, uidvalidity) VALUES (1, 1, ?2, 7, 42);`,
+		acct, gone); err != nil {
+		t.Fatal(err)
+	}
+	// Ordner verschwindet vor 0022 vom Server (Ordnerabgleich löscht die Zeile).
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SyncMailboxes(ctx, acct, []store.MailboxSpec{{Path: "INBOX", Name: "INBOX", Role: "inbox"},
+		{Path: "Privat", Name: "Privat"}}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := st.QueryIntForTest(`SELECT id FROM mailboxes WHERE path = 'Privat'`)
+	sp, err := st.QueryIntForTest(`SELECT count(*) FROM action_targets WHERE source_path IS NULL`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ := st.QueryIntForTest(`SELECT count(*) FROM action_targets WHERE result IS NULL`)
+	t.Logf("open targets (result NULL): %d", res)
+	for _, q := range []string{`SELECT count(*) FROM action_targets`, `SELECT count(*) FROM action_targets WHERE source_path = 'Privat'`, `SELECT count(*) FROM action_targets WHERE source_path = 'Rechnungen'`, `SELECT count(*) FROM action_targets WHERE source_path IS NOT NULL`} {
+		n, err := st.QueryIntForTest(q)
+		t.Logf("%s -> %d %v", q, n, err)
+	}
+	t.Logf("deleted mailbox id %d, new mailbox id %d, open targets without source_path %d", gone, fresh, sp)
+	if fresh == gone {
+		t.Fatalf("mailbox id %d reused although an open action target still points at it", gone)
+	}
+}

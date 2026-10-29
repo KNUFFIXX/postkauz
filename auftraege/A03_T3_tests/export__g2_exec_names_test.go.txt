@@ -1,0 +1,31 @@
+package export
+
+// G2-7 (Nachprüfung): (a) mbox-Export legt einen Ordner wie "Rechnung.cmd"
+// als gleichnamige Datei mit Mailinhalt ab; ein Doppelklick führte sie aus.
+// (b) Endungen, die Windows ausführt bzw. die in Angriffsketten dienen,
+// fehlen in der Liste (magic.riskyExt).
+
+import (
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/magic"
+)
+
+func TestG2MboxFolderNeverExecutableName(t *testing.T) {
+	for _, seg := range []string{"Rechnung.cmd", "Belege.bat", "x.ps1", "amazon.com", "Tools.scr", "a.hta"} {
+		for _, p := range layout(FormatMbox, []Folder{{Segments: []string{seg}}}) {
+			if magic.ExecutableName(p) {
+				t.Errorf("mbox file for folder %q is %q: executable name", seg, p)
+			}
+		}
+	}
+}
+
+func TestG2RiskyExtensionsComplete(t *testing.T) {
+	for _, ext := range []string{".one", ".rdp", ".application", ".accde", ".mde", ".website", ".library-ms", ".search-ms",
+		".diagcab", ".xbap", ".hlp", ".msh", ".msh1", ".msh2", ".mshxml", ".msh1xml", ".msh2xml"} {
+		if !magic.ExecutableName("anhang" + ext) {
+			t.Errorf("%s not treated as executable", ext)
+		}
+	}
+}

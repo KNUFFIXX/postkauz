@@ -1,0 +1,102 @@
+package imap
+
+// G2-8 (Nachprüfung): Meldet der Server beim SELECT UIDVALIDITY 0 (oder
+// gar keins; go-imap übernimmt dann 0), darf Changes keinen Reset melden:
+// Der Reset löst alle Zuordnungen des Ordners (store.unlinkAll) und setzt
+// deleted_remote_at; retention.purge löscht solche Nachrichten nach der
+// Frist. Erwartet: provider.ErrIncomplete, kein Reset.
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net"
+	"regexp"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	goimap "github.com/emersion/go-imap/v2"
+
+	"github.com/KNUFFIXX/postkauz/internal/imapx"
+	"github.com/KNUFFIXX/postkauz/internal/provider"
+)
+
+var uidValidityCode = regexp.MustCompile(`\[UIDVALIDITY [0-9]+\]`)
+
+type zeroUVProxy struct {
+	target string
+	armed  atomic.Bool
+}
+
+func (p *zeroUVProxy) serve(ln net.Listener) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		s, err := net.Dial("tcp", p.target)
+		if err != nil {
+			_ = c.Close()
+			continue
+		}
+		var once sync.Once
+		closeBoth := func() { once.Do(func() { _ = c.Close(); _ = s.Close() }) }
+		go func() { _, _ = io.Copy(s, c); closeBoth() }()
+		go func() {
+			defer closeBoth()
+			buf := make([]byte, 32<<10)
+			for {
+				n, err := s.Read(buf)
+				if n > 0 {
+					out := buf[:n]
+					if p.armed.Load() && bytes.Contains(out, []byte("[UIDVALIDITY ")) {
+						out = uidValidityCode.ReplaceAll(out, []byte("[UIDVALIDITY 0]"))
+					}
+					if _, werr := c.Write(out); werr != nil {
+						return
+					}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+}
+
+func TestG2ChangesUIDValidityZeroIsIncompleteNotReset(t *testing.T) {
+	srvAddr, u := memServerFor(t, "INBOX")
+	if _, err := u.Append("INBOX", rawLit{bytes.NewReader(draftMail("a@example.org", "x"))}, &goimap.AppendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	px := &zeroUVProxy{target: srvAddr}
+	go px.serve(ln)
+	p, err := Connect(context.Background(), Config{Host: "127.0.0.1", Port: portOf(ln.Addr().String()), TLS: "none",
+		Username: "tester@example.invalid", InsecureTestServer: true, CommandTimeout: 2 * time.Second,
+		Session: imapx.SessionOptions{MaxAttempts: 1, Backoff: imapx.Backoff{Initial: 10 * time.Millisecond}}}, "pw-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+	first, err := p.Changes(context.Background(), "INBOX", provider.SyncState{}, provider.ChangesOptions{})
+	if err != nil || first.NewState.UIDValidity == 0 {
+		t.Fatalf("first sync: %+v %v", first.NewState, err)
+	}
+	px.armed.Store(true)
+	cs, err := p.Changes(context.Background(), "INBOX", first.NewState, provider.ChangesOptions{KnownCount: 1})
+	t.Logf("with UIDVALIDITY 0: reset=%v newState=%+v err=%v", cs.Reset, cs.NewState, err)
+	if cs.Reset {
+		t.Errorf("UIDVALIDITY 0 from the server reported as a reset (would unlink every copy of the mailbox)")
+	}
+	if !errors.Is(err, provider.ErrIncomplete) {
+		t.Errorf("want provider.ErrIncomplete, got %v", err)
+	}
+}

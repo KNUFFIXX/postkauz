@@ -1,0 +1,59 @@
+package backup
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// G1-5: Solange PrepareRestored nicht gelaufen ist, darf unter dem Ziel
+// keine öffnbare Datenbank mit der Identität des Originals liegen (ein
+// harter Abbruch, z. B. Stromausfall, ließe sie sonst betriebsfähig
+// zurück: Kennung und Schlüsselbund-Verweise des Originals, offene
+// draft_push/mailbox_action-Jobs).
+func TestG1RestoreLeavesNoUsableCopyBeforePrepare(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	from := backupOf(t, e)
+	to := filepath.Join(t.TempDir(), "neu", "data")
+	orig, _ := e.st.DataDirIDFull(ctx)
+	var problem string
+	checked := false
+	_, err := Restore(ctx, RestoreOptions{From: from, DataDir: to, DBName: brand.Name + ".db", Now: func() time.Time {
+		if checked {
+			return time.Now()
+		}
+		checked = true
+		// Zeitpunkt: nach Kopie und Migration, unmittelbar vor PrepareRestored.
+		p := filepath.Join(to, brand.Name+".db")
+		if _, err := os.Stat(p); err != nil {
+			return time.Now()
+		}
+		st, err := store.Open(p)
+		if err != nil {
+			// gesperrt o. ä.: Datei liegt trotzdem unter dem endgültigen Namen
+			problem = "database lies under its final name before PrepareRestored (open: " + err.Error() + ")"
+			return time.Now()
+		}
+		defer st.Close()
+		id, _ := st.DataDirIDFull(ctx)
+		if id == orig {
+			problem = "a usable database with the original's identity lies under the final name before PrepareRestored"
+		}
+		return time.Now()
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !checked {
+		t.Fatal("hook did not run")
+	}
+	if problem != "" {
+		t.Fatal(problem)
+	}
+}

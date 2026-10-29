@@ -1,0 +1,86 @@
+package ops
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/store"
+)
+
+// G1-2: Eine wiederhergestellte Kopie, deren Export (z. B. über die
+// Live-Konfiguration) in den Ordner des Originals zeigt, darf dort keine
+// Tagesdatei des Originals ersetzen; das Original muss danach weiter
+// exportieren können.
+func TestG1RestoredCopyDoesNotOverwriteOriginalExport(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	dir := filepath.Join(base, "audit-export")
+	open := func(p string) *store.SQLite {
+		_ = os.MkdirAll(filepath.Dir(p), 0o700)
+		st, err := store.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = st.Close() })
+		if err := st.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	ev := func(st *store.SQLite, ts time.Time, op string) {
+		if err := st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, operation, result) VALUES (?, 'system', ?, 'ok')`, ts.UnixMilli(), op); err != nil {
+			t.Fatal(err)
+		}
+	}
+	export := func(st *store.SQLite) error {
+		_, err := AuditExport(st, dir).Handler(ctx, Call{Input: json.RawMessage(`{}`)})
+		return err
+	}
+	now := time.Now().UTC()
+	orig := open(filepath.Join(base, "orig", "postkauz.db"))
+	ev(orig, now.Add(-24*time.Hour), "sync.run")
+	ev(orig, now.Add(-time.Minute), "sync.run")
+	if err := export(orig); err != nil {
+		t.Fatal(err)
+	}
+	// Sicherung + Wiederherstellung (wie backup/restore: Schnappschuss, PrepareRestored).
+	if err := os.MkdirAll(filepath.Join(base, "copy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snap := filepath.Join(base, "copy", "postkauz.db")
+	if err := orig.SnapshotTo(ctx, snap); err != nil {
+		t.Fatal(err)
+	}
+	cp := open(snap)
+	if _, err := cp.PrepareRestored(ctx, store.RestorePrep{DataDirID: "0123456789abcdef0123456789abcdef",
+		CredentialRef: func(id8, a string) string { return "account/" + id8 + "/" + a },
+		Event: func(store.RestoreFixes) audit.Event {
+			return audit.Event{TS: now, ActorType: audit.ActorSystem, Operation: "backup.restore", Result: audit.ResultOK, ParamsRedacted: []byte("{}")}
+		},
+		Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	// Das Original arbeitet weiter und exportiert.
+	ev(orig, now, "keys.list")
+	if err := export(orig); err != nil {
+		t.Fatal(err)
+	}
+	today := filepath.Join(dir, auditFileName(now.Format("2006-01-02")))
+	before, _ := os.ReadFile(today)
+	// Die Kopie exportiert in denselben Ordner.
+	ev(cp, now, "accounts.list")
+	cpErr := export(cp)
+	after, _ := os.ReadFile(today)
+	if !bytes.Equal(before, after) {
+		t.Errorf("the restored copy replaced the original's day file (copy export err = %v)", cpErr)
+	}
+	if err := export(orig); err != nil {
+		t.Errorf("original export after the copy's export = %v", err)
+	}
+}
