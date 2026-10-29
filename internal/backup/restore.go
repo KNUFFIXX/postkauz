@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -119,7 +121,11 @@ type RestoredStyle struct {
 //     umbenennen.
 //
 // Jeder Fehler ab Schritt 2 entfernt den Arbeitsordner; das Ziel bleibt,
-// wie es war.
+// wie es war. Ausnahme (T3-Nachbesserung 3, Punkt 7): Scheitert in Schritt
+// 4 das Entfernen des leeren Ziels oder das Umbenennen endgültig, ist die
+// Kopie schon fertig (eigene Instanz, Datenbank geschlossen); der
+// Arbeitsordner bleibt dann stehen, und die Meldung nennt ihn und den Befehl,
+// der ihn an seinen Platz bringt (keptCopyErr).
 func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err error) {
 	now := time.Now
 	if o.Now != nil {
@@ -181,14 +187,16 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 	// unter dem Ziel keine Datenbank. Ein harter Abbruch (Stromausfall)
 	// ließe sonst eine betriebsfähige Kopie mit Kennung, Schlüsselbund-
 	// Verweisen und offenen Server-Jobs des Originals zurück. Bei jedem
-	// Fehler wird der Arbeitsordner entfernt; nach einem harten Abbruch
-	// nennen ihn doctor und der nächste restore (RestoreLeftovers).
+	// Fehler wird der Arbeitsordner entfernt (außer die fertige Kopie lässt
+	// sich nicht umbenennen, Schritt 4); nach einem harten Abbruch nennen ihn
+	// doctor und der nächste restore (RestoreLeftovers).
 	work, err := makeWork(to)
 	if err != nil {
 		return res, err
 	}
+	keep := false
 	defer func() {
-		if err != nil {
+		if err != nil && !keep {
 			_ = os.RemoveAll(work)
 		}
 	}()
@@ -235,7 +243,13 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 	}
 
 	// 4. Erst jetzt an seinen Platz: ein leeres Ziel weicht, dann umbenennen.
+	// Hat sich das Ziel inzwischen verändert (ErrTarget), wird wie bisher
+	// aufgeräumt; sonst bleibt die fertige Kopie stehen (Punkt 7).
 	if err = moveIntoPlace(work, to); err != nil {
+		if !errors.Is(err, ErrTarget) {
+			keep = true
+			err = keptCopyErr(err, work, to, runtime.GOOS)
+		}
 		return res, err
 	}
 	if res.MigrationSnapshot != "" {
@@ -501,12 +515,66 @@ func moveIntoPlace(work, to string) error {
 	return nil
 }
 
+// keptCopyErr ergänzt den Fehler von moveIntoPlace, wenn die fertige Kopie
+// im Arbeitsordner stehen bleibt (T3-Nachbesserung 3, Punkt 7; vorher
+// löschte restore die Kopie, bei einem großen Archiv mehrere GB, und alles
+// musste neu kopiert werden). Die Meldung nennt den Arbeitsordner und einen
+// Befehl, der ihn an seinen Platz bringt, passend zum Betriebssystem goos:
+// unter Windows für PowerShell (Directory.Delete, Rename-Item), sonst für
+// die Shell (rmdir, mv). Steht das leere Ziel noch, wird es zuerst entfernt
+// (sonst schöbe mv die Kopie in das Ziel hinein); rmdir und
+// [System.IO.Directory]::Delete ohne recursive entfernen nur einen leeren
+// Ordner (Remove-Item fragte bei einem nicht leeren nach und löschte auf
+// Ja alles darin). Rename-Item scheitert, wenn das Ziel noch da ist.
+func keptCopyErr(err error, work, to, goos string) error {
+	_, serr := os.Lstat(to)
+	targetThere := serr == nil
+	var cmd string
+	if goos == "windows" {
+		cmd = "Rename-Item -LiteralPath " + psQuote(work) + " -NewName " + psQuote(filepath.Base(to))
+		if targetThere {
+			cmd = "[System.IO.Directory]::Delete(" + psQuote(to) + "); " + cmd
+		}
+	} else {
+		cmd = "mv " + shQuote(work) + " " + shQuote(to)
+		if targetThere {
+			cmd = "rmdir " + shQuote(to) + " && " + cmd
+		}
+	}
+	return fmt.Errorf("%w; the restored copy is complete and was kept in \"%s\" (do not delete it); "+
+		"when no other program uses it any more, put it in place with: %s", err, work, cmd)
+}
+
+// shQuote setzt s in einfache Anführungszeichen (sh: nichts darin wird
+// ausgewertet); ein Apostroph im Pfad schließt, maskiert und öffnet neu.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// psQuote setzt s in einfache Anführungszeichen (PowerShell); ein
+// Apostroph im Pfad wird verdoppelt, ebenso die typografischen einfachen
+// Anführungszeichen U+2018 bis U+201B, die PowerShell genauso wertet.
+func psQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('\'')
+	for _, r := range s {
+		b.WriteRune(r)
+		switch r {
+		case '\'', '\u2018', '\u2019', '\u201a', '\u201b':
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('\'')
+	return b.String()
+}
+
 // RestoreLeftovers nennt Arbeitsordner abgebrochener Wiederherstellungen
 // neben dem Datenverzeichnis dataDir (<dataDir>.restoring-<zufall>; nach
 // einem harten Abbruch, etwa Stromausfall). Sie sind kein benutzbares
 // Datenverzeichnis (die Datenbank darin trägt womöglich noch die Kennung
 // des Originals) und gehören gelöscht; restore und doctor nennen sie,
 // löschen sie aber nicht (es könnte ein restore sein, der gerade läuft).
+// Ausnahme: den Ordner, den restore nach einem endgültig gescheiterten
+// Umbenennen behalten hat (keptCopyErr), bringt der Befehl aus dessen
+// Meldung an seinen Platz.
 func RestoreLeftovers(dataDir string) []string {
 	abs, err := filepath.Abs(dataDir)
 	if err != nil {
