@@ -73,7 +73,8 @@ type Deps struct {
 	// nil = Standard.
 	MaxChars func(keyName string) int
 	// HTTPClient für Discovery und JWKS des Autorisierungsservers (Tests:
-	// Test-CA); nil = http.DefaultClient.
+	// Test-CA); nil = eigener Client mit Fristen und ohne Umleitungen
+	// (newASClient).
 	HTTPClient *http.Client
 	// Now nur für Tests; nil = time.Now.
 	Now func() time.Time
@@ -136,6 +137,9 @@ func New(d Deps) (*Server, error) {
 	case config.HTTPAuthKey:
 		s.auth = &keyAuth{repo: d.Keys, audit: d.Audit, now: d.Now}
 	case config.HTTPAuthOAuth:
+		if d.HTTPClient == nil {
+			d.HTTPClient = newASClient()
+		}
 		s.auth = &oauthAuth{issuer: h.Issuer, resource: h.Resource, principals: h.Principals, repo: d.Keys, audit: d.Audit,
 			client: d.HTTPClient, now: d.Now, log: d.Log}
 	default:

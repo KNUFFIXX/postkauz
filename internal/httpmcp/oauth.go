@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -32,6 +34,35 @@ const discoveryRetry = 10 * time.Second
 
 // discoveryTimeout begrenzt eine Discovery.
 const discoveryTimeout = 10 * time.Second
+
+// asTimeout: Frist für Verbindungsaufbau und Antwort des
+// Autorisierungsservers (Discovery und JWKS).
+const asTimeout = 10 * time.Second
+
+// errASRedirect: Der Autorisierungsserver antwortete mit einer Umleitung.
+// Discovery und JWKS folgen keiner Umleitung (der Aussteller steht fest in
+// der Konfiguration; eine Umleitung wäre ein Fehler der Einrichtung).
+var errASRedirect = errors.New("httpmcp: the authorization server answered with a redirect; redirects are not followed")
+
+// newASClient baut den Client für Discovery und JWKS, wenn Deps.HTTPClient
+// fehlt: Klon von http.DefaultTransport (Proxy aus der Umgebung, TLS wie
+// üblich) mit eigenem DialContext, Fristen von asTimeout und ohne
+// Umleitungen.
+//
+// Der eigene DialContext schaltet bewusst die SSRF-Sperre des MCP-SDK ab
+// (oauthex: Discovery verweigert sonst private und CGNAT-Adressen, also
+// genau 100.64.0.0/10 und fd7a:115c:a1e0::/48, wo der Aussteller im
+// Tailnet liegt; ADR-010 Punkt 8). Die Sperre schützt Clients, die eine
+// URL aus einer fremden Antwort abrufen. Hier steht der Aussteller fest in
+// [http] issuer und kommt nie aus einer Anfrage; jwks_uri kommt aus den
+// Metadaten genau dieses Ausstellers.
+func newASClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: asTimeout, KeepAlive: 30 * time.Second}
+	tr.DialContext = d.DialContext
+	return &http.Client{Transport: tr, Timeout: asTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return errASRedirect }}
+}
 
 // signingAlgs: angenommene Signaturverfahren (asymmetrisch; nie "none",
 // nie HMAC).
@@ -129,10 +160,7 @@ func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, err
 	}
 	// Der Schlüsselsatz lebt so lange wie der Server (go-oidc nutzt den
 	// Kontext nur für den HTTP-Client).
-	keyCtx := context.Background()
-	if a.client != nil {
-		keyCtx = oidc.ClientContext(keyCtx, a.client)
-	}
+	keyCtx := oidc.ClientContext(context.Background(), a.client)
 	a.verifier = oidc.NewVerifier(a.issuer, oidc.NewRemoteKeySet(keyCtx, jwks), &oidc.Config{
 		SkipClientIDCheck:    true, // aud prüft authenticate gegen die Resource-URL
 		SupportedSigningAlgs: signingAlgs,
@@ -145,15 +173,18 @@ func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, err
 // discoverJWKS liefert jwks_uri des Ausstellers: zuerst RFC 8414
 // (/.well-known/oauth-authorization-server mit dem Pfad des Ausstellers),
 // dann OpenID-Discovery. Der Aussteller in den Metadaten muss genau
-// passen (oauthex.GetAuthServerMeta).
+// passen (oauthex.GetAuthServerMeta). c = nil: newASClient.
 func discoverJWKS(ctx context.Context, issuer string, c *http.Client) (string, error) {
 	u, err := url.Parse(issuer)
 	if err != nil {
 		return "", err
 	}
+	if err := checkIssuerHost(u); err != nil {
+		return "", err
+	}
 	path := strings.TrimSuffix(u.Path, "/")
 	if c == nil {
-		c = http.DefaultClient
+		c = newASClient()
 	}
 	urls := []string{
 		u.Scheme + "://" + u.Host + "/.well-known/oauth-authorization-server" + path,
@@ -174,6 +205,19 @@ func discoverJWKS(ctx context.Context, issuer string, c *http.Client) (string, e
 		}
 	}
 	return "", last
+}
+
+// checkIssuerHost: Der Aussteller braucht einen DNS-Namen; eine
+// IP-Adresse geht nur auf Loopback (Tests, lokaler Betrieb). Grund:
+// tailscale serve bekommt Zertifikate nur für MagicDNS-Namen, und das SDK
+// lehnt private und CGNAT-Adressen in der URL ohnehin ab
+// (checkHTTPSOrLoopback); so ist der Fehler eindeutig.
+func checkIssuerHost(u *url.URL) error {
+	ip, err := netip.ParseAddr(u.Hostname())
+	if err != nil || ip.Unmap().IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("httpmcp: issuer %q uses an IP address; use the DNS name of the authorization server (tailscale serve certificates are issued for MagicDNS names only)", u.Redacted())
 }
 
 // jwtType liest den JOSE-Kopf ohne Prüfung, nur für die typ-Regel (kein
