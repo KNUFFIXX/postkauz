@@ -468,13 +468,15 @@ Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Roll
    ```
 
    Erwartet: `401`
-5. Claude Code am selben PC anbinden (statt `<schlüssel>` den kopierten Wert):
+5. Claude Code am selben PC anbinden. Den Schlüssel **nicht** in die Befehlszeile schreiben: Dort landet er im Befehlsverlauf von PowerShell und im Klartext in der Claude-Konfiguration (`~/.claude.json`). Stattdessen ihn in eine Umgebungsvariable dieses Fensters einfügen (was du bei `Read-Host` eintippst oder einfügst, kommt nicht in den Verlauf) und in der Konfiguration nur den Namen der Variablen eintragen:
 
    ```powershell
-   claude mcp add --transport http postkauz-http http://127.0.0.1:8787/mcp --header "Authorization: Bearer <schlüssel>"
+   $env:POSTKAUZ_KEY = Read-Host 'Schluessel einfuegen'
+   claude mcp add --transport http postkauz-http http://127.0.0.1:8787/mcp --header 'Authorization: Bearer ${POSTKAUZ_KEY}'
+   claude
    ```
 
-   In Claude Code zeigt `/mcp` dann `postkauz-http` mit 12 Tools (Rolle `reader`; das Test-Datenverzeichnis hat noch keine Mails, die Suche bleibt also leer).
+   Wichtig sind die **einfachen** Anführungszeichen: Dann setzt PowerShell nichts ein, und Claude Code ersetzt `${POSTKAUZ_KEY}` erst beim Verbinden durch den Wert aus seiner eigenen Umgebung (so steht es in der Claude-Code-Doku, Abschnitt „Environment variable expansion“). Mit doppelten Anführungszeichen würde PowerShell `${POSTKAUZ_KEY}` als eigene, leere Variable lesen. Claude Code deshalb aus **demselben** Fenster starten (`claude`); fehlt die Variable, warnt `claude mcp list`. In Claude Code zeigt `/mcp` dann `postkauz-http` mit 12 Tools (Rolle `reader`; das Test-Datenverzeichnis hat noch keine Mails, die Suche bleibt also leer).
 6. Beenden: im ersten Fenster Strg+C. Den Testschlüssel widerrufen und den Testordner löschen:
 
    ```powershell
@@ -483,7 +485,7 @@ Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Roll
    Remove-Item -Recurse C:\PK\http-test
    ```
 
-Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt. `doctor` zeigt die Einstellungen in der Zeile `http:`.
+Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt (100.64.0.0/10 und `fd7a:115c:a1e0::/48`). Achtung: 100.64.0.0/10 ist der allgemeine Bereich für Carrier-Grade-NAT, nicht nur Tailscale; auch dein Internetanbieter kann dir eine solche Adresse geben. Trage deshalb in `[http] listen` (oder `--listen`) nur die **eigene Tailscale-Adresse** dieses Rechners ein (`tailscale ip -4`), keine andere Adresse aus diesem Bereich. `doctor` zeigt die Einstellungen in der Zeile `http:`.
 
 ### 4.3 VPS einrichten (Linux, einmalig)
 
@@ -590,7 +592,7 @@ Erwartet: `systemd 257` oder höher und `PrivatePIDs=yes`. Bei einer älteren Ve
    Erwartet: JSON mit `"resource":"https://postkauz.<tailnet>.ts.net/mcp"`.
 5. ACL in der Admin-Konsole: Cloud-Sitzungen bekommen einen Tag (z. B. `tag:cloud`) und dürfen nur Port 443 des Knotens `postkauz` erreichen.
 
-**Eine Cloud-Sitzung im Tailnet:** Sie tritt mit einem **ephemeren, zeitlich begrenzten Auth-Key** mit Tag bei (der Key kommt als Geheimnis in die Sitzung, nie ins Repository) und läuft ohne Root im Userspace-Modus (`tailscaled --tun=userspace-networking`); Programme in der Sitzung erreichen das Tailnet dann über den lokalen Proxy von `tailscaled`. Die Abnahme D8 (`docs/abnahme_D8.md`) zeigt die Kommandos. Claude Code bindet PostKauz dort im Modus `key` an: `claude mcp add --transport http postkauz https://postkauz.<tailnet>.ts.net/mcp --header "Authorization: Bearer ${POSTKAUZ_KEY}"`; der Schlüssel (Rolle passend wählen, kurze Laufzeit) kommt ebenfalls als Geheimnis in die Sitzung.
+**Eine Cloud-Sitzung im Tailnet:** Sie tritt mit einem **ephemeren, zeitlich begrenzten Auth-Key** mit Tag bei (der Key kommt als Geheimnis in die Sitzung, nie ins Repository) und läuft ohne Root im Userspace-Modus (`tailscaled --tun=userspace-networking`); Programme in der Sitzung erreichen das Tailnet dann über den lokalen Proxy von `tailscaled`. Die Abnahme D8 (`docs/abnahme_D8.md`) zeigt die Kommandos. Claude Code bindet PostKauz dort im Modus `key` an: `claude mcp add --transport http postkauz https://postkauz.<tailnet>.ts.net/mcp --header 'Authorization: Bearer ${POSTKAUZ_KEY}'`. Die **einfachen** Anführungszeichen sind Pflicht: Mit doppelten setzt bash den Schlüssel sofort ein, und er stünde im Klartext in der Claude-Konfiguration; so trägt Claude Code nur `${POSTKAUZ_KEY}` ein und setzt den Wert erst beim Verbinden aus seiner Umgebung ein. Der Schlüssel (Rolle passend wählen, kurze Laufzeit) kommt als Geheimnis in die Sitzung, also als Umgebungsvariable `POSTKAUZ_KEY`.
 
 ### 4.6 Anmeldedienst Authelia (Modus `oauth`)
 
