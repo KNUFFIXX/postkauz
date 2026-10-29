@@ -19,17 +19,26 @@ import (
 // SnapshotTo schreibt eine konsistente Kopie der Datenbank nach dest
 // (VACUUM INTO: ein Lesevorgang über den ganzen Bestand, neben laufenden
 // Schreibern wie sync --watch; WAL-Inhalte sind enthalten). dest darf noch
-// nicht existieren. Die Datei bekommt die Rechte 0600.
+// nicht existieren. Die Datei hat von Anfang an die Rechte 0600
+// (Nachbesserung T3, wie der Migrations-Snapshot in sqlite.go): erst leer
+// mit O_EXCL angelegt (VACUUM INTO nimmt ein leeres Ziel an), dann
+// gefüllt; vorher lag sie bis zum chmod nach umask lesbar (meist 0644).
+// Das chmod danach ist nur eine zweite Absicherung (etwa wenn eine
+// Vorgabe-ACL die Rechte beim Anlegen erweitert) und nicht fatal.
 func (s *SQLite) SnapshotTo(ctx context.Context, dest string) error {
 	if s.path == "" {
 		return errors.New("store: snapshot of an in-memory database")
 	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("store: snapshot: %w", err)
+	}
+	_ = f.Close()
 	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, dest); err != nil {
+		_ = os.Remove(dest)
 		return fmt.Errorf("store: snapshot: %w", err)
 	}
-	if err := os.Chmod(dest, 0o600); err != nil {
-		return fmt.Errorf("store: snapshot: %w", err)
-	}
+	_ = os.Chmod(dest, 0o600)
 	return nil
 }
 
