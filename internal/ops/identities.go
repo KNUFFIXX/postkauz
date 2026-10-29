@@ -13,6 +13,7 @@ import (
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -211,9 +212,12 @@ func IdentitiesAdd(d Deps) Operation {
 			if err != nil {
 				return nil, err
 			}
+			// Dubletten nach mailaddr.Key: auch eine andere Gmail-Schreibweise
+			// derselben Adresse (Punkte, Zusatz ab „+“, googlemail.com; zweite
+			// Nachbesserung T3, Punkt 9).
 			for _, x := range list {
-				if strings.EqualFold(x.Email, i.Email) {
-					return nil, inputErr("account %s already has identity %d with this address; remove it first", acc.Name, x.ID)
+				if mailaddr.Key(x.Email) == mailaddr.Key(i.Email) {
+					return nil, inputErr("account %s already has identity %d with this address or another spelling of it (Gmail ignores dots and +tags); remove it first", acc.Name, x.ID)
 				}
 			}
 			if len(list) == 0 {

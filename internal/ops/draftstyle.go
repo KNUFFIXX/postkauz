@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -113,7 +112,7 @@ func DraftsStyle(d Deps) Operation {
 // Anlegen eines Entwurfs (Adresse, ID oder Standard); ohne Konto über alle
 // Konten, solange die Wahl eindeutig ist.
 func (o *draftOps) styleIdentity(ctx context.Context, account, sel string) (store.Identity, error) {
-	sel = strings.ToLower(strings.TrimSpace(sel))
+	sel = strings.TrimSpace(sel)
 	if account != "" || sel == "" {
 		acc, err := ResolveAccount(ctx, o.accounts, account)
 		if err != nil {
@@ -123,28 +122,34 @@ func (o *draftOps) styleIdentity(ctx context.Context, account, sel string) (stor
 		if err != nil {
 			return store.Identity{}, err
 		}
-		for _, i := range list {
-			if (sel == "" && i.IsDefault) || (sel != "" && (strings.ToLower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel)) {
-				return i, nil
-			}
+		i, ok, err := pickIdentity(list, sel)
+		switch {
+		case err != nil:
+			return store.Identity{}, err
+		case !ok:
+			return store.Identity{}, store.ErrIdentityNotFound
 		}
-		return store.Identity{}, store.ErrIdentityNotFound
+		return i, nil
 	}
 	list, err := o.svc.Store.Identities(ctx, 0)
 	if err != nil {
 		return store.Identity{}, err
 	}
-	var found []store.Identity
-	for _, i := range list {
-		if strings.ToLower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel {
-			found = append(found, i)
-		}
-	}
+	// Erst exakt, dann nach mailaddr.Key wie beim Anlegen eines Entwurfs
+	// (zweite Nachbesserung T3, Punkt 9), über alle Konten.
+	found, byKey := matchIdentities(list, sel)
 	switch len(found) {
 	case 0:
 		return store.Identity{}, store.ErrIdentityNotFound
 	case 1:
 		return found[0], nil
+	}
+	accounts := map[int64]bool{}
+	for _, i := range found {
+		accounts[i.AccountID] = true
+	}
+	if byKey && len(accounts) < len(found) {
+		return store.Identity{}, errAmbiguousSpelling(len(found))
 	}
 	return store.Identity{}, inputErr("the identity exists in %d accounts; choose one with account", len(found))
 }

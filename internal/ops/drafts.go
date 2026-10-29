@@ -18,6 +18,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -709,16 +710,70 @@ func (o *draftOps) identity(ctx context.Context, accountID int64, sel string) (s
 	if err != nil {
 		return store.Identity{}, false, err
 	}
-	sel = strings.ToLower(strings.TrimSpace(sel))
-	for _, i := range list {
-		if (sel == "" && i.IsDefault) || (sel != "" && (strings.ToLower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel)) {
-			return i, true, nil
-		}
+	i, ok, err := pickIdentity(list, sel)
+	if err != nil || ok {
+		return i, ok, err
 	}
-	if sel != "" {
+	if strings.TrimSpace(sel) != "" {
 		return store.Identity{}, false, inputErr("unknown identity for this account; list them with: identity list")
 	}
 	return store.Identity{}, false, nil
+}
+
+// pickIdentity wählt aus den Identitäten eines Kontos: sel leer = die
+// Standardidentität, sonst nach matchIdentities. Exakte Treffer gehen vor
+// (bei Altbestand mit zwei gleichen Schreibweisen der erste, wie bisher);
+// passen nur mehrere andere Schreibweisen (Altbestand aus der Zeit vor der
+// Dublettenprüfung von identities.add), ist die Wahl mehrdeutig und
+// verlangt die ID. ok = false: keine passende Identität.
+func pickIdentity(list []store.Identity, sel string) (store.Identity, bool, error) {
+	if strings.TrimSpace(sel) == "" {
+		for _, i := range list {
+			if i.IsDefault {
+				return i, true, nil
+			}
+		}
+		return store.Identity{}, false, nil
+	}
+	found, byKey := matchIdentities(list, sel)
+	switch {
+	case len(found) == 0:
+		return store.Identity{}, false, nil
+	case len(found) > 1 && byKey:
+		return store.Identity{}, false, errAmbiguousSpelling(len(found))
+	}
+	return found[0], true, nil
+}
+
+// matchIdentities sucht in list die Identitäten zu sel (Adresse oder ID,
+// nicht leer): erst exakt (ID oder dieselbe Schreibweise ohne Rücksicht auf
+// ASCII-Groß- und Kleinschreibung, mailaddr.Lower), sonst nach mailaddr.Key
+// (andere Gmail-Schreibweise derselben Adresse: Punkte, Zusatz ab „+“,
+// googlemail.com; zweite Nachbesserung T3, Punkt 9). byKey meldet den
+// zweiten Weg.
+func matchIdentities(list []store.Identity, sel string) (found []store.Identity, byKey bool) {
+	sel = mailaddr.Lower(sel)
+	for _, i := range list {
+		if mailaddr.Lower(i.Email) == sel || strconv.FormatInt(i.ID, 10) == sel {
+			found = append(found, i)
+		}
+	}
+	if len(found) > 0 || !strings.Contains(sel, "@") {
+		return found, false
+	}
+	k := mailaddr.Key(sel)
+	for _, i := range list {
+		if mailaddr.Key(i.Email) == k {
+			found = append(found, i)
+		}
+	}
+	return found, true
+}
+
+// errAmbiguousSpelling: Die Adresse passt nur als andere Schreibweise, und
+// das zu mehreren Identitäten.
+func errAmbiguousSpelling(n int) error {
+	return inputErr("the address matches %d identities in other spellings (Gmail ignores dots and +tags); choose one by ID (identity list)", n)
 }
 
 // draftIdentity ist der Absender beim Neubau eines gespeicherten Entwurfs:
