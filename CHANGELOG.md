@@ -6,7 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 Nichts seit 0.3.0-rc1.
 
-## [0.3.0-rc1] – 2026-10-29 (Release-Kandidat, Tag erst nach D10)
+## [0.3.0-rc1] – 2026-10-29 (Release-Kandidat; vom Betreiber angenommen (D10), Tag `v0.3.0-rc1` an `502da91`, GitHub-Release)
 
 Abschluss von Schnitt 3 (A03 S3.0 bis S3.8, gebaut in den Teilen T1a, T1b, T1c, T2, T3, T4, T5). Schema 22. Build-Commit, Nachbau und Prüfsummen: `docs/protokolle/S38_abschluss.md`. Abnahmen: D7a und D7 bestanden, D8 Teile A bis C bestanden; offen D8 Teil D (OAuth mit Authelia, VPS) und D9 (Microsoft-Postfach, zurückgestellt).
 
