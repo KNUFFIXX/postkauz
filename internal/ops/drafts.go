@@ -704,20 +704,29 @@ func (o *draftOps) putFiles(ctx context.Context, atts []loadedAttachment) error 
 }
 
 // identity wählt die Identität: sel = Adresse oder ID einer Identität des
-// Kontos; leer = die Standardidentität (ok = false: keine).
-func (o *draftOps) identity(ctx context.Context, accountID int64, sel string) (store.Identity, bool, error) {
+// Kontos; leer = die Standardidentität (ok = false: keine). Passt sel nur
+// als andere Gmail-Schreibweise (mailaddr.Key), nennt note, welche
+// Identität mit welcher Adresse genommen wurde (dritte Nachbesserung T3,
+// Punkt 9d); sonst ist note leer.
+func (o *draftOps) identity(ctx context.Context, accountID int64, sel string) (i store.Identity, ok bool, note string, err error) {
 	list, err := o.svc.Store.Identities(ctx, accountID)
 	if err != nil {
-		return store.Identity{}, false, err
+		return store.Identity{}, false, "", err
 	}
-	i, ok, err := pickIdentity(list, sel)
-	if err != nil || ok {
-		return i, ok, err
+	i, ok, err = pickIdentity(list, sel)
+	if err != nil {
+		return i, ok, "", err
+	}
+	if ok {
+		if sel = strings.TrimSpace(sel); sel != "" && mailaddr.Lower(sel) != mailaddr.Lower(i.Email) && sel != strconv.FormatInt(i.ID, 10) {
+			note = fmt.Sprintf("identity %d (%s) was used: %s is another spelling of its Gmail address", i.ID, i.Email, sel)
+		}
+		return i, true, note, nil
 	}
 	if strings.TrimSpace(sel) != "" {
-		return store.Identity{}, false, inputErr("unknown identity for this account; list them with: identity list")
+		return store.Identity{}, false, "", inputErr("unknown identity for this account; list them with: identity list")
 	}
-	return store.Identity{}, false, nil
+	return store.Identity{}, false, "", nil
 }
 
 // pickIdentity wählt aus den Identitäten eines Kontos: sel leer = die
@@ -961,10 +970,11 @@ func DraftsCreate(d Deps) Operation {
 					}
 				}
 			}
-			ident, hasIdent, err := o.identity(ctx, acc.ID, in.Identity)
+			ident, hasIdent, identNote, err := o.identity(ctx, acc.ID, in.Identity)
 			if err != nil {
 				return nil, err
 			}
+			notes = addNote(notes, identNote)
 			atts, err := o.attachments(ctx, acc, in.Attachments, budget)
 			if err != nil {
 				return nil, err
