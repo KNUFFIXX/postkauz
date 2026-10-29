@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -15,12 +16,17 @@ func TestT5N2SystemdCredential(t *testing.T) {
 	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
 	st := envStore{base: Unavailable{Reason: "test"}, lookup: lookup}
 	ref := AccountRef("1a2b3c4d", "demo-1")
+	// Vor jedem Schreiben löschen: Eine Datei mit 0o400 lässt sich als
+	// Nicht-root nicht überschreiben (CI-Nutzer runner).
+	file := filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1")
 	write := func(content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1"), []byte(content), 0o400); err != nil {
+		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.Remove(filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1")) })
+		if err := os.WriteFile(file, []byte(content), 0o400); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if _, err := st.Get(ref); !errors.Is(err, ErrNotFound) {
@@ -53,14 +59,19 @@ func TestT5N2SystemdCredential(t *testing.T) {
 
 	// Kein regulärer Eintrag, zu groß: Fehler mit Namen, ohne Inhalt, kein
 	// Rückfall auf den Speicher darunter.
-	_ = os.Remove(filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1"))
-	if err := os.Symlink(filepath.Join(dir, "elsewhere"), filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1")); err != nil {
-		t.Fatal(err)
+	// Verknüpfung nur außerhalb von Windows (dort braucht os.Symlink
+	// Sonderrechte; systemd-Credentials gibt es dort ohnehin nicht).
+	if runtime.GOOS != "windows" {
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(dir, "elsewhere"), file); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Get(ref); !errors.Is(err, ErrCredential) || !strings.Contains(err.Error(), "POSTKAUZ_PASSWORD_DEMO_1") {
+			t.Errorf("symlink: %v, want ErrCredential", err)
+		}
 	}
-	if _, err := st.Get(ref); !errors.Is(err, ErrCredential) || !strings.Contains(err.Error(), "POSTKAUZ_PASSWORD_DEMO_1") {
-		t.Errorf("symlink: %v, want ErrCredential", err)
-	}
-	_ = os.Remove(filepath.Join(dir, "POSTKAUZ_PASSWORD_DEMO_1"))
 	write("geheim-" + strings.Repeat("x", maxCredentialBytes))
 	if _, err := st.Get(ref); !errors.Is(err, ErrCredential) || strings.Contains(err.Error(), "geheim") {
 		t.Errorf("too large: %v, want ErrCredential without content", err)
