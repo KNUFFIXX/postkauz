@@ -125,7 +125,7 @@ type DoctorHTTP struct {
 // DoctorAccount meldet je Konto, woher das Passwort käme.
 type DoctorAccount struct {
 	Name     string `json:"name"`
-	Password string `json:"password"` // stored | environment | missing | unknown | oauth2 (kein Passwort)
+	Password string `json:"password"` // stored | environment | credential (systemd) | missing | unknown | oauth2 (kein Passwort)
 	EnvVar   string `json:"env_var"`
 	Status   string `json:"status"`
 	// LastError: letzter Fehler am Konto bei Status error (account test;
@@ -348,8 +348,8 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 			rep.Accounts = append(rep.Accounts, da)
 			continue
 		}
-		if v, ok := os.LookupEnv(da.EnvVar); ok && v != "" {
-			da.Password = "environment"
+		if _, src, ok, _ := secrets.FromEnvironment(acc.CredentialRef); ok {
+			da.Password = src // environment | credential
 		} else if sec != nil {
 			switch _, err := sec.Get(acc.CredentialRef); {
 			case err == nil:

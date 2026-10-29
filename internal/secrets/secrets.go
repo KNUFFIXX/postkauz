@@ -3,7 +3,9 @@
 // Rangfolge (docs/sicherheit.md, Abschnitt 4):
 //
 //  1. Umgebungsvariable POSTKAUZ_PASSWORD_<KONTO> (nur lesen; für Server und
-//     Docker, wo es keinen Schlüsselbund gibt),
+//     Docker, wo es keinen Schlüsselbund gibt), danach die systemd-Credential
+//     $CREDENTIALS_DIRECTORY/POSTKAUZ_PASSWORD_<KONTO> (LoadCredential=; der
+//     Weg auf dem VPS, credentials.go),
 //  2. Schlüsselbund des Betriebssystems über github.com/zalando/go-keyring
 //     (Windows Credential Manager, macOS Keychain, Secret Service),
 //  3. nur auf ausdrücklichen Wunsch (secrets.backend = "insecure-file"): eine
@@ -170,7 +172,8 @@ func Stored(st Store) Store {
 }
 
 // WithEnv legt die Umgebungsvariablen über einen Speicher: Get liest zuerst
-// die Umgebung; Set und Delete gehen an den Speicher darunter.
+// die Umgebung, dann die systemd-Credentials (FromEnvironment); Set und
+// Delete gehen an den Speicher darunter.
 func WithEnv(base Store) Store { return envStore{base: base, lookup: os.LookupEnv} }
 
 type envStore struct {
@@ -182,8 +185,11 @@ func (e envStore) Get(ref string) (Secret, error) {
 	if err := ValidRef(ref); err != nil {
 		return "", err
 	}
-	if v, ok := e.lookup(EnvName(ref)); ok && v != "" {
-		return Secret(v), nil
+	switch v, _, ok, err := fromEnvironment(ref, e.lookup); {
+	case err != nil:
+		return "", err
+	case ok:
+		return v, nil
 	}
 	return e.base.Get(ref)
 }

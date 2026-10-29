@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/mail"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -466,7 +465,7 @@ func AccountsAdd(repo AccountRepo, sec secrets.Store, ms oauth.Microsoft) Operat
 					return nil, inputErr("password_from_env and a password must not be combined")
 				}
 				if _, err := sec.Get(ref); err != nil {
-					return nil, inputErr("password_from_env: environment variable %s is not set", secrets.EnvName(ref))
+					return nil, inputErr("password_from_env: neither environment variable nor systemd credential %s is set", secrets.EnvName(ref))
 				}
 			} else if call.Secret.IsZero() {
 				return nil, inputErr("password is required")
@@ -698,7 +697,7 @@ func AccountsSet(repo AccountRepo, sec secrets.Store) Operation {
 					return nil, err
 				}
 				out.CredentialRef, out.SecretStore, out.Password = secrets.AccountRef(dirID, a.Name), sec.Status().Backend, "would_replace"
-				if v, ok := os.LookupEnv(secrets.EnvName(out.CredentialRef)); ok && v != "" {
+				if _, _, ok, _ := secrets.FromEnvironment(out.CredentialRef); ok {
 					out.EnvOverride = secrets.EnvName(out.CredentialRef)
 				}
 			}

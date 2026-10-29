@@ -7,13 +7,21 @@
 #   install -Dm644 postkauz-sync@.service -t /etc/systemd/system/
 #   install -d -m 0750 -o root -g postkauz /etc/postkauz
 #   install -d -m 0700 -o root -g root /etc/postkauz/credentials
-#   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-<konto>.env
-#   # in die Datei: POSTKAUZ_PASSWORD_<KONTO>=<passwort> (Name in Großbuchstaben)
+#   install -d -m 0700 -o root -g root /etc/postkauz/credentials/sync-<konto>
+#   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-<konto>/PASSWORD_<KONTO>
+#   # in die Datei nur das Passwort (Dateiname in Großbuchstaben, "-" wird
+#   # "_"; Konto demo-1 → PASSWORD_DEMO_1; ein Zeilenumbruch am Ende zählt nicht)
 #
-# Die Passwortdatei gehört root und nur root liest sie: systemd selbst liest
-# EnvironmentFile=, bevor es zum Nutzer postkauz wechselt. Der Nutzer
-# postkauz (und damit der HTTP-MCP) kommt an die Datei nicht heran; das
-# Passwort steht danach nur in der Umgebung dieses Prozesses.
+# Das Passwort kommt NICHT über die Umgebung (zweite Nachbesserung T5,
+# Punkt 4): EnvironmentFile= stand in /proc/<pid>/environ. systemd liest den
+# Ordner als root (LoadCredential=, Verzeichnisform ab systemd 251) und
+# legt jede Datei als Credential POSTKAUZ_<DATEINAME> nur für diesen Dienst
+# in $CREDENTIALS_DIRECTORY (/run/credentials/<unit>, nicht auslagerbarer
+# Speicher, lesbar nur für den Nutzer postkauz); PostKauz liest daraus
+# POSTKAUZ_PASSWORD_<KONTO>. Der HTTP-MCP sieht /run/credentials und
+# /etc/postkauz/credentials nicht (InaccessiblePaths=). Ältere systemd
+# (249/250, etwa Ubuntu 22.04): statt der Zeile unten je Konto ein Drop-in
+# mit der Einzeldatei, docs/betrieb.md 4.4.
 #   systemctl daemon-reload
 #   systemctl enable --now postkauz-sync@<konto>.service
 #   journalctl -u postkauz-sync@<konto>.service
@@ -31,9 +39,9 @@ After=network-online.target
 Type=simple
 User=postkauz
 Group=postkauz
-# Zugangsdaten nur hier (Rechte 0600, root:root; liest systemd als root);
-# nie in der Unit selbst.
-EnvironmentFile=/etc/postkauz/credentials/sync-%i.env
+# Zugangsdaten nur hier (Ordner 0700, Datei 0600, root:root; liest systemd
+# als root); nie in der Unit selbst und nie in der Umgebung.
+LoadCredential=POSTKAUZ:/etc/postkauz/credentials/sync-%i
 Environment=POSTKAUZ_CONFIG=/etc/postkauz/config.toml
 Environment=POSTKAUZ_DATA_DIR=/var/lib/postkauz
 ExecStart=/usr/local/bin/postkauz sync --watch -a %i

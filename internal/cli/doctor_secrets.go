@@ -116,8 +116,8 @@ func doctorSecrets(ctx context.Context, a *app, rep DoctorReport) *DoctorSecrets
 				continue
 			}
 			name := "password of account " + acc.Name
-			if v, ok := os.LookupEnv(secrets.EnvName(acc.CredentialRef)); ok && v != "" {
-				addNeedle(name, []byte(v))
+			if v, _, ok, _ := secrets.FromEnvironment(acc.CredentialRef); ok {
+				addNeedle(name, []byte(v.Reveal()))
 				continue
 			}
 			if secErr != nil {

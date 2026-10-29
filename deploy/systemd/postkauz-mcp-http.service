@@ -1,6 +1,6 @@
 # PostKauz: MCP über HTTP (mcp --http, A03 S3.5, ADR-010), Vorlage für einen
 # VPS. Dieser Dienst kennt kein Postfachpasswort (ADR-009): kein
-# EnvironmentFile, und der MCP-Prozess bekommt einen Secrets-Speicher, der
+# LoadCredential=, und der MCP-Prozess bekommt einen Secrets-Speicher, der
 # jeden Zugriff verweigert. Er lauscht nur auf 127.0.0.1:8787 ([http]
 # listen); TLS und das private Netz kommen von tailscale serve. Anleitung:
 # docs/betrieb.md, Abschnitt 4.4.
@@ -10,13 +10,18 @@
 # 0600/0700 setzt (store.Open, blob, config.RestrictPermissions); zwei
 # Nutzer mit gemeinsamer Gruppe gehen erst nach einer Code-Änderung.
 # Deshalb trennt die Unit selbst: eigener PID-Namensraum (PrivatePIDs=, ab
-# systemd 257; dann sieht der Dienst /proc/<pid>/environ des Sync-Dienstes
-# nicht), /proc nur mit eigenen Prozessen (ProtectProc=), die
-# Passwortdateien unsichtbar (InaccessiblePaths=). Ältere systemd-Versionen
-# melden PrivatePIDs= als unbekannt und ignorieren es. Die Umgebung des
-# Sync-Dienstes bleibt trotzdem gesperrt: Jeder PostKauz-Prozess mit
-# Zugangsdaten setzt unter Linux PR_SET_DUMPABLE=0 (internal/procguard,
-# docs/betrieb.md 4.4).
+# systemd 257; dann sieht der Dienst die Prozesse des Sync-Dienstes nicht),
+# Passwortdateien und Credentials unsichtbar (InaccessiblePaths=). Ältere
+# systemd-Versionen melden PrivatePIDs= als unbekannt und ignorieren es;
+# dann sieht dieser Dienst die Prozesse desselben Nutzers in /proc
+# (ProtectProc=invisible verbirgt nur fremde Nutzer). Das Passwort steht
+# trotzdem nicht in /proc/<pid>/environ (es kommt als Credential), und
+# jeder PostKauz-Prozess setzt unter Linux als erste Anweisung
+# PR_SET_DUMPABLE=0 (internal/procguard): /proc/<pid>/mem und ptrace nur
+# für root. Restrisiko: Wer diesen Dienst übernimmt, kann über die
+# gemeinsame Datenbank accounts.host ändern und den Sync beim nächsten
+# Lauf an einen fremden Server schicken (docs/betrieb.md 4.4, Roadmap:
+# zwei Systemnutzer).
 #
 #   install -Dm644 postkauz-mcp-http.service -t /etc/systemd/system/
 #   systemctl daemon-reload
@@ -39,8 +44,10 @@ RestartSec=10
 StateDirectory=postkauz
 StateDirectoryMode=0700
 UMask=0077
-# Passwortdateien der Sync-Dienste gibt es in diesem Dienst nicht.
+# Passwortdateien und Credentials der Sync-Dienste (LoadCredential=, als
+# derselbe Nutzer sonst lesbar) gibt es in diesem Dienst nicht.
 InaccessiblePaths=-/etc/postkauz/credentials
+InaccessiblePaths=-/run/credentials
 # Eigener PID-Namensraum (systemd 257 und neuer): keine fremden Prozesse,
 # also auch nicht /proc/<pid>/environ von postkauz-sync@.
 PrivatePIDs=yes

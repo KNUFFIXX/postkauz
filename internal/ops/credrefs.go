@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -101,7 +100,7 @@ func moveOne(ctx context.Context, repo CredentialRefRepo, base secrets.Store, id
 		// er nach dem Umstellen weder unter dem alten noch unter dem neuen
 		// Namen lesbar; so versucht es das nächste Öffnen erneut, und doctor
 		// warnt weiter.
-		if v, ok := os.LookupEnv(secrets.EnvName(to)); !ok || v == "" {
+		if _, _, ok, _ := secrets.FromEnvironment(to); !ok {
 			return "missing", nil
 		}
 		if err := repo.SetCredentialRef(ctx, id, to); err != nil {

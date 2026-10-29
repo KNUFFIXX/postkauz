@@ -442,7 +442,7 @@ Seit T5 (S3.5, S3.6; ADR-010). Ziel: Ein Agent erreicht PostKauz auch von außer
 
 - **Zwei Dienste** auf dem Dauerläufer (VPS oder PC):
   - `postkauz sync --watch` kennt die Mailpasswörter und spiegelt die Postfächer (wie in Abschnitt 1).
-  - `postkauz mcp --http` kennt **kein** Mailpasswort. Er lauscht nur auf `127.0.0.1:8787` und beantwortet MCP-Anfragen über HTTP. Jeder MCP-Prozess (stdio und `--http`) bekommt einen Secrets-Speicher, der jeden Zugriff verweigert (Backend `denied`): Schlüsselbund, die Datei von `insecure-file` und `POSTKAUZ_PASSWORD_*` fasst er nie an.
+  - `postkauz mcp --http` kennt **kein** Mailpasswort. Er lauscht nur auf `127.0.0.1:8787` und beantwortet MCP-Anfragen über HTTP. Jeder MCP-Prozess (stdio und `--http`) bekommt einen Secrets-Speicher, der jeden Zugriff verweigert (Backend `denied`): Schlüsselbund, die Datei von `insecure-file`, `POSTKAUZ_PASSWORD_*` und systemd-Credentials fasst er nie an.
 - **Tailscale** verbindet deine Geräte zu einem privaten Netz (Tailnet). `tailscale serve` macht aus `http://127.0.0.1:8787` die Adresse `https://<knoten>.<tailnet>.ts.net` mit gültigem Zertifikat, **nur im Tailnet**. Kein Funnel, kein Cloudflare-Tunnel, kein offener Port im Internet.
 - **Anmeldung** an `mcp --http`, eine von zwei Arten (`[http] auth`):
   - `key`: Der Client schickt einen PostKauz-Schlüssel mit (`Authorization: Bearer pk_key_…`). Einfach, geht auch ohne Browser, also aus einer Cloud-Sitzung. Nur auf Loopback oder einer Tailnet-Adresse.
@@ -542,20 +542,21 @@ Für einen kleinen EU-VPS (Debian oder Ubuntu). Als `root`:
 
 ### 4.4 Konten und Dienste (systemd)
 
-Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in einer Datei, die nur `root` lesen kann. systemd liest sie beim Start des Sync-Dienstes selbst (als `root`, bevor es zum Nutzer `postkauz` wechselt) und gibt das Passwort nur diesem Dienst in die Umgebung (Rückfrage R2; Microsoft-Konten mit OAuth2 bleiben auf den Windows-PCs).
+Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in einer Datei, die nur `root` lesen kann. systemd liest sie beim Start des Sync-Dienstes selbst (als `root`, bevor es zum Nutzer `postkauz` wechselt) und gibt sie nur diesem Dienst als **Credential**: eine Datei im Arbeitsspeicher unter `/run/credentials/<dienst>/`, deren Ort PostKauz in `$CREDENTIALS_DIRECTORY` findet (`LoadCredential=`, Rückfrage R2; Microsoft-Konten mit OAuth2 bleiben auf den Windows-PCs). Das Passwort steht **nicht in der Umgebung** des Prozesses (früher `EnvironmentFile=`; die Umgebung war bis zum Selbstschutz des Programms über `/proc/<pid>/environ` lesbar). Nötig ist systemd 251 oder neuer (Ubuntu 24.04, Debian 12); für ältere siehe unten.
 
-1. Je Konto eine Datei mit dem Passwort (Kontoname `privat` → Variable `POSTKAUZ_PASSWORD_PRIVAT`):
+1. Je Konto ein Ordner mit einer Datei, die nur das Passwort enthält. Der Dateiname ist `PASSWORD_` plus der Kontoname in Großbuchstaben, `-` wird `_` (Konto `privat` → `PASSWORD_PRIVAT`, PostKauz liest daraus `POSTKAUZ_PASSWORD_PRIVAT`):
 
    ```bash
-   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-privat.env
+   install -d -m 0700 -o root -g root /etc/postkauz/credentials/sync-privat
+   install -m 0600 -o root -g root /dev/null /etc/postkauz/credentials/sync-privat/PASSWORD_PRIVAT
    ```
 
-   Als `root` mit einem Editor eine Zeile hineinschreiben: `POSTKAUZ_PASSWORD_PRIVAT=<app-passwort>`.
-2. Konto anlegen (liest das Passwort aus der Umgebung, speichert es nicht). Als `root`, über `systemd-run`: systemd liest die Passwortdatei selbst, wie später beim Sync-Dienst, und startet das Programm als Nutzer `postkauz`. So steht das Passwort nie in einer Befehlszeile (`ps`, Befehlsverlauf, das Protokoll von `sudo`). `StateDirectory=` legt dabei `/var/lib/postkauz` für den Nutzer `postkauz` an, wie es die Units später auch tun:
+   Als `root` mit einem Editor nur das Passwort hineinschreiben (ein Zeilenumbruch am Ende zählt nicht mit). Keine weiteren Dateien in diesen Ordner legen: systemd gibt jede Datei darin dem Dienst.
+2. Konto anlegen (liest das Passwort aus dem Credential, speichert es nicht). Als `root`, über `systemd-run`: systemd liest die Passwortdatei selbst, wie später beim Sync-Dienst, und startet das Programm als Nutzer `postkauz`. So steht das Passwort nie in einer Befehlszeile (`ps`, Befehlsverlauf, das Protokoll von `sudo`). `StateDirectory=` legt dabei `/var/lib/postkauz` für den Nutzer `postkauz` an, wie es die Units später auch tun:
 
    ```bash
    systemd-run --pipe --wait --quiet --uid=postkauz --gid=postkauz \
-     -p EnvironmentFile=/etc/postkauz/credentials/sync-privat.env \
+     -p LoadCredential=POSTKAUZ:/etc/postkauz/credentials/sync-privat \
      -p StateDirectory=postkauz -p StateDirectoryMode=0700 -p UMask=0077 \
      -E POSTKAUZ_CONFIG=/etc/postkauz/config.toml -E POSTKAUZ_DATA_DIR=/var/lib/postkauz \
      /usr/local/bin/postkauz account add privat --imap imap.gmail.com:993 --user <adresse> --password-from-env
@@ -579,22 +580,43 @@ Auf dem VPS gibt es keinen Schlüsselbund. Das Passwort eines Kontos steht in ei
 
    Erwartet: beide `active (running)`, dann `204`. Log: `journalctl -u postkauz-mcp-http.service` und `/var/lib/postkauz/postkauz.log`. Abgewiesene Anfragen (falscher Schlüssel, zu viele Anfragen, fremder Host) stehen dort höchstens einmal je 10 Sekunden als eine Zeile `http requests rejected` mit Zählern; viele davon heißen: Jemand im Tailnet probiert etwas, oder ein Client hat einen alten Schlüssel.
 
-Der MCP-Dienst hat keine `EnvironmentFile`-Zeile, sieht `/etc/postkauz/credentials` gar nicht (`InaccessiblePaths=`) und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht.
+Der MCP-Dienst hat keine `LoadCredential`-Zeile, sieht `/etc/postkauz/credentials` und `/run/credentials` gar nicht (`InaccessiblePaths=`) und darf nichts außer seinem Datenverzeichnis schreiben (`ProtectSystem=strict`, `NoNewPrivileges`). Ändere das nicht.
 
-**Grenze, offen gesagt:** Beide Dienste laufen als derselbe Nutzer `postkauz`, weil sie dieselbe Datenbank und dieselben Mail-Dateien brauchen und PostKauz diese bei jedem Start auf „nur der Besitzer“ setzt (0600 und 0700). Normalerweise darf ein Prozess die Umgebung eines anderen Prozesses desselben Nutzers lesen (`/proc/<pid>/environ`), also auch das Passwort des Sync-Dienstes. Davor schützen zwei Dinge:
+**Ältere systemd (249 oder 250, etwa Ubuntu 22.04):** Dort kennt `LoadCredential=` keinen Ordner, und der Sync-Dienst startet nicht (`Is a directory`). Dann je Konto die Zeile der Unit durch die Einzeldatei ersetzen:
 
-- **Im Programm (jede systemd-Version):** Jeder PostKauz-Prozess mit Zugangsdaten (zum Beispiel `sync --watch`) sperrt sich unter Linux gleich beim Start gegen das Auslesen (`PR_SET_DUMPABLE=0`). Dann können nur noch Prozesse von `root` seine Umgebung und seinen Speicher lesen, und es entsteht kein Speicherabbild mit dem Passwort.
-- **In der Unit (ab systemd 257, zum Beispiel Debian 13):** Der MCP-Dienst hat einen eigenen Prozessraum (`PrivatePIDs=yes`) und sieht den Sync-Dienst gar nicht. Ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen nur diese Zeile weg.
+```bash
+systemctl edit postkauz-sync@<konto>.service   # für das Konto privat: privat statt <konto>
+```
+
+In den Editor (zwischen die Kommentarzeilen):
+
+```ini
+[Service]
+LoadCredential=
+LoadCredential=POSTKAUZ_PASSWORD_PRIVAT:/etc/postkauz/credentials/sync-privat/PASSWORD_PRIVAT
+```
+
+Die leere erste Zeile löscht die Ordner-Zeile der Vorlage. Beim Kontoanlegen in Schritt 2 dann `-p LoadCredential=POSTKAUZ_PASSWORD_PRIVAT:/etc/postkauz/credentials/sync-privat/PASSWORD_PRIVAT` statt der Ordner-Zeile.
+
+**Grenze, offen gesagt:** Beide Dienste laufen als derselbe Nutzer `postkauz`, weil sie dieselbe Datenbank und dieselben Mail-Dateien brauchen und PostKauz diese bei jedem Start auf „nur der Besitzer“ setzt (0600 und 0700). Normalerweise darf ein Prozess Umgebung und Speicher eines anderen Prozesses desselben Nutzers lesen, und die Credentials eines Dienstes sind für dessen Nutzer lesbar. Davor schützen drei Dinge:
+
+- **Kein Passwort in der Umgebung:** Es kommt als Credential, nicht über `/proc/<pid>/environ`.
+- **Im Programm (jede systemd-Version):** Jeder PostKauz-Prozess sperrt sich unter Linux als **erste Anweisung** gegen das Auslesen (`PR_SET_DUMPABLE=0`); dann können nur noch Prozesse von `root` seinen Speicher lesen oder ihn untersuchen, und es entsteht kein Speicherabbild mit dem Passwort. Vor dieser ersten Anweisung bleibt ein Fenster von wenigen Millisekunden nach dem Start (gemessen in der zweiten Nachbesserung T5); weil das Passwort nicht in der Umgebung steht, ist dort nichts zu holen.
+- **In der Unit:** Der MCP-Dienst sieht `/run/credentials` und die Passwortdateien nicht (`InaccessiblePaths=`). Ab systemd 257 (zum Beispiel Debian 13) hat er zusätzlich einen eigenen Prozessraum (`PrivatePIDs=yes`) und sieht den Sync-Dienst gar nicht. Ältere Versionen melden `Unknown key name 'PrivatePIDs'` und lassen nur diese Zeile weg; dann kann der MCP-Dienst den Sync-Dienst zwar sehen und beenden (der startet nach 60 s neu), aber weder dessen Umgebung noch dessen Speicher noch dessen Credentials lesen.
+
+**Restrisiko:** Wer den MCP-Dienst übernimmt (Fehler im Programm), schreibt mit denselben Rechten in dieselbe Datenbank. Er könnte dort den Server eines Kontos (`accounts.host`) auf einen eigenen ändern; der Sync-Dienst meldete sich beim nächsten Lauf dort mit dem Passwort an. Dagegen hilft erst die Trennung in zwei Systemnutzer (Roadmap, braucht ein Rechtemodell für Datenbank und Mail-Dateien). Bis dahin: `accounts list` zeigt den Server je Konto; ein unerwarteter Name dort heißt sofort Passwort ändern.
 
 Prüfen:
 
 ```bash
 systemctl --version | head -n 1
-systemctl show -p PrivatePIDs postkauz-mcp-http.service
-sudo -u postkauz cat /proc/$(systemctl show -p MainPID --value postkauz-sync@<konto>.service)/environ
+systemctl show -p PrivatePIDs -p InaccessiblePaths postkauz-mcp-http.service
+PID=$(systemctl show -p MainPID --value postkauz-sync@<konto>.service)
+grep -c POSTKAUZ_PASSWORD /proc/$PID/environ
+sudo -u postkauz cat /proc/$PID/environ
 ```
 
-Erwartet: die Version, `PrivatePIDs=yes` (bei systemd 257 oder höher) und beim dritten Befehl `Permission denied` (der Sync-Prozess ist für den eigenen Nutzer gesperrt). Zwei getrennte Nutzer mit gemeinsamer Gruppe gehen erst nach einer Änderung im Programm (Rechte des Datenverzeichnisses, in der Roadmap vorgemerkt). Beide Units haben außerdem `ProtectProc=invisible` (Prozesse anderer Nutzer bleiben unsichtbar).
+Erwartet: die Version; `PrivatePIDs=yes` (bei systemd 257 oder höher) und `InaccessiblePaths=` mit `/etc/postkauz/credentials` und `/run/credentials`; beim dritten Befehl `0` (kein Passwort in der Umgebung, auch für `root` nicht); beim vierten `Permission denied` (der Sync-Prozess ist für den eigenen Nutzer gesperrt). Zwei getrennte Nutzer mit gemeinsamer Gruppe gehen erst nach einer Änderung im Programm (Rechte des Datenverzeichnisses, in der Roadmap vorgemerkt). Beide Units haben außerdem `ProtectProc=invisible` (Prozesse anderer Nutzer bleiben unsichtbar).
 
 ### 4.5 Tailscale und `tailscale serve`
 
