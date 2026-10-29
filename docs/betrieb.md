@@ -245,6 +245,12 @@ Meldet `verify` mehr als einen Tag als verändert, ist es kein Abbruch: nicht re
 
 **Erster Export nach dem Update (seit 0.3.0-alpha.7b):** Der Exportordner darf anders geschrieben sein als bisher (z. B. `g:\my drive\…` statt `G:\My Drive\…` oder ein neuer Laufwerksbuchstabe von Google Drive), solange das Manifest dort zu den Nachweisen passt. Endet der Export trotzdem mit `the target directory belongs to another data directory: … last recorded at <ort>`, einmal genau mit diesem Ort exportieren: `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export --to "<ort>"`, danach läuft die Aufgabe wieder. Bricht dieser erste Export unter der neuen Schreibweise ab, erkennt der nächste Lauf die schon vorhandenen Tagesdateien an ihrer Prüfsumme als eigene (seit 0.3.0-alpha.7c) und schließt ab; bis dahin kann `audit verify` für den alten und den neuen Ort `manifest does not match the recorded exports` melden.
 
+**Export endet mit `audit_export_source_changed` (seit 0.3.0-alpha.7c):** Der Export hat nichts geschrieben. Ein abgeschlossener Tag liefert aus der Datenbank nicht mehr die Einträge seines Nachweises, die Datenbank wurde also verändert. Nicht erneut exportieren und nichts im Exportordner löschen oder verschieben:
+
+1. `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit verify` — erwartet eine Zeile mit `database_changed` und dem Tag.
+2. Den ganzen Exportordner (mit Manifest) an einen zweiten Ort kopieren, z. B. auf einen USB-Stick; bei Google Drive zusätzlich nicht auf ältere Versionen zurücksetzen (sie sind der Beleg, Google hält sie nur begrenzt).
+3. Klären, wer oder was die Datenbank geändert hat (`docs/sicherheit.md`, Abschnitt 6). Bis dahin bleibt der tägliche Export gesperrt; der Dauer-Sync läuft weiter, `doctor` warnt nach zwei Tagen.
+
 ### 1.9 MCP-Server ohne Passwort, Sync über Claude anstoßen
 
 Der MCP-Server, den die Claude-App startet, kennt **kein** Mailpasswort (ADR-009). Er liest den Spiegel und schreibt Entwürfe nur lokal. Ein Agent kann deshalb nicht selbst synchronisieren. Er kann aber mit dem Tool `mail_sync_now` einen Sync **anfordern**: Das legt einen Auftrag (Job `sync`) in der Datenbank an, und der Dauer-Sync führt ihn binnen etwa 10 Sekunden aus.
