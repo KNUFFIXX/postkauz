@@ -26,9 +26,28 @@ pkg=${2:?usage: abnahme_D7_restore.sh <postkauz> <D7_sicherung.tar> <workdir>}
 work=${3:?usage: abnahme_D7_restore.sh <postkauz> <D7_sicherung.tar> <workdir>}
 
 if [ -e "$work" ]; then echo "ABBRUCH: $work existiert schon; bitte einen neuen Arbeitsordner nennen"; exit 2; fi
-case "$work" in
-  "$HOME/.local/share/postkauz"*|"$HOME/.config/postkauz"*) echo "ABBRUCH: Arbeitsordner im Standardpfad"; exit 2 ;;
-esac
+
+# canon <pfad>: absoluter Pfad ohne Symlinks, auch wenn das Ende noch fehlt
+# (realpath -m; sonst der tiefste vorhandene Vorfahr per cd/pwd -P plus Rest).
+canon() {
+  if r=$(realpath -m -- "$1" 2>/dev/null); then printf '%s\n' "$r"; return; fi
+  case "$1" in /*) p=$1 ;; *) p=$(pwd -P)/$1 ;; esac
+  rest=""
+  while [ ! -d "$p" ]; do
+    rest="/$(basename -- "$p")$rest"; p=$(dirname -- "$p")
+  done
+  printf '%s%s\n' "$(cd -P -- "$p" && pwd -P)" "$rest"
+}
+# Standardpfade wie das Programm (internal/config): XDG_DATA_HOME bzw.
+# XDG_CONFIG_HOME, wenn absolut gesetzt, sonst unter $HOME.
+case "${XDG_DATA_HOME:-}" in /*) std_data=$XDG_DATA_HOME/postkauz ;; *) std_data=$HOME/.local/share/postkauz ;; esac
+case "${XDG_CONFIG_HOME:-}" in /*) std_cfg=$XDG_CONFIG_HOME/postkauz ;; *) std_cfg=$HOME/.config/postkauz ;; esac
+cwork=$(canon "$work")
+for std in "$std_data" "$std_cfg"; do
+  cstd=$(canon "$std")
+  case "$cwork/" in "$cstd/"*) echo "ABBRUCH: Arbeitsordner $work liegt im Standardpfad $std"; exit 2 ;; esac
+  case "$cstd/" in "$cwork/"*) echo "ABBRUCH: Standardpfad $std liegt im Arbeitsordner $work"; exit 2 ;; esac
+done
 mkdir -p "$work" || exit 2
 log="$work/D7_linux.txt"
 ok=0; fail=0

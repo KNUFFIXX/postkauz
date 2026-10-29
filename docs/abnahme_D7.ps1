@@ -78,7 +78,7 @@
     Ein Datei-Eintrag schuetzt auch den Ordner, in dem die Datei liegt.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7b).
 
 .PARAMETER Interactive
     Fragt nach der Thunderbird-Pruefung (D7.4); ohne: SKIP mit Hinweis.
@@ -100,7 +100,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [Parameter(Mandatory = $true)] [string[]] $LivePath,
-    [string] $ExpectVersion = '0.3.0-alpha.7',
+    [string] $ExpectVersion = '0.3.0-alpha.7b',
     [switch] $Interactive,
     [string] $RestoreFrom = '',
     [string] $Reference = ''
@@ -234,8 +234,10 @@ function Invoke-Native {
     $psi.WorkingDirectory = $script:Work
     # Nichts aus der Umgebung darf auf das Live-Verzeichnis oder einen
     # Schluessel zeigen.
-    foreach ($k in @('POSTKAUZ_KEY', 'POSTKAUZ_KEY_FILE', 'POSTKAUZ_DATA_DIR', 'POSTKAUZ_CONFIG', 'POSTKAUZ_POLICY', 'POSTKAUZ_PROFILE', 'POSTKAUZ_PASSWORD_DEMO')) {
-        if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) }
+    # Alle POSTKAUZ_*-Variablen entfernen (wie abnahme_D7_restore.sh), nicht
+    # nur eine Liste: Auch kuenftige Variablen duerfen nicht durchreichen.
+    foreach ($k in @($psi.EnvironmentVariables.Keys | Where-Object { $_ -like 'POSTKAUZ_*' })) {
+        $psi.EnvironmentVariables.Remove($k)
     }
     foreach ($k in $EnvExtra.Keys) { $psi.EnvironmentVariables[$k] = [string] $EnvExtra[$k] }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -324,9 +326,11 @@ function Test-Overlap {
 
 # Markerdatei: in Dir anlegen und pruefen, ob sie in einem der verbotenen
 # Verzeichnisse auftaucht (Junction, subst, Netzlaufwerk auf denselben
-# Ordner). Liefert '' oder den Ort, an dem sie sichtbar war.
+# Ordner). Forbidden wird rekursiv durchsucht, Shallow nur der Ordner selbst
+# (Elternordner von Live-Dateien; sonst liefe die Suche mehrfach ueber das
+# Live-Blob-Verzeichnis). Liefert '' oder den Ort, an dem sie sichtbar war.
 function Test-Marker {
-    param([string] $Dir, [string[]] $Forbidden)
+    param([string] $Dir, [string[]] $Forbidden, [string[]] $Shallow = @())
     if (-not (Test-Path -LiteralPath $Dir)) { [void] [System.IO.Directory]::CreateDirectory($Dir) }
     $name = '.pk-abnahme-marker-' + [guid]::NewGuid().ToString('N')
     $marker = Join-Path $Dir $name
@@ -337,6 +341,12 @@ function Test-Marker {
             if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Container)) { continue }
             $hit = @(Get-ChildItem -LiteralPath $f -Recurse -Force -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1)
             if ($hit.Count -gt 0) { $seen = $f; break }
+        }
+        if (-not $seen) {
+            foreach ($f in $Shallow) {
+                if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Container)) { continue }
+                if (Test-Path -LiteralPath (Join-Path $f $name)) { $seen = $f; break }
+            }
         }
     } finally {
         try {
@@ -405,6 +415,9 @@ $forbidden = New-Object System.Collections.Generic.List[string]
 if ($env:LOCALAPPDATA) { $forbidden.Add((Join-Path $env:LOCALAPPDATA 'postkauz')); $forbidden.Add((Join-Path $env:LOCALAPPDATA 'Packages')) }
 if ($env:APPDATA) { $forbidden.Add((Join-Path $env:APPDATA 'postkauz')) }
 $livePaths = New-Object System.Collections.Generic.List[string]
+# Elternordner von Live-Dateien: verboten fuer -DataDir, -Config, -WorkDir,
+# bei der Markersuche aber nur flach geprueft.
+$parentPlaces = New-Object System.Collections.Generic.List[string]
 foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
     if (-not $l.Trim()) { continue }
     $lp = Get-FullPath $l.Trim()
@@ -415,13 +428,15 @@ foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
     # und oft das Datenverzeichnis des Dauerbetriebs.
     if ((Test-Path -LiteralPath $lp -PathType Leaf) -or ([System.IO.Path]::GetExtension($lp) -and -not (Test-Path -LiteralPath $lp -PathType Container))) {
         $parent = Split-Path -Parent $lp
-        if ($parent) { $forbidden.Add($parent) }
+        if ($parent) { $forbidden.Add($parent); $parentPlaces.Add($parent) }
     }
 }
 if ($livePaths.Count -eq 0) { Stop-Run '-LivePath ist leer: Live-Datenverzeichnis und Live-Konfiguration angeben (durch Komma getrennt).' }
 $markerPlaces = New-Object System.Collections.Generic.List[string]
+$markerShallow = New-Object System.Collections.Generic.List[string]
 foreach ($f in $forbidden) {
-    if ((Test-Path -LiteralPath $f -PathType Container) -and -not $f.EndsWith('\Packages')) { $markerPlaces.Add($f) }
+    if (-not (Test-Path -LiteralPath $f -PathType Container) -or $f.EndsWith('\Packages')) { continue }
+    if ($parentPlaces.Contains($f) -and -not $livePaths.Contains($f)) { $markerShallow.Add($f) } else { $markerPlaces.Add($f) }
 }
 foreach ($f in $forbidden) {
     if (Test-Overlap $script:Data $f) { Stop-Run ('-DataDir liegt im Standard- oder Live-Pfad ' + $f + ' (oder umgekehrt); nichts veraendert.') }
@@ -445,7 +460,7 @@ if ($script:ModeR) {
     if (Test-Overlap $script:From $script:Data) { Stop-Run '-RestoreFrom und -DataDir ueberschneiden sich.' }
 }
 foreach ($d in @($script:Data, $script:Work, (Split-Path -Parent $script:Cfg))) {
-    $where = Test-Marker $d $markerPlaces
+    $where = Test-Marker $d $markerPlaces $markerShallow
     if ($where) { Stop-Run ('Eine Markerdatei aus ' + $d + ' ist in ' + $where + ' sichtbar (Junction, subst oder derselbe Ordner).') }
 }
 # Test-Marker legt -DataDir an; restore will ein leeres oder fehlendes Ziel.

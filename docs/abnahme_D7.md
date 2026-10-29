@@ -1,6 +1,6 @@
 # Abnahme D7: Anhänge, Export, Sicherung, Wiederherstellung, Löschkonzept
 
-Stand: 29.10.2026 (A03 Teil T3 mit Nachbesserung, Build `0.3.0-alpha.7`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T3, Haltepunkt „Abnahme D7“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 4, 5 und 7; die Schritte 1 bis 3 und 6 prüft [abnahme_D7a.md](abnahme_D7a.md)). Skripte: [abnahme_D7.ps1](abnahme_D7.ps1) (Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`) und [abnahme_D7_restore.sh](abnahme_D7_restore.sh) (Restore im Linux-Container). Ausgeführt von der Prüfsitzung.
+Stand: 29.10.2026 (A03 Teil T3 mit zweiter Nachbesserung, Build `0.3.0-alpha.7b`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T3, Haltepunkt „Abnahme D7“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 4, 5 und 7; die Schritte 1 bis 3 und 6 prüft [abnahme_D7a.md](abnahme_D7a.md)). Skripte: [abnahme_D7.ps1](abnahme_D7.ps1) (Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`) und [abnahme_D7_restore.sh](abnahme_D7_restore.sh) (Restore im Linux-Container). Ausgeführt von der Prüfsitzung.
 
 ## Zweck
 
@@ -8,7 +8,7 @@ T3 bringt Anhänge als Datei ablegen, den Export des Archivs (mbox, EML), Sicher
 
 ## Grundregeln
 
-- **Nie die Live-Datenbank** (Rahmen 5): `-DataDir`, `-Config` und seit der Nachbesserung T3 auch `-LivePath` sind Pflicht; das Skript legt `-DataDir` und `-Config` neu an (`-DataDir` leer oder noch nicht vorhanden, `-Config` noch nicht vorhanden). Abbruch ohne Änderung, wenn `-DataDir`, `-Config` oder `-WorkDir` im Standard-Datenverzeichnis (`%LOCALAPPDATA%\postkauz`), im Standard-Konfigurationsordner (`%APPDATA%\postkauz`) oder in einem mit `-LivePath` genannten Pfad liegen (oder umgekehrt); ein Datei-Eintrag in `-LivePath` (die Live-`config.toml`) schützt auch ihren Ordner. Dazu eine Markerdatei gegen Junction und `subst` (für `-DataDir`, `-WorkDir` und den Ordner von `-Config`), wie in D7a, und ein Abbruch, wenn neben `-Config` schon eine `policy.toml` liegt.
+- **Nie die Live-Datenbank** (Rahmen 5): `-DataDir`, `-Config` und seit der Nachbesserung T3 auch `-LivePath` sind Pflicht; das Skript legt `-DataDir` und `-Config` neu an (`-DataDir` leer oder noch nicht vorhanden, `-Config` noch nicht vorhanden). Abbruch ohne Änderung, wenn `-DataDir`, `-Config` oder `-WorkDir` im Standard-Datenverzeichnis (`%LOCALAPPDATA%\postkauz`), im Standard-Konfigurationsordner (`%APPDATA%\postkauz`) oder in einem mit `-LivePath` genannten Pfad liegen (oder umgekehrt); ein Datei-Eintrag in `-LivePath` (die Live-`config.toml`) schützt auch ihren Ordner. Dazu eine Markerdatei gegen Junction und `subst` (für `-DataDir`, `-WorkDir` und den Ordner von `-Config`), wie in D7a, und ein Abbruch, wenn neben `-Config` schon eine `policy.toml` liegt. Die Markersuche durchsucht die verbotenen Ordner rekursiv, den Ordner einer Live-Datei aber nur selbst (nicht seine Unterordner; sonst liefe sie mehrfach über das Live-Blob-Verzeichnis). Jedes aufgerufene Programm bekommt die Umgebung ohne **alle** `POSTKAUZ_*`-Variablen; ebenso `abnahme_D7_restore.sh`, das außerdem kanonisierte Pfade (Symlinks aufgelöst) gegen die Standardpfade vergleicht, auch unter `XDG_DATA_HOME`/`XDG_CONFIG_HOME`.
 - **Protokoll** `D7_windows.txt` (Teil R: `D7_restore.txt`) in `-WorkDir`, exklusiv neu angelegt; Testdaten, Export, Sicherung und Kopie im neuen Laufordner `-WorkDir\lauf-<Datum-Uhrzeit>`. Schlüssel, Mailadressen und Pfade sind maskiert (`<DataDir>`, `<Lauf>`, `<Kopie>` …).
 - Jede Zeile ist `OK`, `FAIL` oder `SKIP` mit Nummer; letzte Zeile `D7: <n> OK, <m> FAIL, <k> SKIP`. Exit 0 nur ohne `FAIL`, Exit 2 bei Abbruch vor dem ersten Schritt.
 - Die Sicherung im Laufordner ist **unverschlüsselt** (synthetische Daten, unkritisch). Für echte Sicherungen gilt [betrieb.md](betrieb.md), Abschnitt 2.
@@ -48,7 +48,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d7\abnahme_D7.ps1 
 
 **Gegenprobe vor Teil A (seit der Nachbesserung T3, nichts wird verändert):** `-Config` in den Ordner der Live-Konfiguration legen, z. B. `-Config C:\PostKauz\config-d7.toml` bei `-LivePath C:\PostKauz\data,C:\PostKauz\config.toml`. Erwartet: `ABBRUCH: -Config liegt im Standard- oder Live-Pfad C:\PostKauz; nichts veraendert.`, Exit 2, kein Protokoll, keine Datei angelegt. Ebenso ohne `-LivePath`: PowerShell fragt nach dem Pflichtparameter (abbrechen mit Strg+C).
 
-Weitere Schalter: `-ExpectVersion` (Standard `0.3.0-alpha.7`). Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` und ein neues `-WorkDir` (oder das alte Protokoll umbenennen).
+Weitere Schalter: `-ExpectVersion` (Standard `0.3.0-alpha.7b`). Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` und ein neues `-WorkDir` (oder das alte Protokoll umbenennen).
 
 ## Teil A
 

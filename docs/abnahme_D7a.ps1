@@ -74,7 +74,7 @@
     durch Komma getrennt. Fuer Teil B Pflicht.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.5).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7b).
 
 .PARAMETER Python
     python.exe fuer die MCP-Probe. Ohne Angabe sucht das Skript python.exe
@@ -112,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.5',
+    [string] $ExpectVersion = '0.3.0-alpha.7b',
     [string] $Python = '',
     [string] $Probe = '',
     [string] $LiveAccount = '',
@@ -265,8 +265,10 @@ function Invoke-Native {
     $psi.WorkingDirectory = $script:Work
     # Nichts aus der Umgebung darf auf das Live-Verzeichnis oder einen
     # Schluessel zeigen.
-    foreach ($k in @('POSTKAUZ_KEY', 'POSTKAUZ_KEY_FILE', 'POSTKAUZ_DATA_DIR', 'POSTKAUZ_CONFIG', 'POSTKAUZ_POLICY', 'POSTKAUZ_PROFILE', 'POSTKAUZ_PASSWORD_DEMO')) {
-        if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) }
+    # Alle POSTKAUZ_*-Variablen entfernen (wie abnahme_D7_restore.sh), nicht
+    # nur eine Liste: Auch kuenftige Variablen duerfen nicht durchreichen.
+    foreach ($k in @($psi.EnvironmentVariables.Keys | Where-Object { $_ -like 'POSTKAUZ_*' })) {
+        $psi.EnvironmentVariables.Remove($k)
     }
     foreach ($k in $EnvExtra.Keys) { $psi.EnvironmentVariables[$k] = [string] $EnvExtra[$k] }
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
