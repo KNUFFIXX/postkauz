@@ -243,6 +243,8 @@ Erwartet am Ende: `== OK: export written to G:\My Drive\PostKauz-Audit …`. Ein
 
 Meldet `verify` mehr als einen Tag als verändert, ist es kein Abbruch: nicht reparieren, sondern klären (Abschnitt 1.8 oben, `docs/sicherheit.md` Abschnitt 6).
 
+**Erster Export nach dem Update (seit 0.3.0-alpha.7b):** Der Exportordner darf anders geschrieben sein als bisher (z. B. `g:\my drive\…` statt `G:\My Drive\…` oder ein neuer Laufwerksbuchstabe von Google Drive), solange das Manifest dort zu den Nachweisen passt. Endet der Export trotzdem mit `the target directory belongs to another data directory: … last recorded at <ort>`, einmal genau mit diesem Ort exportieren: `C:\PostKauz\postkauz.exe --config C:\PostKauz\config.toml audit export --to "<ort>"`, danach läuft die Aufgabe wieder.
+
 ### 1.9 MCP-Server ohne Passwort, Sync über Claude anstoßen
 
 Der MCP-Server, den die Claude-App startet, kennt **kein** Mailpasswort (ADR-009). Er liest den Spiegel und schreibt Entwürfe nur lokal. Ein Agent kann deshalb nicht selbst synchronisieren. Er kann aber mit dem Tool `mail_sync_now` einen Sync **anfordern**: Das legt einen Auftrag (Job `sync`) in der Datenbank an, und der Dauer-Sync führt ihn binnen etwa 10 Sekunden aus.
@@ -401,7 +403,7 @@ Eine Wiederherstellung ist eine **neue Instanz** (A10). Nichts darin schreibt vo
 
 - **Neue Kennung:** Die Kopie sucht ihre Passwörter unter eigenen Namen im Schlüsselbund; die Einträge des Originals liest, verschiebt und löscht sie nie. Mit `--keep-identity` behält sie die Kennung des Originals und benutzt dessen Passwörter. Das ist nur gedacht, wenn das Original verloren ist und du auf demselben Rechner weiterarbeiten willst; Original und Kopie dürfen dann nicht beide laufen.
 - **Offene Aufträge sind geschlossen:** Entwürfe ablegen, markieren, verschieben, angeforderte Syncs (`failed`, Grund `restored`); offene Anträge auf den Papierkorb sind abgelehnt. Entwürfe, die noch in den Entwürfe-Ordner sollten, hält die Kopie zurück: `draft show <id>` sagt warum; `draft edit` oder `draft request` gibt sie frei (vorher prüfen, ob das Original sie schon abgelegt hat).
-- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …` bzw. `export_dir` in ihrer Konfiguration, 2.5 Schritt 2), nie den des Originals, auch mit `--keep-identity` nicht. Ohne `--keep-identity` verweigert der Export den Ordner des Originals seit 0.3.0-alpha.7 selbst (das Manifest dort trägt die Kennung des Originals).
+- **Audit:** Das Audit läuft weiter; neu ist das Ereignis `backup.restore` mit der Prüfsumme des Manifests. Die Orte früherer Audit-Exporte gehören zum Original: `audit verify` prüft diese Tage in der Kopie nur gegen die Datenbank (`… days were exported by the data directory this one was restored from …`). Gib der Kopie einen **eigenen** Exportordner (`audit export --to …` bzw. `export_dir` in ihrer Konfiguration, 2.5 Schritt 2), nie den des Originals, auch mit `--keep-identity` nicht. Ohne `--keep-identity` verweigert der Export den Ordner des Originals seit 0.3.0-alpha.7 selbst (das Manifest dort trägt die Kennung des Originals), mit `--keep-identity` seit 0.3.0-alpha.7b, solange die Kopie dort noch nichts exportiert hat.
 
 ### 2.7 Original und Kopie auf demselben Rechner
 

@@ -825,11 +825,8 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 // Prüfsumme nennt, gelten als eigene. Ein Manifest, das nicht von diesem
 // Programm stammt, ist ErrAuditExportForeign. Seit der Nachbesserung T3
 // (Punkt 2) muss das Manifest auch zu diesem Datenverzeichnis gehören
-// (dataDirID): mit Kennung dieselbe, ohne Kennung (Manifest vor
-// 0.3.0-alpha.7) nur, wenn diese Datenbank schon einen Nachweis an diesem
-// Ort hat; eine wiederhergestellte Kopie hat keinen (Orte geleert, A10).
-// Sonst ErrAuditExportOtherInstance. Ohne bekannte Kennung (Attrappen)
-// entfällt der Vergleich.
+// (dataDirID, checkManifestOwner), sonst ErrAuditExportOtherInstance. Ohne
+// bekannte Kennung (Attrappen) entfällt der Vergleich.
 func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]auditManifestDay, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -843,9 +840,8 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
 	}
 	if dataDirID != "" {
-		recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
-		if (m.DataDirID != "" && m.DataDirID != dataDirID) || (m.DataDirID == "" && !recordedHere) {
-			return nil, fmt.Errorf("%w: %s (use an export directory of its own for each data directory)", ErrAuditExportOtherInstance, dir)
+		if err := checkManifestOwner(dir, dataDirID, m, done); err != nil {
+			return nil, err
 		}
 	}
 	own := map[string]auditManifestDay{}
@@ -853,6 +849,70 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 		own[d.File] = d
 	}
 	return own, nil
+}
+
+// checkManifestOwner: Gehört das Manifest m am Ort dir zu diesem
+// Datenverzeichnis?
+//
+//   - Mit Kennung: nur dieselbe. Zweite Nachbesserung T3, Punkt 7c: Auch bei
+//     derselben Kennung (Wiederherstellung mit --keep-identity) nicht, wenn
+//     diese Datenbank an diesem Ort keinen Nachweis hat, aber Nachweise des
+//     Originals ohne Ort (A10).
+//   - Ohne Kennung (Manifest vor 0.3.0-alpha.7): wenn diese Datenbank einen
+//     Nachweis genau an diesem Ort hat oder (Punkt 3) jeder Tag des
+//     Manifests einem ihrer Nachweise mit gleichem Tag, gleicher Prüfsumme
+//     und einem Ort entspricht, gleich in welcher Schreibweise (unter
+//     Windows Groß- und Kleinschreibung, ein neuer Laufwerksbuchstabe von
+//     Google Drive). Eine wiederhergestellte Kopie hat nur Nachweise ohne
+//     Ort und bleibt abgewiesen.
+func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.AuditExport) error {
+	recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
+	switch {
+	case m.DataDirID != "" && m.DataDirID != dataDirID:
+		return fmt.Errorf("%w: %s (its manifest names another data directory; use an export directory of its own for each data directory)",
+			ErrAuditExportOtherInstance, dir)
+	case m.DataDirID != "":
+		if !recordedHere && slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == "" }) {
+			return fmt.Errorf("%w: %s (this database is a restored copy with the identity of the data directory that exports there; "+
+				"use an export directory of its own)", ErrAuditExportOtherInstance, dir)
+		}
+		return nil
+	case recordedHere || legacyManifestMatches(m, done):
+		return nil
+	}
+	last := ""
+	for _, e := range done {
+		if e.Location != "" {
+			last = e.Location // nach Tag sortiert: der Ort des jüngsten Nachweises
+		}
+	}
+	if last == "" {
+		return fmt.Errorf("%w: %s (its manifest has no data directory id, and this database has no audit export recorded there, "+
+			"as after a restore; use an export directory of its own)", ErrAuditExportOtherInstance, dir)
+	}
+	return fmt.Errorf("%w: %s (its manifest has no data directory id and does not match the audit exports of this database, "+
+		"last recorded at %s; if that is the same folder, run audit export --to %q once, otherwise use an export directory of its own)",
+		ErrAuditExportOtherInstance, dir, last, last)
+}
+
+// legacyManifestMatches: Jeder Tag des Manifests entspricht einem Nachweis
+// dieser Datenbank (gleicher Tag, gleiche Prüfsumme, Ort nicht leer). Ein
+// Manifest ohne Tage belegt nichts.
+func legacyManifestMatches(m auditManifest, done []store.AuditExport) bool {
+	if len(m.Days) == 0 {
+		return false
+	}
+	rec := map[string]store.AuditExport{}
+	for _, e := range done {
+		rec[e.Day] = e
+	}
+	for _, d := range m.Days {
+		e, ok := rec[d.Day]
+		if !ok || e.Location == "" || e.SHA256 != d.SHA256 || d.File != auditFileName(d.Day) {
+			return false
+		}
+	}
+	return true
 }
 
 // checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
