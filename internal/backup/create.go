@@ -19,8 +19,13 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
+
+// LockName ist die Sperrdatei einer laufenden Sicherung im
+// Datenverzeichnis (internal/flock; bleibt leer liegen).
+const LockName = "backup.lock"
 
 // OpDone ist das Systemereignis nach einer Sicherung mit den Zählern
 // (Dateien, Bytes, kopierte und vorhandene Blobs); der Aufruf selbst steht
@@ -96,6 +101,15 @@ type Runner struct {
 	Version string
 	// Now ist in Tests ersetzbar.
 	Now func() time.Time
+	// hook ist ein Test-Haken: Er läuft an benannten Stellen einer
+	// Sicherung (stage "snapshot": Schnappschuss liegt, Blobs folgen).
+	hook func(stage string)
+}
+
+func (r *Runner) at(stage string) {
+	if r.hook != nil {
+		r.hook(stage)
+	}
 }
 
 func (r *Runner) now() time.Time {
@@ -115,6 +129,21 @@ func (r *Runner) Create(ctx context.Context, o Options) (Result, error) {
 		return Result{}, targetErr("give either a target folder or a tar stream")
 	}
 	res := Result{Warning: Warning, DryRun: o.DryRun, ProgramVersion: r.Version}
+	// Eine Sicherung je Datenverzeichnis (T3-Nachbesserung 5a): Zwei Läufe
+	// in denselben Ordner löschten gegenseitig Schnappschuss und
+	// Temporärdateien. Die Sperre liegt im Datenverzeichnis, nicht im Ziel
+	// (sie gilt so auch für den Tar-Strom und für verschiedene Ziele). Ein
+	// Trockenlauf schreibt nichts und braucht sie nicht.
+	if !o.DryRun {
+		lk, err := flock.TryLock(filepath.Join(r.DataDir, LockName))
+		switch {
+		case errors.Is(err, flock.ErrLocked):
+			return res, ErrBusy
+		case err != nil:
+			return res, fmt.Errorf("backup: lock: %w", err)
+		}
+		defer lk.Release()
+	}
 	var err error
 	if o.Tar != nil {
 		res, err = r.createTar(ctx, o, res)
@@ -303,6 +332,7 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		return res, err
 	}
 	res.Database = name
+	r.at("snapshot")
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
 		CreatedAt: res.CreatedAt, Database: name, Files: []File{{Path: name, Kind: KindDatabase, Size: dbSize, SHA256: dbSum}}}
 
@@ -531,6 +561,7 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	if err := r.Store.SnapshotTo(ctx, snap); err != nil {
 		return res, err
 	}
+	r.at("snapshot")
 	name := snapshotName(now, 1)
 	res.Database = name
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,

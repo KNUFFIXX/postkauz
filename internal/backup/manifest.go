@@ -61,6 +61,9 @@ var (
 	// ErrCorruptSource: Ein Blob im Datenverzeichnis passt nicht zu
 	// seinem Namen (doctor --blobs=all zeigt ihn); die Sicherung bricht ab.
 	ErrCorruptSource = errors.New("backup: a blob in the data directory is corrupt")
+	// ErrBusy: Eine andere Sicherung dieses Datenverzeichnisses läuft
+	// (Sperre LockName im Datenverzeichnis); nichts wurde geschrieben.
+	ErrBusy = errors.New("backup: another backup of this data directory is running")
 )
 
 // File ist ein Eintrag im Manifest: Pfad relativ zum Sicherungsordner

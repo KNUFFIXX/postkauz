@@ -315,6 +315,8 @@ Dasselbe Kommando wie in 2.2. Kopiert werden nur Mails und Anhänge, die neu daz
 
 Ohne neue Mails steht dort `copied 0`. Wer mehrere Stände aufheben will, nimmt mehrere Ordner (z. B. einen je Monat).
 
+Es läuft immer nur **eine** Sicherung je Datenverzeichnis. Startest du eine zweite, während die erste noch kopiert (z. B. von Hand neben einer geplanten Aufgabe), bricht die zweite ab, ohne etwas zu schreiben: `error: backup: another backup of this data directory is running` (Code `backup_running`). Warte, bis die erste fertig ist, und starte dann neu.
+
 Ab und zu prüfen, ob die Sicherung noch vollständig und unverändert ist (liest alles, schreibt nichts):
 
 ```powershell
