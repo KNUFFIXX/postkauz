@@ -74,7 +74,7 @@
     durch Komma getrennt. Fuer Teil B Pflicht.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7b).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7c).
 
 .PARAMETER Python
     python.exe fuer die MCP-Probe. Ohne Angabe sucht das Skript python.exe
@@ -112,7 +112,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.7b',
+    [string] $ExpectVersion = '0.3.0-alpha.7c',
     [string] $Python = '',
     [string] $Probe = '',
     [string] $LiveAccount = '',

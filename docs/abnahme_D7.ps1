@@ -78,7 +78,7 @@
     Ein Datei-Eintrag schuetzt auch den Ordner, in dem die Datei liegt.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7b).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7c).
 
 .PARAMETER Interactive
     Fragt nach der Thunderbird-Pruefung (D7.4); ohne: SKIP mit Hinweis.
@@ -100,7 +100,7 @@ param(
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
     [Parameter(Mandatory = $true)] [string[]] $LivePath,
-    [string] $ExpectVersion = '0.3.0-alpha.7b',
+    [string] $ExpectVersion = '0.3.0-alpha.7c',
     [switch] $Interactive,
     [string] $RestoreFrom = '',
     [string] $Reference = ''

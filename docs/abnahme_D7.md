@@ -1,6 +1,6 @@
 # Abnahme D7: Anhänge, Export, Sicherung, Wiederherstellung, Löschkonzept
 
-Stand: 29.10.2026 (A03 Teil T3 mit zweiter Nachbesserung, Build `0.3.0-alpha.7b`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T3, Haltepunkt „Abnahme D7“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 4, 5 und 7; die Schritte 1 bis 3 und 6 prüft [abnahme_D7a.md](abnahme_D7a.md)). Skripte: [abnahme_D7.ps1](abnahme_D7.ps1) (Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`) und [abnahme_D7_restore.sh](abnahme_D7_restore.sh) (Restore im Linux-Container). Ausgeführt von der Prüfsitzung.
+Stand: 29.10.2026 (A03 Teil T3 mit dritter Nachbesserung, Build `0.3.0-alpha.7c`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T3, Haltepunkt „Abnahme D7“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 4, 5 und 7; die Schritte 1 bis 3 und 6 prüft [abnahme_D7a.md](abnahme_D7a.md)). Skripte: [abnahme_D7.ps1](abnahme_D7.ps1) (Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`) und [abnahme_D7_restore.sh](abnahme_D7_restore.sh) (Restore im Linux-Container). Ausgeführt von der Prüfsitzung.
 
 ## Zweck
 
@@ -48,7 +48,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d7\abnahme_D7.ps1 
 
 **Gegenprobe vor Teil A (seit der Nachbesserung T3, nichts wird verändert):** `-Config` in den Ordner der Live-Konfiguration legen, z. B. `-Config C:\PostKauz\config-d7.toml` bei `-LivePath C:\PostKauz\data,C:\PostKauz\config.toml`. Erwartet: `ABBRUCH: -Config liegt im Standard- oder Live-Pfad C:\PostKauz; nichts veraendert.`, Exit 2, kein Protokoll, keine Datei angelegt. Ebenso ohne `-LivePath`: PowerShell fragt nach dem Pflichtparameter (abbrechen mit Strg+C).
 
-Weitere Schalter: `-ExpectVersion` (Standard `0.3.0-alpha.7b`). Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` und ein neues `-WorkDir` (oder das alte Protokoll umbenennen).
+Weitere Schalter: `-ExpectVersion` (Standard `0.3.0-alpha.7c`). Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` und ein neues `-WorkDir` (oder das alte Protokoll umbenennen).
 
 ## Teil A
 

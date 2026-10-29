@@ -1,6 +1,6 @@
 # Abnahme D7a: Tags, Markieren, Verschieben, Papierkorb
 
-Stand: 29.10.2026 (A03 Teil T2, Build `0.3.0-alpha.5` nach der Nachbesserung T2; Standardversion seit der zweiten Nachbesserung T3 `0.3.0-alpha.7b`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
+Stand: 29.10.2026 (A03 Teil T2, Build `0.3.0-alpha.5` nach der Nachbesserung T2; Standardversion seit der dritten Nachbesserung T3 `0.3.0-alpha.7c`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T2, Haltepunkt „Abnahme D7a“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D7 (Schritte 1 bis 3 und 6). Skript: [abnahme_D7a.ps1](abnahme_D7a.ps1) mit der MCP-Probe [abnahme_D7a_mcp.py](abnahme_D7a_mcp.py). Windows PowerShell 5.1, ohne Go und Docker, nur mit dem Programm aus `dist/`. Ausgeführt von der Prüfsitzung auf dem Büro-PC.
 
 ## Zweck
 
@@ -57,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d7a\abnahme_D7a.ps
   -AccountDataDir C:\PK\d7a\konto-daten -AccountConfig C:\PK\d7a\konto-config.toml -Label D7a-Test
 ```
 
-Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.7b`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
+Weitere Schalter, nur falls nötig: `-ExpectVersion` (Standard `0.3.0-alpha.7c`), `-Python`, `-Probe`. Ein Wiederholungslauf braucht ein neues `-DataDir`, ein neues `-Config` (Teil A beginnt immer frisch) und ein neues `-WorkDir` oder das Umbenennen des alten Protokolls `D7a_windows.txt` (sonst Abbruch: „Protokolldatei existiert schon (oder ist ein Link)“); `-AccountDataDir` darf derselbe bleiben.
 
 ## Teil A: offline (immer)
 
