@@ -212,7 +212,7 @@ func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if len(entries) == 0 {
+	if len(entries) == 0 || onlyLeftovers(entries) {
 		return abs, nil, nil
 	}
 	b, err := os.ReadFile(filepath.Join(abs, ManifestName))
@@ -232,6 +232,32 @@ func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
 		}
 	}
 	return abs, known, nil
+}
+
+// onlyLeftovers meldet, ob ein Ordner ohne Manifest nur Reste einer
+// abgebrochenen ersten Sicherung enthält (T3-Nachbesserung 2, Nebenfund
+// N1): ENCRYPT-ME.txt und Temporärdateien (tmpNameRE), dazu, wenn
+// ENCRYPT-ME.txt dabei ist, Schnappschüsse (snapshotRE) und den Ordner
+// blobs (Abbruch während des Kopierens). Ein solcher Ordner gilt als leer;
+// sonst wiese jeder weitere Lauf ihn ab („holds no backup“), obwohl die
+// Anleitung sagt, die Sicherung einfach noch einmal zu starten. Der nächste
+// Lauf räumt die Temporärdateien und den alten Schnappschuss ab und prüft
+// vorhandene Blob-Dateien gegen ihren Inhalt (syncBlob).
+func onlyLeftovers(entries []os.DirEntry) bool {
+	note, more := false, false
+	for _, e := range entries {
+		n := e.Name()
+		switch {
+		case n == EncryptNoteName && e.Type().IsRegular():
+			note = true
+		case tmpNameRE.MatchString(n) && e.Type().IsRegular():
+		case snapshotRE.MatchString(n) && e.Type().IsRegular(), n == "blobs" && e.IsDir():
+			more = true
+		default:
+			return false
+		}
+	}
+	return note || !more
 }
 
 // blobFile ist ein Blob des Datenverzeichnisses.
