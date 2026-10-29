@@ -23,8 +23,9 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 		return orig(backend, dir)
 	}
 	t.Cleanup(func() { openSecrets = orig })
-	// Punkt 6: Nur ein Prozess mit Zugangsdaten schützt sich vor dem
-	// Auslesen (procguard); der MCP-Prozess braucht das nicht.
+	// Punkt 6, seit der zweiten Nachbesserung (Punkt 4a) für jedes
+	// Kommando: Auch der MCP-Prozess schützt sich vor dem Auslesen
+	// (procguard).
 	origDeny := denyInspection
 	denied := 0
 	denyInspection = func() error { denied++; return nil }
@@ -41,7 +42,7 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 	if _, err := a.sec.Get(secrets.AccountRef("1a2b3c4d", "demo")); !errors.Is(err, secrets.ErrDenied) {
 		t.Errorf("Get = %v, want ErrDenied", err)
 	}
-	if opened != 0 || denied != 0 {
+	if opened != 0 || denied != 1 {
 		t.Errorf("noCredentials opened the secrets backend %d times, process guard %d times", opened, denied)
 	}
 	a.close()
@@ -51,7 +52,7 @@ func TestT5NNoCredentialsGetsDeniedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.close()
-	if _, ok := b.sec.(secrets.Denied); ok || opened != 1 || denied != 1 {
+	if _, ok := b.sec.(secrets.Denied); ok || opened != 1 || denied != 2 {
 		t.Errorf("without noCredentials: store %T, opened %d, process guard %d", b.sec, opened, denied)
 	}
 }

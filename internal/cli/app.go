@@ -163,13 +163,15 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	// weder Schlüsselbund noch Datei noch POSTKAUZ_PASSWORD_* an, auch
 	// nicht über einen Fehler im Code. Kein MCP-Tool braucht sie.
 	var sec secrets.Store = secrets.Denied{}
+	// Unter Linux nicht auslesbar für andere Prozesse desselben Nutzers
+	// (/proc/<pid>/environ, ptrace), etwa für mcp --http auf demselben VPS
+	// (Nachbesserung T5 Punkt 6). Gesetzt schon als erste Anweisung in
+	// main (zweite Nachbesserung, Punkt 4a); hier für jedes Kommando noch
+	// einmal, damit ein Fehler im Log steht.
+	if err := denyInspection(); err != nil {
+		a.log.Warn("could not protect the process from inspection", "error", err.Error())
+	}
 	if !a.noCredentials {
-		// Mit Zugangsdaten: unter Linux nicht auslesbar für andere Prozesse
-		// desselben Nutzers (/proc/<pid>/environ, ptrace), etwa für
-		// mcp --http auf demselben VPS (Nachbesserung T5 Punkt 6).
-		if err := denyInspection(); err != nil {
-			a.log.Warn("could not protect the process from inspection", "error", err.Error())
-		}
 		if sec, err = openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir); err != nil {
 			return nil, err
 		}
