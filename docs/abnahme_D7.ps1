@@ -428,7 +428,11 @@ foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
     # und oft das Datenverzeichnis des Dauerbetriebs.
     if ((Test-Path -LiteralPath $lp -PathType Leaf) -or ([System.IO.Path]::GetExtension($lp) -and -not (Test-Path -LiteralPath $lp -PathType Container))) {
         $parent = Split-Path -Parent $lp
-        if ($parent) { $forbidden.Add($parent); $parentPlaces.Add($parent) }
+        # Eine Datenbank-Datei (*.db) statt des Datenverzeichnisses: Ihr
+        # Ordner ist das Datenverzeichnis und wird wie eines rekursiv nach
+        # Markern durchsucht (dritte Nachbesserung T3, Punkt 9e).
+        if ($parent -and [System.IO.Path]::GetExtension($lp) -ieq '.db') { $forbidden.Add($parent); $livePaths.Add($parent) }
+        elseif ($parent) { $forbidden.Add($parent); $parentPlaces.Add($parent) }
     }
 }
 if ($livePaths.Count -eq 0) { Stop-Run '-LivePath ist leer: Live-Datenverzeichnis und Live-Konfiguration angeben (durch Komma getrennt).' }

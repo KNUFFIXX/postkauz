@@ -428,6 +428,13 @@ if ($env:APPDATA) { $forbidden.Add((Join-Path $env:APPDATA 'postkauz')) }
 $livePaths = New-Object System.Collections.Generic.List[string]
 foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
     if ($l.Trim()) { $livePaths.Add((Get-FullPath $l.Trim())); $forbidden.Add((Get-FullPath $l.Trim())) }
+    # Eine Datenbank-Datei (*.db) statt des Datenverzeichnisses: Ihr Ordner
+    # ist das Datenverzeichnis und wird mit durchsucht (dritte Nachbesserung
+    # T3, wie abnahme_D7.ps1).
+    if ($l.Trim() -and [System.IO.Path]::GetExtension($l.Trim()) -ieq '.db') {
+        $dbDir = Split-Path -Parent (Get-FullPath $l.Trim())
+        if ($dbDir) { $forbidden.Add($dbDir) }
+    }
 }
 # Marker nur in Ordnern suchen (Live-Datenverzeichnis, Standardordner);
 # Packages ist riesig und nur fuer den Textvergleich (MSIX-Umleitung) da.
