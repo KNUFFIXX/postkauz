@@ -64,7 +64,9 @@
     -NodeName (<knoten>), -Issuer (<issuer>, <issuer-host>), jeder Name
     unter ts.net (<name>.ts.net) und Tailnet-Adressen (<tailnet-ip>,
     <tailnet-ip6>) maskiert). Letzte Zeile: "D8: <n> OK, <m> FAIL, <k> SKIP".
-    Exit 0 nur ohne FAIL.
+    Exit 0 nur ohne FAIL. Endet die Probe ohne ihre Schlusszeile oder mit
+    falschem Exit-Code (Abbruch, Syntax- oder Importfehler), steht
+    "FAIL <Nr>.ende" im Protokoll.
 
 .PARAMETER ExePath
     postkauz.exe des zu pruefenden Stands (aus dist/, umbenannt).
@@ -518,7 +520,9 @@ function Get-McpHeaders {
 }
 
 # Startet mcp --http im Hintergrund (ohne Fenster), Ausgabe in eine Datei.
-# Liefert den Prozess; wartet hoechstens 30 s auf /healthz.
+# Traegt den Prozess gleich nach dem Start in $script:Srv ein (Clear-Part
+# beendet ihn so auch bei einem Abbruch waehrend der Warteschleife) und
+# wartet dann hoechstens 30 s auf /healthz.
 function Start-McpHttp {
     param([string] $Cfg, [string] $LogName)
     $out = Join-Path $script:Run $LogName
@@ -534,11 +538,14 @@ function Start-McpHttp {
     foreach ($k in @('POSTKAUZ_KEY', 'POSTKAUZ_KEY_FILE', 'POSTKAUZ_DATA_DIR', 'POSTKAUZ_CONFIG', 'POSTKAUZ_POLICY', 'POSTKAUZ_PROFILE')) {
         if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) }
     }
+    $script:McpOutFile = $out
+    $script:McpErr = $null
+    $script:McpOut = $null
     $p = [System.Diagnostics.Process]::Start($psi)
+    $script:Srv = $p
     $p.StandardInput.Close()
     $script:McpErr = $p.StandardError.ReadToEndAsync()
     $script:McpOut = $p.StandardOutput.ReadToEndAsync()
-    $script:McpOutFile = $out
     $base = 'http://127.0.0.1:' + $Port
     for ($i = 0; $i -lt 60; $i++) {
         if ($p.HasExited) { break }
@@ -546,7 +553,6 @@ function Start-McpHttp {
         if ($r.Status -eq 204) { break }
         Start-Sleep -Milliseconds 500
     }
-    return $p
 }
 
 # Beendet den laufenden mcp --http ($script:Srv) und legt seine Ausgabe
@@ -562,6 +568,43 @@ function Stop-McpHttp {
     try { [void] $script:McpOut.Wait(5000); $t += [string] $script:McpOut.Result } catch { }
     [System.IO.File]::WriteAllText($script:McpOutFile, (Hide-Private $t), $script:Utf8)
     return $t
+}
+
+# Pruefnummer der Probe (Wert nach --nr), fuer eigene Zeilen dieses Skripts.
+function Get-ProbeNr {
+    param([string[]] $ProbeArgs)
+    for ($i = 0; $i -lt $ProbeArgs.Count - 1; $i++) {
+        if ($ProbeArgs[$i] -eq '--nr') { return $ProbeArgs[$i + 1] }
+    }
+    return $ProbeArgs[0]
+}
+
+# Die Probe muss sauber enden: Schlusszeile "probe: <n> OK, <m> FAIL,
+# <k> SKIP" passend zu den Zeilen, die sie geschrieben hat, und Exit 0 (ohne
+# FAIL) bzw. 1 (mit FAIL). Sonst (Syntax- oder Importfehler, Absturz,
+# Strg+C in der Probe, eine alte Probe bei falschen Argumenten) eine
+# FAIL-Zeile <Nr>.ende. Ein sauberes Ende zaehlt nicht als eigene Pruefung.
+function Test-ProbeEnd {
+    param([string] $Nr, [string[]] $Lines, $Exit, [string] $Err = '')
+    $n = 0
+    $f = 0
+    $k = 0
+    $final = ''
+    foreach ($line in $Lines) {
+        if ($line -match '^OK ') { $n++ }
+        elseif ($line -match '^FAIL ') { $f++ }
+        elseif ($line -match '^SKIP ') { $k++ }
+        elseif ($line -match '^probe: ') { $final = $line.Trim() }
+    }
+    $want = 'probe: ' + $n + ' OK, ' + $f + ' FAIL, ' + $k + ' SKIP'
+    $wantExit = 0
+    if ($f -gt 0) { $wantExit = 1 }
+    if ($final -eq $want -and $null -ne $Exit -and $Exit -eq $wantExit) { return }
+    $shown = $final
+    if (-not $shown) { $shown = 'keine' }
+    $det = 'Schlusszeile: ' + $shown + "`n" + 'erwartet: ' + $want + ', Exit ' + $wantExit + "`n" + 'Exit: ' + $Exit
+    if ($Err -and $Err.Trim()) { $det += "`n" + '[stderr] ' + (Limit-Text (Hide-Private $Err) 5 400) }
+    Add-Check ($Nr + '.ende') 'Probe endet sauber (Schlusszeile und Exit-Code)' $false $det
 }
 
 # Probe (Python) mit Pruefnummern; Ergebnisse zaehlen in dieses Protokoll.
@@ -581,7 +624,11 @@ function Invoke-Probe {
         if ($line.Trim()) { Write-Log $line }
     }
     if ($r.Err.Trim()) { Write-Log ('      [stderr] ' + (Limit-Text (Hide-Private $r.Err) 5 400)) }
-    if ($r.TimedOut) { Add-Check ($ProbeArgs[0] + '-Probe') 'Probe innerhalb der Zeitgrenze' $false '' }
+    if ($r.TimedOut) {
+        Add-Check ($ProbeArgs[0] + '-Probe') 'Probe innerhalb der Zeitgrenze' $false ''
+    } else {
+        Test-ProbeEnd (Get-ProbeNr $ProbeArgs) ($r.Out -split "`r?`n") $r.Exit
+    }
 }
 
 # Probe, die der Betreiber im Fenster sieht (Teil D: Adresse fuer den Browser).
@@ -594,8 +641,11 @@ function Invoke-ProbeInteractive {
     $outFile = Join-Path $script:Run ('probe-' + (Get-Date -Format 'HHmmss') + '.txt')
     $old = $env:PYTHONIOENCODING
     $env:PYTHONIOENCODING = 'utf-8'
+    $seen = New-Object System.Collections.Generic.List[string]
+    $global:LASTEXITCODE = $null
     & $script:Py -I $script:ProbeFull @ProbeArgs | ForEach-Object {
         $line = [string] $_
+        $seen.Add($line)
         if ($line -match '^OK ') { $script:NOk++ }
         elseif ($line -match '^FAIL ') { $script:NFail++; $script:Fails.Add($line.Substring(5)) }
         elseif ($line -match '^SKIP ') { $script:NSkip++ }
@@ -604,7 +654,9 @@ function Invoke-ProbeInteractive {
         if ($line -match '^\s+https?://\S+\?response_type=') { try { Write-Host $line } catch { }; return }
         Write-Log $line
     }
+    $code = $LASTEXITCODE
     $env:PYTHONIOENCODING = $old
+    Test-ProbeEnd (Get-ProbeNr $ProbeArgs) ($seen.ToArray()) $code
 }
 
 # Datei exklusiv neu anlegen (nie ueberschreiben, nie einem Link folgen).
@@ -695,17 +747,21 @@ function Enable-Serve {
     }
     Add-Check $CheckNr 'tailscale serve status --json: HTTPS 443 ist frei (nichts wird ueberschrieben)' $true $s.Text
     if (-not (Confirm-Step $Nr ('tailscale serve --bg ' + $Port + ' (macht https://<knoten>/ im Tailnet auf diesen Server; kein Funnel). Am Ende des Teils fragt das Skript vor dem Ausschalten; bei Abbruch schaltet es ohne Frage aus (tailscale serve --https=443 off).'))) { return $false }
-    $r = Invoke-Native $script:TsExe @('serve', '--bg', [string] $Port) @{} 60
-    # Auch nach einem Fehler koennte etwas eingestellt sein: dann ebenfalls
-    # am Ende ausschalten.
+    # Schon vor dem Aufruf als an vermerken: Ein Abbruch waehrend des Aufrufs
+    # (oder ein Fehler, nach dem doch etwas eingestellt ist) soll im finally
+    # ebenfalls ausschalten. Disable-Serve vertraegt einen nicht
+    # eingeschalteten Serve.
     $script:ServeOn = $true
+    $r = Invoke-Native $script:TsExe @('serve', '--bg', [string] $Port) @{} 60
     Add-Check $Nr ('tailscale serve --bg ' + $Port) ($r.Exit -eq 0) ($r.Out + "`n" + $r.Err)
     return ($r.Exit -eq 0)
 }
 
 # Schaltet tailscale serve auf 443 wieder aus und prueft danach, dass 443
 # frei ist. Ask: am normalen Ende eines Teils mit Zustimmung (wie bisher);
-# im finally (Abbruch) ohne Frage, wie in Enable-Serve angekuendigt.
+# im finally (Abbruch) ohne Frage, wie in Enable-Serve angekuendigt. Beim
+# Aufraeumen ohne Frage reicht ein freies 443 danach: War serve nie wirklich
+# an (Abbruch waehrend serve --bg), scheitert off; das steht nur im Detail.
 function Disable-Serve {
     param([bool] $Ask)
     if (-not $script:ServeOn) { return }
@@ -719,7 +775,13 @@ function Disable-Serve {
     $script:ServeOn = $false
     $r = Invoke-Native $script:TsExe @('serve', '--https=443', 'off') @{} 60
     $s = Get-Serve443
-    Add-Check $nr 'tailscale serve --https=443 off, danach HTTPS 443 frei (status --json)' ($r.Exit -eq 0 -and $s.State -eq 'frei') ($r.Out + "`n" + $r.Err + "`n" + $s.Text)
+    $det = '> tailscale serve --https=443 off' + "`n" + $r.Out + "`n" + $r.Err + "`n" + '[exit ' + $r.Exit + ']' + "`n" + $s.Text
+    if ($Ask) {
+        Add-Check $nr 'tailscale serve --https=443 off, danach HTTPS 443 frei (status --json)' ($r.Exit -eq 0 -and $s.State -eq 'frei') $det
+    } else {
+        Add-Check $nr 'Aufraeumen: tailscale serve aus, danach HTTPS 443 frei (status --json)' ($s.State -eq 'frei') $det
+        if ($s.State -ne 'frei') { Write-Log '      Aufraeumen: bitte von Hand pruefen und ausschalten: tailscale serve status, tailscale serve --https=443 off' }
+    }
 }
 
 # ---------------------------------------------------------------- Aufraeumen
@@ -908,7 +970,7 @@ try {
     $r = Invoke-PkIn $script:Data $script:Cfg @('mcp', '--http', '--listen', ('0.0.0.0:' + $Port)) '' 30
     Add-Check 'A1.3' 'mcp --http --listen 0.0.0.0:<Port> -> Abbruch vor dem Start (Exit 2, allow_non_loopback)' ($r.Exit -eq 2 -and (Test-Has $r.Err 'allow_non_loopback')) $r.Text
 
-    $script:Srv = Start-McpHttp $script:Cfg 'mcp-http-a.txt'
+    Start-McpHttp $script:Cfg 'mcp-http-a.txt'
     $r = Invoke-Http 'GET' ($base + '/healthz')
     Add-Check 'A2.1' 'mcp --http laeuft: GET /healthz -> 204 ohne Inhalt' ($r.Status -eq 204 -and -not $r.Body) $r.Show
     if ($r.Status -eq 204) {
@@ -978,7 +1040,7 @@ try {
         $cfgB = $script:Cfg + '.tailnet.toml'
         New-ExclusiveFile $cfgB ("# Abnahme D8, Teil B`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`nresource = '" + $res + "'`r`n")
         $keyC = New-TestKey 'cloud-reader-c' 'B1.1'
-        $script:Srv = Start-McpHttp $cfgB 'mcp-http-b.txt'
+        Start-McpHttp $cfgB 'mcp-http-b.txt'
         $r = Invoke-Http 'GET' ($base + '/healthz')
         Add-Check 'B1.2' 'mcp --http laeuft (Resource https://<knoten>/mcp)' ($r.Status -eq 204) $r.Show
         $r = Invoke-Http 'POST' $mcpUrl $script:JsonHdr $script:InitBody
@@ -1022,7 +1084,7 @@ try {
         $keyD = New-TestKey 'cloud-oauth' 'D1.1'
         $tok = Join-Path $script:Run 'keys\oauth-refresh.json'
         $script:OpenFiles.Add($tok)
-        $script:Srv = Start-McpHttp $cfgD 'mcp-http-d.txt'
+        Start-McpHttp $cfgD 'mcp-http-d.txt'
         $r = Invoke-Http 'GET' ($base + '/healthz')
         Add-Check 'D1.2' 'mcp --http laeuft im Modus oauth' ($r.Status -eq 204) $r.Show
         if ($script:TsExe) {

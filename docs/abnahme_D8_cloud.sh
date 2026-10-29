@@ -103,7 +103,7 @@ cleanup() {
   # Nur das maskierte Protokoll bleibt; rohe Ausgaben (Peers, Endpunkte),
   # Token, Anmelde- und Rückleitungs-URL kommen weg.
   rm -f "$WORK/tok.json" "$SOCK" "$WORK/tailscaled.log" "$WORK/up.log" "$WORK/sclient.err" \
-        "$WORK/probe.out" "$WORK/status.json" "$WORK/login-url.txt" "$WORK/callback" "$WORK/callback.tmp" "$WORK/go"
+        "$WORK/probe.out" "$WORK/probe.rc" "$WORK/status.json" "$WORK/login-url.txt" "$WORK/callback" "$WORK/callback.tmp" "$WORK/go"
 }
 trap cleanup EXIT
 trap 'exit 2' INT TERM
@@ -181,10 +181,26 @@ printf '%s' "$cert" | openssl x509 -noout -issuer -enddate 2>&1 | detail
 # ---------------------------------------------------------------- 3. bis 5. Probe
 export HTTPS_PROXY=$PROXY https_proxy=$PROXY
 unset NO_PROXY no_proxy
+# Die Probe muss sauber enden: Schlusszeile "probe: <n> OK, <m> FAIL, <k> SKIP"
+# passend zu ihren Zeilen und Exit 0 (ohne FAIL) bzw. 1 (mit FAIL); sonst
+# (Syntax- oder Importfehler, Absturz, Abbruch) FAIL <Nr>.ende. Den Exit-Status
+# der Probe hinter der Pipeline (mask, tee) liefert eine Statusdatei: /bin/sh
+# (dash) kennt weder pipefail noch PIPESTATUS.
 run_probe() {
-  python3 -I "$here/abnahme_D8_probe.py" "$@" 2>&1 | mask | tee -a "$LOG" | tee "$WORK/probe.out"
+  nr=D8; prev=
+  for x in "$@"; do [ "$prev" = --nr ] && nr=$x; prev=$x; done
+  rm -f "$WORK/probe.rc"
+  { python3 -I "$here/abnahme_D8_probe.py" "$@" 2>&1; echo $? >"$WORK/probe.rc"; } | mask | tee -a "$LOG" | tee "$WORK/probe.out"
+  rc=$(cat "$WORK/probe.rc" 2>/dev/null); rm -f "$WORK/probe.rc"
   n=$(grep -c '^OK ' "$WORK/probe.out"); f=$(grep -c '^FAIL ' "$WORK/probe.out"); s=$(grep -c '^SKIP ' "$WORK/probe.out")
   NOK=$((NOK+n)); NFAIL=$((NFAIL+f)); NSKIP=$((NSKIP+s))
+  last=$(grep '^probe: ' "$WORK/probe.out" | tail -n 1)
+  want="probe: $n OK, $f FAIL, $s SKIP"
+  wantrc=0; [ "$f" -gt 0 ] && wantrc=1
+  if [ "$last" != "$want" ] || [ "${rc:-x}" != "$wantrc" ]; then
+    fail "$nr.ende Probe endet sauber (Schlusszeile und Exit-Code)"
+    log "      Schlusszeile: ${last:-keine}; erwartet: $want, Exit $wantrc; Exit: ${rc:-unbekannt}"
+  fi
 }
 if [ "$MODE" = key ]; then
   run_probe key --url "https://$D8_NODE/mcp" --key-file "$D8_KEY_FILE" --nr C3 --principal "$PRINCIPAL" --expect-tools "$TOOLS"

@@ -7,7 +7,12 @@ Gestartet von docs/abnahme_D8.ps1 (Windows) bzw. docs/abnahme_D8_cloud.sh
 
 Jede Pruefung ist eine Zeile `OK <Nr> <Beschreibung>`, `FAIL <Nr> ...` oder
 `SKIP <Nr> <Grund>`, darunter eingerueckt die Ist-Ausgabe (gekuerzt).
-Letzte Zeile `probe: <n> OK, <m> FAIL, <k> SKIP`. Exit 0 nur ohne FAIL.
+Letzte Zeile `probe: <n> OK, <m> FAIL, <k> SKIP`. Exit 0 nur ohne FAIL,
+sonst 1. Auch ein Abbruch (falsche Argumente, unerwartete Ausnahme, selbst
+SystemExit) endet mit einer FAIL-Zeile, der Schlusszeile und Exit 1; nur
+Strg+C (KeyboardInterrupt) bricht ohne Schlusszeile ab. Die aufrufenden
+Skripte verlangen Schlusszeile und Exit-Code, sonst zaehlen sie FAIL (so
+auch bei einem Syntax- oder Importfehler, der vor main() endet).
 Geprueft wird an stabilen Merkmalen (Status, Kopfzeilen, Toolnamen, Felder),
 nicht an ganzen Saetzen. Schluessel und Token erscheinen nie in der Ausgabe
 (maskiert, auch in Fehlermeldungen). Gekuerzt wird immer erst nach dem
@@ -473,7 +478,14 @@ def cmd_revoked(a):
           r.status == 403 and body.get("status") == "denied" and body.get("code") == "key_revoked", r.show())
 
 
-def main():
+def finish():
+    """Schlusszeile und Exit-Code; die aufrufenden Skripte verlangen beides."""
+    print("probe: %d OK, %d FAIL, %d SKIP" % (RESULTS["ok"], RESULTS["fail"], RESULTS["skip"]))
+    sys.stdout.flush()
+    sys.exit(1 if RESULTS["fail"] else 0)
+
+
+def main(argv=None):
     p = argparse.ArgumentParser(description="HTTP-MCP-Probe fuer Abnahme D8")
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("key", "oauth", "revoked"):
@@ -494,13 +506,24 @@ def main():
         sp.add_argument("--login-timeout", type=int, default=300)
         sp.add_argument("--other-token-file", default="")
         sp.add_argument("--wait-expiry", action="store_true")
-    a = p.parse_args()
+    try:
+        a = p.parse_args(argv)
+    except SystemExit as e:
+        if e.code in (0, None):  # --help
+            raise
+        # argparse hat die Meldung schon auf stderr geschrieben.
+        args = sys.argv[1:] if argv is None else list(argv)
+        nr = args[args.index("--nr") + 1] if "--nr" in args[:-1] else "D8"
+        check(nr + ".x", "Probe-Aufruf mit gueltigen Argumenten", False, "argparse: exit " + str(e.code))
+        finish()
     try:
         {"key": cmd_key, "oauth": cmd_oauth, "revoked": cmd_revoked}[a.cmd](a)
-    except Exception as e:  # nie mit Geheimnis abbrechen
-        check("D8.x", "Probe ohne Ausnahme", False, type(e).__name__ + ": " + str(e))
-    print("probe: %d OK, %d FAIL, %d SKIP" % (RESULTS["ok"], RESULTS["fail"], RESULTS["skip"]))
-    sys.exit(1 if RESULTS["fail"] else 0)
+    except KeyboardInterrupt:
+        # Strg+C: ohne Schlusszeile, die Aufrufer zaehlen das als FAIL.
+        raise
+    except BaseException as e:  # auch SystemExit; nie mit Geheimnis abbrechen
+        check(a.nr + ".x", "Probe ohne Ausnahme", False, type(e).__name__ + ": " + str(e))
+    finish()
 
 
 if __name__ == "__main__":
