@@ -86,6 +86,8 @@ type oauthAuth struct {
 	mu       sync.Mutex
 	verifier *oidc.IDTokenVerifier
 	failedAt time.Time
+	// discovering ist offen, solange eine Discovery läuft.
+	discovering chan struct{}
 }
 
 func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, error) {
@@ -145,23 +147,58 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, er
 // Autorisierungsservers (RFC 8414, sonst OpenID-Discovery) und baut den
 // Prüfer mit der JWKS daraus. Ist der Server beim Start noch nicht
 // erreichbar, läuft PostKauz trotzdem; die Anfragen bekommen bis dahin 503.
+//
+// Die Discovery läuft im Hintergrund mit eigener Frist, unabhängig vom
+// Kontext der Anfrage, die sie anstößt: Trennt dieser Client, läuft sie für
+// die anderen weiter, und failedAt bleibt leer (früher sperrte ein
+// Abbruch alle für 10 s). Wer wartet, wartet nur bis zum Ende seines
+// eigenen Kontexts.
 func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.verifier != nil {
-		return a.verifier, nil
+		v := a.verifier
+		a.mu.Unlock()
+		return v, nil
 	}
 	now := a.now()
 	if !a.failedAt.IsZero() && now.Sub(a.failedAt) < discoveryRetry && !now.Before(a.failedAt) {
+		a.mu.Unlock()
 		return nil, errUnavailable
 	}
+	done := a.discovering
+	if done == nil {
+		done = make(chan struct{})
+		a.discovering = done
+		go a.discover(context.WithoutCancel(ctx), done)
+	}
+	a.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.verifier == nil {
+		return nil, errUnavailable
+	}
+	return a.verifier, nil
+}
+
+// discover führt eine Discovery aus und trägt das Ergebnis ein: den Prüfer
+// oder den Zeitpunkt des Fehlschlags. done schließt danach.
+func (a *oauthAuth) discover(ctx context.Context, done chan struct{}) {
+	defer close(done)
 	dctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 	defer cancel()
 	jwks, err := discoverJWKS(dctx, a.issuer, a.client)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.discovering = nil
 	if err != nil {
-		a.failedAt = now
+		a.failedAt = a.now()
 		a.log.Warn("http mcp: authorization server discovery failed", "issuer", a.issuer, "error", err)
-		return nil, err
+		return
 	}
 	// Der Schlüsselsatz lebt so lange wie der Server (go-oidc nutzt den
 	// Kontext nur für den HTTP-Client, newJWKSClient mit Frist).
@@ -172,7 +209,6 @@ func (a *oauthAuth) getVerifier(ctx context.Context) (*oidc.IDTokenVerifier, err
 		Now:                  func() time.Time { return a.now().Add(-ClockSkew) },
 	})
 	a.log.Info("http mcp: authorization server found", "issuer", a.issuer)
-	return a.verifier, nil
 }
 
 // discoverJWKS liefert jwks_uri des Ausstellers: zuerst RFC 8414

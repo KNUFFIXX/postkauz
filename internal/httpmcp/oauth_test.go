@@ -32,6 +32,8 @@ type fakeAS struct {
 	down atomic.Bool
 	// jwksHits zählt Abrufe der JWKS (Cache).
 	jwksHits atomic.Int32
+	// metaDelay verzögert die Metadaten (Nanosekunden; langsame Discovery).
+	metaDelay atomic.Int64
 }
 
 func newFakeAS(t *testing.T) *fakeAS {
@@ -41,6 +43,7 @@ func newFakeAS(t *testing.T) *fakeAS {
 	mux := http.NewServeMux()
 	as.srv = httptest.NewTLSServer(mux)
 	meta := func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(time.Duration(as.metaDelay.Load()))
 		if as.down.Load() {
 			http.Error(w, "down", http.StatusBadGateway)
 			return
