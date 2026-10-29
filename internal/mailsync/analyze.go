@@ -36,25 +36,16 @@ type storedPart struct {
 	err      error
 }
 
-// errReader merkt sich einen Lesefehler der Quelle (nicht io.EOF).
-type errReader struct {
-	r   io.Reader
-	err error
-}
-
-func (r *errReader) Read(p []byte) (int, error) {
-	n, err := r.r.Read(p)
-	if err != nil && err != io.EOF && r.err == nil {
-		r.err = err
-	}
-	return n, err
-}
-
-// attachmentStoreError: Ein Anhang ließ sich nicht im Blob-Store ablegen,
-// und es lag am Store (Sperre belegt, ErrBusy; Platte voll; Rechte), nicht
-// am Inhalt (Nachbesserung 2, Punkt 8). Die Nachricht wird dann nicht gespeichert,
-// wie bei einem Fehler der Rohmail in mirrorRaw; der nächste Lauf spiegelt
-// sie erneut, statt den Anhang dauerhaft als "not stored" zu führen.
+// attachmentStoreError: Ein Anhang ließ sich nur vorübergehend nicht im
+// Blob-Store ablegen: Die Sperre war bis zur Frist belegt (blob.ErrBusy)
+// oder der Kontext endete (Nachbesserung 2, Punkt 8; eingeengt in der
+// dritten Nachbesserung, Punkt 4). Die Nachricht wird dann nicht
+// gespeichert, wie bei einem Fehler der Rohmail in mirrorRaw; der nächste
+// Lauf spiegelt sie erneut, statt den Anhang dauerhaft als "not stored" zu
+// führen. Jeder andere Fehler beim Ablegen eines Anhangs (Platte, Rechte,
+// ein Virenscanner, der den Schadanhang nicht schreiben lässt) gilt als
+// dauerhaft: Der Anhang bleibt "not stored", die Mail wird gespiegelt;
+// sonst fehlte sie in jedem Lauf erneut.
 type attachmentStoreError struct {
 	PartID string
 	Err    error
@@ -65,23 +56,33 @@ func (e *attachmentStoreError) Error() string {
 }
 func (e *attachmentStoreError) Unwrap() error { return e.Err }
 
+// deferAttachmentErr meldet, ob ein Fehler beim Ablegen eines Anhangs die
+// Nachricht verschiebt (*attachmentStoreError): nur eine bis zur Frist
+// belegte Sperre (blob.ErrBusy) und ein beendeter Kontext.
+func deferAttachmentErr(err error) bool {
+	return errors.Is(err, blob.ErrBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// putAttachment legt einen Anhang ab; in Tests ersetzbar.
+var putAttachment = (*blob.Store).Put
+
 // analyze parst eine Rohmail, speichert dabei jeden Anhang dekodiert im
 // Blob-Store (Typ per Magic Bytes im selben Durchgang) und liefert die
-// Anhänge für den Store. Ein Anhang über der Größengrenze (ErrTooLarge)
-// oder mit unlesbarem Inhalt (etwa kaputtes Base64) bleibt "not stored";
-// scheitert das Ablegen am Store selbst, kommt *attachmentStoreError
-// (Nachricht nicht speichern, nächster Lauf versucht es erneut).
+// Anhänge für den Store. Scheitert das Ablegen eines Anhangs nur
+// vorübergehend (deferAttachmentErr), kommt *attachmentStoreError
+// (Nachricht nicht speichern, nächster Lauf versucht es erneut); bei jedem
+// anderen Fehler (Größengrenze, unlesbarer Inhalt wie kaputtes Base64,
+// dauerhafter Fehler des Stores) bleibt der Anhang "not stored".
 func (e *Engine) analyze(r io.Reader, internal time.Time) (*mimeparse.Message, []store.NewAttachment, error) {
 	parts := map[string]storedPart{}
 	var storeErr *attachmentStoreError
 	m, err := mimeparse.Parse(r, mimeparse.Options{InternalDate: internal,
 		OnAttachment: func(a mimeparse.Attachment, body io.Reader) error {
 			var sn magic.Sniffer
-			src := &errReader{r: body}
-			info, err := e.Blobs.Put(io.TeeReader(src, &sn))
+			info, err := putAttachment(e.Blobs, io.TeeReader(body, &sn))
 			parts[a.PartID] = storedPart{info: info, detected: sn.Detect(), err: err}
 			if err != nil {
-				if storeErr == nil && src.err == nil && !errors.Is(err, blob.ErrTooLarge) {
+				if storeErr == nil && deferAttachmentErr(err) {
 					storeErr = &attachmentStoreError{PartID: a.PartID, Err: err}
 				}
 				return fmt.Errorf("store attachment: %w", err)
@@ -170,9 +171,9 @@ func fillClean(nm *store.NewMessage, m *mimeparse.Message, atts []store.NewAttac
 // mit Typprüfung); für den Import (S1.10). Blob, Größe, Datum, Flags und
 // content_hash setzt der Aufrufer. false: Der Kopf ist unlesbar, die
 // Nachricht wird ohne geparste Felder gespeichert (wie beim Sync). Ein
-// Fehler heißt: Ein Anhang ließ sich nicht im Blob-Store ablegen, und es
-// lag am Store (Nachbesserung 2, Punkt 8); die Nachricht nicht speichern,
-// wie bei einem Fehler beim Ablegen der Rohmail.
+// Fehler heißt: Ein Anhang ließ sich nur vorübergehend nicht ablegen
+// (Sperre belegt oder Kontextende, *attachmentStoreError); die Nachricht
+// nicht speichern, wie bei einem Fehler beim Ablegen der Rohmail.
 func Prepare(blobs *blob.Store, nm *store.NewMessage, r io.Reader, internal time.Time) (bool, error) {
 	e := &Engine{Blobs: blobs}
 	nm.CleanVersion = CleanVersion
@@ -192,8 +193,9 @@ func Prepare(blobs *blob.Store, nm *store.NewMessage, r io.Reader, internal time
 
 // reprocess bereitet Nachrichten mit älterer Aufbereitung aus der Rohmail
 // neu auf (Bestand von vor S1.6). Liefert die Zahl der Nachrichten.
-// Scheitert das Ablegen eines Anhangs am Blob-Store (Nachbesserung 2,
-// Punkt 8), bleibt diese Nachricht auf dem alten Stand; die übrigen des
+// Scheitert das Ablegen eines Anhangs nur vorübergehend (Sperre belegt
+// oder Kontextende; Nachbesserung 2, Punkt 8), bleibt diese Nachricht auf
+// dem alten Stand; die übrigen des
 // Pakets werden gespeichert, und die Aufbereitung endet für diesen Lauf
 // (sonst käme dieselbe Nachricht sofort wieder an die Reihe). Der nächste
 // Lauf versucht es erneut.
@@ -230,8 +232,8 @@ func (e *Engine) reprocess(ctx context.Context) (int, error) {
 }
 
 // reprocessOne bereitet eine Nachricht neu auf. Ein Fehler kommt nur, wenn
-// ein Anhang am Blob-Store scheiterte (*attachmentStoreError); dann nichts
-// speichern.
+// ein Anhang vorübergehend nicht abzulegen war (*attachmentStoreError);
+// dann nichts speichern.
 func (e *Engine) reprocessOne(it store.ReprocessItem) (store.Reprocessed, error) {
 	keep := store.Reprocessed{MessageID: it.ID, KeepBody: true, Body: store.NewMessage{CleanVersion: CleanVersion}}
 	rc, err := e.Blobs.Get(it.BlobSHA256)
