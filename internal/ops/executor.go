@@ -419,15 +419,13 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	return Result{Output: out, Decision: dec, AuditID: auditID}, nil
 }
 
-// withCounts ergänzt die Audit-Parameter (ein JSON-Objekt) um "counts"
-// (Operation.AuditCounts). Sind die Parameter kein Objekt, bleiben sie.
-// withVia ergänzt die Parameter um den Weg des Aufrufs (Feld via).
+// withVia ergänzt die Audit-Parameter (ein JSON-Objekt) um den Weg des
+// Aufrufs (Feld via). Sind die Parameter kein Objekt, bleiben sie; null
+// oder leer gilt als leeres Objekt.
 func withVia(params json.RawMessage, o Origin) json.RawMessage {
-	obj := map[string]json.RawMessage{}
-	if len(params) > 0 {
-		if err := json.Unmarshal(params, &obj); err != nil {
-			return params
-		}
+	obj, ok := paramsObject(params)
+	if !ok {
+		return params
 	}
 	v, err := json.Marshal(o)
 	if err != nil {
@@ -441,15 +439,16 @@ func withVia(params json.RawMessage, o Origin) json.RawMessage {
 	return b
 }
 
+// withCounts ergänzt die Audit-Parameter (ein JSON-Objekt) um "counts"
+// (Operation.AuditCounts). Sind die Parameter kein Objekt, bleiben sie;
+// null oder leer gilt als leeres Objekt.
 func withCounts(params json.RawMessage, counts map[string]int64) json.RawMessage {
 	if len(counts) == 0 {
 		return params
 	}
-	obj := map[string]json.RawMessage{}
-	if len(params) > 0 {
-		if err := json.Unmarshal(params, &obj); err != nil {
-			return params
-		}
+	obj, ok := paramsObject(params)
+	if !ok {
+		return params
 	}
 	c, err := json.Marshal(counts)
 	if err != nil {
@@ -461,4 +460,21 @@ func withCounts(params json.RawMessage, counts map[string]int64) json.RawMessage
 		return params
 	}
 	return b
+}
+
+// paramsObject liest Audit-Parameter als JSON-Objekt. Leere Parameter und
+// null ergeben ein leeres Objekt (json.Unmarshal setzt die Map bei null auf
+// nil, ein Schreiben hinein wäre ein Panic); ok ist false, wenn die
+// Parameter kein Objekt sind.
+func paramsObject(params json.RawMessage) (map[string]json.RawMessage, bool) {
+	obj := map[string]json.RawMessage{}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &obj); err != nil {
+			return nil, false
+		}
+	}
+	if obj == nil {
+		obj = map[string]json.RawMessage{}
+	}
+	return obj, true
 }
