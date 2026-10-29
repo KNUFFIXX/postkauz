@@ -16,7 +16,7 @@ export CGO_ENABLED ?= 0
 # GOTOOLCHAIN=local: fehlt die Toolchain, bricht der Build ab, statt still nachzuladen (ADR-008).
 export GOTOOLCHAIN ?= local
 
-.PHONY: all build install test race vuln vet fmt fmt-check lint hooks guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down integration clean
+.PHONY: all build install test race vuln vet fmt fmt-check lint hooks guard pii-check check cross release corpus corpus-load testmail-up testmail-setup testmail-down testauth-up testauth-down integration clean
 
 all: check build
 
@@ -230,6 +230,17 @@ testmail-setup:
 
 testmail-down:
 	$(COMPOSE) down -v
+
+# Test-Autorisierungsserver (Authelia im Docker, nur 127.0.0.1) für den
+# Integrationstest von mcp --http mit [http] auth = "oauth" (S3.6);
+# eingerichtet aus dem Beispiel deploy/docker/auth, Geheimnisse zufällig
+# in WORK (Standard /tmp/postkauz-testauth). Danach:
+#   POSTKAUZ_IT=authelia make integration
+testauth-up:
+	sh deploy/testauth/setup.sh
+
+testauth-down:
+	docker rm -f postkauz-testauth
 
 # Integrationstests gegen die Docker-Testserver (nicht in check und CI).
 # Auswahl: make integration IT=dovecot,greenmail

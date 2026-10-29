@@ -1,0 +1,66 @@
+# Authelia 4.39.x für PostKauz (ADR-010 Punkt 6; gemessen im Spike P-AUTH,
+# docs/protokolle/S30_pauth.md). Platzhalter in spitzen Klammern ersetzen:
+#   <auth-host>      Name des Autorisierungsservers ohne Port, z. B. postkauz.<tailnet>.ts.net
+#   <auth-url>       seine Adresse mit https und ggf. Port, z. B. https://postkauz.<tailnet>.ts.net:8443
+#                    (= [http] issuer von PostKauz)
+#   <resource>       [http] resource von PostKauz, z. B. https://postkauz.<tailnet>.ts.net/mcp
+#   <callback-port>  fester Port für Claude Code (--callback-port), z. B. 33418
+#   <random-*>       je ein eigener Zufallswert: openssl rand -hex 32
+# Den Signaturschlüssel erzeugt: openssl genrsa -out jwks.pem 2048
+# Nichts davon gehört in ein Repository.
+server:
+  address: 'tcp://0.0.0.0:9091/'
+log:
+  level: 'info'
+identity_validation:
+  reset_password:
+    jwt_secret: '<random-jwt>'
+authentication_backend:
+  file:
+    path: '/config/users.yml'
+access_control:
+  default_policy: 'one_factor'
+session:
+  secret: '<random-session>'
+  cookies:
+    - domain: '<auth-host>'
+      authelia_url: '<auth-url>'
+storage:
+  encryption_key: '<random-storage>'
+  local:
+    path: '/data/db.sqlite3'
+notifier:
+  filesystem:
+    filename: '/data/notification.txt'
+identity_providers:
+  oidc:
+    hmac_secret: '<random-hmac>'
+    lifespans:
+      # Kurze Access-Token (ADR-010 Punkt 6); der Client erneuert per Refresh-Token.
+      access_token: '5m'
+    jwks:
+      - key_id: 'postkauz-1'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: {{ secret "/config/jwks.pem" | mindent 10 "|" | msquote }}
+    clients:
+      - client_id: 'claude-code'
+        client_name: 'Claude Code (PostKauz)'
+        public: true
+        authorization_policy: 'one_factor'
+        consent_mode: 'implicit'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # Claude Code nutzt localhost, nicht 127.0.0.1 (Befund B7).
+          - 'http://localhost:<callback-port>/callback'
+        audience:
+          - '<resource>'
+        # Ohne resource-Parameter bliebe aud sonst leer (Befund B4).
+        requested_audience_mode: 'implicit'
+        scopes: ['openid', 'offline_access']
+        grant_types: ['authorization_code', 'refresh_token']
+        response_types: ['code']
+        token_endpoint_auth_method: 'none'
+        # JWT-Access-Token mit typ at+jwt (RFC 9068); PostKauz verlangt das.
+        access_token_signed_response_alg: 'RS256'

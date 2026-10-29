@@ -438,6 +438,10 @@ Festgelegt in `internal/cli/exit.go`, getestet in `internal/cli/contract_test.go
   resource = ""             # eigene URL, wie Clients sie nutzen, z. B. "https://<knoten>/mcp"; leer = http://<listen>/mcp (bei oauth Pflicht)
   allowed_hosts = []        # erlaubte Host-Köpfe (host oder host:port); leer = Host aus resource (ohne resource auch localhost/127.0.0.1/[::1] mit Port)
   max_requests_per_minute = 120  # alle Anfragen zusammen (1 bis 10000); darüber 429
+  issuer = ""               # nur oauth (Pflicht): Aussteller (iss) des Autorisierungsservers, https
+  scopes = ["openid", "offline_access"]  # nur oauth: scopes_supported in den Metadaten; Rechte kommen nie aus dem Token
+  [http.principals]         # nur oauth (Pflicht, mindestens einer): Subjekt (sub) des Tokens = PostKauz-Schlüsselname
+  # "<sub aus dem Audit>" = "cloud-reader"
   ```
 
 - **Zitatzeile auf Deutsch** (`[draft] quote_line`, Platzhalter `{date_numeric}` seit S2.4): Programmausgaben sind Englisch, deshalb beginnt ein Zitat standardmäßig mit `On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel <erika@example.org> wrote:`. Die Vorlage kennt drei Platzhalter: `{date}` (Datum der Ausgangsnachricht englisch, wie oben), `{date_numeric}` (dasselbe Datum als `21.10.2026 09:15`, in derselben Zeitzone wie `{date}`, also der der Ausgangsnachricht, siehe unten; fehlt das Datum, steht `??.??.???? ??:??`) und `{from}` (Absender als `Name <adresse>`). Für Deutsch:

@@ -136,7 +136,8 @@ func New(d Deps) (*Server, error) {
 	case config.HTTPAuthKey:
 		s.auth = &keyAuth{repo: d.Keys, audit: d.Audit, now: d.Now}
 	case config.HTTPAuthOAuth:
-		return nil, errors.New("httpmcp: auth = \"oauth\" is not available yet (S3.6)")
+		s.auth = &oauthAuth{issuer: h.Issuer, resource: h.Resource, principals: h.Principals, repo: d.Keys, audit: d.Audit,
+			client: d.HTTPClient, now: d.Now, log: d.Log}
 	default:
 		return nil, fmt.Errorf("httpmcp: unknown auth mode %q", h.Auth)
 	}

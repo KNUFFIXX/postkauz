@@ -1,0 +1,12 @@
+# Benutzerdatei für Authelia (ein Konto genügt). Den Hash erzeugt:
+#   docker run --rm authelia/authelia:4.39.28 authelia crypto hash generate argon2
+# Das Subjekt (sub) im Token ist bei Authelia eine zufällige Kennung je
+# Benutzer, nicht der Name; PostKauz zeigt sie nach der ersten Anmeldung
+# im Audit (keys.authenticate, principal_unknown), dann in
+# [http.principals] eintragen (docs/betrieb.md).
+users:
+  <name>:
+    displayname: '<Anzeigename>'
+    password: '<argon2-hash>'
+    email: '<name>@example.invalid'
+    groups: []

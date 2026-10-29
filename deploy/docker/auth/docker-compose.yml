@@ -1,0 +1,28 @@
+# Authelia als externer Autorisierungsserver für mcp --http mit
+# [http] auth = "oauth" (A03 S3.6, ADR-010 Punkt 6). PostKauz ist nur
+# Resource Server; Anmeldung, Token und Client-Verwaltung macht Authelia.
+# Beispiel mit Platzhaltern; Anleitung: docs/betrieb.md, Abschnitt
+# „Autorisierungsserver (Authelia)“. Nur im Tailnet erreichbar machen
+# (tailscale serve), nie öffentlich.
+#
+#   cp configuration.example.yml configuration.yml   # Platzhalter ersetzen
+#   cp users.example.yml users.yml                     # Testkonto, Passwort-Hash
+#   docker compose -f deploy/docker/auth/docker-compose.yml up -d
+name: postkauz-auth
+services:
+  authelia:
+    image: authelia/authelia:${AUTHELIA_VERSION:-4.39.28}
+    environment:
+      # Für {{ secret ... }} in configuration.yml (Signaturschlüssel aus jwks.pem).
+      X_AUTHELIA_CONFIG_FILTERS: template
+    volumes:
+      - ./configuration.yml:/config/configuration.yml:ro
+      - ./users.yml:/config/users.yml:ro
+      - ./jwks.pem:/config/jwks.pem:ro
+      - authelia-data:/data
+    # Nur auf dem Host-Loopback; tailscale serve reicht weiter.
+    ports:
+      - "127.0.0.1:9091:9091"
+    restart: unless-stopped
+volumes:
+  authelia-data:
