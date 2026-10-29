@@ -130,7 +130,9 @@ func Flags(list []string) provider.Flags {
 // „Änderungserkennung"; ADR-007: ohne QRESYNC):
 //
 //   - SELECT (EXAMINE, mit CONDSTORE wo vorhanden). Anderes UIDVALIDITY als
-//     since: Reset, der Ordner wird wie neu behandelt.
+//     since: Reset, der Ordner wird wie neu behandelt. UIDVALIDITY 0 oder
+//     fehlend: imapx.ErrNoUIDValidity (provider.ErrIncomplete), nichts
+//     wird geändert.
 //   - Neue UIDs ab since.UIDNext (UID SEARCH). Stimmt EXISTS nicht mit
 //     KnownCount plus Neuen überein (oder FullScan, CheckDeleted,
 //     Erstabgleich, Reset), folgt UID SEARCH ALL: Present für den
@@ -151,6 +153,11 @@ func (p *Provider) Changes(ctx context.Context, mailbox string, since provider.S
 		st, err := c.Select(mailbox, p.selectOpts())
 		if err != nil {
 			return err
+		}
+		if st.UIDValidity == 0 {
+			// Nachbesserung T3, Punkt 10: kein Reset, kein Stand mit 0;
+			// mailsync überspringt den Ordner ohne zu löschen.
+			return imapx.ErrNoUIDValidity
 		}
 		s := since
 		if s.UIDValidity != 0 && s.UIDValidity != st.UIDValidity {

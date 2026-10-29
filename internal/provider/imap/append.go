@@ -26,8 +26,10 @@ import (
 //
 // Fehler: provider.ErrNotFound, wenn der Ordner fehlt; provider.ErrRejected
 // (zusammen mit imapx.ErrRejected), wenn der Server das APPEND selbst
-// ablehnt (NO/BAD, z. B. zu groß, Kontingent); Verbindungs- und
-// Anmeldefehler wie bei allen Kommandos.
+// ablehnt (NO/BAD, z. B. zu groß, Kontingent); imapx.ErrNoUIDValidity
+// (provider.ErrIncomplete), wenn der Server für den Ordner UIDVALIDITY 0
+// meldet (dann wird nichts abgelegt); Verbindungs- und Anmeldefehler wie
+// bei allen Kommandos.
 //
 // Die Liste known gilt nur innerhalb eines Aufrufs. Bricht der Lauf ab,
 // bevor der Aufrufer die Kopie vermerkt hat (Wiederaufbau gescheitert,
@@ -55,6 +57,11 @@ func (p *Provider) Append(ctx context.Context, mailbox string, raw []byte, o pro
 				return err
 			}
 			uv = st.UIDValidity
+			if uv == 0 {
+				// Nachbesserung T3, Punkt 10: ohne UIDVALIDITY nichts
+				// ablegen; die Kopie ließe sich nicht sicher vermerken.
+				return imapx.ErrNoUIDValidity
+			}
 			if o.MessageID != "" {
 				if known, err = c.SearchHeader("Message-ID", o.MessageID, 0); err != nil {
 					return err
@@ -108,6 +115,9 @@ func findCopy(c *imapx.Client, mailbox, mid string, uv uint32, known []uint32) (
 	st, err := c.Select(mailbox, imapx.SelectOptions{ReadOnly: true}) // frisch: die neue Nachricht soll sichtbar sein
 	if err != nil {
 		return provider.AppendResult{}, err
+	}
+	if st.UIDValidity == 0 {
+		return provider.AppendResult{}, imapx.ErrNoUIDValidity
 	}
 	res := provider.AppendResult{UIDValidity: st.UIDValidity}
 	uids, err := c.SearchHeader("Message-ID", mid, 0)

@@ -408,7 +408,7 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			mr.Failed = true
 			if errors.Is(err, provider.ErrIncomplete) {
 				mr.Incomplete = true
-				e.log().Warn("incomplete UID list from the server; mailbox skipped, nothing removed", "mailbox", mb.Path)
+				e.log().Warn("incomplete answer from the server (UID list or UIDVALIDITY); mailbox skipped, nothing removed", "mailbox", mb.Path)
 			}
 			mr.problem(err.Error())
 			check.SkipSent = check.SkipSent || isDrafts

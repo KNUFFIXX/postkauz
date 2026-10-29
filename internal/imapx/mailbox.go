@@ -77,7 +77,8 @@ func (c *Client) Selected() *SelectInfo { return c.sel }
 // provider.ErrUIDValidityChanged: Gespeicherte UIDs gelten nicht mehr.
 // UIDVALIDITY 0 ist ErrInvalidUID, ohne Serveraufruf (A6): Wer UIDs
 // anspricht, muss wissen, unter welchem Stand sie gelten; 0 hieße „ohne
-// Prüfung“.
+// Prüfung“. Meldet der Server selbst UIDVALIDITY 0, ist das
+// ErrNoUIDValidity (provider.ErrIncomplete), kein Wechsel.
 func (c *Client) Ensure(mailbox string, uidValidity uint32, o SelectOptions) (SelectInfo, error) {
 	if uidValidity == 0 {
 		return SelectInfo{}, fmt.Errorf("%w: UIDVALIDITY 0", ErrInvalidUID)
@@ -85,23 +86,42 @@ func (c *Client) Ensure(mailbox string, uidValidity uint32, o SelectOptions) (Se
 	return c.ensure(mailbox, uidValidity, o)
 }
 
+// ErrNoUIDValidity: Der Server meldete beim SELECT UIDVALIDITY 0 oder gar
+// keins (go-imap übernimmt dann 0; RFC 3501/9051 verlangen eine Zahl
+// ungleich 0). Das ist eine unvollständige Antwort (provider.ErrIncomplete),
+// kein Wechsel der UIDVALIDITY und kein Reset (Nachbesserung T3, Punkt 10):
+// Ein Reset löste alle Zuordnungen des Ordners, ein Wechsel erklärte die
+// Ziele einer Aktion für veraltet. Der Aufrufer überspringt den Ordner und
+// ändert nichts; der nächste Lauf versucht es erneut.
+var ErrNoUIDValidity = fmt.Errorf("%w: the server reported UIDVALIDITY 0 or none for the mailbox; nothing changed, retrying in the next run",
+	provider.ErrIncomplete)
+
 // ensure ist Ensure ohne Pflicht-UIDVALIDITY (0 = nicht prüfen); nur für
 // Kommandos ohne UIDs (IDLE).
 func (c *Client) ensure(mailbox string, uidValidity uint32, o SelectOptions) (SelectInfo, error) {
 	if s := c.sel; s != nil && s.Mailbox == mailbox && (s.ReadOnly == o.ReadOnly || !s.ReadOnly) {
-		if uidValidity != 0 && s.UIDValidity != uidValidity {
-			return *s, provider.ErrUIDValidityChanged
-		}
-		return *s, nil
+		return *s, checkUIDValidity(*s, uidValidity)
 	}
 	info, err := c.Select(mailbox, o)
 	if err != nil {
 		return info, err
 	}
-	if uidValidity != 0 && info.UIDValidity != uidValidity {
-		return info, provider.ErrUIDValidityChanged
+	return info, checkUIDValidity(info, uidValidity)
+}
+
+// checkUIDValidity vergleicht die UIDVALIDITY des gewählten Ordners mit der
+// erwarteten (0 = nicht prüfen). Meldet der Server 0, ist das
+// ErrNoUIDValidity, nicht provider.ErrUIDValidityChanged.
+func checkUIDValidity(info SelectInfo, uidValidity uint32) error {
+	switch {
+	case uidValidity == 0:
+		return nil
+	case info.UIDValidity == 0:
+		return ErrNoUIDValidity
+	case info.UIDValidity != uidValidity:
+		return provider.ErrUIDValidityChanged
 	}
-	return info, nil
+	return nil
 }
 
 // SearchOptions steuert UIDSearch.

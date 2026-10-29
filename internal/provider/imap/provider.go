@@ -167,7 +167,7 @@ func (p *Provider) ListMailboxes(ctx context.Context) ([]provider.Mailbox, error
 	out := make([]provider.Mailbox, 0, len(sel))
 	for i, b := range sel {
 		m := provider.Mailbox{Path: b.Path, Name: leafName(b), Role: roles[i], Virtual: VirtualView(b)}
-		if st := b.Status; st != nil {
+		if st := b.Status; st != nil && st.UIDValidity != 0 { // ohne UIDVALIDITY kein Zustand (Nachbesserung T3, Punkt 10)
 			m.State = provider.SyncState{UIDValidity: st.UIDValidity, UIDNext: st.UIDNext, HighestModSeq: st.HighestModSeq}
 		}
 		out = append(out, m)
