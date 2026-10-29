@@ -98,6 +98,9 @@ type DoctorReport struct {
 	// HTTP: Einstellungen für mcp --http ([http], T5); nie Geheimnisse
 	// (Principals nur als Zahl).
 	HTTP *DoctorHTTP `json:"http,omitempty"`
+	// HTTPError: Fehler in [http] (Nachbesserung T5, Punkt 9h); dann fehlt
+	// HTTP. Nur mcp --http startet nicht, doctor endet mit Exit 1.
+	HTTPError string `json:"http_error,omitempty"`
 	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
@@ -201,6 +204,9 @@ func doctorCmd(a *app) *cobra.Command {
 			if rep.Blobs != nil && rep.Blobs.Problems > 0 {
 				return fmt.Errorf("%w: %d problems (see the section blobs)", errBlobCheck, rep.Blobs.Problems)
 			}
+			if rep.HTTPError != "" {
+				return errors.New("[http] is invalid (mcp --http does not start; other commands are not affected): " + rep.HTTPError)
+			}
 			return nil
 		},
 	}
@@ -227,7 +233,11 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
 	rep.AttachDir = a.paths.AttachDir
 	rep.ExportDir = a.paths.ExportDir
-	rep.HTTP = doctorHTTP(a.cfg.HTTP)
+	if a.cfg.HTTPErr != nil {
+		rep.HTTPError = a.cfg.HTTPErr.Error()
+	} else {
+		rep.HTTP = doctorHTTP(a.cfg.HTTP)
+	}
 	pf := doctorPolicy(&rep, a.paths.ConfigFile)
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
@@ -660,6 +670,9 @@ func printDoctor(w io.Writer, r DoctorReport) {
 			fmt.Fprintf(w, ", issuer %s, %s", h.Issuer, plural(h.Principals, "principal", "principals"))
 		}
 		fmt.Fprintln(w, " [http]")
+	}
+	if r.HTTPError != "" {
+		fmt.Fprintf(w, "http:      INVALID: %s (mcp --http does not start; other commands are not affected) [http]\n", r.HTTPError)
 	}
 	if r.PDFTool != "" {
 		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)

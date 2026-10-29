@@ -67,9 +67,12 @@ max_requests_per_minute = 60
 		{"[http]\nallowed_hosts = [\"a b\"]", "allowed_hosts"},
 		{"[http]\nlisten_typo = 1", "unknown keys"},
 	} {
+		// Seit der Nachbesserung T5 (Punkt 9h) lädt die Konfiguration
+		// trotzdem; der Fehler steht in HTTPErr (nur mcp --http und doctor).
 		write(bad.toml)
-		if _, _, err := Load(); err == nil || !strings.Contains(err.Error(), bad.want) {
-			t.Errorf("%q: %v, want %q", bad.toml, err, bad.want)
+		cfg, _, err := Load()
+		if err != nil || cfg.HTTPErr == nil || !strings.Contains(cfg.HTTPErr.Error(), bad.want) {
+			t.Errorf("%q: load %v, HTTPErr %v, want %q", bad.toml, err, cfg.HTTPErr, bad.want)
 		}
 	}
 }

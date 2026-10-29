@@ -66,6 +66,12 @@ type Config struct {
 	Retention Retention `toml:"retention"`
 	// HTTP: Abschnitt [http] (seit T5, ADR-010: mcp --http).
 	HTTP HTTP `toml:"http"`
+	// HTTPErr: Fehler in [http] beim Laden (unbekannter Schlüssel unter
+	// http., Prüfung von CheckHTTP; Nachbesserung T5, Punkt 9h). Er hält
+	// nur `mcp --http` auf und steht in `doctor`; alle anderen Kommandos
+	// laufen, damit ein Tippfehler den Dauerbetrieb (sync --watch) beim
+	// nächsten Start nicht stoppt. HTTP ist dann nicht verlässlich.
+	HTTPErr error `toml:"-" json:"-"`
 }
 
 // Retention: Abschnitt [retention] der Konfiguration (E8, A11). Gelöscht
@@ -299,7 +305,8 @@ func DefaultDataDir() (string, error) {
 
 // Load liest die Konfigurationsdatei (falls vorhanden), wendet
 // Umgebungsvariablen und Standards an und bestimmt die Pfade. Unbekannte
-// Schlüssel in der Datei sind ein Fehler (Tippfehler sollen auffallen).
+// Schlüssel in der Datei sind ein Fehler (Tippfehler sollen auffallen);
+// ein Fehler nur in [http] ist es erst für mcp --http (Config.HTTPErr).
 func Load() (Config, Paths, error) { return LoadWith(LoadOptions{}) }
 
 // LoadOptions übersteuert die Pfade für einen Aufruf (globale Flags
@@ -364,12 +371,23 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	case err == nil:
 		p.ConfigExists = true
 		if und := md.Undecoded(); len(und) > 0 {
-			keys := make([]string, 0, len(und))
+			// Unbekannte Schlüssel nur unter [http] halten allein mcp --http
+			// auf (HTTPErr); jeder andere hält jedes Kommando auf.
+			var keys, httpKeys []string
 			for _, k := range und {
-				keys = append(keys, k.String())
+				if len(k) > 0 && k[0] == "http" {
+					httpKeys = append(httpKeys, k.String())
+				} else {
+					keys = append(keys, k.String())
+				}
 			}
-			sort.Strings(keys)
-			return cfg, p, fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(keys, ", "))
+			if len(keys) > 0 {
+				keys = append(keys, httpKeys...)
+				sort.Strings(keys)
+				return cfg, p, fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(keys, ", "))
+			}
+			sort.Strings(httpKeys)
+			cfg.HTTPErr = fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(httpKeys, ", "))
 		}
 	case errors.Is(err, fs.ErrNotExist):
 		// keine Datei: Standards
@@ -430,8 +448,8 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 	if err := checkRetention(&cfg); err != nil {
 		return cfg, p, err
 	}
-	if err := CheckHTTP(&cfg.HTTP); err != nil {
-		return cfg, p, err
+	if cfg.HTTPErr == nil {
+		cfg.HTTPErr = CheckHTTP(&cfg.HTTP)
 	}
 	cfg.Approval.TTL = cfg.Draft.ApprovalTTL
 	if cfg.DataDir == "" {

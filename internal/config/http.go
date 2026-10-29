@@ -72,8 +72,8 @@ var (
 	httpHostRE    = regexp.MustCompile(`^[A-Za-z0-9.\-\[\]:]{1,255}$`)
 )
 
-// CheckHTTP prüft [http] und setzt die Standards (Load ruft es auf; mcp
-// --http erneut nach --listen). Ob die Adresse erlaubt ist (Loopback,
+// CheckHTTP prüft [http] und setzt die Standards (Load ruft es auf und
+// merkt einen Fehler in Config.HTTPErr; mcp --http erneut nach --listen). Ob die Adresse erlaubt ist (Loopback,
 // Tailnet), entscheidet httpmcp.CheckListen beim Start.
 func CheckHTTP(h *HTTP) error {
 	h.Listen = strings.TrimSpace(h.Listen)

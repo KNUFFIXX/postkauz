@@ -103,6 +103,11 @@ func runMCPHTTP(ctx context.Context, a *app, listen string) error {
 	if os.Getenv(EnvKey) != "" || os.Getenv(EnvKeyFile) != "" {
 		fmt.Fprintf(a.stderr, "mcp --http: %s/%s is ignored; every HTTP request brings its own credential\n", EnvKey, EnvKeyFile)
 	}
+	// Ein Fehler in [http] hält nur diesen Start auf (Nachbesserung T5,
+	// Punkt 9h); die übrigen Kommandos laufen trotzdem.
+	if a.cfgErr == nil && a.cfg.HTTPErr != nil {
+		return a.cfg.HTTPErr
+	}
 	a.noCredentials = true
 	x, err := a.open(ctx)
 	if err != nil {
