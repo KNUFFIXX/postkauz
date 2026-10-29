@@ -239,7 +239,8 @@ testmail-down:
 # Test-Autorisierungsserver (Authelia im Docker, nur 127.0.0.1) für den
 # Integrationstest von mcp --http mit [http] auth = "oauth" (S3.6);
 # eingerichtet aus dem Beispiel deploy/docker/auth, Geheimnisse zufällig
-# in WORK (Standard /tmp/postkauz-testauth). Danach:
+# in POSTKAUZ_TESTAUTH_DIR (Standard /tmp/postkauz-testauth, gelöscht nur
+# mit der eigenen Marke .postkauz-testauth). Danach:
 #   POSTKAUZ_IT=authelia make integration
 testauth-up:
 	sh deploy/testauth/setup.sh

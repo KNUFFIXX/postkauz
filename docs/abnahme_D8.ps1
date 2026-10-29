@@ -479,6 +479,8 @@ function Invoke-Http {
             $s = $req.GetRequestStream()
             $s.Write($Bytes, 0, $Bytes.Length)
             $s.Close()
+        } elseif ($withBody) {
+            $req.ContentLength = 0
         }
         $resp = $req.GetResponse()
     } catch [System.Net.WebException] {
