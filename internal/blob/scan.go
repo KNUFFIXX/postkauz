@@ -58,7 +58,7 @@ type Entry struct {
 // ist die von filepath.WalkDir. Liegen beide Formen eines Blobs vor
 // (<sha256> und <sha256>.zst), kommen beide.
 func (s *Store) Scan(fn func(Entry)) error {
-	tmpDir := filepath.Join(s.root, "tmp")
+	tmpDir, lockPath := filepath.Join(s.root, "tmp"), s.lockPath()
 	return filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -68,6 +68,9 @@ func (s *Store) Scan(fn func(Entry)) error {
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if p == lockPath && d.Type().IsRegular() {
+			return nil // Sperrdatei (lock.go), keine fremde Datei
 		}
 		if filepath.Dir(p) == tmpDir {
 			if d.Type().IsRegular() && strings.HasPrefix(d.Name(), "put-") {

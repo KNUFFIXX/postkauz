@@ -146,8 +146,9 @@ type GCReport struct {
 	RemovedFiles int
 	RemovedRows  int
 	Bytes        int64
-	// Skipped: Kandidaten, auf die beim Löschen der Zeile doch etwas
-	// verwies (die Datei bleibt dann).
+	// Skipped: Kandidaten, auf die beim Löschen der Zeile oder der Datei
+	// doch etwas verwies oder deren Datei inzwischen erneuert wurde (ein
+	// Put während des Laufs); die Datei bleibt dann.
 	Skipped int
 }
 
@@ -156,8 +157,10 @@ type GCReport struct {
 // ohne Verweis, deren Datei (ohne Datei: deren Zeile) älter als minAge
 // ist; blob.Put erneuert das Dateidatum eines wieder abgelegten Inhalts
 // (A14). Zuerst die Zeile (die Anweisung prüft die Verweise erneut), dann
-// die Datei; ist die Zeile doch verwiesen, bleibt die Datei. Fremde und
-// Temporärdateien bleiben, wie sie sind.
+// die Datei; ist die Zeile doch verwiesen, bleibt die Datei. Die Dateien
+// löscht removeFiles unter der Sperre des Blob-Ordners mit Nachprüfung von
+// Entwurfsverweisen und Dateidatum. Fremde und Temporärdateien bleiben,
+// wie sie sind.
 func (s *Service) GC(ctx context.Context, minAge time.Duration, dryRun bool) (GCReport, error) {
 	var rep GCReport
 	if s.Blobs == nil {
@@ -256,21 +259,92 @@ func (s *Service) GC(ctx context.Context, minAge time.Duration, dryRun bool) (GC
 	for _, h := range deleted {
 		gone[h] = true
 	}
+	var files2 []string
 	for _, h := range oldFiles {
 		if _, hasRow := rowAt[h]; hasRow && !gone[h] {
 			rep.Skipped++ // Zeile inzwischen verwiesen: Datei bleibt
 			continue
 		}
+		files2 = append(files2, h)
+	}
+	return rep, s.removeFiles(ctx, files2, limit, sizes, &rep)
+}
+
+// Lösch-Phase von GC (Nachbesserung T3, Punkt 6): Dateien ohne Zeile in
+// blobs (Dateianhänge von Entwürfen) prüft keine SQL-Anweisung nach, und
+// drafts.create im MCP-Prozess hält keine Kontosperre. Deshalb je Paket:
+// exklusive Sperre des Blob-Ordners (blob.Store.LockForGC; Put wartet so
+// lange), Entwurfs-Hashes neu laden, je Datei das Dateidatum direkt vor
+// dem Löschen neu lesen. Was ein Entwurf inzwischen nennt oder was Put
+// inzwischen erneuert hat, bleibt (Skipped). Zwischen den Paketen gibt GC
+// die Sperre für gcPause frei (länger als die Wartetakte von Put), damit
+// ein wartendes Put drankommt.
+var (
+	gcBatch    = 256
+	gcPause    = 20 * time.Millisecond
+	gcLockWait = 10 * time.Second
+)
+
+// removeFiles löscht die Dateien hs (Kandidaten älter als limit) paketweise
+// unter der Sperre des Blob-Ordners und zählt in rep.
+func (s *Service) removeFiles(ctx context.Context, hs []string, limit time.Time, sizes map[string]int64, rep *GCReport) error {
+	for len(hs) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n := min(len(hs), gcBatch)
+		if err := s.removeBatch(ctx, hs[:n], limit, sizes, rep); err != nil {
+			return err
+		}
+		hs = hs[n:]
+		if len(hs) > 0 {
+			time.Sleep(gcPause)
+		}
+	}
+	return nil
+}
+
+func (s *Service) removeBatch(ctx context.Context, hs []string, limit time.Time, sizes map[string]int64, rep *GCReport) error {
+	lock, err := s.Blobs.LockForGC(gcLockWait)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	// Unter der Sperre: Was ein Entwurf bis jetzt nennt, bleibt.
+	drafts, err := s.Store.DraftAttachmentHashes(ctx)
+	if err != nil {
+		return err
+	}
+	inDraft := map[string]bool{}
+	for _, h := range drafts {
+		inDraft[h] = true
+	}
+	for _, h := range hs {
+		if inDraft[h] {
+			rep.Skipped++
+			continue
+		}
+		mt, err := s.Blobs.ModTime(h)
+		if errors.Is(err, blob.ErrNotFound) {
+			continue // schon weg
+		}
+		if err != nil {
+			return err
+		}
+		if mt.After(limit) {
+			rep.Skipped++ // von Put inzwischen erneuert: Datei bleibt
+			continue
+		}
 		removed, err := s.Blobs.Remove(h)
 		if err != nil {
-			return rep, err
+			return err
 		}
 		if removed {
 			rep.RemovedFiles++
 			rep.Bytes += sizes[h]
 		}
 	}
-	return rep, nil
+	return nil
 }
 
 // blobSize liefert die Größe der Datei(en) eines Blobs auf dem Datenträger.

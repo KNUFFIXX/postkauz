@@ -140,6 +140,9 @@ func (w *limitWriter) Write(p []byte) (int, error) {
 // Put liest r vollständig, schreibt den Inhalt atomar und liefert Hash und
 // Größe. Ist der Inhalt schon vorhanden, bleibt die vorhandene Datei
 // inhaltlich unverändert (Existed=true); nur ihr Dateidatum wird erneuert.
+// Nachsehen und Ablegen geschehen unter der geteilten Sperre des
+// Blob-Ordners (lock.go); hält blobs.gc sie gerade, wartet Put bis zu
+// putLockWait und liefert danach ErrBusy.
 func (s *Store) Put(r io.Reader) (Info, error) {
 	tmp, err := os.CreateTemp(filepath.Join(s.root, "tmp"), "put-*")
 	if err != nil {
@@ -180,6 +183,15 @@ func (s *Store) Put(r io.Reader) (Info, error) {
 		}
 	}
 	info := Info{SHA256: hex.EncodeToString(h.Sum(nil)), Size: lw.n, Compressed: s.opts.Compress}
+
+	// Ab hier geteilt gesperrt (lock.go): blobs.gc löscht nichts, solange
+	// Put nachsieht und ablegt; läuft gerade ein Lösch-Paket, wartet Put
+	// kurz (putLockWait), statt zu scheitern.
+	lock, err := s.lockWait(false, putLockWait)
+	if err != nil {
+		return Info{}, err
+	}
+	defer lock.Release()
 
 	// Schon vorhanden (in einer der beiden Formen)? Dann nichts ersetzen,
 	// aber das Dateidatum erneuern (A14): blobs.gc löscht nur Dateien ohne

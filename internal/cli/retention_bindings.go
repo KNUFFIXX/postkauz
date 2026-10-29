@@ -76,7 +76,7 @@ func renderBlobGC(w io.Writer, out any) error {
 	}
 	fmt.Fprintf(w, "%s: %s (%s), %s\n", verb, plural(o.RemovedFiles, "file", "files"), humanBytes(o.Bytes), plural(o.RemovedRows, "row", "rows"))
 	if o.Skipped > 0 {
-		fmt.Fprintf(w, "kept: %s referenced again during the run\n", plural(o.Skipped, "file", "files"))
+		fmt.Fprintf(w, "kept: %s referenced or stored again during the run\n", plural(o.Skipped, "file", "files"))
 	}
 	if o.DryRun {
 		_, err := fmt.Fprintln(w, "dry run: nothing changed")

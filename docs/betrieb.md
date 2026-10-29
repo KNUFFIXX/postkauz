@@ -463,7 +463,7 @@ would delete: 28 files (12.3 MB), 26 rows
 dry run: nothing changed
 ```
 
-Ohne `--dry-run` steht statt `would delete` die Zeile `deleted: …`. Danach meldet `doctor --blobs` bei `without reference` nur noch die frischen Dateien.
+Ohne `--dry-run` steht statt `would delete` die Zeile `deleted: …`. Danach meldet `doctor --blobs` bei `without reference` nur noch die frischen Dateien. Die Claude-App (MCP) darf dabei offen bleiben: Legt ein Agent gerade einen Entwurf mit Anhang an, wartet er kurz, und `blob gc` lässt dessen Datei stehen (Zeile `kept: … referenced or stored again during the run`).
 
 ### 5.3 Altes Audit archivieren: `audit rotate`
 
