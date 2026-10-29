@@ -50,3 +50,4 @@ spike/s0/data/
 spike/s0/corpus/*.eml
 spike/s0/corpus/manifest.json
 spike/s0/s0
+__pycache__/
