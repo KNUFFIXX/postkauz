@@ -1,0 +1,53 @@
+package httpmcp
+
+import (
+	"net/http"
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/ops"
+)
+
+// F1 (Prüfung): Ein Teilnehmer ohne Schlüssel verbraucht den gemeinsamen
+// Vorrat; die berechtigte Sitzung bekommt danach 429, auch /healthz.
+// Soll: Anfragen ohne/mit falschem Schlüssel dürfen eine angemeldete
+// Sitzung nicht aussperren. Scheitert heute.
+func TestZZRateLockoutByUnauthenticated(t *testing.T) {
+	e := newEnv(t)
+	ts, _ := e.start(t, nil, nil)
+	for i := 0; i < 130; i++ {
+		res := post(t, ts.URL+PathMCP, initBody, nil) // ohne Bearer
+		_ = res.Body.Close()
+	}
+	res := post(t, ts.URL+PathMCP, initBody, bearer(e.keys["reader"]))
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("legitimate reader after 130 anonymous requests: %d, want 200", res.StatusCode)
+	}
+	h, err := http.Get(ts.URL + PathHealth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = h.Body.Close()
+	if h.StatusCode != http.StatusNoContent {
+		t.Errorf("/healthz after flood: %d, want 204", h.StatusCode)
+	}
+}
+
+// F1 (Prüfung): Zahl der Audit-Zeilen durch falsche Schlüssel in einem
+// Schwung (Vorrat 120). Nur Messung.
+func TestZZWrongKeyAuditRows(t *testing.T) {
+	e := newEnv(t)
+	ts, _ := e.start(t, nil, nil)
+	codes := map[int]int{}
+	for i := 0; i < 130; i++ {
+		res := post(t, ts.URL+PathMCP, initBody, bearer(ops.KeyPrefix+"wrong-0123456789abcdef"))
+		codes[res.StatusCode]++
+		_ = res.Body.Close()
+	}
+	n := 0
+	for _, r := range e.auditAll(t) {
+		if r.Operation == ops.OpAuthenticate && r.Reason == "key_invalid" {
+			n++
+		}
+	}
+	t.Logf("status codes %v, key_invalid audit rows %d", codes, n)
+}

@@ -1,0 +1,48 @@
+package ops
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// F7 (Prüfung): withVia mit null → Panic; mit Nicht-Objekt fällt via weg.
+func TestZZWithViaEdge(t *testing.T) {
+	o := Origin{Transport: "http", Principal: "reader"}
+	t.Logf("array: %s", withVia(json.RawMessage(`[1]`), o))
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("withVia(null) panics: %v", r)
+			}
+		}()
+		t.Logf("null: %s", withVia(json.RawMessage(`null`), o))
+	}()
+}
+
+// F7: Erreichbarkeit heute: Lässt eine Operation die Eingabe null durch
+// die Prüfung, oder liefert ein Redact etwas anderes als ein Objekt?
+func TestZZRedactAlwaysObject(t *testing.T) {
+	for _, op := range Catalog(Deps{}) {
+		if err := op.validateInput(json.RawMessage(`null`)); err == nil {
+			t.Errorf("%s: input null passes validation", op.Name)
+		}
+		if op.Redact == nil {
+			continue
+		}
+		in, ok := contractInputs[op.Name]
+		inputs := []string{`{}`}
+		if ok {
+			inputs = append(inputs, in.input)
+		}
+		for _, raw := range inputs {
+			if op.validateInput(json.RawMessage(raw)) != nil {
+				continue
+			}
+			p, _ := op.Redact(json.RawMessage(raw))
+			if s := strings.TrimSpace(string(p)); len(s) > 0 && s[0] != '{' {
+				t.Errorf("%s: Redact(%s) = %s (no object)", op.Name, raw, s)
+			}
+		}
+	}
+}

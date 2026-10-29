@@ -1,0 +1,31 @@
+package httpmcp
+
+import (
+	"net"
+	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/config"
+)
+
+// F6 (Prüfung): CheckHTTP (Syntax) und CheckListen (Politik) für Grenzfälle.
+func TestZZListenEdgeCases(t *testing.T) {
+	for _, l := range []string{"localhost:8787", "LOCALHOST:8787", "[::ffff:127.0.0.1]:8787", "[::ffff:100.64.1.1]:8787",
+		"[fe80::1%eth0]:8787", "100.64.0.1:8787", "100.127.255.255:8787", "[fd7a:115c:a1e0::5]:8787", "0.0.0.0:8787", "[::]:8787", "127.0.0.2:8787"} {
+		for _, auth := range []string{config.HTTPAuthKey, config.HTTPAuthOAuth} {
+			h := config.HTTP{Listen: l, Auth: auth, AllowNonLoopback: true}
+			if auth == config.HTTPAuthOAuth {
+				h.Resource, h.Issuer, h.Principals = "https://n.example.net/mcp", "https://as.example.net", map[string]string{"s": "reader"}
+			}
+			e1 := config.CheckHTTP(&h)
+			e2 := CheckListen(h)
+			t.Logf("%-28s %-5s CheckHTTP=%v | CheckListen=%v", l, auth, e1 == nil, e2 == nil)
+		}
+	}
+	// Worauf lauscht [::ffff:127.0.0.1]?
+	if ln, err := net.Listen("tcp", "[::ffff:127.0.0.1]:0"); err == nil {
+		t.Logf("[::ffff:127.0.0.1]:0 listens on %s", ln.Addr())
+		_ = ln.Close()
+	} else {
+		t.Logf("[::ffff:127.0.0.1]: %v", err)
+	}
+}

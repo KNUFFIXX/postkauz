@@ -1,0 +1,166 @@
+package httpmcp
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/KNUFFIXX/postkauz/internal/config"
+)
+
+// F3 (Prüfung): Ein Client bricht seine Anfrage während der ersten
+// Discovery ab (hier: Kontext schon beendet). Danach bekommt ein
+// berechtigter Client 10 s lang 503. Soll: Abbruch durch den Client sperrt
+// andere nicht. Scheitert heute.
+func TestZZDiscoveryCancelledByClientBlocksOthers(t *testing.T) {
+	o := newOAuthEnv(t)
+	a := o.srv.auth.(*oauthAuth)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// Ein beliebiges Token mit typ at+jwt reicht, keine Signatur nötig.
+	hdr := `{"alg":"RS256","typ":"at+jwt"}`
+	junk := b64(hdr) + ".e30.AAAA"
+	if _, err := a.authenticate(ctx, junk); err == nil {
+		t.Fatal("cancelled request authenticated")
+	}
+	code, _, body := o.post(t, o.token(t, "user-reader", nil))
+	if code != http.StatusOK {
+		t.Errorf("legitimate token after a cancelled discovery: %d %s, want 200", code, strings.TrimSpace(body))
+	}
+}
+
+func b64(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+
+// F2 (Prüfung): Hängt die JWKS des AS (Verbindung offen, keine Antwort),
+// hängt die Anmeldung, bis der Client aufgibt; PostKauz setzt keine Frist.
+// Soll: Antwort (503) binnen ~15 s. Scheitert heute (Client-Timeout).
+func TestZZJWKSHangHasNoDeadline(t *testing.T) {
+	block := make(chan struct{})
+	mux := http.NewServeMux()
+	as := httptest.NewTLSServer(mux)
+	t.Cleanup(as.Close)
+	defer close(block) // vor den Cleanups, sonst blockiert ts.Close
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": as.URL, "jwks_uri": as.URL + "/jwks",
+			"authorization_endpoint": as.URL + "/a", "token_endpoint": as.URL + "/t",
+			"code_challenge_methods_supported": []string{"S256"}})
+	})
+	mux.HandleFunc("/jwks", func(http.ResponseWriter, *http.Request) { <-block })
+	e := newEnv(t)
+	o := &oauthEnv{testEnv: e}
+	ts, s := e.start(t, func(h *config.HTTP) {
+		h.Auth = config.HTTPAuthOAuth
+		h.Resource = testResource
+		h.Issuer = as.URL
+		h.AllowedHosts = []string{"node.example.net"}
+		h.Principals = map[string]string{"user-reader": "reader"}
+	}, func(d *Deps) { d.HTTPClient = as.Client() })
+	o.ts, o.srv = ts, s
+	key := genKey(t)
+	sig, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithHeader("kid", "k1").WithType("at+jwt"))
+	tok, _ := jwt.Signed(sig).Claims(map[string]any{"iss": as.URL, "sub": "user-reader", "aud": testResource,
+		"exp": time.Now().Add(time.Minute).Unix()}).Serialize()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+PathMCP, strings.NewReader(initBody))
+	req.Host = "node.example.net"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	start := time.Now()
+	res, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		t.Errorf("no answer from PostKauz after %v while the JWKS hangs: %v", time.Since(start).Round(time.Second), err)
+		// Der Handler läuft weiter, obwohl der Client weg ist (Body nie
+		// gelesen → keine Abbruch-Erkennung des Servers).
+		time.Sleep(2 * time.Second)
+		if !strings.Contains(e.log.String(), `"status"`) {
+			t.Errorf("handler still running 2 s after the client gave up (no request log line)")
+		}
+		return
+	}
+	_ = res.Body.Close()
+	t.Logf("answer %d after %v", res.StatusCode, time.Since(start))
+}
+
+// F2 (Prüfung): jwks_uri mit http (nicht Loopback) wird angenommen.
+// Soll: Fehler. Scheitert heute.
+func TestZZDiscoverRejectsHTTPJWKS(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"issuer": srv.URL, "jwks_uri": "http://keys.example.net/jwks",
+			"authorization_endpoint": srv.URL + "/a", "token_endpoint": srv.URL + "/t", "code_challenge_methods_supported": []string{"S256"}})
+	})
+	got, err := discoverJWKS(context.Background(), srv.URL, srv.Client())
+	if err == nil {
+		t.Errorf("http jwks_uri accepted: %q", got)
+	}
+}
+
+// F4 (Prüfung): Jedes Token mit falscher Signatur oder unbekannter kid löst
+// einen JWKS-Abruf aus, auch bei fremdem iss und abgelaufenem exp
+// (go-oidc prüft die Signatur vor iss/exp). Nur Messung.
+func TestZZJWKSRefetchPerBadToken(t *testing.T) {
+	o := newOAuthEnv(t)
+	if code, _, body := o.post(t, o.token(t, "user-reader", nil)); code != http.StatusOK {
+		t.Fatalf("valid: %d %s", code, body)
+	}
+	base := o.as.jwksHits.Load()
+	other := genKey(t)
+	for i := 0; i < 5; i++ {
+		c := o.claims("user-reader", func(c map[string]any) {
+			c["iss"] = "https://evil.example.org"
+			c["exp"] = time.Now().Add(-time.Hour).Unix()
+		})
+		code, _, _ := o.post(t, o.as.sign(t, other, "at+jwt", c))
+		if code != http.StatusUnauthorized {
+			t.Errorf("bad token %d: %d", i, code)
+		}
+	}
+	t.Logf("JWKS fetches caused by 5 bad tokens (foreign iss, expired, wrong signature): %d", o.as.jwksHits.Load()-base)
+}
+
+// F3 Ende zu Ende: POST mit leerem Body (Content-Length 0, damit der
+// Server den Verbindungsabbruch bemerkt), Token-Kopf typ at+jwt, Client
+// trennt nach 200 ms, während die erste Discovery noch läuft. Danach
+// bekommt ein berechtigter Client 503. Scheitert heute.
+func TestZZDiscoveryCancelledEndToEnd(t *testing.T) {
+	o := newOAuthEnv(t)
+	var slow atomicBool
+	slow.v.Store(true)
+	// Discovery verzögern: Wrapper um den Handler des Fake-AS.
+	orig := o.as.srv.Config.Handler
+	o.as.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if slow.v.Load() && strings.HasPrefix(r.URL.Path, "/.well-known/") {
+			time.Sleep(time.Second)
+		}
+		orig.ServeHTTP(w, r)
+	})
+	junk := b64(`{"alg":"RS256","typ":"at+jwt"}`) + ".e30.AAAA"
+	req, _ := http.NewRequest(http.MethodPost, o.ts.URL+PathMCP, http.NoBody)
+	req.Host = "node.example.net"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+junk)
+	if res, err := (&http.Client{Timeout: 200 * time.Millisecond}).Do(req); err == nil {
+		_ = res.Body.Close()
+		t.Logf("attacker got %d", res.StatusCode)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	slow.v.Store(false)
+	code, _, body := o.post(t, o.token(t, "user-reader", nil))
+	if code != http.StatusOK {
+		t.Errorf("legitimate token after an aborted anonymous request: %d %s, want 200", code, strings.TrimSpace(body))
+	}
+}
+
+type atomicBool struct{ v atomic.Bool }
