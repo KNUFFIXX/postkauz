@@ -101,6 +101,34 @@ Für die Prüfsitzung: Diese Datei ersetzt bei einem parallel laufenden Teil die
 | PSScriptAnalyzer | nicht verfügbar (kein `pwsh`) |
 | Mutationen | Ohne `at+jwt`-Prüfung bzw. ohne `aud`-Prüfung scheitern 5 Fälle von `TestOAuthTokenChecks` (geprüft, danach zurückgesetzt) |
 
+### Nach dem Merge mit der zweiten Nachbesserung T3 (`2210e76`)
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün (an `3bb7df5`; der zweite Merge `2210e76` brachte nur Doku und das Löschen von Wegwerf-Testdateien) |
+| `make integration` | `IT=dovecot,stalwart,authelia`: 32 PASS, kein FAIL; GreenMail weiter übersprungen (429) |
+| `make race` | grün, 37 Pakete ohne Datenrennen; `internal/cli` 2.065 s (34 min) auch allein, also nicht durch den parallelen Lauf: nur 11 min unter der Grenze von 45 min (`Makefile`, Ziel `race`); Hinweis an die Prüfsitzung, die Grenze im Auge zu behalten |
+| `make cross` | grün (die drei Programme des Release-Baus) |
+
+### Build 0.3.0-alpha.8
+
+Gebaut an `2210e76` in einem frischen Klon ohne Tags (`git clone --no-tags --branch claude/determined-fermi-1g8w63`, sauberer Arbeitsbaum), Nachbau in einem zweiten Klon ohne Tags: `SHA256SUMS` gleich (ohne die Zeile `VERSION`), `go version -m` in beiden `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029073539-2210e7603fa2`, `vcs.modified=false`. Go 1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`.
+
+```
+f51c6d5649cfb9608d542847269e4949f0b3409e5e766d4c19a2fde2c42bc706  postkauz-linux-amd64
+cbbe93d21a5bfa15fc7fa92f59197a8c07ff97e277e2c7a9a68976526752b23f  postkauz-windows-amd64.exe
+196a0a959ec14b61021364b5e9cb6ee2d9261106c19928073d1dcd03a9becc7b  postkauz-darwin-arm64
+26043f606d050fd1095f31019e1a1e3d3ce68bdde402ab4b2b5ce1fe17abcdef  Register-AuditExport.ps1
+8a50ee74c064cc731446ed6f224d1d3ba8247d7abcea6cb9da834f2e40ec91c1  Register-SyncWatch.ps1
+6973c8473a8a244172530c9e926d4d2b854b2bbee05bc013bde1c700bcdf3de3  Run-SyncWatch.ps1
+9d40eb8aaef6b4c2cb68a8eea02651823ead6ac87c0a4917b29d9d3fc6a785e9  check-example.ps1
+4bf639c3a3a5e3dd66c759ac21d8b1f0b1be6e7174bf67072bfcad01ecececc5  check-example.sh
+c6b85f6389690ce64c0a68a370f494d4fe16ea417af5180a29faa65cdc3bee47  postkauz-sync@.service
+233db530992511b2056540cac427fb73e0af5d17466bee9f36f00ec53eea093c  postkauz-mcp-http.service
+```
+
+Nur für die Abnahme D8, nicht für den Dauerbetrieb (Rahmen 5: Builds, die nicht von `main` stammen, nur in eigenen, frischen Datenverzeichnissen).
+
 ## Offen und Fragen
 
 - Abnahme D8 (Prüfsitzung): Tailscale (`tailscale serve` und der `Host`-Kopf, B1: durch die Allowlist abgedeckt), Cloud-Sitzung im Userspace-Modus (ob die Netzregel der Sitzung `tailscaled` erlaubt, Risiko 1), Claude Code mit Authelia (B4, B7).
@@ -116,4 +144,5 @@ Für die Prüfsitzung: Diese Datei ersetzt bei einem parallel laufenden Teil die
 5. `test: give the test CA key usage so Python clients trust it`
 6. `docs: add acceptance D8 for HTTP-MCP with key and OAuth`
 7. `docs: record T5 phase 2 in roadmap, changelog, ADR-010 and protocol`
-8. `docs: record the build 0.3.0-alpha.8` (Prüfsummen unten)
+8. `chore: merge the second T3 follow-up into the T5 branch`, `chore: merge the alpha.7b record of the second T3 follow-up`
+9. `docs: record the build 0.3.0-alpha.8` (Prüfsummen oben)
