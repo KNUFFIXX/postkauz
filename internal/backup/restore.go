@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,20 +53,23 @@ type RestoreOptions struct {
 
 // RestoreResult ist das Ergebnis einer Wiederherstellung.
 type RestoreResult struct {
-	Source               string             `json:"source"`
-	DataDir              string             `json:"data_dir"`
-	ManifestSHA256       string             `json:"manifest_sha256"`
-	BackupCreatedAt      string             `json:"backup_created_at"`
-	BackupProgramVersion string             `json:"backup_program_version"`
-	BackupSchemaVersion  int                `json:"backup_schema_version"`
-	SchemaVersion        int                `json:"schema_version"`
-	Files                int                `json:"files"`
-	Bytes                int64              `json:"bytes"`
-	Blobs                int                `json:"blobs"`
-	AuditArchives        int                `json:"audit_archives"`
-	MigrationSnapshot    string             `json:"migration_snapshot,omitempty"`
-	DryRun               bool               `json:"dry_run"`
-	Fixes                store.RestoreFixes `json:"fixes"`
+	Source               string `json:"source"`
+	DataDir              string `json:"data_dir"`
+	ManifestSHA256       string `json:"manifest_sha256"`
+	BackupCreatedAt      string `json:"backup_created_at"`
+	BackupProgramVersion string `json:"backup_program_version"`
+	BackupSchemaVersion  int    `json:"backup_schema_version"`
+	SchemaVersion        int    `json:"schema_version"`
+	Files                int    `json:"files"`
+	Bytes                int64  `json:"bytes"`
+	Blobs                int    `json:"blobs"`
+	AuditArchives        int    `json:"audit_archives"`
+	MigrationSnapshot    string `json:"migration_snapshot,omitempty"`
+	// Leftovers: Arbeitsordner abgebrochener Wiederherstellungen neben dem
+	// Ziel (RestoreLeftovers); löschen.
+	Leftovers []string           `json:"leftovers,omitempty"`
+	DryRun    bool               `json:"dry_run"`
+	Fixes     store.RestoreFixes `json:"fixes"`
 }
 
 // Restore prüft eine Sicherung und stellt sie in ein neues
@@ -74,14 +78,18 @@ type RestoreResult struct {
 //  1. Manifest lesen und streng prüfen (Aufbau, Pfade, Zähler, Schema
 //     höchstens bekannt); jede Datei vorhanden, gewöhnliche Datei, Größe
 //     passt. Bis hier wird nichts geschrieben.
-//  2. Datenverzeichnis anlegen (0700) und jede Datei kopieren (0600),
-//     dabei SHA-256 prüfen; komprimierte Blobs zusätzlich gegen ihren
-//     Namen (blob.Store.Verify).
-//  3. Datenbank öffnen und migrieren (Schnappschuss vor einer Migration
-//     wie immer), dann eine eigene Instanz daraus machen
-//     (store.PrepareRestored, A10) mit dem Systemereignis backup.restore.
+//  2. Arbeitsordner <ziel>.restoring-<zufall> neben dem Ziel anlegen
+//     (0700) und jede Datei hinein kopieren (0600), dabei SHA-256 prüfen;
+//     komprimierte Blobs zusätzlich gegen ihren Namen (blob.Store.Verify).
+//  3. Datenbank dort öffnen und migrieren (Schnappschuss vor einer
+//     Migration wie immer), eine eigene Instanz daraus machen
+//     (store.PrepareRestored, A10) mit dem Systemereignis backup.restore,
+//     schließen.
+//  4. Ein leeres Ziel entfernen und den Arbeitsordner in das Ziel
+//     umbenennen.
 //
-// Jeder Fehler ab Schritt 2 entfernt, was restore angelegt hat.
+// Jeder Fehler ab Schritt 2 entfernt den Arbeitsordner; das Ziel bleibt,
+// wie es war.
 func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err error) {
 	now := time.Now
 	if o.Now != nil {
@@ -132,27 +140,34 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 			return res, manifestErr("%s has %d bytes, the manifest says %d", f.Path, size, f.Size)
 		}
 	}
+	res.Leftovers = RestoreLeftovers(to)
 	if o.DryRun {
 		return res, verifyFiles(ctx, from, m)
 	}
 
-	// 2. Anlegen und kopieren; bei jedem Fehler wieder entfernen.
-	created, err := makeTarget(to)
+	// 2. In einem Arbeitsordner neben dem Ziel anlegen und kopieren
+	// (T3-Nachbesserung 4): Bis die Kopie eine eigene Instanz ist, liegt
+	// unter dem Ziel keine Datenbank. Ein harter Abbruch (Stromausfall)
+	// ließe sonst eine betriebsfähige Kopie mit Kennung, Schlüsselbund-
+	// Verweisen und offenen Server-Jobs des Originals zurück. Bei jedem
+	// Fehler wird der Arbeitsordner entfernt; nach einem harten Abbruch
+	// nennen ihn doctor und der nächste restore (RestoreLeftovers).
+	work, err := makeWork(to)
 	if err != nil {
 		return res, err
 	}
 	defer func() {
 		if err != nil {
-			removeTarget(to, created)
+			_ = os.RemoveAll(work)
 		}
 	}()
 	for _, f := range m.Files {
 		if err = ctx.Err(); err != nil {
 			return res, err
 		}
-		dst := filepath.Join(to, filepath.FromSlash(f.Path))
+		dst := filepath.Join(work, filepath.FromSlash(f.Path))
 		if f.Kind == KindDatabase {
-			dst = filepath.Join(to, o.DBName)
+			dst = filepath.Join(work, o.DBName)
 		}
 		want := f
 		if _, _, err = copyAtomic(filepath.Join(from, filepath.FromSlash(f.Path)), dst, func(got string, n int64) error {
@@ -165,7 +180,7 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 		}
 	}
 	if m.Counts.Blobs > 0 {
-		bs, berr := blob.OpenExisting(filepath.Join(to, "blobs"), blob.Options{})
+		bs, berr := blob.OpenExisting(filepath.Join(work, "blobs"), blob.Options{})
 		if berr != nil {
 			err = berr
 			return res, err
@@ -182,10 +197,29 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 		}
 	}
 
-	// 3. Datenbank: Schema wie im Manifest, migrieren, eigene Instanz.
-	st, err := store.Open(filepath.Join(to, o.DBName))
-	if err != nil {
+	// 3. Datenbank: Schema wie im Manifest, migrieren, eigene Instanz;
+	// danach ist sie geschlossen.
+	if err = prepareDB(ctx, filepath.Join(work, o.DBName), m.SchemaVersion, o.KeepIdentity, now, &res); err != nil {
 		return res, err
+	}
+
+	// 4. Erst jetzt an seinen Platz: ein leeres Ziel weicht, dann umbenennen.
+	if err = moveIntoPlace(work, to); err != nil {
+		return res, err
+	}
+	if res.MigrationSnapshot != "" {
+		res.MigrationSnapshot = filepath.Join(to, filepath.Base(res.MigrationSnapshot))
+	}
+	return res, nil
+}
+
+// prepareDB öffnet die kopierte Datenbank, prüft das Schema gegen das
+// Manifest, migriert und macht eine eigene Instanz daraus
+// (store.PrepareRestored, A10); sie ist danach geschlossen.
+func prepareDB(ctx context.Context, path string, schema int, keepIdentity bool, now func() time.Time, res *RestoreResult) (err error) {
+	st, err := store.Open(path)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		if cerr := st.Close(); cerr != nil && err == nil {
@@ -194,30 +228,29 @@ func Restore(ctx context.Context, o RestoreOptions) (res RestoreResult, err erro
 	}()
 	v, err := st.SchemaVersion(ctx)
 	if err != nil {
-		return res, err
+		return err
 	}
-	if v != m.SchemaVersion {
-		err = manifestErr("the database has schema %d, the manifest says %d; nothing was restored", v, m.SchemaVersion)
-		return res, err
+	if v != schema {
+		return manifestErr("the database has schema %d, the manifest says %d; nothing was restored", v, schema)
 	}
 	if err = st.Migrate(ctx); err != nil {
-		return res, err
+		return err
 	}
 	res.MigrationSnapshot = st.LastSnapshot
 	if res.SchemaVersion, err = st.SchemaVersion(ctx); err != nil {
-		return res, err
+		return err
 	}
 	prep := store.RestorePrep{Now: now(), Event: func(fx store.RestoreFixes) audit.Event {
-		return restoreEvent(res, fx, now())
+		return restoreEvent(*res, fx, now())
 	}}
-	if !o.KeepIdentity {
+	if !keepIdentity {
 		if prep.DataDirID, err = randHex(16); err != nil {
-			return res, err
+			return err
 		}
 		prep.CredentialRef = secrets.AccountRef
 	}
 	res.Fixes, err = st.PrepareRestored(ctx, prep)
-	return res, err
+	return err
 }
 
 // verifyFiles liest jede Datei der Sicherung und vergleicht sie mit dem
@@ -318,31 +351,80 @@ func checkRestoreTarget(from, to string, refuse []string) error {
 	return nil
 }
 
-// makeTarget legt das Datenverzeichnis an (0700) und meldet, ob es neu ist.
-func makeTarget(to string) (bool, error) {
-	_, err := os.Stat(to)
-	created := isNotExist(err)
-	if err := os.MkdirAll(to, dirMode); err != nil {
-		return false, err
+// restoringInfix steht im Namen des Arbeitsordners einer Wiederherstellung:
+// <ziel>.restoring-<zufall>, neben dem Ziel (gleiches Laufwerk, damit das
+// Umbenennen atomar ist).
+const restoringInfix = ".restoring-"
+
+// restoringRE erkennt den Zufallsteil eines Arbeitsordners.
+var restoringRE = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// makeWork legt den Arbeitsordner neben dem Ziel an (0700; fehlende
+// Elternordner ebenfalls 0700, wie zuvor das Ziel selbst).
+func makeWork(to string) (string, error) {
+	parent := filepath.Dir(to)
+	if err := os.MkdirAll(parent, dirMode); err != nil {
+		return "", err
 	}
-	if err := os.Chmod(to, dirMode); err != nil && !created {
-		return false, fmt.Errorf("restore: cannot restrict the permissions of %s: %w", to, err)
+	tag, err := randHex(4)
+	if err != nil {
+		return "", err
 	}
-	return created, nil
+	work := filepath.Join(parent, filepath.Base(to)+restoringInfix+tag)
+	if err := os.Mkdir(work, dirMode); err != nil {
+		return "", err
+	}
+	// Mkdir wirkt nach umask; 0700 soll es genau sein.
+	if err := os.Chmod(work, dirMode); err != nil {
+		_ = os.Remove(work)
+		return "", fmt.Errorf("restore: cannot restrict the permissions of %s: %w", work, err)
+	}
+	return work, nil
 }
 
-// removeTarget entfernt nach einem Fehler, was restore angelegt hat: das
-// ganze Verzeichnis, wenn es neu war, sonst seinen Inhalt (es war leer).
-func removeTarget(to string, created bool) {
-	if created {
-		_ = os.RemoveAll(to)
-		return
+// moveIntoPlace benennt den fertigen Arbeitsordner in das Ziel um. Ein
+// vorhandenes Ziel war bei der Prüfung leer und wird erst jetzt entfernt;
+// ist es inzwischen nicht mehr leer, scheitert das Entfernen und nichts
+// wird überschrieben.
+func moveIntoPlace(work, to string) error {
+	fi, err := os.Lstat(to)
+	switch {
+	case isNotExist(err):
+	case err != nil:
+		return err
+	case !fi.IsDir():
+		return targetErr("%s exists and is not a folder", to)
+	default:
+		if err := os.Remove(to); err != nil {
+			return targetErr("%s is no longer empty; restore only into a new or empty folder", to)
+		}
 	}
-	entries, err := os.ReadDir(to)
+	return os.Rename(work, to)
+}
+
+// RestoreLeftovers nennt Arbeitsordner abgebrochener Wiederherstellungen
+// neben dem Datenverzeichnis dataDir (<dataDir>.restoring-<zufall>; nach
+// einem harten Abbruch, etwa Stromausfall). Sie sind kein benutzbares
+// Datenverzeichnis (die Datenbank darin trägt womöglich noch die Kennung
+// des Originals) und gehören gelöscht; restore und doctor nennen sie,
+// löschen sie aber nicht (es könnte ein restore sein, der gerade läuft).
+func RestoreLeftovers(dataDir string) []string {
+	abs, err := filepath.Abs(dataDir)
 	if err != nil {
-		return
+		return nil
 	}
+	abs = filepath.Clean(abs)
+	parent, prefix := filepath.Dir(abs), filepath.Base(abs)+restoringInfix
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil
+	}
+	var out []string
 	for _, e := range entries {
-		_ = os.RemoveAll(filepath.Join(to, e.Name()))
+		n := e.Name()
+		if e.IsDir() && strings.HasPrefix(n, prefix) && restoringRE.MatchString(strings.TrimPrefix(n, prefix)) {
+			out = append(out, filepath.Join(parent, n))
+		}
 	}
+	return out
 }

@@ -144,6 +144,7 @@ func restoreCmd(a *app) *cobra.Command {
 				}
 				_, err := fmt.Fprintf(a.stdout, "dry run: the backup of %s is complete and unchanged (%s, %s, manifest sha256 %s); %s would be created; nothing was written\n",
 					res.BackupCreatedAt, plural(res.Files, "file", "files"), humanBytes(res.Bytes), res.ManifestSHA256, termLine(res.DataDir))
+				printLeftovers(a.stdout, res.Leftovers)
 				return err
 			}
 			d := doctor(cmd.Context(), a)
@@ -211,4 +212,13 @@ func printRestore(w io.Writer, r backup.RestoreResult) {
 	fmt.Fprintf(w, "audit:     %s closed, %s cleared (they belong to the original), event %s written\n",
 		plural(fx.AuditStarts, "unfinished call", "unfinished calls"), plural(fx.AuditExports, "export location", "export locations"), backup.OpRestore)
 	fmt.Fprintln(w, "           nothing in this copy writes to a mail server on its own")
+}
+
+// printLeftovers nennt Arbeitsordner abgebrochener Wiederherstellungen
+// (T3-Nachbesserung 4) beim Trockenlauf; nach einer Wiederherstellung
+// nennt sie der Bericht von doctor als Warnung.
+func printLeftovers(w io.Writer, left []string) {
+	for _, l := range left {
+		fmt.Fprintf(w, "leftover:  %s is left from an interrupted restore; it is not a usable data directory, delete it\n", termLine(l))
+	}
 }

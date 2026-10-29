@@ -40,6 +40,15 @@ func ReadSnapshot(ctx context.Context, path string) (SnapshotContents, error) {
 	if out.Blobs, err = s.BlobReferences(ctx); err != nil {
 		return out, fmt.Errorf("store: snapshot: %w", err)
 	}
+	// audit_archives gibt es seit Migration 0022; ein älterer Stand hat
+	// keine Archive.
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_archives'`).Scan(&n); err != nil {
+		return out, fmt.Errorf("store: snapshot: %w", err)
+	}
+	if n == 0 {
+		return out, nil
+	}
 	if out.Archives, err = s.AuditArchives(ctx); err != nil {
 		return out, fmt.Errorf("store: snapshot: %w", err)
 	}

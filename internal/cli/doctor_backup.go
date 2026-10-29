@@ -8,8 +8,25 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
+
+// doctorRestoreLeftovers meldet Arbeitsordner abgebrochener
+// Wiederherstellungen neben dem Datenverzeichnis
+// (<datenverzeichnis>.restoring-<zufall>; T3-Nachbesserung 4). doctor
+// löscht nichts.
+func doctorRestoreLeftovers(rep *DoctorReport, dataDir string) {
+	left := backup.RestoreLeftovers(dataDir)
+	if len(left) == 0 {
+		return
+	}
+	rep.RestoreLeftovers = left
+	for _, l := range left {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf("restore: %s is left from an interrupted restore; "+
+			"it is not a usable data directory (it may still carry the identity of the original); delete it and run restore again", l))
+	}
+}
 
 // doctorArchiveFiles meldet Archivdateien von audit rotate im Ordner der
 // Datenbank, die in audit_archives nicht eingetragen sind

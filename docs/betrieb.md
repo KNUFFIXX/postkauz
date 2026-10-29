@@ -375,6 +375,8 @@ Wiederhergestellt wird **immer in einen neuen, leeren Ordner**. In das Datenverz
    ```
 
    Vorher prüft `restore` jede Datei gegen das Manifest. Fehlt eine Datei oder wurde eine verändert, bricht es ab (`error: backup: invalid backup: …`) und entfernt, was es angelegt hatte. Ist der Zielordner nicht leer: `error: backup: target not allowed: … is not empty`.
+
+   `restore` arbeitet in einem Ordner neben dem Ziel (`C:\PostKauz\data-neu.restoring-…`) und benennt ihn erst ganz am Ende in `data-neu` um. Bricht der Rechner mittendrin ab (Stromausfall), bleibt dieser Ordner liegen; der nächste `restore` und `doctor` nennen ihn (`… is left from an interrupted restore …`). Lösche ihn und starte `restore` neu; benutze ihn nie als Datenverzeichnis.
 3. **Passwörter neu hinterlegen.** Die Kopie benutzt die gespeicherten Passwörter des Originals absichtlich nicht (`doctor` meldet `account privat has no password`):
    `C:\PostKauz\postkauz.exe account set privat --password-stdin --data-dir C:\PostKauz\data-neu` (bei Microsoft-Konten `account login privat`).
 4. Prüfen: `C:\PostKauz\postkauz.exe doctor --blobs=all --data-dir C:\PostKauz\data-neu` — erwartet `result:  ok`; eine Suche, die du kennst, liefert dieselben Treffer wie vorher.

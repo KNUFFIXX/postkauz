@@ -73,8 +73,11 @@ type DoctorReport struct {
 	AuditUnfinished int `json:"audit_unfinished_calls"`
 	// AuditArchivesUnregistered: Dateien audit-archive-*.db neben der
 	// Datenbank ohne Eintrag in audit_archives (T3-Nachbesserung 3b).
-	AuditArchivesUnregistered []string        `json:"audit_archives_unregistered,omitempty"`
-	Accounts                  []DoctorAccount `json:"accounts"`
+	AuditArchivesUnregistered []string `json:"audit_archives_unregistered,omitempty"`
+	// RestoreLeftovers: Arbeitsordner abgebrochener Wiederherstellungen
+	// neben dem Datenverzeichnis (T3-Nachbesserung 4).
+	RestoreLeftovers []string        `json:"restore_leftovers,omitempty"`
+	Accounts         []DoctorAccount `json:"accounts"`
 	// Policy-Datei (S2.1, A02 E8): Pfad, Zustand (ok | default = keine
 	// Datei, eingebaute Standards | invalid), SHA-256, Version in der
 	// Tabelle policies (0 = noch nicht eingetragen; das nächste Kommando
@@ -210,6 +213,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.DataDirReal, rep.ConfigPathReal, rep.AppPackage = redir.DataDirReal, redir.ConfigReal, redir.Package
 	rep.DataDirShadow = redir.DataDirShadow
 	rep.Warnings = append(rep.Warnings, redir.Warnings...)
+	doctorRestoreLeftovers(&rep, a.paths.DataDir)
 
 	sec, err := openSecrets(a.cfg.Secrets.Backend, a.paths.SecretsDir)
 	switch {
