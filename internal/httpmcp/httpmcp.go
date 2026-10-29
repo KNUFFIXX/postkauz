@@ -68,10 +68,11 @@ const (
 	authTimeout = 15 * time.Second
 	// failPerMinute: Vorrat je Minute (ebenso viele auf einmal) für alle
 	// Anfragen ohne gültige Anmeldung: fehlendes oder falsches Token,
-	// Metadaten, unbekannte Pfade, 405/415 an /mcp, fremder Host. Ist er
-	// leer, bekommen sie 429; eine gescheiterte Anmeldung schreibt dann
-	// keine Audit-Zeile mehr (begrenzt key_invalid und principal_unknown).
-	// Ein gültiger Schlüssel braucht den Vorrat nicht und wird so nie
+	// Metadaten, unbekannte Pfade, 405/415 an /mcp, fremder Host, 503 vor
+	// geglückter Prüfung des Tokens. Ist er leer, bekommen sie 429; eine
+	// gescheiterte Anmeldung schreibt dann keine Audit-Zeile mehr (begrenzt
+	// key_invalid und principal_unknown). Ein gültiger Schlüssel zieht nie
+	// aus dem Vorrat (mcpGate sieht ihn vorher nur an) und wird so nie
 	// ausgesperrt.
 	failPerMinute = 30
 	// maxPrincipalLimiters begrenzt die Zahl der Vorräte je Schlüssel
@@ -301,24 +302,20 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		// Einen Platz im Vorrat für Fehlschläge vormerken: Nur mit Platz
-		// schreibt eine gescheiterte Anmeldung ins Audit. Gelingt die
-		// Anmeldung (oder liegt es am Dienst, 503), geht der Platz zurück.
-		res := s.failures.Reserve()
-		held := res.OK() && res.Delay() == 0
+		// Den Vorrat für Fehlschläge vorher nur ansehen: Nur mit Platz
+		// schreibt eine gescheiterte Anmeldung ins Audit. Gezogen wird erst
+		// nach einem Fehlschlag (auch 503 vor geglückter Prüfung); eine
+		// gelungene Anmeldung zieht nie (Festlegung 19). Reserve/Cancel
+		// taugt dafür nicht: x/time/rate gibt eine sofort erfüllte
+		// Reservierung nicht zurück.
 		var aw audit.Writer
-		if held {
+		if s.failures.Tokens() >= 1 {
 			aw = s.d.Audit
-		} else {
-			res.Cancel()
 		}
 		actx, cancel := context.WithTimeout(r.Context(), authTimeout)
 		p, err := s.auth.authenticate(actx, tok, aw)
 		cancel()
-		if held && (err == nil || authStatus(err) == "unavailable") {
-			res.Cancel()
-		}
-		if err != nil && !held && authStatus(err) != "unavailable" {
+		if err != nil && !errors.Is(err, errUnavailableVerified) && !s.failures.Allow() {
 			tooMany(w, failPerMinute)
 			setReason(r, authStatus(err))
 			return

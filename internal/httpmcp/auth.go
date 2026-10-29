@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ var (
 	// errUnavailable → 503 (Autorisierungsserver nicht erreichbar,
 	// Datenbank nicht lesbar).
 	errUnavailable = errors.New("service unavailable")
+	// errUnavailableVerified → 503 wie errUnavailable, aber erst nach
+	// geglückter Prüfung des Tokens (Datenbank nicht lesbar). Nur dieser
+	// Fall zieht nicht aus dem Vorrat für Fehlschläge (Server.mcpGate).
+	errUnavailableVerified = fmt.Errorf("%w (token verified)", errUnavailable)
 )
 
 // deniedError → 403 mit Status denied und festem Code (Schlüssel

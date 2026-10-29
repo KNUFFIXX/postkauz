@@ -140,7 +140,7 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string, w audit.Writer
 		auditDenied(ctx, w, now, name, o, "key_expired")
 		return principal{}, &deniedError{code: "key_expired"}
 	default:
-		return principal{}, errUnavailable
+		return principal{}, errUnavailableVerified
 	}
 	o.Principal = name
 	return principal{key: k, origin: o}, nil
