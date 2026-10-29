@@ -53,6 +53,11 @@ if [ -e "$TESTAUTH_DIR" ]; then
   if [ ! -d "$TESTAUTH_DIR" ]; then
     echo "setup: $TESTAUTH_DIR exists and is not a directory" >&2; exit 1
   fi
+  # Nur einen eigenen Ordner benutzen: Ein fremder (etwa von einem anderen
+  # Nutzer in /tmp vorab angelegt) koennte mitlesen oder Dateien unterschieben.
+  if [ ! -O "$TESTAUTH_DIR" ]; then
+    echo "setup: $TESTAUTH_DIR is not owned by the current user; refusing to use it (choose another POSTKAUZ_TESTAUTH_DIR)" >&2; exit 1
+  fi
   if [ ! -f "$TESTAUTH_DIR/$MARK" ] && [ -n "$(ls -A "$TESTAUTH_DIR")" ]; then
     echo "setup: $TESTAUTH_DIR is not empty and has no $MARK marker; not deleting it (choose another POSTKAUZ_TESTAUTH_DIR)" >&2; exit 1
   fi
@@ -66,7 +71,18 @@ if [ -f "$TESTAUTH_DIR/$MARK" ]; then
   fi
   rm -rf "$TESTAUTH_DIR"
 fi
-mkdir -p "$TESTAUTH_DIR"
+# Neu anlegen mit Rechten 700, ohne -p, damit mkdir abbricht, wenn ihn
+# inzwischen jemand anders angelegt hat. Ein vorhandener, leerer eigener
+# Ordner bekommt dieselben Rechte (Eigentum noch einmal geprueft).
+if [ -d "$TESTAUTH_DIR" ] && [ ! -L "$TESTAUTH_DIR" ]; then
+  if [ ! -O "$TESTAUTH_DIR" ]; then
+    echo "setup: $TESTAUTH_DIR is not owned by the current user; refusing to use it" >&2; exit 1
+  fi
+  chmod 700 "$TESTAUTH_DIR"
+else
+  mkdir -p "$(dirname "$TESTAUTH_DIR")"
+  mkdir -m 700 "$TESTAUTH_DIR"
+fi
 echo 'postkauz testauth work dir (deploy/testauth/setup.sh); deleted on the next run' > "$TESTAUTH_DIR/$MARK"
 mkdir -p "$TESTAUTH_DIR/tls" "$TESTAUTH_DIR/data"
 cd "$TESTAUTH_DIR"
