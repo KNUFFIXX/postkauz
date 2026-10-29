@@ -37,10 +37,12 @@ test:
 # Race-Detector (P7). Braucht CGO und einen C-Compiler; deshalb ein eigenes
 # Ziel und nicht Teil von `make check` (Builds und Releases bleiben CGO-frei).
 # Unter -race laufen die Korpus-Tests mehrfach langsamer; der Standard von
-# go test (10 Minuten je Paket) reicht dafür knapp nicht, daher 30 Minuten.
+# go test (10 Minuten je Paket) reicht dafür knapp nicht, daher bis T3 30
+# Minuten, seit der Nachbesserung T3 45 Minuten (internal/cli lag bei 23 min;
+# Festlegung der Prüfsitzung 29.10.2026).
 # Bewusst ohne -short: Gerade die schweren Tests sollen unter -race laufen.
 race:
-	CGO_ENABLED=1 go test -race -timeout 30m ./...
+	CGO_ENABLED=1 go test -race -timeout 45m ./...
 
 # Bekannte Schwachstellen in Abhängigkeiten und Standardbibliothek (A01 N2).
 # Version gepinnt (per `go list -m golang.org/x/vuln@latest` aufgelöst, nicht
