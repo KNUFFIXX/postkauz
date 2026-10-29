@@ -39,8 +39,11 @@ type deniedError struct{ code string }
 
 func (e *deniedError) Error() string { return "denied (" + e.code + ")" }
 
+// authenticator meldet ein Token an. w nimmt die Audit-Zeilen gescheiterter
+// Anmeldungen auf; nil = keine Zeile (der Vorrat für Fehlschläge ist leer,
+// Server.mcpGate).
 type authenticator interface {
-	authenticate(ctx context.Context, token string) (principal, error)
+	authenticate(ctx context.Context, token string, w audit.Writer) (principal, error)
 }
 
 // keyCacheTTL: So lange gilt eine erfolgreiche Anmeldung mit einem
@@ -53,11 +56,11 @@ const keyCacheTTL = 30 * time.Second
 const keyCacheMax = 256
 
 // keyAuth: Modus key (S3.5, R1). Bearer = PostKauz-Schlüssel; gescheiterte
-// Anmeldungen schreibt ops.AuthenticateKeyAudited ins Audit (Weg http).
+// Anmeldungen schreibt ops.AuthenticateKeyAudited ins Audit (Weg http),
+// solange der Vorrat für Fehlschläge reicht.
 type keyAuth struct {
-	repo  ops.KeyRepo
-	audit audit.Writer
-	now   func() time.Time
+	repo ops.KeyRepo
+	now  func() time.Time
 
 	mu    sync.Mutex
 	cache map[string]cachedKey // Hash des Schlüssels → Anmeldung
@@ -68,7 +71,7 @@ type cachedKey struct {
 	key policy.Key
 }
 
-func (a *keyAuth) authenticate(ctx context.Context, token string) (principal, error) {
+func (a *keyAuth) authenticate(ctx context.Context, token string, w audit.Writer) (principal, error) {
 	now := a.now()
 	h := ops.HashKey(token)
 	a.mu.Lock()
@@ -77,7 +80,7 @@ func (a *keyAuth) authenticate(ctx context.Context, token string) (principal, er
 	if hit && now.Sub(c.at) < keyCacheTTL && !now.Before(c.at) && (c.key.ExpiresAt.IsZero() || now.Before(c.key.ExpiresAt)) {
 		return keyPrincipal(c.key), nil
 	}
-	k, err := ops.AuthenticateKeyAudited(ctx, a.repo, a.audit, transportHTTP, token, now)
+	k, err := ops.AuthenticateKeyAudited(ctx, a.repo, w, transportHTTP, token, now)
 	switch {
 	case err == nil:
 	case errors.Is(err, ops.ErrKeyMissing), errors.Is(err, ops.ErrKeyInvalid):

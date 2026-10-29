@@ -251,7 +251,7 @@ func TestHTTPHardening(t *testing.T) {
 	}
 	limited := false
 	for range 40 {
-		r := post(t, ts.URL+PathHealth, "", nil)
+		r := post(t, url, initBody, key)
 		if r.StatusCode == http.StatusTooManyRequests {
 			limited = r.Header.Get("Retry-After") != ""
 			break

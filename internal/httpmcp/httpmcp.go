@@ -15,8 +15,9 @@
 //     iss und sub), nie das Token.
 //   - Härtung (A03 Teil C): Host-Allowlist statt des SDK-Schutzes gegen
 //     DNS-Rebinding (Befund B1), Origin-Prüfung der Standardbibliothek,
-//     Anfrage höchstens 1 MiB, Fristen 60 s, Rate-Begrenzung, keine
-//     Server-Kennung.
+//     Anfrage höchstens 1 MiB, Fristen 60 s, Rate-Begrenzung (je
+//     Schlüssel und ein kleiner Vorrat für Anfragen ohne gültige
+//     Anmeldung), keine Server-Kennung.
 //   - Der Prozess kennt kein Postfachpasswort (ADR-009).
 package httpmcp
 
@@ -33,6 +34,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -64,6 +66,17 @@ const (
 	// Anmeldung nicht liest und net/http eine Trennung des Clients dann
 	// nicht bemerkt.
 	authTimeout = 15 * time.Second
+	// failPerMinute: Vorrat je Minute (ebenso viele auf einmal) für alle
+	// Anfragen ohne gültige Anmeldung: fehlendes oder falsches Token,
+	// Metadaten, unbekannte Pfade, 405/415 an /mcp, fremder Host. Ist er
+	// leer, bekommen sie 429; eine gescheiterte Anmeldung schreibt dann
+	// keine Audit-Zeile mehr (begrenzt key_invalid und principal_unknown).
+	// Ein gültiger Schlüssel braucht den Vorrat nicht und wird so nie
+	// ausgesperrt.
+	failPerMinute = 30
+	// maxPrincipalLimiters begrenzt die Zahl der Vorräte je Schlüssel
+	// (danach neu angelegt; in der Praxis gibt es weit weniger Schlüssel).
+	maxPrincipalLimiters = 1024
 )
 
 // Deps sind die Teile, die der HTTP-Server braucht.
@@ -92,7 +105,14 @@ type Server struct {
 	auth    authenticator
 	hosts   map[string]bool
 	prmURL  string
-	limiter *rate.Limiter
+	// failures: Vorrat für Anfragen ohne gültige Anmeldung (failPerMinute).
+	failures *rate.Limiter
+	// perMin: Vorrat je Schlüssel nach der Anmeldung
+	// ([http] max_requests_per_minute).
+	perMin int
+
+	mu         sync.Mutex
+	principals map[string]*rate.Limiter // Schlüssel-ID → Vorrat
 }
 
 type ctxKey struct{}
@@ -136,16 +156,17 @@ func New(d Deps) (*Server, error) {
 	if perMin <= 0 {
 		perMin = config.DefaultMaxRequestsPerMin
 	}
-	s.limiter = rate.NewLimiter(rate.Limit(float64(perMin)/60), perMin)
+	s.perMin = perMin
+	s.failures = rate.NewLimiter(rate.Limit(float64(failPerMinute)/60), failPerMinute)
 
 	switch h.Auth {
 	case config.HTTPAuthKey:
-		s.auth = &keyAuth{repo: d.Keys, audit: d.Audit, now: d.Now}
+		s.auth = &keyAuth{repo: d.Keys, now: d.Now}
 	case config.HTTPAuthOAuth:
 		if d.HTTPClient == nil {
 			d.HTTPClient = newASClient()
 		}
-		s.auth = &oauthAuth{issuer: h.Issuer, resource: h.Resource, principals: h.Principals, repo: d.Keys, audit: d.Audit,
+		s.auth = &oauthAuth{issuer: h.Issuer, resource: h.Resource, principals: h.Principals, repo: d.Keys,
 			client: d.HTTPClient, now: d.Now, log: d.Log}
 	default:
 		return nil, fmt.Errorf("httpmcp: unknown auth mode %q", h.Auth)
@@ -207,8 +228,10 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // PRMURL ist die Adresse der Metadaten (für WWW-Authenticate und Doku).
 func (s *Server) PRMURL() string { return s.prmURL }
 
-// outer: für jede Anfrage Rate-Begrenzung, Host-Allowlist (außer
-// /healthz), feste Kopfzeilen, Größengrenze und ein Log ohne Token.
+// outer: für jede Anfrage Host-Allowlist (außer /healthz), feste
+// Kopfzeilen, Größengrenze und ein Log ohne Token. /healthz liegt außerhalb
+// jeder Rate-Begrenzung; alles außer /mcp zählt zum Vorrat für Anfragen
+// ohne Anmeldung (/mcp zählt mcpGate selbst).
 func (s *Server) outer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := s.d.Now()
@@ -225,14 +248,16 @@ func (s *Server) outer(next http.Handler) http.Handler {
 			}
 			s.d.Log.Info("http request", args...)
 		}()
-		if !s.limiter.Allow() {
-			hd.Set("Retry-After", "1")
-			plain(rw, http.StatusTooManyRequests, "too many requests")
-			return
-		}
-		if r.URL.Path != PathHealth && !s.hosts[normHost(r.Host)] {
-			plain(rw, http.StatusMisdirectedRequest, "misdirected request")
-			return
+		if r.URL.Path != PathHealth {
+			if !s.hosts[normHost(r.Host)] {
+				if s.allowFailure(rw) {
+					plain(rw, http.StatusMisdirectedRequest, "misdirected request")
+				}
+				return
+			}
+			if r.URL.Path != PathMCP && !s.allowFailure(rw) {
+				return
+			}
 		}
 		r.Body = http.MaxBytesReader(rw, r.Body, MaxRequestBytes)
 		next.ServeHTTP(rw, r.WithContext(context.WithValue(r.Context(), ctxKey{}, slot)))
@@ -244,22 +269,47 @@ func (s *Server) outer(next http.Handler) http.Handler {
 func (s *Server) mcpGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			plain(w, http.StatusMethodNotAllowed, "method not allowed")
+			if s.allowFailure(w) {
+				w.Header().Set("Allow", "POST")
+				plain(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
 			return
 		}
 		if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
-			plain(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+			if s.allowFailure(w) {
+				plain(w, http.StatusUnsupportedMediaType, "content type must be application/json")
+			}
 			return
 		}
 		tok := bearerToken(r.Header.Get("Authorization"))
 		if tok == "" {
-			s.challenge(w, false)
+			if s.allowFailure(w) {
+				s.challenge(w, false)
+			}
 			return
 		}
+		// Einen Platz im Vorrat für Fehlschläge vormerken: Nur mit Platz
+		// schreibt eine gescheiterte Anmeldung ins Audit. Gelingt die
+		// Anmeldung (oder liegt es am Dienst, 503), geht der Platz zurück.
+		res := s.failures.Reserve()
+		held := res.OK() && res.Delay() == 0
+		var aw audit.Writer
+		if held {
+			aw = s.d.Audit
+		} else {
+			res.Cancel()
+		}
 		actx, cancel := context.WithTimeout(r.Context(), authTimeout)
-		p, err := s.auth.authenticate(actx, tok)
+		p, err := s.auth.authenticate(actx, tok, aw)
 		cancel()
+		if held && (err == nil || authStatus(err) == "unavailable") {
+			res.Cancel()
+		}
+		if err != nil && !held && authStatus(err) != "unavailable" {
+			tooMany(w, failPerMinute)
+			s.d.Log.Warn("http mcp: authentication failed", "status", authStatus(err), "limited", true)
+			return
+		}
 		if err != nil {
 			var de *deniedError
 			switch {
@@ -283,11 +333,48 @@ func (s *Server) mcpGate(next http.Handler) http.Handler {
 		if slot, ok := r.Context().Value(ctxKey{}).(**principal); ok {
 			*slot = &p
 		}
+		if !s.principalLimiter(p.key.ID).Allow() {
+			tooMany(w, s.perMin)
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, &p)))
 	})
 }
 
 type principalKey struct{}
+
+// allowFailure nimmt einen Platz aus dem Vorrat für Anfragen ohne gültige
+// Anmeldung; ist er leer, antwortet es 429 und meldet false.
+func (s *Server) allowFailure(w http.ResponseWriter) bool {
+	if s.failures.Allow() {
+		return true
+	}
+	tooMany(w, failPerMinute)
+	return false
+}
+
+// principalLimiter liefert den Vorrat des Schlüssels (je Schlüssel-ID
+// perMin je Minute, ebenso viele auf einmal).
+func (s *Server) principalLimiter(id string) *rate.Limiter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l, ok := s.principals[id]
+	if !ok {
+		if s.principals == nil || len(s.principals) >= maxPrincipalLimiters {
+			s.principals = map[string]*rate.Limiter{}
+		}
+		l = rate.NewLimiter(rate.Limit(float64(s.perMin)/60), s.perMin)
+		s.principals[id] = l
+	}
+	return l
+}
+
+// tooMany antwortet 429; Retry-After ist der Abstand zweier Plätze bei
+// perMin je Minute (mindestens 1 s).
+func tooMany(w http.ResponseWriter, perMin int) {
+	w.Header().Set("Retry-After", strconv.Itoa(max(1, (60+perMin-1)/perMin)))
+	plain(w, http.StatusTooManyRequests, "too many requests")
+}
 
 // authStatus ist der feste Grund einer gescheiterten Anmeldung fürs Log.
 func authStatus(err error) string {

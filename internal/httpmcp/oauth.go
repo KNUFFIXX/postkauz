@@ -76,7 +76,6 @@ type oauthAuth struct {
 	resource   string
 	principals map[string]string
 	repo       ops.KeyRepo
-	audit      audit.Writer
 	client     *http.Client
 	now        func() time.Time
 	log        *slog.Logger
@@ -88,7 +87,7 @@ type oauthAuth struct {
 	discovering chan struct{}
 }
 
-func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, error) {
+func (a *oauthAuth) authenticate(ctx context.Context, raw string, w audit.Writer) (principal, error) {
 	// 1. JOSE-Typ at+jwt (RFC 9068): Ein ID-Token mit passender aud geht
 	// sonst als Access-Token durch (Befund B5).
 	if t := jwtType(raw); t != "at+jwt" && t != "application/at+jwt" {
@@ -125,20 +124,20 @@ func (a *oauthAuth) authenticate(ctx context.Context, raw string) (principal, er
 	o := ops.Origin{Transport: transportHTTP, Issuer: tok.Issuer, Subject: tok.Subject}
 	name, ok := a.principals[tok.Subject]
 	if !ok {
-		auditDenied(ctx, a.audit, now, "", o, "principal_unknown")
+		auditDenied(ctx, w, now, "", o, "principal_unknown")
 		return principal{}, errForbidden
 	}
 	k, err := ops.KeyByName(ctx, a.repo, name, now)
 	switch {
 	case err == nil:
 	case errors.Is(err, store.ErrKeyNotFound):
-		auditDenied(ctx, a.audit, now, "", o, "principal_unknown")
+		auditDenied(ctx, w, now, "", o, "principal_unknown")
 		return principal{}, errForbidden
 	case errors.Is(err, ops.ErrKeyRevoked):
-		auditDenied(ctx, a.audit, now, name, o, "key_revoked")
+		auditDenied(ctx, w, now, name, o, "key_revoked")
 		return principal{}, &deniedError{code: "key_revoked"}
 	case errors.Is(err, ops.ErrKeyExpired):
-		auditDenied(ctx, a.audit, now, name, o, "key_expired")
+		auditDenied(ctx, w, now, name, o, "key_expired")
 		return principal{}, &deniedError{code: "key_expired"}
 	default:
 		return principal{}, errUnavailable

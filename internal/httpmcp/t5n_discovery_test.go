@@ -32,7 +32,7 @@ func TestT5NDiscoveryCancelledByClient(t *testing.T) {
 	a := o.srv.auth.(*oauthAuth)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := a.authenticate(ctx, o.junkToken(t)); err == nil {
+	if _, err := a.authenticate(ctx, o.junkToken(t), nil); err == nil {
 		t.Fatal("cancelled request authenticated")
 	}
 	code, _, body := o.post(t, o.token(t, "user-reader", nil))
