@@ -29,6 +29,9 @@ type Options struct {
 	// MaxChars: Zeichenbudget je Text aus der Policy-Datei ([agent_defaults]
 	// max_chars, A02 E8); 0 = ops.DefaultMaxChars.
 	MaxChars int
+	// Origin nennt den Weg (HTTP-MCP, ADR-010 Punkt 9); jeder Aufruf trägt
+	// ihn ins Audit (params.via). nil bei stdio.
+	Origin *ops.Origin
 }
 
 // Instructions erhält der Client beim Verbindungsaufbau. Was der Text
@@ -150,7 +153,7 @@ func (h *handler) call(ctx context.Context, op string, input json.RawMessage) (o
 // der dry_run_default des Schlüssels).
 func (h *handler) callNarrow(ctx context.Context, op string, input json.RawMessage, narrow *jsonschema.Resolved, dryRun *bool) (ops.Result, error) {
 	return h.o.Executor.Execute(ctx, ops.Request{Key: h.o.Key, Actor: audit.ActorAgent, Operation: op, Input: input, Narrow: narrow,
-		DryRun: dryRun})
+		DryRun: dryRun, Origin: h.o.Origin})
 }
 
 // takeDryRun nimmt dry_run aus den Argumenten eines schreibenden Tools.

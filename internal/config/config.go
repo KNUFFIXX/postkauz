@@ -64,6 +64,8 @@ type Config struct {
 	Tags Tags `toml:"tags"`
 	// Retention: Abschnitt [retention] (seit T3, E8: Löschkonzept).
 	Retention Retention `toml:"retention"`
+	// HTTP: Abschnitt [http] (seit T5, ADR-010: mcp --http).
+	HTTP HTTP `toml:"http"`
 }
 
 // Retention: Abschnitt [retention] der Konfiguration (E8, A11). Gelöscht
@@ -426,6 +428,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		return cfg, p, err
 	}
 	if err := checkRetention(&cfg); err != nil {
+		return cfg, p, err
+	}
+	if err := CheckHTTP(&cfg.HTTP); err != nil {
 		return cfg, p, err
 	}
 	cfg.Approval.TTL = cfg.Draft.ApprovalTTL

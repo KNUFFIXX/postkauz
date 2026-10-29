@@ -129,6 +129,22 @@ type Request struct {
 	// (MCP: limit ≤ 100 statt 500). Es wird wie das InputSchema der
 	// Operation geprüft und nie statt dessen; nil = keins.
 	Narrow *jsonschema.Resolved
+	// Origin nennt den Weg des Aufrufs (HTTP-MCP, ADR-010 Punkt 9); er
+	// steht in jedem Audit-Eintrag des Aufrufs unter params.via. nil =
+	// nicht genannt (CLI, MCP über stdio).
+	Origin *Origin
+}
+
+// Origin beschreibt, über welchen Weg und für wen ein Aufruf kam (T5,
+// ADR-010 Punkt 9). Nie ein Token oder Schlüssel, auch nicht gekürzt.
+type Origin struct {
+	// Transport: "http".
+	Transport string `json:"transport"`
+	// Principal: Name des PostKauz-Schlüssels, für den der Aufruf läuft.
+	Principal string `json:"principal,omitempty"`
+	// Issuer und Subject: nur bei OAuth (iss und sub des Access-Tokens).
+	Issuer  string `json:"iss,omitempty"`
+	Subject string `json:"sub,omitempty"`
 }
 
 // Result ist das Ergebnis eines Aufrufs. Bei einem Fehler ist Output nil,
@@ -246,6 +262,9 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	params, targets := json.RawMessage(`{}`), []string(nil)
 	if op.Redact != nil && verr == nil {
 		params, targets = op.Redact(req.Input)
+	}
+	if req.Origin != nil {
+		params = withVia(params, *req.Origin)
 	}
 	ev := audit.Event{
 		TS:             start.UTC(),
@@ -402,6 +421,26 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 
 // withCounts ergänzt die Audit-Parameter (ein JSON-Objekt) um "counts"
 // (Operation.AuditCounts). Sind die Parameter kein Objekt, bleiben sie.
+// withVia ergänzt die Parameter um den Weg des Aufrufs (Feld via).
+func withVia(params json.RawMessage, o Origin) json.RawMessage {
+	obj := map[string]json.RawMessage{}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &obj); err != nil {
+			return params
+		}
+	}
+	v, err := json.Marshal(o)
+	if err != nil {
+		return params
+	}
+	obj["via"] = v
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return params
+	}
+	return b
+}
+
 func withCounts(params json.RawMessage, counts map[string]int64) json.RawMessage {
 	if len(counts) == 0 {
 		return params
