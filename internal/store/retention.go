@@ -22,20 +22,28 @@ import (
 //   - kein Entwurf verweist auf sie (drafts.in_reply_to_msg,
 //     drafts.sent_message_id; offen oder geschlossen). So bricht purge
 //     keinen Entwurf (Zitatquelle, Antwortbezug), und der Verweis bleibt als
-//     Zahl stehen (E8), ohne dass ON DELETE SET NULL ihn löscht.
+//     Zahl stehen (E8), ohne dass ON DELETE SET NULL ihn löscht,
+//   - sie trägt kein lokales Tag (message_tags). E5: „Tags überleben das
+//     Löschen auf dem Server“; ein Tag ist eine bewusste Markierung des
+//     Menschen oder eines Agenten (Festlegung der Prüfsitzung T3, Punkt 9).
 const purgeRule = `m.deleted_remote_at IS NOT NULL AND m.deleted_remote_at < ?
 	AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id)
 	AND NOT EXISTS (SELECT 1 FROM message_import_folders mi WHERE mi.message_id = m.id)
-	AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.in_reply_to_msg = m.id OR d.sent_message_id = m.id)`
+	AND NOT EXISTS (SELECT 1 FROM drafts d WHERE d.in_reply_to_msg = m.id OR d.sent_message_id = m.id)
+	AND NOT EXISTS (SELECT 1 FROM message_tags mt WHERE mt.message_id = m.id)`
 
 // PurgeCounts zählt, was retention.purge sieht (Stichtag und Konto wie
 // angegeben). Gone sind alle Nachrichten ohne Serverkopie mit
-// deleted_remote_at vor dem Stichtag; davon bleiben KeptImported (Archiv)
-// und KeptDrafts (Verweis eines Entwurfs); der Rest steht in IDs.
+// deleted_remote_at vor dem Stichtag; davon bleiben KeptImported (Archiv),
+// KeptDrafts (Verweis eines Entwurfs, nicht importiert) und KeptTagged
+// (lokales Tag, weder importiert noch von einem Entwurf verwiesen); jede
+// Nachricht zählt nur in der ersten passenden Gruppe. Der Rest steht in
+// IDs.
 type PurgeCounts struct {
 	Gone         int
 	KeptImported int
 	KeptDrafts   int
+	KeptTagged   int
 }
 
 // PurgeCandidates liefert die IDs der Nachrichten, die retention.purge
@@ -47,12 +55,13 @@ func (s *SQLite) PurgeCandidates(ctx context.Context, cutoff time.Time, accountI
 	if accountID > 0 {
 		acct, args = " AND m.account_id = ?", append(args, accountID)
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT count(*),
-		coalesce(sum(EXISTS (SELECT 1 FROM message_import_folders mi WHERE mi.message_id = m.id)), 0),
-		coalesce(sum(NOT EXISTS (SELECT 1 FROM message_import_folders mi WHERE mi.message_id = m.id)
-			AND EXISTS (SELECT 1 FROM drafts d WHERE d.in_reply_to_msg = m.id OR d.sent_message_id = m.id)), 0)
+	err := s.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(imp), 0), coalesce(sum(NOT imp AND dr), 0),
+		coalesce(sum(NOT imp AND NOT dr AND tg), 0)
+		FROM (SELECT EXISTS (SELECT 1 FROM message_import_folders mi WHERE mi.message_id = m.id) AS imp,
+			EXISTS (SELECT 1 FROM drafts d WHERE d.in_reply_to_msg = m.id OR d.sent_message_id = m.id) AS dr,
+			EXISTS (SELECT 1 FROM message_tags mt WHERE mt.message_id = m.id) AS tg
 		FROM messages m WHERE m.deleted_remote_at IS NOT NULL AND m.deleted_remote_at < ?
-		AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id)`+acct, args...).Scan(&c.Gone, &c.KeptImported, &c.KeptDrafts)
+		AND NOT EXISTS (SELECT 1 FROM message_mailboxes mm WHERE mm.message_id = m.id)`+acct+`)`, args...).Scan(&c.Gone, &c.KeptImported, &c.KeptDrafts, &c.KeptTagged)
 	if err != nil {
 		return nil, c, err
 	}
@@ -84,8 +93,9 @@ type PurgeResult struct {
 const purgeBatch = 500
 
 // PurgeMessages löscht die Nachrichten ids, soweit sie zum Stichtag noch
-// purgeRule erfüllen (jede Transaktion prüft die Regel neu). Mit ihnen
-// gehen Text (bodies), Anhangszeilen, Tags, Indexzeilen (Trigger
+// purgeRule erfüllen (jede Transaktion prüft die Regel neu; ein inzwischen
+// gesetztes Tag hält die Nachricht also noch). Mit ihnen gehen Text
+// (bodies), Anhangszeilen, Indexzeilen (Trigger
 // messages_index_delete, index_queue) per Fremdschlüssel bzw. Trigger;
 // betroffene Threads werden neu berechnet, Threads ohne Nachricht gelöscht.
 // IDs werden danach nicht neu vergeben (Höchststand in meta, 0022). Blobs

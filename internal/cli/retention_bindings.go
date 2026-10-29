@@ -53,6 +53,7 @@ func renderPurge(w io.Writer, out any) error {
 	fmt.Fprintf(w, "  gone from the server: %d\n", o.GoneFromServer)
 	fmt.Fprintf(w, "  kept (imported archive): %d\n", o.KeptImported)
 	fmt.Fprintf(w, "  kept (a draft refers to them): %d\n", o.KeptDrafts)
+	fmt.Fprintf(w, "  kept (tagged): %d\n", o.KeptTagged)
 	if o.DryRun {
 		_, err := fmt.Fprintf(w, "dry run: %s would be deleted from the local archive; nothing changed\n", plural(o.Eligible, "message", "messages"))
 		return err

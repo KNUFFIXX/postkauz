@@ -432,14 +432,15 @@ PostKauz löscht nie von selbst. Was auf dem Server gelöscht wurde, bleibt im l
      gone from the server: 120
      kept (imported archive): 100
      kept (a draft refers to them): 1
-   dry run: 19 messages would be deleted from the local archive; nothing changed
+     kept (tagged): 2
+   dry run: 17 messages would be deleted from the local archive; nothing changed
    ```
 
-   `kept (imported archive)` sind Nachrichten aus `import` (z. B. dein Thunderbird-Archiv): Die bleiben immer. `kept (a draft refers to them)` sind Nachrichten, auf die ein Entwurf antwortet: Die bleiben ebenfalls.
+   `kept (imported archive)` sind Nachrichten aus `import` (z. B. dein Thunderbird-Archiv): Die bleiben immer. `kept (a draft refers to them)` sind Nachrichten, auf die ein Entwurf antwortet: Die bleiben ebenfalls. `kept (tagged)` sind Nachrichten, denen du (oder ein Agent) ein Tag gegeben hast, etwa `rechnung`: Ein Tag ist eine bewusste Markierung, deshalb löscht `purge` sie nicht (E5: „Tags überleben das Löschen auf dem Server“). Willst du eine davon doch loswerden, nimm erst das Tag ab (`tag remove rechnung <id>`) und lass `purge` danach noch einmal laufen.
 2. Wirklich löschen: dasselbe Kommando ohne `--dry-run`. Erwartet zum Schluss:
 
    ```
-   deleted: 19 messages, 7 attachment entries, 12 threads that became empty
+   deleted: 17 messages, 7 attachment entries, 12 threads that became empty
    the stored files stay until: blob gc
    ```
 

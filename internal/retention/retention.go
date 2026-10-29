@@ -97,6 +97,9 @@ type PurgeReport struct {
 	KeptImported int
 	// KeptDrafts: davon von einem Entwurf verwiesen (bleiben, A14).
 	KeptDrafts int
+	// KeptTagged: davon mit lokalem Tag (bleiben, E5; Nachbesserung T3,
+	// Punkt 9).
+	KeptTagged int
 	// Eligible: davon zu löschen (im Trockenlauf: würden gelöscht).
 	Eligible int
 	// Purged: gelöscht (Trockenlauf: 0); Attachments: ihre Anhangszeilen;
@@ -108,7 +111,7 @@ type PurgeReport struct {
 
 // Purge entfernt die Nachrichten, die store.PurgeCandidates nennt (Regel
 // in store/retention.go: vom Server gelöscht, nicht importiert, ohne
-// Verweis eines Entwurfs). Blobs bleiben liegen; die räumt blob gc ab.
+// Verweis eines Entwurfs, ohne lokales Tag). Blobs bleiben liegen; die räumt blob gc ab.
 func (s *Service) Purge(ctx context.Context, o PurgeOptions) (PurgeReport, error) {
 	var rep PurgeReport
 	release := func() {}
@@ -123,7 +126,8 @@ func (s *Service) Purge(ctx context.Context, o PurgeOptions) (PurgeReport, error
 	if err != nil {
 		return rep, err
 	}
-	rep.GoneFromServer, rep.KeptImported, rep.KeptDrafts, rep.Eligible = c.Gone, c.KeptImported, c.KeptDrafts, len(ids)
+	rep.GoneFromServer, rep.KeptImported, rep.KeptDrafts, rep.KeptTagged = c.Gone, c.KeptImported, c.KeptDrafts, c.KeptTagged
+	rep.Eligible = len(ids)
 	if o.DryRun || len(ids) == 0 {
 		return rep, nil
 	}

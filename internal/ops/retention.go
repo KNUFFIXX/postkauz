@@ -38,10 +38,12 @@ type RetentionPurgeOutput struct {
 	Cutoff    string `json:"cutoff"`
 	// GoneFromServer: Nachrichten ohne Serverkopie, deren Löschung vor dem
 	// Stichtag bemerkt wurde; davon bleiben KeptImported (importiertes
-	// Archiv) und KeptDrafts (Verweis eines Entwurfs); Eligible = der Rest.
+	// Archiv), KeptDrafts (Verweis eines Entwurfs) und KeptTagged (lokales
+	// Tag, E5); Eligible = der Rest.
 	GoneFromServer int  `json:"gone_from_server"`
 	KeptImported   int  `json:"kept_imported"`
 	KeptDrafts     int  `json:"kept_drafts"`
+	KeptTagged     int  `json:"kept_tagged"`
 	Eligible       int  `json:"eligible"`
 	Purged         int  `json:"purged"`
 	Attachments    int  `json:"attachments"`
@@ -73,7 +75,7 @@ func RetentionPurge(d Deps) Operation {
 		// Bericht bis zum Abbruch, Zähler auch dann im Audit (Punkt 7).
 		OutputOnError: true,
 		Summary: "Delete messages from the local archive that were deleted on the server longer ago than a period " +
-			"(never imported archive messages, never messages a draft refers to); blobs stay until blob gc.",
+			"(never imported archive messages, never messages a draft refers to, never tagged messages); blobs stay until blob gc.",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -87,10 +89,10 @@ func RetentionPurge(d Deps) Operation {
   "properties": {
     "account": {"type": "string"}, "older_than": {"type": "string"}, "cutoff": {"type": "string", "format": "date-time"},
     "gone_from_server": {"type": "integer"}, "kept_imported": {"type": "integer"}, "kept_drafts": {"type": "integer"},
-    "eligible": {"type": "integer"}, "purged": {"type": "integer"}, "attachments": {"type": "integer"},
+    "kept_tagged": {"type": "integer"}, "eligible": {"type": "integer"}, "purged": {"type": "integer"}, "attachments": {"type": "integer"},
     "threads_removed": {"type": "integer"}, "dry_run": {"type": "boolean"}
   },
-  "required": ["older_than", "cutoff", "gone_from_server", "kept_imported", "kept_drafts", "eligible", "purged", "attachments", "threads_removed", "dry_run"]
+  "required": ["older_than", "cutoff", "gone_from_server", "kept_imported", "kept_drafts", "kept_tagged", "eligible", "purged", "attachments", "threads_removed", "dry_run"]
 }`),
 		Redact: func(raw json.RawMessage) (json.RawMessage, []string) {
 			var in struct {
@@ -117,7 +119,7 @@ func RetentionPurge(d Deps) Operation {
 				return nil
 			}
 			return map[string]int64{"gone_from_server": int64(o.GoneFromServer), "kept_imported": int64(o.KeptImported),
-				"kept_drafts": int64(o.KeptDrafts), "eligible": int64(o.Eligible), "purged": int64(o.Purged),
+				"kept_drafts": int64(o.KeptDrafts), "kept_tagged": int64(o.KeptTagged), "eligible": int64(o.Eligible), "purged": int64(o.Purged),
 				"attachments": int64(o.Attachments), "threads_removed": int64(o.ThreadsRemoved)}
 		},
 		Handler: func(ctx context.Context, call Call) (any, error) {
@@ -159,7 +161,8 @@ func RetentionPurge(d Deps) Operation {
 				o.AccountID, out.Account = a.ID, a.Name
 			}
 			rep, err := svc.Purge(ctx, o)
-			out.GoneFromServer, out.KeptImported, out.KeptDrafts, out.Eligible = rep.GoneFromServer, rep.KeptImported, rep.KeptDrafts, rep.Eligible
+			out.GoneFromServer, out.KeptImported, out.KeptDrafts, out.KeptTagged = rep.GoneFromServer, rep.KeptImported, rep.KeptDrafts, rep.KeptTagged
+			out.Eligible = rep.Eligible
 			out.Purged, out.Attachments, out.ThreadsRemoved = rep.Purged, rep.Attachments, rep.ThreadsRemoved
 			if err != nil {
 				// Teil-Ausgabe (OutputOnError): Was bis zum Abbruch gelöscht

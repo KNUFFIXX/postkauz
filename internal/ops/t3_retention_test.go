@@ -181,9 +181,11 @@ func (e *retEnv) count(t *testing.T, q string, args ...any) int {
 
 // Akzeptanz 1: purge --dry-run zählt; echt löscht es nur, was die Regeln
 // erlauben (auf dem Server gelöscht, älter als die Frist, nicht importiert,
-// kein Entwurf verweist darauf). Index, Zuordnungen, Anhangszeilen, Tags
-// und der leere Thread folgen; das importierte Archiv und die Nachricht mit
-// offenem Entwurf bleiben, der Entwurfsverweis bleibt als Zahl.
+// kein Entwurf verweist darauf, kein lokales Tag). Index, Zuordnungen,
+// Anhangszeilen und der leere Thread folgen; das importierte Archiv, die
+// Nachricht mit offenem Entwurf und die getaggte bleiben, der
+// Entwurfsverweis bleibt als Zahl. Seit der Nachbesserung T3 (Punkt 9,
+// E5) folgen Tags nicht mehr, sie halten die Nachricht.
 func TestRetentionPurge(t *testing.T) {
 	ctx := context.Background()
 	e := newRetEnv(t)
@@ -191,7 +193,8 @@ func TestRetentionPurge(t *testing.T) {
 	recent := e.mirror(t, 2, "recent")
 	present := e.mirror(t, 3, "present")
 	quoted := e.mirror(t, 4, "quoted")
-	if _, err := e.st.ChangeTags(ctx, store.TagChange{AccountID: e.acct, MessageIDs: []int64{gone, present}, Add: []string{"rechnung"},
+	tagged := e.mirror(t, 5, "tagged")
+	if _, err := e.st.ChangeTags(ctx, store.TagChange{AccountID: e.acct, MessageIDs: []int64{tagged, present}, Add: []string{"rechnung"},
 		SetBy: "cli", Now: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +212,7 @@ func TestRetentionPurge(t *testing.T) {
 	e.goneFromServer(t, gone, 1, 100*24*time.Hour)
 	e.goneFromServer(t, recent, 2, 5*24*time.Hour)
 	e.goneFromServer(t, quoted, 4, 100*24*time.Hour)
+	e.goneFromServer(t, tagged, 5, 100*24*time.Hour)
 	// Offener Entwurf, der auf „quoted“ antwortet (A14).
 	dr, err := e.deps.Drafts.Create(ctx, drafts.NewDraft{AccountID: e.acct, Kind: drafts.KindReply, InReplyToMsg: quoted, CreatedBy: "cli",
 		Content: drafts.Content{To: []store.Addr{{Address: "b@example.org"}}, Subject: "Re", BodyText: "Text"}})
@@ -231,7 +235,7 @@ func TestRetentionPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := out.(RetentionPurgeOutput)
-	if o.GoneFromServer != 3 || o.KeptImported != 1 || o.KeptDrafts != 1 || o.Eligible != 1 || o.Purged != 0 || !o.DryRun {
+	if o.GoneFromServer != 4 || o.KeptImported != 1 || o.KeptDrafts != 1 || o.KeptTagged != 1 || o.Eligible != 1 || o.Purged != 0 || !o.DryRun {
 		t.Fatalf("dry run = %+v", o)
 	}
 	if e.count(t, `SELECT count(*) FROM messages`) != before {
@@ -243,15 +247,14 @@ func TestRetentionPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 	o = out.(RetentionPurgeOutput)
-	if o.Purged != 1 || o.Attachments != 1 || o.ThreadsRemoved != 1 || o.Account != "demo" || o.OlderThan != "30d" {
+	if o.Purged != 1 || o.KeptTagged != 1 || o.Attachments != 1 || o.ThreadsRemoved != 1 || o.Account != "demo" || o.OlderThan != "30d" {
 		t.Fatalf("purge = %+v", o)
 	}
 	for q, want := range map[string]int{
-		`SELECT count(*) FROM messages WHERE id = ?`:             0,
-		`SELECT count(*) FROM bodies WHERE message_id = ?`:       0,
-		`SELECT count(*) FROM attachments WHERE message_id = ?`:  0,
-		`SELECT count(*) FROM message_tags WHERE message_id = ?`: 0,
-		`SELECT count(*) FROM index_queue WHERE message_id = ?`:  0,
+		`SELECT count(*) FROM messages WHERE id = ?`:            0,
+		`SELECT count(*) FROM bodies WHERE message_id = ?`:      0,
+		`SELECT count(*) FROM attachments WHERE message_id = ?`: 0,
+		`SELECT count(*) FROM index_queue WHERE message_id = ?`: 0,
 	} {
 		if n := e.count(t, q, gone); n != want {
 			t.Errorf("%s: %d", q, n)
@@ -263,19 +266,21 @@ func TestRetentionPurge(t *testing.T) {
 	if e.count(t, `SELECT count(*) FROM threads WHERE id = ?`, thread) != 0 {
 		t.Error("empty thread left behind")
 	}
-	for _, id := range []int64{recent, present, quoted, imported} {
+	for _, id := range []int64{recent, present, quoted, imported, tagged} {
 		if e.count(t, `SELECT count(*) FROM messages WHERE id = ?`, id) != 1 {
 			t.Errorf("message %d was purged", id)
 		}
 	}
-	if e.count(t, `SELECT count(*) FROM message_tags WHERE message_id = ?`, present) != 1 {
-		t.Error("tag of a present message lost")
+	for _, id := range []int64{present, tagged} {
+		if e.count(t, `SELECT count(*) FROM message_tags WHERE message_id = ?`, id) != 1 {
+			t.Errorf("tag of message %d lost", id)
+		}
 	}
 	if got, _ := e.st.Draft(ctx, dr.Draft.ID); got.InReplyToMsg != quoted {
 		t.Errorf("draft reference = %d, want %d", got.InReplyToMsg, quoted)
 	}
 	// Blobs bleiben (blob gc räumt sie ab).
-	if e.count(t, `SELECT count(*) FROM blobs`) != 2*4 {
+	if e.count(t, `SELECT count(*) FROM blobs`) != 2*5 {
 		t.Error("purge must not delete blob rows")
 	}
 	// Die ID wird nicht neu vergeben (0022).

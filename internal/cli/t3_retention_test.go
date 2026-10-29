@@ -46,16 +46,16 @@ func TestRetentionCommandsHumanOnly(t *testing.T) {
 func TestRenderRetention(t *testing.T) {
 	var b bytes.Buffer
 	_ = renderPurge(&b, ops.RetentionPurgeOutput{OlderThan: "180d", Cutoff: "2026-05-01T10:00:00Z", GoneFromServer: 120, KeptImported: 100,
-		KeptDrafts: 1, Eligible: 19, DryRun: true})
+		KeptDrafts: 1, KeptTagged: 2, Eligible: 17, DryRun: true})
 	want := "all accounts, deleted on the server before 2026-05-01T10:00:00Z (older than 180d):\n  gone from the server: 120\n" +
-		"  kept (imported archive): 100\n  kept (a draft refers to them): 1\n" +
-		"dry run: 19 messages would be deleted from the local archive; nothing changed\n"
+		"  kept (imported archive): 100\n  kept (a draft refers to them): 1\n  kept (tagged): 2\n" +
+		"dry run: 17 messages would be deleted from the local archive; nothing changed\n"
 	if b.String() != want {
 		t.Fatalf("purge dry run:\n%s", b.String())
 	}
 	b.Reset()
-	_ = renderPurge(&b, ops.RetentionPurgeOutput{OlderThan: "180d", Cutoff: "x", Purged: 19, Attachments: 7, ThreadsRemoved: 12})
-	if !strings.HasSuffix(b.String(), "deleted: 19 messages, 7 attachment entries, 12 threads that became empty\nthe stored files stay until: blob gc\n") {
+	_ = renderPurge(&b, ops.RetentionPurgeOutput{OlderThan: "180d", Cutoff: "x", Purged: 17, Attachments: 7, ThreadsRemoved: 12})
+	if !strings.HasSuffix(b.String(), "deleted: 17 messages, 7 attachment entries, 12 threads that became empty\nthe stored files stay until: blob gc\n") {
 		t.Fatalf("purge:\n%s", b.String())
 	}
 	b.Reset()
