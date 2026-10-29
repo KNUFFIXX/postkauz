@@ -80,6 +80,10 @@ type Result struct {
 	BlobsExisting  int    `json:"blobs_existing"`
 	BytesCopied    int64  `json:"bytes_copied"`
 	AuditArchives  int    `json:"audit_archives"`
+	// AuditArchivesSkipped: eingetragene Archive, die fehlen oder nicht
+	// mehr zu ihrer Prüfsumme passen ("<name> (archive_missing)" bzw.
+	// "(archive_changed)"); sie sind nicht in der Sicherung (Warnung).
+	AuditArchivesSkipped []string `json:"audit_archives_skipped,omitempty"`
 	// SnapshotsRemoved: ältere Schnappschüsse im Ordner, die das neue
 	// Manifest ersetzt hat.
 	SnapshotsRemoved int    `json:"snapshots_removed"`
@@ -94,8 +98,8 @@ type Runner struct {
 	// Blobs ist der Blob-Store des Datenverzeichnisses.
 	Blobs *blob.Store
 	// DataDir ist das Datenverzeichnis (Ziele darin sind verboten; der
-	// Tar-Modus legt den Schnappschuss kurz dort ab; Archivdatenbanken
-	// audit-archive-*.db liegen dort).
+	// Tar-Modus legt den Schnappschuss kurz dort ab; die Sperre LockName
+	// liegt dort). Archive von audit.rotate findet Store.AuditArchivePath.
 	DataDir string
 	// Version ist die Programmversion (Manifest).
 	Version string
@@ -157,7 +161,7 @@ func (r *Runner) Create(ctx context.Context, o Options) (Result, error) {
 	params, _ := json.Marshal(map[string]any{"call_audit_id": o.CallAuditID, "mode": res.Mode, "target_hash": targetHash(res),
 		"manifest_sha256": res.ManifestSHA256, "schema_version": res.SchemaVersion, "files": res.Files, "bytes": res.Bytes,
 		"blobs": res.Blobs, "blobs_copied": res.BlobsCopied, "blobs_existing": res.BlobsExisting, "bytes_copied": res.BytesCopied,
-		"audit_archives": res.AuditArchives})
+		"audit_archives": res.AuditArchives, "audit_archives_skipped": len(res.AuditArchivesSkipped)})
 	if aerr := r.Store.AuditWriter().Append(ctx, audit.Event{TS: r.now().UTC(), ActorType: audit.ActorSystem, KeyID: "system",
 		Operation: OpDone, Result: audit.ResultOK, ParamsRedacted: params}); aerr != nil {
 		return res, fmt.Errorf("backup: written, but the audit entry %s failed: %w", OpDone, aerr)
@@ -272,21 +276,57 @@ func checkComplete(refs map[string]bool, blobs []blobFile) error {
 		ErrIncomplete, len(missing), missing[0])
 }
 
-// listArchives liefert die Archivdatenbanken von audit.rotate im
-// Datenverzeichnis (audit-archive-<von>-<bis>.db; generisch jede Datei, die
-// archiveRE erfüllt).
-func (r *Runner) listArchives() ([]string, error) {
-	entries, err := os.ReadDir(r.DataDir)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.Type().IsRegular() && archiveRE.MatchString(e.Name()) {
-			out = append(out, e.Name())
+// archiveFile ist ein Archiv von audit.rotate, das in die Sicherung kommt:
+// Name, Pfad im Datenverzeichnis, Prüfsumme und Größe wie eingetragen bzw.
+// eben gelesen.
+type archiveFile struct {
+	name string
+	src  string
+	sum  string
+	size int64
+}
+
+// Probleme eines eingetragenen Archivs (dieselben Codes wie audit verify).
+const (
+	archiveMissing = "archive_missing"
+	archiveChanged = "archive_changed"
+)
+
+// listArchives liefert die Archive von audit.rotate für die Sicherung
+// (T3-Nachbesserung 3b): nur die in list eingetragenen (audit_archives des
+// Schnappschusses bzw. beim Trockenlauf der Datenbank), nie eine Datei, die
+// nur nach ihrem Namen aussieht (Rest eines hart abgebrochenen audit
+// rotate). Jede Datei wird gelesen und mit der eingetragenen Prüfsumme
+// verglichen; fehlt sie oder weicht sie ab, bleibt sie draußen und steht in
+// skipped ("<name> (archive_missing|archive_changed)"). Festlegung: Die
+// Sicherung der Mails bricht deswegen nicht ab (sonst schlüge jede weitere
+// Sicherung fehl, denn audit_archives ist nur anfügbar); audit verify meldet
+// denselben Befund.
+func (r *Runner) listArchives(list []store.AuditArchive) (out []archiveFile, skipped []string, err error) {
+	for _, a := range list {
+		if !archiveRE.MatchString(a.File) {
+			skipped = append(skipped, a.File+" ("+archiveChanged+")")
+			continue
 		}
+		src := r.Store.AuditArchivePath(a.File)
+		if _, err := regularFile(src); isNotExist(err) {
+			skipped = append(skipped, a.File+" ("+archiveMissing+")")
+			continue
+		}
+		sum, size, err := hashFile(src)
+		switch {
+		case isNotExist(err):
+			skipped = append(skipped, a.File+" ("+archiveMissing+")")
+			continue
+		case err != nil:
+			return nil, nil, err
+		case sum != a.SHA256:
+			skipped = append(skipped, a.File+" ("+archiveChanged+")")
+			continue
+		}
+		out = append(out, archiveFile{name: a.File, src: src, sum: sum, size: size})
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 // checkBlob prüft einen eben gelesenen Blob gegen seinen Namen:
@@ -396,28 +436,25 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 		m.Files = append(m.Files, f)
 	}
 
-	// 4. Archivdatenbanken von audit.rotate.
-	archives, err := r.listArchives()
+	// 4. Archive von audit.rotate, die der Schnappschuss kennt.
+	archives, skipped, err := r.listArchives(contents.Archives)
 	if err != nil {
 		return res, err
 	}
+	res.AuditArchivesSkipped = skipped
 	for _, a := range archives {
-		src, dst := filepath.Join(r.DataDir, a), filepath.Join(to, a)
-		sum, size, err := hashFile(src)
-		if err != nil {
-			return res, err
-		}
-		if p, ok := prev[a]; !ok || p.SHA256 != sum || p.Size != size || !sameFile(dst, size) {
-			got, n, err := copyAtomic(src, dst, nil)
+		dst := filepath.Join(to, a.name)
+		if p, ok := prev[a.name]; !ok || p.SHA256 != a.sum || p.Size != a.size || !sameFile(dst, a.size) {
+			got, n, err := copyAtomic(a.src, dst, nil)
 			if err != nil {
 				return res, err
 			}
-			if got != sum || n != size {
-				return res, fmt.Errorf("backup: %s changed while it was copied; run backup create again", a)
+			if got != a.sum || n != a.size {
+				return res, fmt.Errorf("backup: %s changed while it was copied; run backup create again", a.name)
 			}
 			res.BytesCopied += n
 		}
-		m.Files = append(m.Files, File{Path: a, Kind: KindAuditArchive, Size: size, SHA256: sum})
+		m.Files = append(m.Files, File{Path: a.name, Kind: KindAuditArchive, Size: a.size, SHA256: a.sum})
 	}
 
 	// 5. Manifest zuletzt: Erst mit ihm gilt der neue Stand.
@@ -529,20 +566,21 @@ func (r *Runner) dryRunFolder(ctx context.Context, to string, prev map[string]Fi
 		res.BlobsCopied++
 		res.BytesCopied += size
 	}
-	archives, err := r.listArchives()
+	list, err := r.Store.AuditArchives(ctx)
 	if err != nil {
 		return res, err
 	}
+	archives, skipped, err := r.listArchives(list)
+	if err != nil {
+		return res, err
+	}
+	res.AuditArchivesSkipped = skipped
 	for _, a := range archives {
-		size, err := regularFile(filepath.Join(r.DataDir, a))
-		if err != nil {
-			return res, err
-		}
 		res.Files++
 		res.AuditArchives++
-		res.Bytes += size
-		if p, ok := prev[a]; !ok || p.Size != size {
-			res.BytesCopied += size
+		res.Bytes += a.size
+		if p, ok := prev[a.name]; !ok || p.SHA256 != a.sum || p.Size != a.size {
+			res.BytesCopied += a.size
 		}
 	}
 	return res, nil
@@ -622,6 +660,11 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	if err := checkComplete(contents.Blobs, blobs); err != nil {
 		return res, err
 	}
+	archives, skipped, err := r.listArchives(contents.Archives)
+	if err != nil {
+		return res, err
+	}
+	res.AuditArchivesSkipped = skipped
 	name := snapshotName(now, 1)
 	res.Database = name
 	m := Manifest{Format: ManifestFormat, Program: brand.Name, ProgramVersion: r.Version, SchemaVersion: res.SchemaVersion,
@@ -639,17 +682,16 @@ func (r *Runner) createTar(ctx context.Context, o Options, res Result) (Result, 
 	m.Files = append(m.Files, File{Path: name, Kind: KindDatabase, Size: size, SHA256: sum})
 	_ = os.Remove(snap)
 
-	archives, err := r.listArchives()
-	if err != nil {
-		return res, err
-	}
 	for _, a := range archives {
-		sum, size, err := tarw.file(a, filepath.Join(r.DataDir, a))
+		sum, size, err := tarw.file(a.name, a.src)
 		if err != nil {
 			return res, err
 		}
+		if sum != a.sum || size != a.size {
+			return res, fmt.Errorf("backup: %s changed while it was written; run backup create again", a.name)
+		}
 		res.BytesCopied += size
-		m.Files = append(m.Files, File{Path: a, Kind: KindAuditArchive, Size: size, SHA256: sum})
+		m.Files = append(m.Files, File{Path: a.name, Kind: KindAuditArchive, Size: size, SHA256: sum})
 	}
 	for _, b := range blobs {
 		if err := ctx.Err(); err != nil {

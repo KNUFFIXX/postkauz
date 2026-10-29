@@ -178,9 +178,7 @@ func TestCreateFolderIncremental(t *testing.T) {
 
 	// Dritter Lauf: ein neuer Blob, ein Audit-Archiv.
 	e.put(t, e.blobs, "neu")
-	if err := os.WriteFile(filepath.Join(e.dir, "audit-archive-2025-01-01-2025-12-31.db"), []byte("archiv"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	e.archive(t, "audit-archive-2025-01-01-2025-12-31.db", "archiv")
 	e.now = e.now.Add(time.Minute)
 	res3, err := e.r.Create(ctx, Options{To: to})
 	if err != nil {

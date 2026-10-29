@@ -279,7 +279,7 @@ Die Beispiele nehmen an: Der verschlüsselte USB-Stick ist entsperrt und heißt 
 
 - die Datenbank als Schnappschuss (`postkauz-<Zeit>.db`); der Dauer-Sync darf dabei weiterlaufen,
 - alle Mails und Anhänge (Ordner `blobs`), auch die Anhänge deiner Entwürfe,
-- die Audit-Archive (`audit-archive-….db`), falls es welche gibt,
+- die Audit-Archive (`audit-archive-….db`), falls es welche gibt; nur die, die die Datenbank kennt und die zu ihrer Prüfsumme passen. Fehlt eines oder wurde es verändert, kommt es nicht mit, die Sicherung warnt (`warning: audit archive … is not in this backup …`) und `audit verify` zeigt denselben Befund. Eine Archivdatei, die die Datenbank nicht kennt (Rest eines abgebrochenen `audit rotate`), nennt `doctor`; verschiebe sie aus dem Datenverzeichnis,
 - `manifest.json`: Liste aller Dateien mit Größe und Prüfsumme (SHA-256),
 - `ENCRYPT-ME.txt`: der Hinweis auf die Verschlüsselung.
 

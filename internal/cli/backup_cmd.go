@@ -54,10 +54,17 @@ func backupToStdout(cmd *cobra.Command) bool {
 
 func backupWarnings(out any) []string {
 	o, ok := out.(backup.Result)
-	if !ok || o.DryRun {
+	if !ok {
 		return nil
 	}
-	return []string{o.Warning}
+	var w []string
+	for _, s := range o.AuditArchivesSkipped {
+		w = append(w, "audit archive "+s+" is not in this backup: it is missing or no longer matches its recorded checksum; see audit verify")
+	}
+	if !o.DryRun {
+		w = append(w, o.Warning)
+	}
+	return w
 }
 
 func renderBackupCreate(w io.Writer, out any) error {

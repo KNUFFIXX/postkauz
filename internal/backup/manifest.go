@@ -7,7 +7,7 @@
 //	ENCRYPT-ME.txt                   Hinweis: das Ziel muss verschlüsselt sein
 //	<programm>-<UTC-Zeit>.db         Schnappschuss der Datenbank (VACUUM INTO)
 //	blobs/ab/cd/<sha256>[.zst]       Blob-Store, Layout wie im Datenverzeichnis
-//	audit-archive-*.db               Archivdatenbanken von audit.rotate, falls vorhanden
+//	audit-archive-*.db               eingetragene Archive von audit.rotate (audit_archives)
 //
 // PostKauz verschlüsselt nicht selbst (E7): Eigene Schlüssel wären neuer
 // Code mit Verlustrisiko. Das Manifest beschreibt genau einen konsistenten

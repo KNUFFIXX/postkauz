@@ -24,7 +24,7 @@ import (
 // internal/ops (auditrotate.go).
 
 // AuditArchivePrefix ist der Anfang jedes Archivnamens; Sicherungen
-// (Paket B) erfassen audit-archive-*.db.
+// (internal/backup) nehmen die eingetragenen Archive mit (audit_archives).
 const AuditArchivePrefix = "audit-archive-"
 
 // AuditArchiveName ist der Dateiname des Archivs der Tage from bis to.

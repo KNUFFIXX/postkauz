@@ -70,8 +70,11 @@ type DoctorReport struct {
 	// AuditUnfinished: Aufrufe, deren Start-Eintrag älter als
 	// auditUnfinishedAge ist und keinen Abschluss hat (A1: Absturz im
 	// Handler oder gescheiterter Abschluss-Eintrag).
-	AuditUnfinished int             `json:"audit_unfinished_calls"`
-	Accounts        []DoctorAccount `json:"accounts"`
+	AuditUnfinished int `json:"audit_unfinished_calls"`
+	// AuditArchivesUnregistered: Dateien audit-archive-*.db neben der
+	// Datenbank ohne Eintrag in audit_archives (T3-Nachbesserung 3b).
+	AuditArchivesUnregistered []string        `json:"audit_archives_unregistered,omitempty"`
+	Accounts                  []DoctorAccount `json:"accounts"`
 	// Policy-Datei (S2.1, A02 E8): Pfad, Zustand (ok | default = keine
 	// Datei, eingebaute Standards | invalid), SHA-256, Version in der
 	// Tabelle policies (0 = noch nicht eingetragen; das nächste Kommando
@@ -263,6 +266,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.FTSVersion, _ = db.FTSVersion(ctx)
 	rep.ExtractPending, _ = db.ExtractPending(ctx, 0)
 	doctorAudit(ctx, db, &rep, time.Now())
+	doctorArchiveFiles(ctx, db, &rep)
 	if v >= 10 && rep.Policy != "invalid" {
 		if last, ok, err := db.LatestPolicy(ctx); err != nil {
 			rep.Warnings = append(rep.Warnings, "policy: "+err.Error())
