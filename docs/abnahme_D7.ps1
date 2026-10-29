@@ -40,12 +40,16 @@
     Referenzdatei -Reference (Suche, Nachrichtenzahl, doctor --blobs=all,
     audit verify).
 
-    Sicherheitsregeln (A03_teile.md, Rahmen 5): -DataDir und -Config sind
-    Pflicht. Das Skript bricht ab, ohne etwas zu aendern, wenn -DataDir,
-    -Config oder -WorkDir im Standard-Datenverzeichnis
-    (%LOCALAPPDATA%\postkauz), im Standard-Konfigurationsordner
-    (%APPDATA%\postkauz) oder in einem mit -LivePath genannten Pfad liegen
-    (oder umgekehrt); dazu eine Markerdatei gegen Junction und subst.
+    Sicherheitsregeln (A03_teile.md, Rahmen 5): -DataDir, -Config und
+    (seit der Nachbesserung T3) -LivePath sind Pflicht. Das Skript bricht
+    ab, ohne etwas zu aendern, wenn -DataDir, -Config oder -WorkDir im
+    Standard-Datenverzeichnis (%LOCALAPPDATA%\postkauz), im
+    Standard-Konfigurationsordner (%APPDATA%\postkauz) oder in einem mit
+    -LivePath genannten Pfad liegen (oder umgekehrt); ein Datei-Eintrag in
+    -LivePath (etwa die Live-Konfiguration) schuetzt auch seinen Ordner.
+    Dazu eine Markerdatei gegen Junction und subst (auch fuer den Ordner
+    von -Config) und ein Abbruch, wenn neben -Config schon eine
+    policy.toml liegt (Ordner einer anderen Konfiguration).
 
     Jede Pruefung ist eine Zeile "OK <Nr> <Beschreibung>",
     "FAIL <Nr> <Beschreibung>" oder "SKIP <Nr> <Grund>", darunter
@@ -69,11 +73,12 @@
     Reparse Point.
 
 .PARAMETER LivePath
-    Pfade des Dauerbetriebs (Live-Datenverzeichnis, Live-Konfiguration),
-    durch Komma getrennt; Schutz gegen Verwechslung.
+    Pflicht: Pfade des Dauerbetriebs (Live-Datenverzeichnis,
+    Live-Konfiguration), durch Komma getrennt; Schutz gegen Verwechslung.
+    Ein Datei-Eintrag schuetzt auch den Ordner, in dem die Datei liegt.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.6).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.7).
 
 .PARAMETER Interactive
     Fragt nach der Thunderbird-Pruefung (D7.4); ohne: SKIP mit Hinweis.
@@ -94,8 +99,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $DataDir,
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
-    [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.6',
+    [Parameter(Mandatory = $true)] [string[]] $LivePath,
+    [string] $ExpectVersion = '0.3.0-alpha.7',
     [switch] $Interactive,
     [string] $RestoreFrom = '',
     [string] $Reference = ''
@@ -401,8 +406,19 @@ if ($env:LOCALAPPDATA) { $forbidden.Add((Join-Path $env:LOCALAPPDATA 'postkauz')
 if ($env:APPDATA) { $forbidden.Add((Join-Path $env:APPDATA 'postkauz')) }
 $livePaths = New-Object System.Collections.Generic.List[string]
 foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
-    if ($l.Trim()) { $livePaths.Add((Get-FullPath $l.Trim())); $forbidden.Add((Get-FullPath $l.Trim())) }
+    if (-not $l.Trim()) { continue }
+    $lp = Get-FullPath $l.Trim()
+    $livePaths.Add($lp)
+    $forbidden.Add($lp)
+    # Ein Datei-Eintrag (vorhandene Datei oder Name mit Endung, etwa
+    # config.toml) schuetzt auch seinen Ordner: Dort liegen policy.toml
+    # und oft das Datenverzeichnis des Dauerbetriebs.
+    if ((Test-Path -LiteralPath $lp -PathType Leaf) -or ([System.IO.Path]::GetExtension($lp) -and -not (Test-Path -LiteralPath $lp -PathType Container))) {
+        $parent = Split-Path -Parent $lp
+        if ($parent) { $forbidden.Add($parent) }
+    }
 }
+if ($livePaths.Count -eq 0) { Stop-Run '-LivePath ist leer: Live-Datenverzeichnis und Live-Konfiguration angeben (durch Komma getrennt).' }
 $markerPlaces = New-Object System.Collections.Generic.List[string]
 foreach ($f in $forbidden) {
     if ((Test-Path -LiteralPath $f -PathType Container) -and -not $f.EndsWith('\Packages')) { $markerPlaces.Add($f) }
@@ -416,6 +432,9 @@ if ((Test-Path -LiteralPath $script:Data) -and @(Get-ChildItem -LiteralPath $scr
     Stop-Run '-DataDir ist nicht leer; die Abnahme braucht ein frisches Datenverzeichnis.'
 }
 if (Test-Path -LiteralPath $script:Cfg) { Stop-Run '-Config gibt es schon; das Skript legt die Konfiguration selbst an (neuen Pfad waehlen).' }
+if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $script:Cfg) 'policy.toml')) {
+    Stop-Run 'Neben -Config liegt schon eine policy.toml (Ordner einer anderen Konfiguration, vielleicht der Live-Konfiguration); bitte einen neuen, leeren Ordner fuer -Config nehmen.'
+}
 if ($script:Cfg.Contains("'")) { Stop-Run '-Config darf kein einfaches Anfuehrungszeichen enthalten (TOML).' }
 if (-not (Test-Path -LiteralPath $script:ExeFull -PathType Leaf)) { Stop-Run ('Programm nicht gefunden: ' + $script:ExeFull) }
 if ($script:ModeR) {
@@ -425,7 +444,7 @@ if ($script:ModeR) {
     foreach ($f in $forbidden) { if (Test-Overlap $script:From $f) { Stop-Run ('-RestoreFrom liegt im Standard- oder Live-Pfad ' + $f + '; nichts veraendert.') } }
     if (Test-Overlap $script:From $script:Data) { Stop-Run '-RestoreFrom und -DataDir ueberschneiden sich.' }
 }
-foreach ($d in @($script:Data, $script:Work)) {
+foreach ($d in @($script:Data, $script:Work, (Split-Path -Parent $script:Cfg))) {
     $where = Test-Marker $d $markerPlaces
     if ($where) { Stop-Run ('Eine Markerdatei aus ' + $d + ' ist in ' + $where + ' sichtbar (Junction, subst oder derselbe Ordner).') }
 }

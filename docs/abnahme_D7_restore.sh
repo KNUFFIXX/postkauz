@@ -14,6 +14,13 @@
 # Braucht python3 (nur zum Lesen von JSON).
 set -u
 
+# Keine Einstellung aus der Umgebung (Datenverzeichnis, Konfiguration,
+# Profil, Passwörter): alle POSTKAUZ_*-Variablen entfernen (Nachbesserung
+# T3, Punkt 12). Das Skript nennt Pfade nur ausdrücklich.
+for v in $(env | sed -n 's/^\(POSTKAUZ_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$v"
+done
+
 exe=${1:?usage: abnahme_D7_restore.sh <postkauz> <D7_sicherung.tar> <workdir>}
 pkg=${2:?usage: abnahme_D7_restore.sh <postkauz> <D7_sicherung.tar> <workdir>}
 work=${3:?usage: abnahme_D7_restore.sh <postkauz> <D7_sicherung.tar> <workdir>}
