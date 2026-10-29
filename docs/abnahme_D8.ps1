@@ -39,12 +39,15 @@
     Ablauf des Tokens (5 min) abwarten -> 401, Refresh -> 200, Widerruf ->
     403 denied (key_revoked).
 
-    Sicherheitsregeln (A03_teile.md, Rahmen 5): -DataDir und -Config sind
-    Pflicht; Abbruch ohne Aenderung, wenn sie oder -WorkDir im
-    Standard-Datenverzeichnis, im Standard-Konfigurationsordner oder in
-    einem mit -LivePath genannten Pfad liegen (Markerdatei gegen Junction
-    und subst). Nie die Live-Datenbank. Kein Mailkonto, kein Passwort:
-    mcp --http kennt keins.
+    Sicherheitsregeln (A03_teile.md, Rahmen 5): -DataDir, -Config und
+    -LivePath sind Pflicht (wie bei D7). Abbruch ohne Aenderung, wenn
+    -DataDir, -Config oder -WorkDir im Standard-Datenverzeichnis, im
+    Standard-Konfigurationsordner oder in einem mit -LivePath genannten
+    Pfad liegen (oder umgekehrt); ein Datei-Eintrag in -LivePath (etwa die
+    Live-Konfiguration) schuetzt auch seinen Ordner. Dazu eine Markerdatei
+    gegen Junction und subst (auch fuer den Ordner von -Config) und ein
+    Abbruch, wenn neben -Config schon eine policy.toml liegt. Nie die
+    Live-Datenbank. Kein Mailkonto, kein Passwort: mcp --http kennt keins.
 
     Jede Pruefung ist eine Zeile "OK <Nr> <Beschreibung>",
     "FAIL <Nr> <Beschreibung>" oder "SKIP <Nr> <Grund>", darunter
@@ -70,11 +73,12 @@
     Laufordner lauf-<Datum-Uhrzeit>. Kein Reparse Point.
 
 .PARAMETER LivePath
-    Pfade des Dauerbetriebs (Live-Datenverzeichnis, Live-Konfiguration),
-    durch Komma getrennt.
+    Pflicht: Pfade des Dauerbetriebs (Live-Datenverzeichnis,
+    Live-Konfiguration), durch Komma getrennt; Schutz gegen Verwechslung.
+    Ein Datei-Eintrag schuetzt auch den Ordner, in dem die Datei liegt.
 
 .PARAMETER ExpectVersion
-    Erwartete Version von -ExePath (Standard 0.3.0-alpha.8).
+    Erwartete Version von -ExePath (Standard 0.3.0-alpha.8b).
 
 .PARAMETER Port
     Port fuer mcp --http auf 127.0.0.1 (Standard 18787; nicht der
@@ -120,8 +124,8 @@ param(
     [Parameter(Mandatory = $true)] [string] $DataDir,
     [Parameter(Mandatory = $true)] [string] $Config,
     [Parameter(Mandatory = $true)] [string] $WorkDir,
-    [string[]] $LivePath = @(),
-    [string] $ExpectVersion = '0.3.0-alpha.8',
+    [Parameter(Mandatory = $true)] [string[]] $LivePath,
+    [string] $ExpectVersion = '0.3.0-alpha.8b',
     [int] $Port = 18787,
     [string] $Python = '',
     [string] $Probe = '',
@@ -180,11 +184,6 @@ function Add-HostMask {
     foreach ($x in $sorted) { $script:HostMask.Add($x) }
 }
 
-# Schluessel, Mailadressen, Pfade, Label und Kontoname nie ins Protokoll.
-# Vergleichsschluessel einer eigenen Adresse wie im Programm
-# (internal/mailaddr, Nachbesserung T3 Punkt 15): klein; bei gmail.com und
-# googlemail.com ohne Punkte im lokalen Teil, ohne Zusatz ab '+', Domain
-# gmail.com. Andere Anbieter nur klein.
 # Schluessel, Token, Auth-Keys, Mailadressen, Pfade und Knotenname nie ins
 # Protokoll.
 function Hide-Private {
@@ -377,9 +376,11 @@ function Test-Overlap {
 
 # Markerdatei: in Dir anlegen und pruefen, ob sie in einem der verbotenen
 # Verzeichnisse auftaucht (Junction, subst, Netzlaufwerk auf denselben
-# Ordner). Liefert '' oder den Ort, an dem sie sichtbar war.
+# Ordner). Forbidden wird rekursiv durchsucht, Shallow nur der Ordner selbst
+# (Elternordner von Live-Dateien; sonst liefe die Suche mehrfach ueber das
+# Live-Blob-Verzeichnis). Liefert '' oder den Ort, an dem sie sichtbar war.
 function Test-Marker {
-    param([string] $Dir, [string[]] $Forbidden)
+    param([string] $Dir, [string[]] $Forbidden, [string[]] $Shallow = @())
     if (-not (Test-Path -LiteralPath $Dir)) { [void] [System.IO.Directory]::CreateDirectory($Dir) }
     $name = '.pk-abnahme-marker-' + [guid]::NewGuid().ToString('N')
     $marker = Join-Path $Dir $name
@@ -390,6 +391,12 @@ function Test-Marker {
             if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Container)) { continue }
             $hit = @(Get-ChildItem -LiteralPath $f -Recurse -Force -Filter $name -ErrorAction SilentlyContinue | Select-Object -First 1)
             if ($hit.Count -gt 0) { $seen = $f; break }
+        }
+        if (-not $seen) {
+            foreach ($f in $Shallow) {
+                if (-not $f -or -not (Test-Path -LiteralPath $f -PathType Container)) { continue }
+                if (Test-Path -LiteralPath (Join-Path $f $name)) { $seen = $f; break }
+            }
         }
     } finally {
         try {
@@ -421,8 +428,6 @@ function Confirm-Step {
     if ($yes) { Write-Log '      Antwort: ja' } else { Write-Log '      Antwort: nicht ja, Schritt uebersprungen' }
     return $yes
 }
-
-# Beobachtung des Betreibers im Gmail-Fenster (Teil B): ja, nein oder leer.
 
 # ---------------------------------------------------------------- Hilfen fuer HTTP
 
@@ -627,12 +632,28 @@ $forbidden = New-Object System.Collections.Generic.List[string]
 if ($env:LOCALAPPDATA) { $forbidden.Add((Join-Path $env:LOCALAPPDATA 'postkauz')); $forbidden.Add((Join-Path $env:LOCALAPPDATA 'Packages')) }
 if ($env:APPDATA) { $forbidden.Add((Join-Path $env:APPDATA 'postkauz')) }
 $livePaths = New-Object System.Collections.Generic.List[string]
+# Elternordner von Live-Dateien: verboten fuer -DataDir, -Config, -WorkDir,
+# bei der Markersuche aber nur flach geprueft (wie abnahme_D7.ps1).
+$parentPlaces = New-Object System.Collections.Generic.List[string]
 foreach ($l in ($LivePath | ForEach-Object { $_ -split ',' })) {
-    if ($l.Trim()) { $livePaths.Add((Get-FullPath $l.Trim())); $forbidden.Add((Get-FullPath $l.Trim())) }
+    if (-not $l.Trim()) { continue }
+    $lp = Get-FullPath $l.Trim()
+    $livePaths.Add($lp)
+    $forbidden.Add($lp)
+    # Ein Datei-Eintrag (vorhandene Datei oder Name mit Endung, etwa
+    # config.toml) schuetzt auch seinen Ordner: Dort liegen policy.toml
+    # und oft das Datenverzeichnis des Dauerbetriebs.
+    if ((Test-Path -LiteralPath $lp -PathType Leaf) -or ([System.IO.Path]::GetExtension($lp) -and -not (Test-Path -LiteralPath $lp -PathType Container))) {
+        $parent = Split-Path -Parent $lp
+        if ($parent) { $forbidden.Add($parent); $parentPlaces.Add($parent) }
+    }
 }
+if ($livePaths.Count -eq 0) { Stop-Run '-LivePath ist leer: Live-Datenverzeichnis und Live-Konfiguration angeben (durch Komma getrennt).' }
 $markerPlaces = New-Object System.Collections.Generic.List[string]
+$markerShallow = New-Object System.Collections.Generic.List[string]
 foreach ($f in $forbidden) {
-    if ((Test-Path -LiteralPath $f -PathType Container) -and -not $f.EndsWith('\Packages')) { $markerPlaces.Add($f) }
+    if (-not (Test-Path -LiteralPath $f -PathType Container) -or $f.EndsWith('\Packages')) { continue }
+    if ($parentPlaces.Contains($f) -and -not $livePaths.Contains($f)) { $markerShallow.Add($f) } else { $markerPlaces.Add($f) }
 }
 foreach ($f in $forbidden) {
     if (Test-Overlap $script:Data $f) { Stop-Run ('-DataDir liegt im Standard- oder Live-Pfad ' + $f + ' (oder umgekehrt); nichts veraendert.') }
@@ -645,15 +666,18 @@ if ((Test-Path -LiteralPath $script:Data) -and @(Get-ChildItem -LiteralPath $scr
 foreach ($c in @($script:Cfg, ($script:Cfg + '.tailnet.toml'), ($script:Cfg + '.oauth.toml'))) {
     if (Test-Path -LiteralPath $c) { Stop-Run ($c + ' gibt es schon; D8 legt die Konfiguration selbst an (neuen Pfad waehlen).') }
 }
+if (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $script:Cfg) 'policy.toml')) {
+    Stop-Run 'Neben -Config liegt schon eine policy.toml (Ordner einer anderen Konfiguration, vielleicht der Live-Konfiguration); bitte einen neuen, leeren Ordner fuer -Config nehmen.'
+}
 if ($Port -lt 1024 -or $Port -gt 65535 -or $Port -eq 8787) { Stop-Run '-Port muss zwischen 1024 und 65535 liegen und darf nicht 8787 sein (Standard eines laufenden Dienstes).' }
 if (-not (Test-Path -LiteralPath $script:ExeFull -PathType Leaf)) { Stop-Run ('Programm nicht gefunden: ' + $script:ExeFull) }
 if ($NodeName -and $NodeName -notmatch '^[A-Za-z0-9.-]+$') { Stop-Run '-NodeName: nur der Name, z. B. pc.<tailnet>.ts.net (ohne https:// und ohne Pfad).' }
 if ($Issuer -and $Issuer -notmatch '^https://[A-Za-z0-9.:-]+(/[A-Za-z0-9._/-]*)?$') { Stop-Run '-Issuer: https://<name>[:port][/pfad]' }
 if ($Issuer -and -not $NodeName) { Stop-Run 'Teil D (-Issuer) braucht -NodeName.' }
 
-$markerDirs = @($script:Data, $script:Work)
+$markerDirs = @($script:Data, $script:Work, (Split-Path -Parent $script:Cfg))
 foreach ($d in $markerDirs) {
-    $where = Test-Marker $d $markerPlaces
+    $where = Test-Marker $d $markerPlaces $markerShallow
     if ($where) { Stop-Run ('Eine Markerdatei aus ' + $d + ' ist in ' + $where + ' sichtbar (Junction, subst oder derselbe Ordner).') }
 }
 
@@ -709,7 +733,7 @@ Write-Log '===== Teil A: mcp --http lokal im Modus key (offline)'
 
 $det = 'SHA-256 postkauz.exe: ' + (Get-FileHash -LiteralPath $script:ExeFull -Algorithm SHA256).Hash
 $r = Invoke-Native $script:ExeFull @('version')
-Add-Check 'A0.1' ('version nennt ' + $ExpectVersion) ($r.Exit -eq 0 -and (Test-Has $r.Out ([regex]::Escape($ExpectVersion) + '(?![0-9.])'))) ($r.Out.Trim() + "`n" + $det)
+Add-Check 'A0.1' ('version nennt ' + $ExpectVersion) ($r.Exit -eq 0 -and (Test-Has $r.Out ([regex]::Escape($ExpectVersion) + '(?![0-9A-Za-z.])'))) ($r.Out.Trim() + "`n" + $det)
 
 [void] [System.IO.Directory]::CreateDirectory($script:Data)
 [void] [System.IO.Directory]::CreateDirectory((Split-Path -Parent $script:Cfg))

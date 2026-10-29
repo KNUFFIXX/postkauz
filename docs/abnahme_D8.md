@@ -1,6 +1,6 @@
 # Abnahme D8: HTTP-MCP mit Schlüssel und OAuth über das private Netz
 
-Stand: 29.10.2026 (A03 Teil T5 Phase 2, Build `0.3.0-alpha.8`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T5, Haltepunkt „Abnahme D8“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D8, **vorläufig mit einem PC des Betreibers als Knoten im privaten Netz**, bis über einen VPS entschieden ist. Skripte: [abnahme_D8.ps1](abnahme_D8.ps1) (Windows, Teile A, B, D), [abnahme_D8_cloud.sh](abnahme_D8_cloud.sh) (Cloud-Sitzung, Teil C), gemeinsame Probe [abnahme_D8_probe.py](abnahme_D8_probe.py) (nur Python-Standardbibliothek). Ausgeführt von der Prüfsitzung; der Betreiber übernimmt nur Tailnet, Auth-Key und die Anmeldung im Browser.
+Stand: 29.10.2026 (A03 Teil T5 Phase 2 mit Nachbesserung, Build `0.3.0-alpha.8b`). Gehört zu [auftraege/A03_teile.md](../auftraege/A03_teile.md), Teil T5, Haltepunkt „Abnahme D8“, und zu [auftraege/A03_s3.md](../auftraege/A03_s3.md), Teil D, Abschnitt D8, **vorläufig mit einem PC des Betreibers als Knoten im privaten Netz**, bis über einen VPS entschieden ist. Skripte: [abnahme_D8.ps1](abnahme_D8.ps1) (Windows, Teile A, B, D), [abnahme_D8_cloud.sh](abnahme_D8_cloud.sh) (Cloud-Sitzung, Teil C), gemeinsame Probe [abnahme_D8_probe.py](abnahme_D8_probe.py) (nur Python-Standardbibliothek). Ausgeführt von der Prüfsitzung; der Betreiber übernimmt nur Tailnet, Auth-Key und die Anmeldung im Browser.
 
 ## Zweck
 
@@ -13,7 +13,7 @@ D8 prüft beides: lokal ohne Netz (Teil A), über Tailscale vom PC aus (Teil B),
 
 ## Grundregeln
 
-- **Nie die Live-Datenbank** (Rahmen 5): `-DataDir` und `-Config` sind Pflicht; das Skript legt beide neu an und bricht ohne Änderung ab, wenn sie oder `-WorkDir` im Standard-Datenverzeichnis, im Standard-Konfigurationsordner oder in einem mit `-LivePath` genannten Pfad liegen (Markerdatei gegen Junction und `subst`). Kein Mailkonto, kein Passwort: `mcp --http` kennt keins.
+- **Nie die Live-Datenbank** (Rahmen 5): `-DataDir`, `-Config` und `-LivePath` sind Pflicht (wie bei D7); das Skript legt Datenverzeichnis und Konfiguration neu an und bricht ohne Änderung ab, wenn sie oder `-WorkDir` im Standard-Datenverzeichnis, im Standard-Konfigurationsordner oder in einem mit `-LivePath` genannten Pfad liegen (oder umgekehrt). Ein Datei-Eintrag in `-LivePath` (etwa `C:\PostKauz\config.toml`) sperrt auch seinen Ordner. Dazu eine Markerdatei gegen Junction und `subst` (für `-DataDir`, `-WorkDir` und den Ordner von `-Config`) und ein Abbruch, wenn neben `-Config` schon eine `policy.toml` liegt. Kein Mailkonto, kein Passwort: `mcp --http` kennt keins.
 - **Port:** `-Port` (Standard 18787) auf `127.0.0.1`, nie der Standardport 8787 (ein laufender Dienst bleibt ungestört).
 - **Geheimnisse:** Schlüssel liegen nur während des Laufs in `<WorkDir>\lauf-…\keys\` und werden danach gelöscht und widerrufen. Der Auth-Key von Tailscale und der Schlüssel für Teil C kommen als **Geheimnis der Cloud-Sitzung**, nie ins Repository, nie in ein Protokoll.
 - **Protokolle** `D8_windows.txt` (Windows) und `D8_cloud.txt` (Cloud-Sitzung): exklusiv neu angelegt; Schlüssel (`pk_key_********`), Token (`<token>`), Auth-Keys (`tskey-********`), Pfade (`<DataDir>` …), der Knotenname (`<knoten>`), der Aussteller (`<issuer>`, sein Host `<issuer-host>`), jeder andere Name unter `ts.net` (`<name>.ts.net`) und Tailnet-Adressen (`<tailnet-ip>` für 100.64.0.0/10, `<tailnet-ip6>` für `fd7a:115c:a1e0:…`) sind maskiert. Knotenname und Aussteller maskiert das Windows-Skript wörtlich (nicht als Pfad), auch in `resource`, `authorization_servers` und `aud`. Jede Zeile `OK`, `FAIL` oder `SKIP` mit Nummer; letzte Zeile `D8: …` bzw. `D8 Teil C: …`. Exit 0 nur ohne `FAIL`, Exit 2 bei Abbruch vor dem ersten Schritt.
@@ -40,7 +40,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PK\d8\abnahme_D8.ps1 
 
 | Nr | Schritt | Erwartet |
 |---|---|---|
-| A0.1 | `version` | `0.3.0-alpha.8` |
+| A0.1 | `version` | `0.3.0-alpha.8b` (`-ExpectVersion`) |
 | A1.1 | `doctor --json` | `http.listen` `127.0.0.1:<Port>`, `auth` `key`, `listen_allowed` true |
 | A1.2 | `key create --name cloud-reader --role reader --expires 1d` | Schlüssel in einer Datei im Laufordner |
 | A1.3 | `mcp --http --listen 0.0.0.0:<Port>` | Exit 2, Meldung nennt `allow_non_loopback`, kein Server |
