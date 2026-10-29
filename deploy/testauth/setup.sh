@@ -25,9 +25,10 @@ cd "$WORK"
 rnd() { openssl rand -hex 32; }
 
 # Test-CA und Zertifikat für $HOST (nur dieser Test).
-openssl req -x509 -newkey rsa:2048 -nodes -keyout tls/ca.key -out tls/ca.crt -days 2 -subj '/CN=postkauz testauth CA' 2>/dev/null
+openssl req -x509 -newkey rsa:2048 -nodes -keyout tls/ca.key -out tls/ca.crt -days 2 -subj '/CN=postkauz testauth CA' \
+  -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' 2>/dev/null
 openssl req -newkey rsa:2048 -nodes -keyout tls/auth.key -out tls/auth.csr -subj "/CN=$HOST" 2>/dev/null
-printf 'subjectAltName=DNS:%s\n' "$HOST" > tls/auth.ext
+printf 'subjectAltName=DNS:%s\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$HOST" > tls/auth.ext
 openssl x509 -req -in tls/auth.csr -CA tls/ca.crt -CAkey tls/ca.key -CAcreateserial -out tls/auth.crt -days 2 -extfile tls/auth.ext 2>/dev/null
 openssl genrsa -out jwks.pem 2048 2>/dev/null
 chmod 644 tls/auth.key jwks.pem
