@@ -48,8 +48,10 @@
 
     Jede Pruefung ist eine Zeile "OK <Nr> <Beschreibung>",
     "FAIL <Nr> <Beschreibung>" oder "SKIP <Nr> <Grund>", darunter
-    eingerueckt die Ist-Ausgabe (gekuerzt; Schluessel, Token, Pfade und
-    -NodeName maskiert). Letzte Zeile: "D8: <n> OK, <m> FAIL, <k> SKIP".
+    eingerueckt die Ist-Ausgabe (gekuerzt; Schluessel, Token, Pfade,
+    -NodeName (<knoten>), -Issuer (<issuer>, <issuer-host>), jeder Name
+    unter ts.net (<name>.ts.net) und Tailnet-Adressen (<tailnet-ip>,
+    <tailnet-ip6>) maskiert). Letzte Zeile: "D8: <n> OK, <m> FAIL, <k> SKIP".
     Exit 0 nur ohne FAIL.
 
 .PARAMETER ExePath
@@ -157,6 +159,27 @@ function Add-PathMask {
     foreach ($x in $sorted) { $script:PathMask.Add($x) }
 }
 
+# Platzhalter fuer Hostnamen und URLs (-NodeName, -Issuer): woertlich, ohne
+# GetFullPath (das machte aus pc.<tailnet>.ts.net einen Pfad unter dem
+# aktuellen Ordner, und der blanke Name blieb stehen). Bei einer URL auch
+# der Host mit und ohne Port. Laengste zuerst.
+$script:HostMask = New-Object System.Collections.Generic.List[object]
+function Add-HostMask {
+    param([string] $Text, [string] $Name, [string] $HostName = '')
+    if (-not $Text) { return }
+    if (-not $HostName) { $HostName = $Name }
+    $script:HostMask.Add((New-Object PSObject -Property @{ Text = $Text.TrimEnd('/'); Name = $Name }))
+    $u = $null
+    if ([System.Uri]::TryCreate($Text, [System.UriKind]::Absolute, [ref] $u) -and $u.Host) {
+        foreach ($v in @($u.Authority, $u.Host)) {
+            if ($v) { $script:HostMask.Add((New-Object PSObject -Property @{ Text = $v; Name = $HostName })) }
+        }
+    }
+    $sorted = @($script:HostMask | Sort-Object -Property @{ Expression = { $_.Text.Length }; Descending = $true })
+    $script:HostMask = New-Object System.Collections.Generic.List[object]
+    foreach ($x in $sorted) { $script:HostMask.Add($x) }
+}
+
 # Schluessel, Mailadressen, Pfade, Label und Kontoname nie ins Protokoll.
 # Vergleichsschluessel einer eigenen Adresse wie im Programm
 # (internal/mailaddr, Nachbesserung T3 Punkt 15): klein; bei gmail.com und
@@ -171,9 +194,17 @@ function Hide-Private {
     $t = [regex]::Replace($t, 'tskey-[A-Za-z0-9_-]+', 'tskey-********')
     $t = [regex]::Replace($t, 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '<token>')
     $t = [regex]::Replace($t, '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', '<adresse>')
+    foreach ($m in $script:HostMask) {
+        $t = [regex]::Replace($t, [regex]::Escape($m.Text), $m.Name, 'IgnoreCase')
+    }
     foreach ($m in $script:PathMask) {
         $t = [regex]::Replace($t, [regex]::Escape($m.Text), $m.Name, 'IgnoreCase')
     }
+    # Allgemeine Muster wie in abnahme_D8_cloud.sh: jeder MagicDNS-Name
+    # (*.ts.net), Tailnet-Adressen IPv6 (fd7a:115c:a1e0::/48) und IPv4
+    # (100.64.0.0/10).
+    $t = [regex]::Replace($t, '(?i)\b[a-z0-9-]+(\.[a-z0-9-]+)*\.ts\.net\b', '<name>.ts.net')
+    $t = [regex]::Replace($t, '(?i)\bfd7a:115c:a1e0:[0-9a-f:]*', '<tailnet-ip6>')
     $t = [regex]::Replace($t, '\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.\d{1,3}\.\d{1,3}\b', '<tailnet-ip>')
     return $t
 }
@@ -649,6 +680,10 @@ $i = 0
 foreach ($l in $livePaths) { $i++; Add-PathMask $l ('<Live' + $i + '>') }
 Add-PathMask (Split-Path -Parent $script:ExeFull) '<ExeDir>'
 Add-PathMask $env:USERPROFILE '<USERPROFILE>'
+# Knotenname und Aussteller von Anfang an maskieren (auch im Kopf des
+# Protokolls und in resource, authorization_servers, aud).
+Add-HostMask $NodeName '<knoten>'
+Add-HostMask $Issuer '<issuer>' '<issuer-host>'
 
 $script:Py = ''
 if ($Python) { $script:Py = Get-FullPath $Python } else { $script:Py = Find-Python }
@@ -754,7 +789,6 @@ Add-Check 'A5.4' 'audit verify -> status ok' ($r.Exit -eq 0 -and $null -ne $j -a
 if ($NodeName) {
     Write-Log ''
     Write-Log '===== Teil B: dieser PC als Knoten im Tailnet (Modus key)'
-    Add-PathMask $NodeName '<knoten>'
     $res = 'https://' + $NodeName + '/mcp'
     $cfgB = $script:Cfg + '.tailnet.toml'
     New-ExclusiveFile $cfgB ("# Abnahme D8, Teil B`r`n[http]`r`nlisten = '127.0.0.1:" + $Port + "'`r`nauth = 'key'`r`nresource = '" + $res + "'`r`n")
@@ -799,7 +833,6 @@ if ($NodeName) {
 if ($Issuer) {
     Write-Log ''
     Write-Log '===== Teil D: Modus oauth mit dem Autorisierungsserver'
-    Add-PathMask $Issuer '<issuer>'
     $res = 'https://' + $NodeName + '/mcp'
     $cfgD = $script:Cfg + '.oauth.toml'
     $sub = $Subject
