@@ -42,11 +42,27 @@ Jeder Wegwerf-Test aus `auftraege/A03_T3nb3_tests/` ist als `t3n3_<thema>_test.g
 
 ## 3. Prüfläufe
 
-PRUEFLAEUFE
+- **Während der Arbeit:** Zwei Subagenten und die Hauptsitzung teilten sich 4 Kerne. Die Zwischen-Commits sind mit gofmt, `go vet ./...` (für die berührten Pakete der Subagenten auch mit `GOOS=windows` und `darwin/arm64`), den Tests der berührten Pakete (ganze Pakete; `internal/ops` 220–275 s, `internal/cli` 147–187 s), Guard und PII-Gate geprüft; der volle Lauf folgte am zusammengeführten Stand. Gegenproben am Ausgangsstand in Kopien von `6874b94` (`git archive`).
+- **`make check`** am Codestand `195fbb8` (danach nur Doku): **grün** in 5:35 min (gofmt, vet, `go test ./...` ohne `-short`, Guard, PII-Gate).
+- **`make race`** (allein, Grenze 45 min) an `9534cfe`: **alle Pakete grün** in 22:52 min; längste Pakete `internal/cli` 1307 s, `internal/importer` 818 s, `internal/mailsync` 711 s, `internal/ops` 650 s (zweite Nachbesserung: 31:36 min, `internal/cli` 1793 s, damals mit `make vuln` und einer Gegenprobe nebenher).
+- **`make integration`** gegen **Dovecot 2.4.5, Stalwart 0.11.8 und GreenMail 2.1.14** (Images über `mirror.gcr.io`, auf die Namen aus `docker-compose.yml` umbenannt; `dockerd` von Hand gestartet; `make testmail-up testmail-setup integration` an `9534cfe`): **41 PASS, 0 SKIP, 0 FAIL** in 3:39 min, frische Container.
+- **`make cross`:** grün (linux/amd64 29,7 MB, windows/amd64 29,5 MB, darwin/arm64 27,9 MB, ohne `-s -w`).
+- **`make vuln`:** in dieser Cloud-Umgebung gesperrt (`vuln.go.dev` → 403 vom Proxy). `go.mod`/`go.sum` sind seit `6874b94` unverändert; die Prüfsitzung meldete an `5aa88f3` keinen Fund. Nachholen in der Prüfsitzung bzw. im CI-Job.
+- **Migration 0022 (Punkte 3 und 9c), gemessen** an der synthetischen Datenbank (50.000 Nachrichten, 80.000 Ordnerkopien, 50.000 Threads, 10.000 Anhänge, 1.000 Aktionen mit 20.000 Zielen, 500 Entwürfe, 40.000 Audit-Zeilen, davon 20.000 mit `thread:`/`attachment:`-Zielen): `POSTKAUZ_MEASURE_MIGRATION=1 go test ./internal/store/ -run TestMeasureMigration0022 -v`, mit Snapshot: **0,48 s** (zweite Nachbesserung 0,48–0,50 s). Eine erste Fassung von Abschnitt 4 (Endungsliste als `EXISTS` mit `LIKE` je Endung) brauchte 1,89 s; die übernommene ermittelt die Endung einmal je Zeile und vergleicht per `IN`. Startwerte unverändert: Threads 59.995, Anhänge 12.000 (die Messdaten haben nur Ziele mit `result = 'ok'`).
+- **PowerShell (Punkt 9e, `-ExpectVersion`):** nur Lesetest (kein PowerShell im Container). `[System.IO.Path]::GetExtension($lp) -ieq '.db'` gilt für `C:\PostKauz\data\postkauz.db`; dessen Ordner kommt in `$livePaths` (D7: rekursive Markersuche statt flacher) bzw. in `$forbidden` (D7a: Pfadvergleich und rekursive Markersuche über `$markerPlaces`). Zeilenenden CRLF und BOM unverändert (`file`).
 
 ## 4. Release `0.3.0-alpha.7c`
 
-RELEASE
+Gebaut nach `docs/betrieb.md` Abschnitt 7 an **`9534cfe`** (Zweigspitze mit dem ganzen Code und der Doku dieser Nachbesserung; danach kamen nur dieser Nachtrag und das Löschen von `auftraege/A03_T3nb3_tests/`, beides ohne Programmänderung): zwei frische Klone ohne Tags (`git clone --no-tags`, je `git tag` leer, `git status --short` leer), je `make release VERSION=0.3.0-alpha.7c` mit go1.27.3, `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`.
+
+- **Nachbau bytegleich:** `dist/SHA256SUMS` beider Klone gleich bis auf die Zeile `VERSION` (Bauzeit). `go version -m` beider Windows-Programme gleich bis auf den Dateipfad in der ersten Zeile: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261029090036-9534cfe169e8`, `vcs.revision=9534cfe169e8ad0520f98e5902ab8784428bfc5f`, `vcs.modified=false`, `CGO_ENABLED=0`.
+- `postkauz-linux-amd64 version` → `postkauz 0.3.0-alpha.7c (go1.27.3 linux/amd64)`.
+- SHA-256:
+  - `postkauz-windows-amd64.exe` `2a41bafb4b060023c28b70bcf646f12c0b5457e5b26a744487bef501cfd57b3c` (21.671.936 Bytes)
+  - `postkauz-linux-amd64` `918ab1d344e7e570edf39a04c3b2782ace18dcf04307a8dc55b35edeece7bbaa` (21.692.576 Bytes)
+  - `postkauz-darwin-arm64` `b203eb1be4e859fd41e57acef2417b0d6f2311592b82cf26a31f2872a13584bf` (20.228.450 Bytes)
+  - Skripte unverändert gegenüber `0.3.0-alpha.7b`: `Register-AuditExport.ps1` `26043f60…`, `Register-SyncWatch.ps1` `8a50ee74…`, `Run-SyncWatch.ps1` `6973c847…`, `check-example.ps1` `9d40eb8a…`, `check-example.sh` `4bf639c3…`
+- Kein Tag, kein GitHub-Release (Auftrag). Abnahme D7 und D7a mit `-ExpectVersion 0.3.0-alpha.7c` (Standard in beiden Skripten).
 
 ## 5. Offen und Restfenster
 
