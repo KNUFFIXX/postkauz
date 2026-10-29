@@ -70,7 +70,7 @@ func (c DraftConfig) maxBytes() int64 {
 // BlobStore liest und schreibt Blobs (Anhänge von Entwürfen, E10).
 type BlobStore interface {
 	BlobReader
-	Put(r io.Reader) (blob.Info, error)
+	PutContext(ctx context.Context, r io.Reader) (blob.Info, error)
 }
 
 // DraftChecker ist der Prüf-Hook vor der Vorlage (A02 E4). Die Umsetzung
@@ -694,9 +694,9 @@ func (o *draftOps) storedAttachments(atts []store.DraftAttachment, budget *attac
 // inzwischen entfernten neu an. Sonst könnten purge (Quelle weg) und
 // blob gc zwischen Einlesen und Speichern den Blob löschen, und der
 // Entwurf verwiese ins Leere (zweite Nachbesserung T3, Punkt 5).
-func (o *draftOps) putFiles(atts []loadedAttachment) error {
+func (o *draftOps) putFiles(ctx context.Context, atts []loadedAttachment) error {
 	for _, a := range atts {
-		if _, err := o.blobs.Put(bytes.NewReader(a.att.Data)); err != nil {
+		if _, err := o.blobs.PutContext(ctx, bytes.NewReader(a.att.Data)); err != nil {
 			return fmt.Errorf("store attachment: %w", err)
 		}
 	}
@@ -993,13 +993,13 @@ func DraftsCreate(d Deps) Operation {
 				notes = addNote(notes, composeNotes[n])
 			}
 			if !call.DryRun {
-				if err := o.putFiles(atts); err != nil {
+				if err := o.putFiles(ctx, atts); err != nil {
 					return nil, err
 				}
 				// Ebenso die übernommenen Anhänge einer Weiterleitung.
 				if orig != nil {
 					for _, a := range orig.Attachments {
-						if _, err := o.blobs.Put(bytes.NewReader(a.Data)); err != nil {
+						if _, err := o.blobs.PutContext(ctx, bytes.NewReader(a.Data)); err != nil {
 							return nil, fmt.Errorf("store attachment: %w", err)
 						}
 					}
@@ -1181,7 +1181,7 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 		}
 	}
 	if !call.DryRun {
-		if err := o.putFiles(atts); err != nil {
+		if err := o.putFiles(ctx, atts); err != nil {
 			return nil, err
 		}
 	}

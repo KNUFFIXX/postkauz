@@ -10,6 +10,9 @@ package mailsync
 // wird gespiegelt, auch bei Import und Neuaufbereitung.
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -67,4 +70,35 @@ func TestT3N3PermanentAttachmentErrorEveryRun(t *testing.T) {
 		t.Fatalf("reprocessOne = %+v, want the new body", r)
 	}
 	notStored(t, "reprocessOne", r.Body.Attachments)
+}
+
+// Nachbesserung 3, Punkt 8 im Zusammenspiel mit Punkt 4: Ein dauerhafter
+// Fehler beim Öffnen von gc.lock (hier ein Ordner an ihrem Platz) ist kein
+// blob.ErrBusy mehr und kommt sofort. Ein Anhang bleibt dann "not stored"
+// (ohne die Frist abzuwarten); die Rohmail scheitert wie bisher als Fehler
+// der Nachricht, ebenfalls ohne zu warten.
+func TestT3N3PermanentLockOpenErrorNotStored(t *testing.T) {
+	root := t.TempDir()
+	bs, err := blob.Open(root, blob.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, blob.LockName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Blobs: bs}
+	start := time.Now()
+	_, atts, err := e.analyze(strings.NewReader(t3n2Raw), time.Now())
+	if err != nil {
+		t.Fatalf("analyze with a permanent lock open error = %v, want the attachment not stored", err)
+	}
+	notStored(t, "analyze", atts)
+	_, _, err = e.mirrorRaw(strings.NewReader(t3n2Raw), provider.Header{UID: 7, Size: int64(len(t3n2Raw))})
+	var se *attachmentStoreError
+	if err == nil || errors.Is(err, blob.ErrBusy) || errors.As(err, &se) {
+		t.Fatalf("mirrorRaw with a permanent lock open error = %v, want the raw message's open error", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("analyze and mirrorRaw took %v; a permanent lock error must not wait for the deadline", d)
+	}
 }
