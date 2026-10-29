@@ -45,6 +45,11 @@ const (
 // dessen Tage nicht neu schreiben.
 var ErrAuditArchive = errors.New("audit archive is missing or changed")
 
+// ErrAuditRotateRunning: Eine andere Rotation dieses Datenverzeichnisses
+// läuft oder hat seit der Planung ein Archiv eingetragen (Nachbesserung
+// T3, Punkt 3a).
+var ErrAuditRotateRunning = errors.New("another audit rotate of this data directory is running")
+
 // auditArchiveState ist ein Archiv mit dem Ergebnis seiner Prüfung.
 type auditArchiveState struct {
 	store.AuditArchive
@@ -307,6 +312,25 @@ func AuditRotate(repo AuditRepo, retain time.Duration) Operation {
 			out.Archive, out.ChainHead = ar.AuditArchivePath(arc.File), arc.ChainHead
 			if call.DryRun {
 				return out, nil
+			}
+			// Nur eine Rotation je Datenverzeichnis zugleich (Punkt 3a).
+			unlock, err := lockBesideDB(repo, "audit-rotate.lock", ErrAuditRotateRunning)
+			if err != nil {
+				return nil, err
+			}
+			defer unlock()
+			// Hat seit der Planung ein anderer Lauf ein Archiv eingetragen
+			// (etwa ohne Sperre, ältere Programmversion), ist der Plan
+			// überholt; eine Datei mit eingetragenem Namen ist dessen
+			// Archiv und wird nie gelöscht.
+			recorded, err := ar.AuditArchives(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range recorded {
+				if a.File == arc.File || !slices.ContainsFunc(src.archives, func(s *auditArchiveState) bool { return s.File == a.File }) {
+					return nil, fmt.Errorf("%w: archive %s was recorded in the meantime; run audit verify, then audit rotate again", ErrAuditRotateRunning, a.File)
+				}
 			}
 			// Eine Datei dieses Namens ohne Eintrag stammt von einem
 			// abgebrochenen Lauf (vor der Transaktion): Ihre Zeilen stehen

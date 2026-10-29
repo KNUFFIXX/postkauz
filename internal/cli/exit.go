@@ -99,6 +99,9 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, ops.ErrAuditExportRunning):
 		return ExitError, ErrorInfo{Code: "audit_export_running", Message: err.Error(),
 			Hint: "wait until the other audit export (e.g. the daily task) has finished, then run the command again"}
+	case errors.Is(err, ops.ErrAuditRotateRunning):
+		return ExitError, ErrorInfo{Code: "audit_rotate_running", Message: err.Error(),
+			Hint: "nothing was moved; wait until the other audit rotate has finished, run audit verify, then try again"}
 	case errors.Is(err, ops.ErrAuditExportOtherInstance):
 		return ExitError, ErrorInfo{Code: "audit_export_other_instance", Message: err.Error(),
 			Hint: "nothing was written; a restored copy needs an export directory of its own (audit export --to <dir>, see docs/betrieb.md, backup and restore)"}

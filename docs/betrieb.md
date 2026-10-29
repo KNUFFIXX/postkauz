@@ -490,7 +490,7 @@ Das Audit wächst mit jedem Aufruf. `audit rotate` verschiebt Tage, die älter a
 
 4. Danach `audit verify`: wieder `ok: …`. Die Archivdatei gehört zum Datenverzeichnis; sichere sie mit (das Backup tut das). **Lösche sie nie:** Ohne sie meldet `audit verify` `archive is missing`.
 
-Meldungen: `denied (not_exported)` heißt, ein alter Tag ist noch nicht (fertig) exportiert: `audit export`, dann `audit verify`, dann noch einmal. `denied (not_verified)` heißt, `audit verify` findet eine Abweichung; erst klären (Abschnitt 1.8), dann noch einmal.
+Meldungen: `error: another audit rotate of this data directory is running` heißt, eine zweite Rotation läuft oder hat gerade ein Archiv angelegt; nichts wurde verschoben: `audit verify`, dann noch einmal. `denied (not_exported)` heißt, ein alter Tag ist noch nicht (fertig) exportiert: `audit export`, dann `audit verify`, dann noch einmal. `denied (not_verified)` heißt, `audit verify` findet eine Abweichung; erst klären (Abschnitt 1.8), dann noch einmal.
 
 ## 6. Export
 
