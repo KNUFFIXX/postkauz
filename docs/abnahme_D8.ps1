@@ -398,8 +398,12 @@ function Confirm-Step {
 # Eine HTTP-Anfrage ohne Proxy-Raten: HttpWebRequest (Windows PowerShell 5.1
 # kann den Host-Kopf mit Invoke-WebRequest nicht setzen). Liefert Status
 # (0 = keine Verbindung), Kopfzeilen und Text.
+# $Body bleibt absichtlich ohne Typ: [string] macht aus $null einen leeren
+# Text, und dann schickte jede GET-Anfrage einen Inhalt
+# (ProtocolViolationException). Ein Inhalt geht nur mit, wenn die Methode
+# nicht GET oder HEAD ist und $Body bzw. $Bytes etwas enthaelt.
 function Invoke-Http {
-    param([string] $Method, [string] $Url, [hashtable] $Headers = @{}, [string] $Body = $null, [string] $HostName = '', [byte[]] $Bytes = $null)
+    param([string] $Method, [string] $Url, [hashtable] $Headers = @{}, $Body = $null, [string] $HostName = '', [byte[]] $Bytes = $null)
     $req = [System.Net.HttpWebRequest]::Create($Url)
     $req.Method = $Method
     $req.Timeout = 30000
@@ -413,12 +417,14 @@ function Invoke-Http {
             default { $req.Headers[$k] = [string] $Headers[$k] }
         }
     }
-    if ($null -ne $Body -and $null -eq $Bytes) { $Bytes = $script:Utf8.GetBytes($Body) }
+    $withBody = ($Method -ne 'GET' -and $Method -ne 'HEAD')
+    if ($withBody -and $null -eq $Bytes -and $null -ne $Body -and ([string] $Body) -ne '') { $Bytes = $script:Utf8.GetBytes([string] $Body) }
+    if ($null -ne $Bytes -and $Bytes.Length -eq 0) { $Bytes = $null }
     $status = 0
     $hdr = ''
     $text = ''
     try {
-        if ($null -ne $Bytes) {
+        if ($withBody -and $null -ne $Bytes) {
             $req.ContentLength = $Bytes.Length
             $s = $req.GetRequestStream()
             $s.Write($Bytes, 0, $Bytes.Length)
