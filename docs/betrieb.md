@@ -485,7 +485,7 @@ Was ein Agent darf, bestimmt in beiden Fällen nur der PostKauz-Schlüssel (Roll
    Remove-Item -Recurse C:\PK\http-test
    ```
 
-Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt (100.64.0.0/10 und `fd7a:115c:a1e0::/48`). Achtung: 100.64.0.0/10 ist der allgemeine Bereich für Carrier-Grade-NAT, nicht nur Tailscale; auch dein Internetanbieter kann dir eine solche Adresse geben. Trage deshalb in `[http] listen` (oder `--listen`) nur die **eigene Tailscale-Adresse** dieses Rechners ein (`tailscale ip -4`), keine andere Adresse aus diesem Bereich. `doctor` zeigt die Einstellungen in der Zeile `http:`.
+Hinweise: `--listen 127.0.0.1:9000` wählt einen anderen Port. Eine andere Adresse als Loopback verweigert PostKauz ohne `[http] allow_non_loopback = true`; im Modus `key` sind dann nur Tailnet-Adressen erlaubt (100.64.0.0/10 und `fd7a:115c:a1e0::/48`). Achtung: 100.64.0.0/10 ist der allgemeine Bereich für Carrier-Grade-NAT, nicht nur Tailscale; auch dein Internetanbieter kann dir eine solche Adresse geben. Trage deshalb in `[http] listen` (oder `--listen`) nur die **eigene Tailscale-Adresse** dieses Rechners ein (`tailscale ip -4`), keine andere Adresse aus diesem Bereich. `doctor` zeigt die Einstellungen in der Zeile `http:`. Ein Fehler im Abschnitt `[http]` (etwa ein Tippfehler) hält nur `mcp --http` an; alle anderen Kommandos, auch der Dauerbetrieb `sync --watch`, laufen weiter. `doctor` zeigt den Fehler dann als Zeile `INVALID`.
 
 ### 4.3 VPS einrichten (Linux, einmalig)
 
