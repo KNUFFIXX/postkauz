@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/net/idna"
 
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 )
 
@@ -160,19 +161,16 @@ func normAddr(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 // ursprüngliche (eigene) Adresse: Eine Mail an sich selbst wird an sich
 // selbst beantwortet, nie mit leeren Empfängern (Gegenprüfung S2.9, B1).
 func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
-	ownSet := map[string]bool{}
-	for _, a := range own {
-		if n := normAddr(a); n != "" {
-			ownSet[n] = true
-		}
-	}
+	// Eigene Adressen nach mailaddr.Key (Gmail: Punkte, „+“, googlemail.com;
+	// Nachbesserung T3, Punkt 15), Dubletten weiter nach normAddr.
+	ownSet := mailaddr.NewSet(own...)
 	sender := o.ReplyTo
 	if len(sender) == 0 {
 		sender = o.From
 	}
 	allOwn := len(sender) > 0
 	for _, a := range sender {
-		if !ownSet[normAddr(a.Address)] {
+		if !ownSet.Has(a.Address) {
 			allOwn = false
 		}
 	}
@@ -181,7 +179,7 @@ func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
 		var out []Address
 		for _, a := range list {
 			n := normAddr(a.Address)
-			if n == "" || (dropOwn && ownSet[n]) || seen[n] {
+			if n == "" || (dropOwn && ownSet.Has(n)) || seen[n] {
 				continue
 			}
 			seen[n] = true

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -397,7 +398,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 		e.fd, e.fp = &fd, Fingerprint(d)
 		return nil
 	}
-	var own map[string]bool
+	var own mailaddr.Set
 	type pair struct {
 		e     *entry
 		c     int
@@ -421,12 +422,10 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 				if err != nil {
 					return err
 				}
-				own = map[string]bool{}
-				for _, a := range addrs {
-					own[normAddr(a)] = true
-				}
+				// Gmail: Punkte, „+“, googlemail.com (Punkt 15).
+				own = mailaddr.NewSet(addrs...)
 			}
-			if !own[fromAddress(c.From)] {
+			if !own.Has(fromAddress(c.From)) {
 				continue
 			}
 		}

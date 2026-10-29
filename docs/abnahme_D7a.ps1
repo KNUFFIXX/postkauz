@@ -150,6 +150,25 @@ function Add-PathMask {
 }
 
 # Schluessel, Mailadressen, Pfade, Label und Kontoname nie ins Protokoll.
+# Vergleichsschluessel einer eigenen Adresse wie im Programm
+# (internal/mailaddr, Nachbesserung T3 Punkt 15): klein; bei gmail.com und
+# googlemail.com ohne Punkte im lokalen Teil, ohne Zusatz ab '+', Domain
+# gmail.com. Andere Anbieter nur klein.
+function Get-OwnKey {
+    param([string] $Addr)
+    $s = ([string] $Addr).Trim().ToLowerInvariant()
+    $i = $s.LastIndexOf('@')
+    if ($i -le 0) { return $s }
+    $local = $s.Substring(0, $i)
+    $domain = $s.Substring($i + 1)
+    if ($domain -ne 'gmail.com' -and $domain -ne 'googlemail.com') { return $s }
+    $j = $local.IndexOf('+')
+    if ($j -ge 0) { $local = $local.Substring(0, $j) }
+    $local = $local.Replace('.', '')
+    if (-not $local) { return $s }
+    return $local + '@gmail.com'
+}
+
 function Hide-Private {
     param([string] $Text)
     if ($null -eq $Text) { return '' }
@@ -745,7 +764,7 @@ if (-not $script:PartB) {
     $accFound = $false
     if ($null -ne $aj) {
         foreach ($x in @($aj.accounts)) {
-            if ([string] $x.name -eq $acc) { $accFound = $true; $own += ([string] $x.email).ToLowerInvariant(); foreach ($al in @($x.aliases)) { if ($al) { $own += ([string] $al).ToLowerInvariant() } } }
+            if ([string] $x.name -eq $acc) { $accFound = $true; $own += (Get-OwnKey ([string] $x.email)); foreach ($al in @($x.aliases)) { if ($al) { $own += (Get-OwnKey ([string] $al)) } } }
         }
     }
     Add-Check 'B0.1' 'Konto in -AccountDataDir vorhanden (accounts list); Datenbank laeuft mit dem neuen Programm (Migration nur an dieser Kopie)' ($r.Exit -eq 0 -and $accFound -and $own.Count -gt 0) ('Exit ' + $r.Exit + ', Konto gefunden: ' + $accFound + ', eigene Adressen: ' + $own.Count + "`n" + $r.Err)
@@ -904,7 +923,9 @@ if (-not $script:PartB) {
                 Write-Host ('      Ordner:  ' + ($st.Boxes -join ', '))
                 Write-Host ''
             } catch { }
-            $selfSent = ($st.Account -eq $acc) -and ($own -contains $st.From)
+            # Gmail im Browser setzt die Schreibweise mit Punkten (Befund D7a B1):
+            # Vergleich ueber Get-OwnKey wie im Programm.
+            $selfSent = ($st.Account -eq $acc) -and ($own -contains (Get-OwnKey $st.From))
             $inInbox = $st.Boxes -contains $inboxPath
             if (-not $selfSent) { Write-Log ('      ID ' + $in + ': Absender ist nicht die Adresse des Kontos (oder ein Alias) bzw. anderes Konto; bitte eine Mail an dich selbst waehlen.'); continue }
             if (-not $inInbox) { Write-Log ('      ID ' + $in + ': liegt nicht im Posteingang; bitte eine Mail aus dem Posteingang waehlen.'); continue }

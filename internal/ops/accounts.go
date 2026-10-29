@@ -10,12 +10,12 @@ import (
 	"net/mail"
 	"os"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
@@ -560,12 +560,12 @@ type AccountsSetOutput struct {
 // normalizeAliases prüft die Adressen (RFC 5322, nur die Adresse ohne
 // Namen), schreibt sie klein, entfernt Dubletten und die schon eigenen
 // Adressen des Kontos (Kontoadresse, Anmeldename; ohne Rücksicht auf
-// Groß- und Kleinschreibung). Die Grenze MaxAliases gilt danach.
+// Groß- und Kleinschreibung, bei Gmail auch auf Punkte, Zusatz ab „+“ und
+// googlemail.com, mailaddr.Key; Nachbesserung T3, Punkt 15). Die Grenze
+// MaxAliases gilt danach.
 func normalizeAliases(in []string, own ...string) ([]string, error) {
 	out := []string{}
-	for i := range own {
-		own[i] = strings.ToLower(strings.TrimSpace(own[i]))
-	}
+	seen := mailaddr.NewSet(own...)
 	for i, raw := range in {
 		s := strings.TrimSpace(raw)
 		addr, err := mail.ParseAddress(s)
@@ -574,9 +574,10 @@ func normalizeAliases(in []string, own ...string) ([]string, error) {
 			return nil, inputErr("invalid alias (aliases[%d]): give a plain e-mail address such as alias@example.org", i)
 		}
 		a := strings.ToLower(addr.Address)
-		if slices.Contains(own, a) || slices.Contains(out, a) {
+		if seen.Has(a) {
 			continue
 		}
+		seen[mailaddr.Key(a)] = true
 		out = append(out, a)
 	}
 	if len(out) > MaxAliases {

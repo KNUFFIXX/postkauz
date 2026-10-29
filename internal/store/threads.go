@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/thread"
 )
 
@@ -132,7 +133,7 @@ func (x *txIndex) Participants(id int64) ([]string, error) {
 func participants(from string, to, cc json.RawMessage, self []string) []string {
 	var out []string
 	add := func(s string) {
-		if a := thread.NormalizeAddress(s); a != "" && !slices.Contains(self, a) && !slices.Contains(out, a) {
+		if a := thread.NormalizeAddress(s); a != "" && !isSelf(self, a) && !slices.Contains(out, a) {
 			out = append(out, a)
 		}
 	}
@@ -147,6 +148,14 @@ func participants(from string, to, cc json.RawMessage, self []string) []string {
 		}
 	}
 	return out
+}
+
+// isSelf meldet, ob a eine der eigenen Adressen self ist, nach
+// mailaddr.Key (Gmail: Punkte im lokalen Teil, Zusatz ab „+“,
+// googlemail.com; Nachbesserung T3, Punkt 15).
+func isSelf(self []string, a string) bool {
+	k := mailaddr.Key(a)
+	return slices.ContainsFunc(self, func(s string) bool { return mailaddr.Key(s) == k })
 }
 
 // selfAddresses liefert die eigenen Adressen des Kontos: E-Mail,
@@ -273,7 +282,7 @@ func assignThread(ctx context.Context, q querier, account, mid int64, m thread.M
 	if err != nil {
 		return err
 	}
-	m.Participants = slices.DeleteFunc(slices.Clone(m.Participants), func(a string) bool { return slices.Contains(self, a) })
+	m.Participants = slices.DeleteFunc(slices.Clone(m.Participants), func(a string) bool { return isSelf(self, a) })
 	ix := &txIndex{ctx: ctx, q: q, account: account, msgID: mid, self: self}
 	_, err = thread.Assign(ix, m)
 	return err
