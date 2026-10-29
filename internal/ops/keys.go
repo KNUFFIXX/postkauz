@@ -129,8 +129,9 @@ const OpAuthenticate = "keys.authenticate"
 // Anmeldung an einem unbekannten, widerrufenen oder abgelaufenen Schlüssel,
 // steht ein Eintrag keys.authenticate mit Ergebnis denied und dem Grund
 // (key_invalid, key_revoked, key_expired) im Audit, Akteur agent, Schlüssel
-// key:<name>, wenn er bekannt ist; Parameter nur der Weg (transport, z. B.
-// stdio). Nie der Schlüssel selbst und kein Teil davon. Scheitert das
+// key:<name>, wenn er bekannt ist; Parameter nur der Weg als
+// {"via":{"transport":"stdio"}} (seit der Nachbesserung T5 wie bei OAuth
+// und im Executor). Ohne Writer (w == nil) kein Eintrag. Nie der Schlüssel selbst und kein Teil davon. Scheitert das
 // Schreiben, bleibt es bei der Ablehnung (die Anmeldung ist ohnehin
 // gescheitert); der Fehler der Anmeldung geht an den Aufrufer.
 func AuthenticateKeyAudited(ctx context.Context, repo KeyRepo, w audit.Writer, transport string, plain string, now time.Time) (policy.Key, error) {
@@ -146,7 +147,9 @@ func AuthenticateKeyAudited(ctx context.Context, repo KeyRepo, w audit.Writer, t
 	if name != "" {
 		id = "key:" + name
 	}
-	params, _ := json.Marshal(map[string]string{"transport": transport})
+	// Gleiche Form wie bei OAuth und im Executor (params.via, Festlegung 2
+	// der T5): Ein Filter auf params.via findet alle Wege.
+	params, _ := json.Marshal(map[string]Origin{"via": {Transport: transport}})
 	_ = w.Append(ctx, audit.Event{TS: now.UTC(), ActorType: audit.ActorAgent, KeyID: id, Operation: OpAuthenticate,
 		ParamsRedacted: params, Result: audit.ResultDenied, Reason: reason})
 	return k, err
