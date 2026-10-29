@@ -1,15 +1,19 @@
 package mailsync
 
-// Nachbesserung 2, Punkt 8: Scheitert das Ablegen eines Anhangs am
-// Blob-Store selbst (Sperre bis zur Frist belegt, Platte, Rechte), wird die
+// Nachbesserung 2, Punkt 8: Scheitert das Ablegen eines Anhangs nur
+// vorübergehend (Sperre bis zur Frist belegt, blob.ErrBusy), wird die
 // Nachricht nicht gespeichert (wie bei einem Fehler der Rohmail in
 // mirrorRaw; der nächste Lauf spiegelt sie erneut), statt den Anhang
-// dauerhaft als "not stored" zu führen. Ein Anhang über der Größengrenze
-// oder mit unlesbarem Inhalt bleibt wie bisher "not stored".
+// dauerhaft als "not stored" zu führen. Ein Anhang über der Größengrenze,
+// mit unlesbarem Inhalt oder mit einem dauerhaften Fehler des Stores
+// bleibt "not stored" (Nachbesserung 3, Punkt 4:
+// t3n3_attachment_error_test.go).
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,19 +25,23 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
-func TestT3N2AnalyzePersistentLockErrorFailsMessage(t *testing.T) {
+// Die Sperre bleibt bis zur Frist belegt (blobs.gc hält sie exklusiv):
+// ErrBusy verschiebt die Nachricht.
+func TestT3N2AnalyzeBusyLockFailsMessage(t *testing.T) {
 	root := t.TempDir()
 	bs, err := blob.Open(root, blob.Options{LockWait: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(root, blob.LockName), 0o700); err != nil {
+	lock, err := bs.LockForGC(context.Background(), time.Second)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer lock.Release()
 	e := &Engine{Blobs: bs}
 	_, atts, err := e.analyze(strings.NewReader(t3n2Raw), time.Now())
 	if !errors.Is(err, blob.ErrBusy) {
-		t.Fatalf("analyze with a persistent lock error = %v (attachments %+v), want ErrBusy", err, atts)
+		t.Fatalf("analyze with a busy lock = %v (attachments %+v), want ErrBusy", err, atts)
 	}
 	var se *attachmentStoreError
 	if !errors.As(err, &se) || se.PartID == "" {
@@ -43,7 +51,7 @@ func TestT3N2AnalyzePersistentLockErrorFailsMessage(t *testing.T) {
 	// Import (Prepare): derselbe Fehler, nichts gefüllt.
 	var nm store.NewMessage
 	if ok, err := Prepare(bs, &nm, strings.NewReader(t3n2Raw), time.Now()); ok || !errors.Is(err, blob.ErrBusy) {
-		t.Fatalf("Prepare with a persistent lock error = %v %v, want false and ErrBusy", ok, err)
+		t.Fatalf("Prepare with a busy lock = %v %v, want false and ErrBusy", ok, err)
 	}
 }
 
@@ -83,18 +91,29 @@ func blockAttachment(t *testing.T, root, raw string) {
 	}
 }
 
-func TestT3N2MirrorRawStoreErrorNotMirrored(t *testing.T) {
-	root := t.TempDir()
-	bs, err := blob.Open(root, blob.Options{})
+// busyAttachments lässt das Ablegen jedes Anhangs mit ErrBusy scheitern
+// (die Rohmail legt mirrorRaw unabhängig davon ab).
+func busyAttachments(t *testing.T) {
+	t.Helper()
+	orig := putAttachment
+	t.Cleanup(func() { putAttachment = orig })
+	putAttachment = func(_ *blob.Store, r io.Reader) (blob.Info, error) {
+		_, _ = io.Copy(io.Discard, r)
+		return blob.Info{}, fmt.Errorf("%w (test)", blob.ErrBusy)
+	}
+}
+
+func TestT3N2MirrorRawBusyAttachmentNotMirrored(t *testing.T) {
+	bs, err := blob.Open(t.TempDir(), blob.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	blockAttachment(t, root, t3n2Raw)
+	busyAttachments(t)
 	e := &Engine{Blobs: bs}
 	nm, variants, err := e.mirrorRaw(strings.NewReader(t3n2Raw), provider.Header{UID: 7, Size: int64(len(t3n2Raw))})
 	var se *attachmentStoreError
-	if !errors.As(err, &se) {
-		t.Fatalf("mirrorRaw with a failing attachment store = %v (message %+v), want an attachmentStoreError", err, nm)
+	if !errors.As(err, &se) || !errors.Is(err, blob.ErrBusy) {
+		t.Fatalf("mirrorRaw with a busy attachment store = %v (message %+v), want an attachmentStoreError with ErrBusy", err, nm)
 	}
 	if nm.BlobSHA256 != "" || variants != nil {
 		t.Fatalf("mirrorRaw returned a message to save: %+v %v", nm, variants)
@@ -144,18 +163,16 @@ func (s *reprocessStore) SaveReprocessed(_ context.Context, items []store.Reproc
 	return nil
 }
 
-// Neuaufbereitung: Die Nachricht mit dem gescheiterten Anhang bleibt auf
-// dem alten Stand (kein KeepBody, der sie als erledigt markierte), die
-// andere wird gespeichert, und die Runde endet ohne Fehler und ohne
-// Endlosschleife.
-func TestT3N2ReprocessDefersStoreError(t *testing.T) {
-	root := t.TempDir()
-	bs, err := blob.Open(root, blob.Options{})
+// Neuaufbereitung: Die Nachricht, deren Anhang an der belegten Sperre
+// scheitert, bleibt auf dem alten Stand (kein KeepBody, der sie als
+// erledigt markierte), die andere (ohne Anhang) wird gespeichert, und die
+// Runde endet ohne Fehler und ohne Endlosschleife.
+func TestT3N2ReprocessDefersBusyAttachment(t *testing.T) {
+	bs, err := blob.Open(t.TempDir(), blob.Options{LockWait: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := strings.Replace(t3n2Raw, "Subject: x", "Subject: other", 1)
-	other = strings.Replace(other, "%PDF-1.4 x", "%PDF-1.4 other", 1)
+	other := "From: a@example.org\r\nTo: b@example.org\r\nSubject: other\r\n\r\nHallo ohne Anhang\r\n"
 	var items []store.ReprocessItem
 	for i, raw := range []string{t3n2Raw, other} {
 		info, err := bs.Put(strings.NewReader(raw))
@@ -164,10 +181,11 @@ func TestT3N2ReprocessDefersStoreError(t *testing.T) {
 		}
 		items = append(items, store.ReprocessItem{ID: int64(i + 1), BlobSHA256: info.SHA256})
 	}
-	blockAttachment(t, root, t3n2Raw)
-	if attachmentSHA(t, other)[:2] == attachmentSHA(t, t3n2Raw)[:2] {
-		t.Skip("both attachments share the first directory level; change the test mail")
+	lock, err := bs.LockForGC(context.Background(), time.Second)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer lock.Release()
 	st := &reprocessStore{items: items}
 	e := &Engine{Blobs: bs, Store: st}
 	n, err := e.reprocess(context.Background())

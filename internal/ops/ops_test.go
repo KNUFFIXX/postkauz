@@ -382,6 +382,9 @@ func (c countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// PutContext ist Put (der Speicher wartet nie auf eine Sperre).
+func (b *memBlobs) PutContext(_ context.Context, r io.Reader) (blob.Info, error) { return b.Put(r) }
+
 func (b *memBlobs) Put(r io.Reader) (blob.Info, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {

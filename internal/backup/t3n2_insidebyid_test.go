@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -97,7 +98,7 @@ func TestT3N2BindMountSubfolderAsTarget(t *testing.T) {
 		}
 	}()
 	for _, to := range []string{j, filepath.Join(j, "backup")} {
-		if _, _, err := e.r.prepareFolder(to); !errors.Is(err, ErrTarget) {
+		if _, _, err := e.r.prepareFolder(context.Background(), to); !errors.Is(err, ErrTarget) {
 			t.Errorf("target %s (bind mount of %s) accepted: %v", to, sub, err)
 		}
 	}
@@ -114,7 +115,7 @@ func TestT3N2BindMountSubfolderAsTarget(t *testing.T) {
 		t.Fatalf("mount --bind: %v %s", err, out)
 	}
 	defer func() { _, _ = runCmd("umount", k) }()
-	if _, _, err := e.r.prepareFolder(filepath.Join(k, "backup")); err != nil {
+	if _, _, err := e.r.prepareFolder(context.Background(), filepath.Join(k, "backup")); err != nil {
 		t.Errorf("target in a bind mount of a foreign folder refused: %v", err)
 	}
 }

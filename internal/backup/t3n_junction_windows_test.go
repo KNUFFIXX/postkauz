@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"context"
 	"errors"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,7 @@ func TestT3NBackupTargetThroughJunctionIntoDataDir(t *testing.T) {
 		t.Skipf("mklink /J: %v %s", err, out)
 	}
 	for _, to := range []string{j, filepath.Join(j, "backup")} {
-		if _, _, err := e.r.prepareFolder(to); !errors.Is(err, ErrTarget) {
+		if _, _, err := e.r.prepareFolder(context.Background(), to); !errors.Is(err, ErrTarget) {
 			t.Errorf("target %s (junction into the data directory) accepted: %v", to, err)
 		}
 	}

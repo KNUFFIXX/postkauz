@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -88,8 +89,11 @@ func RecipientKey(lists ...[]store.Addr) string {
 	return strings.Join(out, "\n")
 }
 
+// normAddr schreibt nur ASCII klein (mailaddr.Lower, dritte Nachbesserung
+// T3, Punkt 9a): strings.ToLower machte aus dem Kelvin-Zeichen U+212A ein
+// „k“, und eine fremde Adresse galt als eigene.
 func normAddr(s string) string {
-	return strings.ToLower(strings.TrimSpace(sanitize.Text(s)))
+	return mailaddr.Lower(sanitize.Text(s))
 }
 
 // fromAddress liefert die Adresse aus messages.from_addr („Name <adresse>"

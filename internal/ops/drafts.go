@@ -70,7 +70,7 @@ func (c DraftConfig) maxBytes() int64 {
 // BlobStore liest und schreibt Blobs (Anhänge von Entwürfen, E10).
 type BlobStore interface {
 	BlobReader
-	Put(r io.Reader) (blob.Info, error)
+	PutContext(ctx context.Context, r io.Reader) (blob.Info, error)
 }
 
 // DraftChecker ist der Prüf-Hook vor der Vorlage (A02 E4). Die Umsetzung
@@ -694,9 +694,9 @@ func (o *draftOps) storedAttachments(atts []store.DraftAttachment, budget *attac
 // inzwischen entfernten neu an. Sonst könnten purge (Quelle weg) und
 // blob gc zwischen Einlesen und Speichern den Blob löschen, und der
 // Entwurf verwiese ins Leere (zweite Nachbesserung T3, Punkt 5).
-func (o *draftOps) putFiles(atts []loadedAttachment) error {
+func (o *draftOps) putFiles(ctx context.Context, atts []loadedAttachment) error {
 	for _, a := range atts {
-		if _, err := o.blobs.Put(bytes.NewReader(a.att.Data)); err != nil {
+		if _, err := o.blobs.PutContext(ctx, bytes.NewReader(a.att.Data)); err != nil {
 			return fmt.Errorf("store attachment: %w", err)
 		}
 	}
@@ -704,20 +704,29 @@ func (o *draftOps) putFiles(atts []loadedAttachment) error {
 }
 
 // identity wählt die Identität: sel = Adresse oder ID einer Identität des
-// Kontos; leer = die Standardidentität (ok = false: keine).
-func (o *draftOps) identity(ctx context.Context, accountID int64, sel string) (store.Identity, bool, error) {
+// Kontos; leer = die Standardidentität (ok = false: keine). Passt sel nur
+// als andere Gmail-Schreibweise (mailaddr.Key), nennt note, welche
+// Identität mit welcher Adresse genommen wurde (dritte Nachbesserung T3,
+// Punkt 9d); sonst ist note leer.
+func (o *draftOps) identity(ctx context.Context, accountID int64, sel string) (i store.Identity, ok bool, note string, err error) {
 	list, err := o.svc.Store.Identities(ctx, accountID)
 	if err != nil {
-		return store.Identity{}, false, err
+		return store.Identity{}, false, "", err
 	}
-	i, ok, err := pickIdentity(list, sel)
-	if err != nil || ok {
-		return i, ok, err
+	i, ok, err = pickIdentity(list, sel)
+	if err != nil {
+		return i, ok, "", err
+	}
+	if ok {
+		if sel = strings.TrimSpace(sel); sel != "" && mailaddr.Lower(sel) != mailaddr.Lower(i.Email) && sel != strconv.FormatInt(i.ID, 10) {
+			note = fmt.Sprintf("identity %d (%s) was used: %s is another spelling of its Gmail address", i.ID, i.Email, sel)
+		}
+		return i, true, note, nil
 	}
 	if strings.TrimSpace(sel) != "" {
-		return store.Identity{}, false, inputErr("unknown identity for this account; list them with: identity list")
+		return store.Identity{}, false, "", inputErr("unknown identity for this account; list them with: identity list")
 	}
-	return store.Identity{}, false, nil
+	return store.Identity{}, false, "", nil
 }
 
 // pickIdentity wählt aus den Identitäten eines Kontos: sel leer = die
@@ -961,10 +970,11 @@ func DraftsCreate(d Deps) Operation {
 					}
 				}
 			}
-			ident, hasIdent, err := o.identity(ctx, acc.ID, in.Identity)
+			ident, hasIdent, identNote, err := o.identity(ctx, acc.ID, in.Identity)
 			if err != nil {
 				return nil, err
 			}
+			notes = addNote(notes, identNote)
 			atts, err := o.attachments(ctx, acc, in.Attachments, budget)
 			if err != nil {
 				return nil, err
@@ -993,13 +1003,13 @@ func DraftsCreate(d Deps) Operation {
 				notes = addNote(notes, composeNotes[n])
 			}
 			if !call.DryRun {
-				if err := o.putFiles(atts); err != nil {
+				if err := o.putFiles(ctx, atts); err != nil {
 					return nil, err
 				}
 				// Ebenso die übernommenen Anhänge einer Weiterleitung.
 				if orig != nil {
 					for _, a := range orig.Attachments {
-						if _, err := o.blobs.Put(bytes.NewReader(a.Data)); err != nil {
+						if _, err := o.blobs.PutContext(ctx, bytes.NewReader(a.Data)); err != nil {
 							return nil, fmt.Errorf("store attachment: %w", err)
 						}
 					}
@@ -1181,7 +1191,7 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 		}
 	}
 	if !call.DryRun {
-		if err := o.putFiles(atts); err != nil {
+		if err := o.putFiles(ctx, atts); err != nil {
 			return nil, err
 		}
 	}

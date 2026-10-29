@@ -185,8 +185,36 @@ func targetHash(res Result) string {
 	return PathHash(res.Target)
 }
 
+// runMarkerName ist die Laufmarke im Sicherungsordner (T3-Nachbesserung 3,
+// Punkt 6): Eine erste Sicherung (Ordner ohne Manifest) schreibt sie als
+// erste Datei (runID) und löscht sie erst, wenn das Manifest steht. Bleibt sie liegen, war der Lauf nicht
+// fertig; ihr Inhalt sagt, welches Datenverzeichnis ihn begonnen hat
+// (onlyLeftovers). tmpNameRE erfasst den Namen nicht, cleanTemps lässt sie
+// also stehen.
+const runMarkerName = ".backup-run.tmp"
+
+// maxRunMarker begrenzt das Lesen einer Laufmarke (eine Zeile).
+const maxRunMarker = 256
+
+// runID ist der Inhalt der Laufmarke: die volle Kennung des
+// Datenverzeichnisses (meta.datadir_id). Festlegung: Ohne Kennung (Schema
+// vor 8) tritt der Ausweis des aufgelösten Pfads an ihre Stelle (PathHash);
+// ein anderer Fehler beim Lesen bricht die Sicherung ab.
+func (r *Runner) runID(ctx context.Context) (string, error) {
+	id, err := r.Store.DataDirIDFull(ctx)
+	switch {
+	case errors.Is(err, store.ErrNoDataDirID):
+		return "path:" + PathHash(realPath(r.DataDir)), nil
+	case err != nil:
+		return "", err
+	case id == "":
+		return "", errors.New("backup: meta.datadir_id is empty")
+	}
+	return "datadir_id:" + id, nil
+}
+
 // prepareFolder prüft den Sicherungsordner und liest eine frühere Sicherung.
-func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
+func (r *Runner) prepareFolder(ctx context.Context, to string) (string, map[string]File, error) {
 	abs, err := filepath.Abs(to)
 	if err != nil {
 		return "", nil, targetErr("invalid target folder")
@@ -212,7 +240,14 @@ func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if len(entries) == 0 || onlyLeftovers(entries) {
+	if len(entries) == 0 {
+		return abs, nil, nil
+	}
+	id, err := r.runID(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if onlyLeftovers(abs, entries, id) {
 		return abs, nil, nil
 	}
 	b, err := os.ReadFile(filepath.Join(abs, ManifestName))
@@ -235,29 +270,55 @@ func (r *Runner) prepareFolder(to string) (string, map[string]File, error) {
 }
 
 // onlyLeftovers meldet, ob ein Ordner ohne Manifest nur Reste einer
-// abgebrochenen ersten Sicherung enthält (T3-Nachbesserung 2, Nebenfund
-// N1): ENCRYPT-ME.txt und Temporärdateien (tmpNameRE), dazu, wenn
-// ENCRYPT-ME.txt dabei ist, Schnappschüsse (snapshotRE) und den Ordner
-// blobs (Abbruch während des Kopierens). Ein solcher Ordner gilt als leer;
-// sonst wiese jeder weitere Lauf ihn ab („holds no backup“), obwohl die
-// Anleitung sagt, die Sicherung einfach noch einmal zu starten. Der nächste
-// Lauf räumt die Temporärdateien und den alten Schnappschuss ab und prüft
-// vorhandene Blob-Dateien gegen ihren Inhalt (syncBlob).
-func onlyLeftovers(entries []os.DirEntry) bool {
-	note, more := false, false
+// abgebrochenen ersten Sicherung dieses Datenverzeichnisses enthält
+// (T3-Nachbesserung 2, Nebenfund N1; T3-Nachbesserung 3, Punkt 6). Ein
+// solcher Ordner gilt als leer; sonst wiese jeder weitere Lauf ihn ab („holds
+// no backup“), obwohl die Anleitung sagt, die Sicherung einfach noch einmal
+// zu starten. Zulässig sind ENCRYPT-ME.txt und Temporärdateien (tmpNameRE)
+// immer; Schnappschüsse (snapshotRE), Audit-Archive (archiveRE) und der
+// Ordner blobs nur zusammen mit der eigenen Laufmarke (Inhalt gleich own,
+// runID). Eine fremde oder unlesbare Laufmarke weist den Ordner ab: Er kann
+// die halbe Sicherung eines anderen Datenverzeichnisses sein, deren
+// Schnappschuss der nächste Lauf sonst löschte (früher genügte dafür
+// ENCRYPT-ME.txt, das jede Sicherung schreibt). Der nächste Lauf räumt die
+// Temporärdateien und den alten Schnappschuss ab und prüft vorhandene
+// Blob-Dateien gegen ihren Inhalt (syncBlob) und Archive gegen ihre
+// Prüfsumme (sie werden neu kopiert).
+func onlyLeftovers(dir string, entries []os.DirEntry, own string) bool {
+	marker, ownMarker, more := false, false, false
 	for _, e := range entries {
 		n := e.Name()
 		switch {
+		case n == runMarkerName && e.Type().IsRegular():
+			marker = true
+			ownMarker = readRunMarker(filepath.Join(dir, n)) == own
 		case n == EncryptNoteName && e.Type().IsRegular():
-			note = true
 		case tmpNameRE.MatchString(n) && e.Type().IsRegular():
-		case snapshotRE.MatchString(n) && e.Type().IsRegular(), n == "blobs" && e.IsDir():
+		case (snapshotRE.MatchString(n) || archiveRE.MatchString(n)) && e.Type().IsRegular(), n == "blobs" && e.IsDir():
 			more = true
 		default:
 			return false
 		}
 	}
-	return note || !more
+	if marker {
+		return ownMarker
+	}
+	return !more
+}
+
+// readRunMarker liest eine Laufmarke ("" bei einem Fehler oder einer zu
+// großen Datei; das ist nie eine gültige runID).
+func readRunMarker(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxRunMarker+1))
+	if err != nil || len(b) > maxRunMarker {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // blobFile ist ein Blob des Datenverzeichnisses.
@@ -423,7 +484,7 @@ func (r *Runner) checkBlob(b blobFile, sum string) error {
 
 // createFolder: Sicherung in einen Ordner, inkrementell.
 func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Result, error) {
-	to, prev, err := r.prepareFolder(o.To)
+	to, prev, err := r.prepareFolder(ctx, o.To)
 	if err != nil {
 		return res, err
 	}
@@ -444,6 +505,21 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	// Ein vorhandener Ordner (USB-Laufwerk mit FAT) kennt keine Rechte;
 	// dann bleibt es bei den Rechten des Laufwerks.
 	_ = os.Chmod(to, dirMode)
+	// Laufmarke zuerst (T3-Nachbesserung 3, Punkt 6), aber nur bei einer
+	// ersten Sicherung (Ordner ohne Manifest): Bricht dieser Lauf ab, erkennt
+	// der nächste seine Reste an ihr (onlyLeftovers). Neben einem Manifest
+	// gilt dieses, die Marke wäre dort nur ein Rest mehr.
+	marker := ""
+	if prev == nil {
+		id, err := r.runID(ctx)
+		if err != nil {
+			return res, err
+		}
+		marker = filepath.Join(to, runMarkerName)
+		if err := writeFileAtomic(marker, []byte(id+"\n")); err != nil {
+			return res, err
+		}
+	}
 	if err := writeFileAtomic(res.EncryptNote, []byte(EncryptNote)); err != nil {
 		return res, err
 	}
@@ -550,6 +626,11 @@ func (r *Runner) createFolder(ctx context.Context, o Options, res Result) (Resul
 	sum := sha256.Sum256(b)
 	res.ManifestSHA256 = hex.EncodeToString(sum[:])
 	res.Files, res.Bytes, res.Blobs, res.AuditArchives = m.Counts.Files, m.Counts.Bytes, m.Counts.Blobs, m.Counts.AuditArchives
+	// Der Lauf ist fertig; bleibt die Marke liegen (Virenscanner), schadet
+	// sie neben dem Manifest nicht.
+	if marker != "" {
+		_ = os.Remove(marker)
+	}
 
 	// 6. Ältere Schnappschüsse gehören zu keinem Manifest mehr.
 	if entries, err := os.ReadDir(to); err == nil {

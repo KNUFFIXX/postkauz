@@ -544,6 +544,19 @@ func auditDataDirID(ctx context.Context, repo AuditRepo) (string, error) {
 	return id, err
 }
 
+// auditRestored meldet, ob die Datenbank aus einer Sicherung
+// wiederhergestellt wurde (store.Restored; false ohne Store, etwa in
+// Testattrappen). Ein Lesefehler bricht ab.
+func auditRestored(ctx context.Context, repo AuditRepo) (bool, error) {
+	r, ok := repo.(interface {
+		Restored(ctx context.Context) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return r.Restored(ctx)
+}
+
 // lockBesideDB holt die Sperrdatei name neben der Datenbank, ohne zu
 // warten (flock: fällt mit dem Prozess). Ohne Datenbankdatei (Attrappen)
 // gibt es keine Sperre. Belegt → busy.
@@ -680,11 +693,18 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 			if err != nil {
 				return nil, err
 			}
-			own, err := ownExportFiles(dir, dataDirID, done)
+			restored, err := auditRestored(ctx, repo)
+			if err != nil {
+				return nil, err
+			}
+			own, err := ownExportFiles(dir, dataDirID, restored, done)
 			if err != nil {
 				return nil, err
 			}
 			head := auditChainGenesis
+			// vhead ist das Kettenende, wie audit verify es aus den
+			// bisherigen Nachweisen rechnet (dritte Nachbesserung T3, Punkt 2).
+			vhead := auditChainGenesis
 			for _, day := range days {
 				p, recorded := prev[day]
 				_, closed := plan.asg.closed(day)
@@ -710,7 +730,7 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						if fh, bad := checkChain(b, head); bad == 0 {
 							f := AuditExportFile{Day: day, File: file, Events: bytes.Count(b, []byte{'\n'}), FirstEventID: p.FirstEventID,
 								LastEventID: p.LastEventID, SHA256: p.SHA256, ChainHead: fh, State: "unchanged"}
-							head = fh
+							head, vhead = fh, fh
 							todo = append(todo, pending{f, nil})
 							manifest = append(manifest, auditManifestDay{Day: day, File: auditFileName(day), Events: f.Events,
 								FirstEventID: f.FirstEventID, LastEventID: f.LastEventID, SHA256: f.SHA256, ChainHead: fh})
@@ -739,6 +759,30 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						return nil, fmt.Errorf("%w: day %s should hold entries %d to %d, found %d to %d; nothing was written "+
 							"(an audit rotate may have run meanwhile; run audit verify, then audit export again)",
 							ErrAuditExportSourceChanged, day, p.FirstEventID, p.LastEventID, first, last)
+					}
+					// Dritte Absicherung (dritte Nachbesserung T3, Punkt 2):
+					// Die Einträge müssen den Nachweis ergeben wie in audit
+					// verify (Format 2 mit der Kette, sonst Format 1). Sonst
+					// ist die Datenbank verändert, und die neue Datei würde die
+					// Änderung legitimieren: Abbruch vor dem ersten Schreiben.
+					c2, err := auditDayContent(evs, p.LastEventID, 2, vhead)
+					if err != nil {
+						return nil, err
+					}
+					c1, err := auditDayContent(evs, p.LastEventID, 1, "")
+					if err != nil {
+						return nil, err
+					}
+					switch {
+					case sha256Hex(c2.content) == p.SHA256:
+						vhead = c2.head
+					case sha256Hex(c1.content) == p.SHA256:
+						if p.Location == "" {
+							vhead = c2.head // wie verify für Tage des Originals
+						}
+					default:
+						return nil, fmt.Errorf("%w: day %s no longer gives the recorded checksum; nothing was written "+
+							"(the database was changed; run audit verify)", ErrAuditExportSourceChanged, day)
 					}
 				}
 				d, err := auditDayContent(evs, 0, AuditExportFormat, head)
@@ -795,7 +839,8 @@ func AuditExport(repo AuditRepo, defaultDir string) Operation {
 						continue
 					}
 					rec, recorded := prev[t.f.Day]
-					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location == dir && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
+					// Ort in jeder Schreibweise (dritte Nachbesserung T3, Punkt 1).
+					if d, ok := own[auditFileName(t.f.Day)]; ok && recorded && rec.Location != "" && d.Day == rec.Day && d.SHA256 == rec.SHA256 {
 						list = append(list, d)
 					}
 				}
@@ -859,7 +904,7 @@ var ErrAuditExportForeign = errors.New("audit export: the target directory holds
 // (Punkt 2) muss das Manifest auch zu diesem Datenverzeichnis gehören
 // (dataDirID, checkManifestOwner), sonst ErrAuditExportOtherInstance. Ohne
 // bekannte Kennung (Attrappen) entfällt der Vergleich.
-func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string]auditManifestDay, error) {
+func ownExportFiles(dir, dataDirID string, restored bool, done []store.AuditExport) (map[string]auditManifestDay, error) {
 	b, err := os.ReadFile(filepath.Join(dir, auditManifestName()))
 	if errors.Is(err, fs.ErrNotExist) {
 		return map[string]auditManifestDay{}, nil
@@ -872,7 +917,7 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 		return nil, fmt.Errorf("%w: %s", ErrAuditExportForeign, auditManifestName())
 	}
 	if dataDirID != "" {
-		if err := checkManifestOwner(dir, dataDirID, m, done); err != nil {
+		if err := checkManifestOwner(dir, dataDirID, restored, m, done); err != nil {
 			return nil, err
 		}
 	}
@@ -896,8 +941,11 @@ func ownExportFiles(dir, dataDirID string, done []store.AuditExport) (map[string
 //     und einem Ort entspricht, gleich in welcher Schreibweise (unter
 //     Windows Groß- und Kleinschreibung, ein neuer Laufwerksbuchstabe von
 //     Google Drive). Eine wiederhergestellte Kopie hat nur Nachweise ohne
-//     Ort und bleibt abgewiesen.
-func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.AuditExport) error {
+//     Ort und bleibt abgewiesen. Dritte Nachbesserung T3, Punkt 5: Hat
+//     sie schon anderswo exportiert, haben ihre Nachweise wieder einen
+//     Ort; die zweite Regel gilt deshalb nur für eine Datenbank, die nie
+//     wiederhergestellt wurde (restored, meta.restored_at).
+func checkManifestOwner(dir, dataDirID string, restored bool, m auditManifest, done []store.AuditExport) error {
 	recordedHere := slices.ContainsFunc(done, func(e store.AuditExport) bool { return e.Location == dir })
 	switch {
 	case m.DataDirID != "" && m.DataDirID != dataDirID:
@@ -909,7 +957,7 @@ func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.Aud
 				"use an export directory of its own)", ErrAuditExportOtherInstance, dir)
 		}
 		return nil
-	case recordedHere || legacyManifestMatches(m, done):
+	case recordedHere || (!restored && legacyManifestMatches(m, done)):
 		return nil
 	}
 	last := ""
@@ -923,7 +971,7 @@ func checkManifestOwner(dir, dataDirID string, m auditManifest, done []store.Aud
 			"as after a restore; use an export directory of its own)", ErrAuditExportOtherInstance, dir)
 	}
 	return fmt.Errorf("%w: %s (its manifest has no data directory id and does not match the audit exports of this database, "+
-		"last recorded at %s; if that is the same folder, run audit export --to %q once, otherwise use an export directory of its own)",
+		"last recorded at %s; if that is the same folder, run audit export --to \"%s\" once, otherwise use an export directory of its own)",
 		ErrAuditExportOtherInstance, dir, last, last)
 }
 
@@ -948,8 +996,9 @@ func legacyManifestMatches(m auditManifest, done []store.AuditExport) bool {
 }
 
 // checkOwnFile: Darf der Export path ersetzen? Ja, wenn dort nichts liegt,
-// wenn der Nachweis rec dieses Tages genau diese Datei an diesem Ort
-// belegt (Prüfsumme schon vorher geprüft), wenn ein Merker eines
+// wenn der Nachweis rec dieses Tages genau diese Datei belegt (gleiche
+// Prüfsumme, Ort nicht leer, gleich in welcher Schreibweise: dritte
+// Nachbesserung T3, Punkt 1), wenn ein Merker eines
 // abgebrochenen Exports sie belegt (gleicher Tag, gleicher Ort) oder wenn
 // das Manifest am Ziel sie mit ihrer Prüfsumme nennt.
 func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditExport, dir string, pend auditPendingSet) error {
@@ -960,7 +1009,7 @@ func checkOwnFile(path string, own map[string]auditManifestDay, rec store.AuditE
 	if err != nil {
 		return err
 	}
-	if rec.Location == dir && rec.SHA256 == got {
+	if rec.Location != "" && rec.SHA256 == got {
 		return nil
 	}
 	if day, ok := auditDayOfFile(filepath.Base(path)); ok && pend.has(day, dir, got) {

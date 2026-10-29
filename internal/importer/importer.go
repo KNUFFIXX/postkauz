@@ -338,8 +338,9 @@ func (r *run) handle(src Source, it item, rep *SourceReport) error {
 	parsed, err := mailsync.Prepare(r.e.Blobs, &nm, rc, it.date)
 	_ = rc.Close()
 	if err != nil {
-		// Ein Anhang scheiterte am Blob-Store (Nachbesserung 2, Punkt 8):
-		// wie ein Fehler beim Ablegen der Rohmail oben.
+		// Ein Anhang war nur vorübergehend nicht abzulegen (Sperre belegt
+		// oder Kontextende; Nachbesserung 2, Punkt 8): wie ein Fehler beim
+		// Ablegen der Rohmail oben.
 		return err
 	}
 	if !parsed {

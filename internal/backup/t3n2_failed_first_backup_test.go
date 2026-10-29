@@ -25,7 +25,8 @@ func dirNames(t *testing.T, dir string) []string {
 
 // T3-Nachbesserung 2, Nebenfund N1 (Wegwerf-Test A8b): Scheitert die
 // ERSTE Sicherung in einen neuen Ordner (hier: ein Blob verschwindet
-// während des Laufs), bleibt nur ENCRYPT-ME.txt liegen. Der nächste Lauf in
+// während des Laufs), bleiben nur ENCRYPT-ME.txt und (seit der
+// T3-Nachbesserung 3, Punkt 6) die eigene Laufmarke liegen. Der nächste Lauf in
 // denselben Ordner muss gehen (betrieb.md 2.3: „Starte die Sicherung
 // einfach noch einmal“), statt „not empty and holds no backup“ zu melden.
 func TestT3N2FailedFirstBackupLeavesFolderUsable(t *testing.T) {
@@ -49,7 +50,7 @@ func TestT3N2FailedFirstBackupLeavesFolderUsable(t *testing.T) {
 	if _, err := e.r.Create(ctx, Options{To: to}); !errors.Is(err, ErrIncomplete) {
 		t.Fatalf("first run: err = %v, want ErrIncomplete", err)
 	}
-	if names := dirNames(t, to); !slices.Equal(names, []string{EncryptNoteName}) {
+	if names := dirNames(t, to); !slices.Equal(names, []string{runMarkerName, EncryptNoteName}) {
 		t.Fatalf("left in the folder after the failed first run: %v", names)
 	}
 	// Blob wieder da (z. B. aus der Quarantäne zurück): zweiter Lauf.
@@ -66,10 +67,10 @@ func TestT3N2FailedFirstBackupLeavesFolderUsable(t *testing.T) {
 }
 
 // N1, Varianten: Reste eines Laufs, der während des Kopierens abbrach
-// (Schnappschuss, blobs/, Temporärdateien neben ENCRYPT-ME.txt), gelten
-// ebenfalls als leer; der nächste Lauf räumt sie ab. Ein Ordner mit einer
-// fremden Datei oder nur mit blobs/ (ohne ENCRYPT-ME.txt) bleibt
-// abgewiesen.
+// (Schnappschuss, blobs/, Temporärdateien neben ENCRYPT-ME.txt und der
+// eigenen Laufmarke), gelten ebenfalls als leer; der nächste Lauf räumt sie
+// ab. Ein Ordner mit einer fremden Datei oder nur mit blobs/ bzw. einem
+// Schnappschuss (ohne Laufmarke) bleibt abgewiesen.
 func TestT3N2LeftoversOfInterruptedFirstBackup(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -130,7 +131,7 @@ func TestT3N2LeftoversOfInterruptedFirstBackup(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, _, err := e.r.prepareFolder(dir); !errors.Is(err, ErrTarget) {
+		if _, _, err := e.r.prepareFolder(context.Background(), dir); !errors.Is(err, ErrTarget) {
 			t.Errorf("%s: folder accepted: %v", name, err)
 		}
 	}

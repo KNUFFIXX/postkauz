@@ -28,9 +28,11 @@ const LockName = "gc.lock"
 
 // ErrBusy: Die Sperre war innerhalb der Wartezeit nicht zu bekommen (für
 // Put: blobs.gc löscht gerade; für GC: ein Put legt gerade ab). Scheiterte
-// zuletzt schon das Öffnen der Sperrdatei (Nachbesserung 2, Punkt 8: etwa
-// eine Sharing-Violation durch Virenscanner oder Sicherungsprogramm unter
-// Windows), hängt jener Fehler mit an (errors.Is findet beide).
+// zuletzt schon das Öffnen der Sperrdatei mit einem vorübergehenden Fehler
+// (Nachbesserung 2, Punkt 8: unter Windows etwa eine Sharing-Violation
+// durch Virenscanner oder Sicherungsprogramm), hängt jener Fehler mit an
+// (errors.Is findet beide). Ein dauerhafter Öffnungsfehler ist kein
+// ErrBusy (lockWait).
 // CLI und MCP melden den Code blob_busy („try again“).
 var ErrBusy = errors.New("blob: store busy (blob gc or another write holds the lock); try again")
 
@@ -55,13 +57,20 @@ func (s *Store) putWait() time.Duration {
 	return putLockWait
 }
 
+// transientLockErr stuft Fehler beim Öffnen oder Sperren von gc.lock als
+// vorübergehend ein (isTransientLockErr); in Tests ersetzbar.
+var transientLockErr = isTransientLockErr
+
 // lockWait holt die Sperre (geteilt oder exklusiv) und versucht es bis
 // wait erneut; danach ErrBusy. Nachbesserung 2, Punkt 8: Wiederholt wird
 // nicht nur bei belegter Sperre, sondern auch, wenn das Öffnen der
-// Sperrdatei scheitert (unter Windows hält ein Virenscanner oder ein
-// Sicherungsprogramm sie kurz ohne Freigabe zum Mitbenutzen); bleibt das
-// bis zur Frist so, kommt ErrBusy mit dem letzten Fehler. Wird ctx
-// beendet, endet das Warten sofort mit ctx.Err().
+// Sperrdatei vorübergehend scheitert (unter Windows hält ein Virenscanner
+// oder ein Sicherungsprogramm sie kurz ohne Freigabe zum Mitbenutzen);
+// bleibt das bis zur Frist so, kommt ErrBusy mit dem letzten Fehler.
+// Nachbesserung 3, Punkt 8: Jeder andere Fehler (transientLockErr false,
+// unter macOS und Linux alle) endet sofort mit diesem Fehler, ohne
+// ErrBusy; sonst wartete bei einem dauerhaften Fehler jede Nachricht die
+// volle Frist. Wird ctx beendet, endet das Warten sofort mit ctx.Err().
 func (s *Store) lockWait(ctx context.Context, exclusive bool, wait time.Duration) (*flock.Lock, error) {
 	try := flock.TryLockShared
 	if exclusive {
@@ -78,6 +87,9 @@ func (s *Store) lockWait(ctx context.Context, exclusive bool, wait time.Duration
 		l, err := try(s.lockPath())
 		if err == nil {
 			return l, nil
+		}
+		if !errors.Is(err, flock.ErrLocked) && !transientLockErr(err) {
+			return nil, fmt.Errorf("blob: %w", err)
 		}
 		if !time.Now().Before(deadline) {
 			if errors.Is(err, flock.ErrLocked) {

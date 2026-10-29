@@ -147,7 +147,9 @@ func domainOf(addr string) string {
 }
 
 // normAddr ist der Vergleichsschlüssel einer Adresse.
-func normAddr(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+// normAddr: nur ASCII klein (mailaddr.Lower, dritte Nachbesserung T3,
+// Punkt 9a), wie der Vergleich mit den eigenen Adressen.
+func normAddr(s string) string { return mailaddr.Lower(s) }
 
 // ReplyRecipients leitet die Empfänger einer Antwort auf o ab (E11): To =
 // Reply-To von o, sonst From. Mit all („Allen antworten") Cc = alle übrigen
