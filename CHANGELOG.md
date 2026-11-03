@@ -4,7 +4,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Auftrag A05 „Erkennung und Text“ (03.11.2026, Zweig `claude/quirky-feynman-1jsuxj`, Basis `main` `cb8919d` = Stand 0.3.0-rc2), Build **0.3.0-rc3** (kein Tag, kein Release; Build-Commit und Prüfsummen: `docs/protokolle/A05_stand.md`). Kein Schema-Upgrade (Schema 22), keine Migration; Aufbereitungsstand der Texte 4 (`clean_version`).
+Noch nichts.
+
+## [0.3.0-rc3] – 2026-11-03 (Release-Kandidat; im Dauerbetrieb seit 03.11.2026, Build 28941b7)
+
+Auftrag A05 „Erkennung und Text“ (03.11.2026, Zweig `claude/quirky-feynman-1jsuxj`, Basis `main` `cb8919d` = Stand 0.3.0-rc2), Build **0.3.0-rc3** an `28941b7` (noch kein Tag; Prüfsummen: `docs/protokolle/A05_stand.md`). Abnahme D11 auf dem Büro-PC bestanden (03.11.2026, 20 OK, 0 FAIL, `docs/protokolle/D11_windows.txt`); Dauerbetrieb seit 03.11.2026 18:47 auf rc3. Kein Schema-Upgrade (Schema 22), keine Migration; Aufbereitungsstand der Texte 4 (`clean_version`).
 
 ### Fixed
 

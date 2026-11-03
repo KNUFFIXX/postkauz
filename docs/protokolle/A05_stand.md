@@ -141,8 +141,14 @@ Windows-Programm: 22.616.064 Byte. Der frühere rc3-Build an `5cdab24` (Windows 
 
 Nachprüfung von `b96e424` (Anforderungen 1 bis 6 aus Nachtrag 2 erfüllt; rc3 an `28941b7` vom Betreiber bytegleich nachgebaut, Windows `f7789cf3…e934` stimmt mit Abschnitt 7.2 überein). Ein Commit: `abnahme_D11.ps1` trennt `-Accounts a,b` selbst (mit `powershell.exe -File` kommt die Liste in PS 5.1 als ein Text an; sonst lief 3.1 mit `sync -a "a,b"` nach dem Tausch in FAIL), Teil 2 hat ein eigenes try/catch (auch eine Ausnahme beim Tausch kopiert `postkauz-rc2.exe` zurück, bevor `finally` die Aufgaben einschaltet), 1.2 verlangt lesbares JSON; Test `TestA05RecheckWaitsForDeferredCleanup` (belegte Sperre des Blob-Ordners → Neuaufbereitung vorzeitig beendet → `KeepMark`, `sent_check_rev` bleibt ungesetzt; ohne den Zweig rot). Nur `_test.go` und Doku geändert; der Build bleibt an `28941b7`. Die Roadmap hat nach Nachtrag 3 zwei Offene Fragen.
 
+## 7b. Abnahme D11 (Nachtrag 6)
+
+Abnahme D11 auf dem Büro-PC am 03.11.2026 18:23–18:47 bestanden: **20 OK, 0 FAIL**, Aufruf mit `-KeepStdioMcp` und abweichenden Pfaden und Aufgaben (`abnahme_D11.md` Abschnitt 6); Protokoll [D11_windows.txt](D11_windows.txt) (wörtlich abgelegt, sha256 `08c16f54e4668df7b704fe0f5bc0f51295e160babe9fa8ad6e97a8914cfa65ac`). Programm an `28941b7` (Windows `f7789cf3…e934`), Sicherung vor dem Tausch, Schema 22 unverändert. Erster Lauf: Entwurf 1 per `thread` geschlossen, Entwurf 3 offen; die Prüfnachricht mit HTML im Klartextteil ohne Tags, `alternative_mismatch false`; „xmlns“ 140 → 80 Treffer; `doctor` ohne neue Warnung, `audit verify` ok. **Dauerbetrieb seit 18:47 auf 0.3.0-rc3.** Danach `main` per Fast-Forward auf den Stand des Zweigs (Betreiber-Freigabe „Merge nach D11“); noch kein Tag.
+
+Befunde (kein Code in A05): (a) Antwort mit eigenem neuen Betreff ging aus Gmail im Browser ohne `In-Reply-To`/`References` in einen neuen Verlauf → Roadmap Offene Frage 3 (Warnung bei abweichendem Betreff); (b) Rückfall verfehlte eine unverändert gesendete Antwort (eigener Text 1,0, gesamt 0,83), weil Gmail die zweite Zitatebene neu umbricht und Fortsetzungszeilen ohne „>“ stehen bleiben → Roadmap „Als Nächstes“ 0b; (c) „xmlns“ noch in 80 Mails mit HTML-Kommentaren nach Text im Klartextteil, bewusst nicht erfasst → „Als Nächstes“ 0c.
+
 ## 8. Offen
 
-- Abnahme D11 auf dem Büro-PC ([abnahme_D11.md](../abnahme_D11.md)); das Skript ist in der Cloud weder ausgeführt noch von PowerShell geparst (kein PowerShell im Container), nur gegen die CLI-Ausgaben geprüft.
-- Ob Gmail im Browser beim Senden eines Antwort-Entwurfs `In-Reply-To` behält (Voraussetzung für den Weg über den Verlauf), zeigt erst D11 bzw. der Alltag; der Testserver-Fall D bildet es nach.
-- Offene Frage 2 der Roadmap (Bedingung (f) wie gebaut). Die Defaults von Teil 2 und 3 hat der Betreiber am 03.11.2026 bestätigt (Entschiedene Fragen 74, 75).
+- ~~Abnahme D11~~ bestanden (Abschnitt 7b).
+- Ob Gmail im Browser beim Senden eines Antwort-Entwurfs `In-Reply-To` behält: in D11 ja für einen Entwurf (Weg `thread` griff), nein für einen Entwurf mit eigenem neuen Betreff (Befund a, Indiz aus einem Fall).
+- Offene Fragen 2 und 3 der Roadmap (Bedingung (f) wie gebaut; Warnung bei abweichendem Betreff), Befund b für den nächsten Auftrag, Tag `v0.3.0-rc3` nach Entscheidung des Betreibers. Die Defaults von Teil 2 und 3 hat der Betreiber am 03.11.2026 bestätigt (Entschiedene Fragen 74, 75).
