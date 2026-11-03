@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,7 +28,18 @@ import (
 //	   Zeichen (sanitize.Text); die Kopffelder in messages werden mit
 //	   nachgezogen
 //	3  alternative_mismatch: Klartext und HTML weichen ab
-const CleanVersion = 3
+//	4  A05 Teil 3: HTML-Quelltext im Klartextteil (sanitize.PlainIsHTML)
+//	   gilt als HTML. Neu aufbereitet werden nur Nachrichten, auf die die
+//	   Regel passen kann; alle übrigen mit Stand 3 hebt ein UPDATE auf 4
+//	   (reprocess, fullCleanBelow).
+const CleanVersion = 4
+
+// fullCleanBelow: Nachrichten mit kleinerem Stand werden ganz neu
+// aufbereitet. Ab diesem Stand bis unter CleanVersion nur die, deren
+// Klartext HTML sein kann (store.ReprocessItem.PlainHTML); die übrigen
+// hebt store.BumpCleanVersion in einem UPDATE (A05 Teil 3: nicht alle
+// 61.500 Nachrichten des Betreibers neu aufbereiten).
+const fullCleanBelow = 3
 
 // storedPart ist ein beim Parsen gespeicherter Anhang.
 type storedPart struct {
@@ -141,17 +153,31 @@ func extractPlan(a store.NewAttachment, t magic.Type) (status, reason string) {
 
 // fillClean setzt die bereinigten Textfelder (internal/sanitize) und die
 // Anhänge.
+//
+// HTML-Quelltext im Klartextteil (A05 Teil 3, sanitize.PlainIsHTML): Der
+// Klartext wird leer gespeichert, der Text kommt aus dem HTML-Teil bzw.,
+// ohne HTML-Teil, aus dem Klartext-HTML (versteckter Text entfernt und
+// gemeldet, Links gesammelt); text_source ist dann html, und
+// alternative_mismatch bleibt false (der Agent liest, was der Mensch sieht).
 func fillClean(nm *store.NewMessage, m *mimeparse.Message, atts []store.NewAttachment) {
 	nm.TextPlain = sanitize.Text(m.Text)
 	nm.TextCharset = m.TextCharset
+	html := m.HTML
+	plainHTML := sanitize.PlainIsHTML(nm.TextPlain)
+	if plainHTML {
+		if strings.TrimSpace(html) == "" {
+			html = nm.TextPlain
+		}
+		nm.TextPlain = ""
+	}
 	main := nm.TextPlain
 	links := []sanitize.Link{}
-	if m.HTML != "" {
-		h := sanitize.HTML(m.HTML)
+	if html != "" {
+		h := sanitize.HTML(html)
 		nm.TextHTML, nm.HiddenText = h.Text, h.Hidden
 		// Der Agent liest den Klartext, der Mensch sieht das HTML: weichen
 		// die beiden Darstellungen ab, wird das gemeldet.
-		nm.AlternativeMismatch = m.Alternative && sanitize.AlternativeMismatch(nm.TextPlain, h.Text)
+		nm.AlternativeMismatch = !plainHTML && m.Alternative && sanitize.AlternativeMismatch(nm.TextPlain, h.Text)
 		if h.Links != nil {
 			links = h.Links
 		}
@@ -199,12 +225,33 @@ func Prepare(blobs *blob.Store, nm *store.NewMessage, r io.Reader, internal time
 // Pakets werden gespeichert, und die Aufbereitung endet für diesen Lauf
 // (sonst käme dieselbe Nachricht sofort wieder an die Reihe). Der nächste
 // Lauf versucht es erneut.
+//
+// Seit A05 Teil 3 (CleanVersion 4): Liegen unter den Kandidaten Nachrichten
+// mit Stand ab fullCleanBelow, auf die die Regel für HTML im Klartextteil
+// nicht passt, hebt ein UPDATE alle solchen des Kontos auf den neuen Stand
+// (einmal je Lauf); neu aufbereitet werden dann nur die Treffer. Das läuft
+// bei jedem Lauf, so dass auch Nachrichten erfasst werden, die ein älteres
+// Programm nach einem Rückweg mit Stand 3 gespiegelt hat.
 func (e *Engine) reprocess(ctx context.Context) (int, error) {
 	total := 0
+	bumped := false
 	for {
 		items, err := e.Store.ReprocessCandidates(ctx, e.AccountID, CleanVersion, 100)
 		if err != nil || len(items) == 0 {
 			return total, err
+		}
+		if !bumped && slices.ContainsFunc(items, func(it store.ReprocessItem) bool {
+			return it.Version >= fullCleanBelow && !it.PlainHTML
+		}) {
+			bumped = true
+			n, err := e.Store.BumpCleanVersion(ctx, e.AccountID, fullCleanBelow, CleanVersion)
+			if err != nil {
+				return total, err
+			}
+			if n > 0 {
+				e.log().Info("cleanup version raised without reprocessing (no HTML in the plain part)", "count", n)
+			}
+			continue
 		}
 		out := make([]store.Reprocessed, 0, len(items))
 		deferred := 0

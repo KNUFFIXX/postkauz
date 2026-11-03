@@ -85,12 +85,28 @@ type ReprocessItem struct {
 	ID           int64
 	BlobSHA256   string
 	InternalDate time.Time
+	// Version: clean_version (-1 = noch keine Aufbereitung). PlainHTML: Der
+	// gespeicherte Klartext beginnt nach Leerraum wie HTML-Quelltext
+	// (plainHTMLCond, Vorauswahl für sanitize.PlainIsHTML; A05 Teil 3).
+	Version   int
+	PlainHTML bool
 }
+
+// plainHTMLCond ist die Vorauswahl der Regel sanitize.PlainIsHTML in SQL
+// für bodies b: Der Klartext beginnt nach Leerzeichen, Tabulator, LF und CR
+// (ltrim mit char(32,9,10,13), nicht ltrim(x): das nähme nur Leerzeichen)
+// mit <html, <head, <body, <meta, <?xml oder <!doctype, Groß/Klein egal.
+// Sie fasst etwas weiter als die Regel (etwa <header, <?xml ohne HTML);
+// solche Nachrichten werden nur unnötig neu aufbereitet, mit demselben
+// Ergebnis.
+const plainHTMLCond = `(lower(substr(ltrim(COALESCE(b.text_plain, ''), char(32,9,10,13)), 1, 5)) IN ('<html', '<head', '<body', '<meta', '<?xml')
+	OR lower(substr(ltrim(COALESCE(b.text_plain, ''), char(32,9,10,13)), 1, 9)) = '<!doctype')`
 
 // ReprocessCandidates liefert bis zu limit Nachrichten des Kontos mit
 // Rohmail, deren clean_version kleiner als version ist.
 func (s *SQLite) ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]ReprocessItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.blob_sha256, m.internal_date FROM messages m
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.blob_sha256, m.internal_date, COALESCE(b.clean_version, -1),
+		COALESCE(`+plainHTMLCond+`, 0) FROM messages m
 		LEFT JOIN bodies b ON b.message_id = m.id
 		WHERE m.account_id = ? AND m.blob_sha256 IS NOT NULL AND COALESCE(b.clean_version, -1) < ?
 		ORDER BY m.id LIMIT ?`, accountID, version, limit)
@@ -102,7 +118,7 @@ func (s *SQLite) ReprocessCandidates(ctx context.Context, accountID int64, versi
 	for rows.Next() {
 		var it ReprocessItem
 		var idate sql.NullInt64
-		if err := rows.Scan(&it.ID, &it.BlobSHA256, &idate); err != nil {
+		if err := rows.Scan(&it.ID, &it.BlobSHA256, &idate, &it.Version, &it.PlainHTML); err != nil {
 			return nil, err
 		}
 		if idate.Valid {
@@ -111,6 +127,21 @@ func (s *SQLite) ReprocessCandidates(ctx context.Context, accountID int64, versi
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// BumpCleanVersion hebt clean_version aller Nachrichten des Kontos mit
+// Stand from bis unter to auf to, deren Klartext nicht wie HTML beginnt
+// (plainHTMLCond), in einem UPDATE ohne Neuaufbereitung (A05 Teil 3: Ihr
+// Text bliebe gleich). Liefert die Zahl der gehobenen Nachrichten.
+func (s *SQLite) BumpCleanVersion(ctx context.Context, accountID int64, from, to int) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE bodies AS b SET clean_version = ?
+		WHERE b.clean_version >= ? AND b.clean_version < ?
+		AND b.message_id IN (SELECT id FROM messages WHERE account_id = ? AND blob_sha256 IS NOT NULL)
+		AND NOT `+plainHTMLCond, to, from, to, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // Reprocessed ist eine neu aufbereitete Nachricht. Body enthält die

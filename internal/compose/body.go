@@ -71,14 +71,21 @@ func textToHTML(s string) string {
 }
 
 // originalText ist der bereinigte Text der Ausgangsnachricht: aus ihrem
-// HTML ohne versteckten Text, sonst ihr Klartext.
+// HTML ohne versteckten Text, sonst ihr Klartext. Ist der Klartext
+// HTML-Quelltext (A05 Teil 3, sanitize.PlainIsHTML; manche
+// Absender-Software schreibt so in text/plain), wird er wie HTML
+// bereinigt, damit Zitat und Weiterleitung kein rohes HTML enthalten.
 func originalText(o *Original) string {
 	if strings.TrimSpace(o.HTML) != "" {
 		if t := sanitize.HTML(o.HTML).Text; strings.TrimSpace(t) != "" {
 			return t
 		}
 	}
-	return sanitize.Text(o.Text)
+	t := sanitize.Text(o.Text)
+	if sanitize.PlainIsHTML(t) {
+		return sanitize.HTML(t).Text
+	}
+	return t
 }
 
 // quotedText ist originalText, gekürzt auf MaxQuoteChars (an einem

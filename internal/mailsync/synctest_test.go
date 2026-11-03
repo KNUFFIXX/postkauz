@@ -97,8 +97,9 @@ func (nopStore) ThreadUnassigned(context.Context, int64, int) (int, error) { ret
 func (nopStore) ReprocessCandidates(context.Context, int64, int, int) ([]store.ReprocessItem, error) {
 	return nil, nil
 }
-func (nopStore) SaveReprocessed(context.Context, []store.Reprocessed) error   { return nil }
-func (nopStore) SkippedUIDs(context.Context, int64, uint32) ([]uint32, error) { return nil, nil }
+func (nopStore) SaveReprocessed(context.Context, []store.Reprocessed) error       { return nil }
+func (nopStore) BumpCleanVersion(context.Context, int64, int, int) (int64, error) { return 0, nil }
+func (nopStore) SkippedUIDs(context.Context, int64, uint32) ([]uint32, error)     { return nil, nil }
 func (nopStore) MarkSkipped(context.Context, int64, uint32, uint32, int64, string) error {
 	return nil
 }

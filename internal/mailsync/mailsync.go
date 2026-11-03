@@ -67,6 +67,7 @@ type Store interface {
 	ApplyBatch(ctx context.Context, b store.MirrorBatch) (store.BatchResult, error)
 	ThreadUnassigned(ctx context.Context, accountID int64, limit int) (int, error)
 	ReprocessCandidates(ctx context.Context, accountID int64, version, limit int) ([]store.ReprocessItem, error)
+	BumpCleanVersion(ctx context.Context, accountID int64, from, to int) (int64, error)
 	SaveReprocessed(ctx context.Context, items []store.Reprocessed) error
 	// Übersprungene Nachrichten (zu groß; Migration 0009).
 	SkippedUIDs(ctx context.Context, mailboxID int64, uidValidity uint32) ([]uint32, error)
