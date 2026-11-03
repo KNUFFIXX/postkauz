@@ -31,6 +31,18 @@
       Fehler; danach Aufgaben wieder an. Eine Wiederherstellung der
       Sicherung ist dann nicht noetig (sie bleibt fuer den Notfall).
 
+    Abbrueche: Fehlt eine Voraussetzung (Teil 0), laeuft noch ein
+    postkauz.exe (1.1), ist der Stand vorher nicht lesbar (1.2, 1.3) oder
+    fehlt die Sicherung (1.5: Exit 0 und "backup written to"), tauscht das
+    Skript nichts. Scheitert 2.1 oder 2.2, kopiert es postkauz-rc2.exe
+    zurueck, bevor das neue Programm einen sync macht. Der Rueckweg
+    kopiert nur, wenn postkauz.exe die neue Version meldet und
+    postkauz-rc3.exe noch nicht existiert. In jedem Fall (auch bei einem
+    unerwarteten Fehler) schaltet das Skript die Aufgaben wieder ein, die
+    es abgeschaltet hat, und schreibt die Schlusszeile. stderr von sync
+    steht nie im Protokoll (dort koennen Ordnernamen stehen), nur
+    Exit-Code und Zahl der Zeilen.
+
     Jede Pruefung ist eine Zeile "OK <Nr> <Beschreibung>",
     "FAIL <Nr> <Beschreibung>" oder "INFO <Nr> <Beschreibung>", darunter
     eingerueckt die Ist-Ausgabe (gekuerzt). Betreff, Adressen und Mailtext
@@ -307,13 +319,42 @@ function Get-MessageFacts {
 }
 
 # Zahl der Suchtreffer fuer "xmlns" (steht im Suchindex nur, solange
-# HTML-Quelltext aus dem Klartextteil dort liegt); -1 = Fehler.
+# HTML-Quelltext aus dem Klartextteil dort liegt); -1 = Fehler. search
+# --json ist NDJSON; mit --explain steht total in der ersten Zeile.
 function Get-XmlnsHits {
     param([string] $Prog)
-    $r = Invoke-Pk $Prog @('search', 'xmlns', '--limit', '1', '--json')
-    $j = Get-Json $r.Out
-    if ($r.Exit -ne 0 -or $null -eq $j) { return -1 }
-    return [int] $j.total
+    $r = Invoke-Pk $Prog @('search', 'xmlns', '--limit', '1', '--explain', '--json')
+    if ($r.Exit -ne 0) { return -1 }
+    foreach ($line in ($r.Out -split "`r?`n")) {
+        $t = $line.Trim()
+        if (-not $t.StartsWith('{')) { continue }
+        $o = Get-Json $t
+        if ($null -ne $o -and $null -ne $o.explain) { return [int] $o.total }
+    }
+    return -1
+}
+
+# Audit-Eintraege drafts.sent_detected der letzten Stunden: audit --json
+# ist NDJSON (eine Zeile je Eintrag), wie Get-AuditEvents in abnahme_D4.ps1.
+function Get-SentDetected {
+    param([string] $Prog)
+    $r = Invoke-Pk $Prog @('audit', '--operation', 'drafts.sent_detected', '--since', '3h', '--limit', '1000', '--json')
+    $events = New-Object System.Collections.Generic.List[object]
+    foreach ($line in ($r.Out -split "`r?`n")) {
+        $t = $line.Trim()
+        if (-not $t.StartsWith('{')) { continue }
+        $o = Get-Json $t
+        if ($null -ne $o -and $null -ne $o.operation) { $events.Add($o) }
+    }
+    return New-Object PSObject -Property @{ Exit = $r.Exit; Events = $events }
+}
+
+# Zahl der Zeilen auf stderr (Inhalt nie ins Protokoll: ohne --json stehen
+# dort Ordnernamen, und die Protokolle landen in docs/protokolle).
+function Get-LineCount {
+    param([string] $Text)
+    if (-not $Text -or -not $Text.Trim()) { return 0 }
+    return @($Text.Trim() -split "`r?`n").Count
 }
 
 function Get-DoctorWarnings {
@@ -335,25 +376,24 @@ function Get-WarningKey {
     return [regex]::Replace($W, '[0-9]+', '#')
 }
 
-# ---------------------------------------------------------------- Start
+# ---------------------------------------------------------------- Ablauf
 
-$script:ExeFull = [System.IO.Path]::GetFullPath($Exe)
-$dir = Split-Path -Parent $script:ExeFull
-if (-not $LogFile) { $LogFile = Join-Path $dir 'D11_windows.txt' }
-$script:Log = $LogFile
-$OldCopy = Join-Path $dir 'postkauz-rc2.exe'
-$mode = 'Umstellung'
-if ($Rueckweg) { $mode = 'Rueckweg' }
-Write-Log ('=== Abnahme D11 (' + $mode + '), ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ===')
-Write-Log ('Programm: ' + $script:ExeFull + '; Daten: ' + $DataDir + '; Konfiguration: ' + $Config)
+# Geplanter Abbruch: Die Pruefung, die zum Abbruch fuehrt, ist schon als
+# FAIL gezaehlt; finally schaltet die Aufgaben wieder ein und schreibt die
+# Schlusszeile.
+function Stop-D11 {
+    param([string] $Why)
+    throw ('D11-ABBRUCH: ' + $Why)
+}
 
-if (-not $Rueckweg) {
+# Teil 0 bis 4: Umstellung rc2 -> rc3.
+function Invoke-Umstellung {
     # ------------------------------------------------------------ Teil 0
     Write-Log '--- Teil 0: Voraussetzungen'
     $newFull = ''
     if ($NewExe) { $newFull = [System.IO.Path]::GetFullPath($NewExe) }
     Add-Check '0.1' 'neues Programm angegeben und vorhanden' ($newFull -and (Test-Path $newFull)) $newFull
-    if (-not ($newFull -and (Test-Path $newFull))) { Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL'); exit 1 }
+    if (-not ($newFull -and (Test-Path $newFull))) { Stop-D11 'neues Programm fehlt' }
     $sums = Join-Path (Split-Path -Parent $newFull) 'SHA256SUMS'
     $hash = Get-Sha256 $newFull
     $want = ''
@@ -367,25 +407,18 @@ if (-not $Rueckweg) {
     Add-Check '0.4' ('altes Programm meldet ' + $OldVersion) ($v.Exit -eq 0 -and $v.Out -match [regex]::Escape($OldVersion)) $v.Text
     Add-Check '0.5' 'Ordner der Sicherung angegeben' ([bool] $BackupTo) $BackupTo
     Add-Check '0.6' 'mindestens ein Konto fuer den ersten Lauf angegeben' ($Accounts.Count -gt 0) ('Konten: ' + $Accounts.Count)
-    if ($script:NFail -gt 0) {
-        Write-Log 'Abbruch vor jeder Aenderung (Voraussetzungen fehlen).'
-        Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL')
-        exit 1
-    }
+    if ($script:NFail -gt 0) { Stop-D11 'Voraussetzungen fehlen; nichts geaendert' }
 
     # ------------------------------------------------------------ Teil 1
     Write-Log '--- Teil 1: Stand vorher (altes Programm), Sicherung'
     Stop-Tasks '1.1'
-    if ($script:NFail -gt 0) {
-        Write-Log 'Abbruch: Es laeuft noch ein postkauz.exe (Claude-App oder Aufgabe). Aufgaben werden wieder eingeschaltet.'
-        Start-Tasks '1.1b'
-        Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL')
-        exit 1
-    }
-    $before = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
-    Add-Check '1.2' ('draft list vorher: ' + $before.List.Count + ' offene Entwuerfe') ($before.Exit -eq 0) (Format-Drafts $before.List)
-    $docBefore = Get-DoctorWarnings $script:ExeFull
-    Add-Check '1.3' 'doctor vorher' ($docBefore.Database -eq 'ok') ('database ' + $docBefore.Database + "`n" + (($docBefore.Warnings) -join "`n"))
+    if ($script:NFail -gt 0) { Stop-D11 'es laeuft noch ein postkauz.exe (Claude-App oder Aufgabe); nichts getauscht' }
+    $script:Before = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
+    Add-Check '1.2' ('draft list vorher: ' + $script:Before.List.Count + ' offene Entwuerfe') ($script:Before.Exit -eq 0) (Format-Drafts $script:Before.List)
+    $script:DocBefore = Get-DoctorWarnings $script:ExeFull
+    Add-Check '1.3' 'doctor vorher' ($script:DocBefore.Database -eq 'ok') ('database ' + $script:DocBefore.Database + "`n" + (($script:DocBefore.Warnings) -join "`n"))
+    # Ohne Liste vorher waere 3.2 wertlos (leere Liste = OK).
+    if ($script:NFail -gt 0) { Stop-D11 'Stand vorher nicht lesbar; nichts getauscht' }
     if ($HtmlMessage) {
         $f = Get-MessageFacts $script:ExeFull $HtmlMessage
         Add-Info '1.4' ('Nachricht ' + $HtmlMessage + ' vorher (erwartet: HTML-Tags im Text, alternative_mismatch meist true)') $f.Detail
@@ -395,56 +428,52 @@ if (-not $Rueckweg) {
     $script:XmlnsBefore = Get-XmlnsHits $script:ExeFull
     Add-Info '1.4b' ('Suchtreffer fuer "xmlns" vorher: ' + $script:XmlnsBefore)
     $b = Invoke-Pk $script:ExeFull @('backup', 'create', '--to', $BackupTo) -TimeoutSec 7200
-    Add-Check '1.5' 'Sicherung geschrieben (betrieb.md 2.2)' ($b.Exit -eq 0 -and $b.Out -match 'backup written to') $b.Text
-    if ($b.Exit -ne 0) {
-        Write-Log 'Abbruch: ohne Sicherung kein Tausch. Aufgaben werden wieder eingeschaltet.'
-        Start-Tasks '1.6'
-        Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL')
-        exit 1
-    }
+    Add-Check '1.5' 'Sicherung geschrieben (betrieb.md 2.2): Exit 0 und "backup written to"' ($b.Exit -eq 0 -and $b.Out -match 'backup written to') $b.Text
+    if ($script:NFail -gt 0) { Stop-D11 'ohne Sicherung kein Tausch' }
 
     # ------------------------------------------------------------ Teil 2
     Write-Log '--- Teil 2: Programm tauschen'
     Copy-Item -LiteralPath $script:ExeFull -Destination $OldCopy -Force
     Copy-Item -LiteralPath $newFull -Destination $script:ExeFull -Force
+    $script:Swapped = $true
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     Add-Check '2.1' ('getauscht: ' + $script:ExeFull + ' meldet ' + $ExpectVersion + ', altes Programm als postkauz-rc2.exe aufgehoben') ($v.Out -match [regex]::Escape($ExpectVersion) -and (Test-Path $OldCopy)) $v.Text
     $d = Get-DoctorWarnings $script:ExeFull
     Add-Check '2.2' 'doctor: database ok (keine Migration, Schema 22)' ($d.Database -eq 'ok') ('database ' + $d.Database)
+    if ($script:NFail -gt 0) {
+        # Vor dem ersten sync zurueck auf das alte Programm.
+        if (Test-Path $OldCopy) { Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force; $script:Swapped = $false }
+        $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
+        Add-Info '2.3' ('altes Programm zurueckkopiert, meldet: ' + $v.Out.Trim())
+        Stop-D11 'Tausch nicht in Ordnung; altes Programm wieder in Betrieb, kein sync mit dem neuen'
+    }
 
     # ------------------------------------------------------------ Teil 3
     Write-Log '--- Teil 3: erster Lauf mit dem neuen Programm'
-    $syncOk = $true
-    $sent = 0
     foreach ($acc in $Accounts) {
         $s = Invoke-Pk $script:ExeFull @('sync', '-a', $acc, '--json') -TimeoutSec 3600
         $j = Get-Json $s.Out
-        $line = '[exit ' + $s.Exit + ']'
+        $line = 'exit ' + $s.Exit + ', stderr ' + (Get-LineCount $s.Err) + ' Zeilen'
         if ($null -ne $j) {
+            $line += ', neu ' + $j.new + ', Fehler ' + $j.errors
             $dc = $j.draft_check
-            $line = 'Konto ' + $acc + ': neu ' + $j.new + ', Fehler ' + $j.errors
             if ($null -ne $dc) {
                 $line += ', sent_by_message_id ' + [int] $dc.sent_by_message_id + ', sent_by_fallback ' + [int] $dc.sent_by_fallback +
                     ', sent_by_thread ' + [int] $dc.sent_by_thread + ', missing ' + [int] $dc.missing + ', taken_over ' + [int] $dc.taken_over
-                $sent += [int] $dc.sent_by_message_id + [int] $dc.sent_by_fallback + [int] $dc.sent_by_thread
             }
         }
-        if ($s.Exit -ne 0) { $syncOk = $false }
-        Add-Check ('3.1') ('sync -a <Konto> (erster Lauf, bereitet betroffene Texte neu auf)') ($s.Exit -eq 0) ($line + "`n" + [string] $s.Err)
+        Add-Check '3.1' 'sync -a <Konto> (erster Lauf, bereitet betroffene Texte neu auf)' ($s.Exit -eq 0) $line
     }
     $after = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready', 'sent_by_human')
     $closed = @()
-    foreach ($o in $before.List) {
+    foreach ($o in $script:Before.List) {
         $n = $after.List | Where-Object { $_.Id -eq $o.Id } | Select-Object -First 1
         if ($null -ne $n -and $n.Status -eq 'sent_by_human') { $closed += $n }
     }
-    $au = Invoke-Pk $script:ExeFull @('audit', '--operation', 'drafts.sent_detected', '--since', '3h', '--json', '--limit', '500')
-    $aj = Get-Json $au.Out
+    $au = Get-SentDetected $script:ExeFull
     $reasons = @{}
-    if ($null -ne $aj -and $null -ne $aj.events) {
-        foreach ($ev in $aj.events) {
-            foreach ($tg in $ev.targets) { if ([string] $tg -match '^draft:([0-9]+)$') { $reasons[[int64] $Matches[1]] = [string] $ev.reason } }
-        }
+    foreach ($ev in $au.Events) {
+        foreach ($tg in $ev.targets) { if ([string] $tg -match '^draft:([0-9]+)$') { $reasons[[int64] $Matches[1]] = [string] $ev.reason } }
     }
     $lines = @()
     $missingReason = 0
@@ -453,7 +482,8 @@ if (-not $Rueckweg) {
         if (-not $r) { $missingReason++; $r = '(kein Audit-Eintrag)' }
         $lines += ('draft ' + $c.Id + ': sent_by_human, Grund ' + $r)
     }
-    Add-Check '3.2' ('draft list nachher: ' + $closed.Count + ' offene Entwuerfe von vorher jetzt sent_by_human, jeder mit Grund im Audit (message_id, fallback oder thread)') ($after.Exit -eq 0 -and $missingReason -eq 0) ((@($lines) -join "`n") + "`n--- noch offen:`n" + (Format-Drafts @($after.List | Where-Object { @('draft', 'pending_approval', 'ready') -contains $_.Status })))
+    $open = @($after.List | Where-Object { @('draft', 'pending_approval', 'ready') -contains $_.Status })
+    Add-Check '3.2' ('draft list nachher: ' + $closed.Count + ' offene Entwuerfe von vorher jetzt sent_by_human, jeder mit Grund im Audit (message_id, fallback oder thread)') ($after.Exit -eq 0 -and $au.Exit -eq 0 -and $missingReason -eq 0) ((@($lines) -join "`n") + "`n--- noch offen:`n" + (Format-Drafts $open))
     Add-Info '3.3' 'Betreiber: Sind die noch offenen Entwuerfe wirklich nicht gesendet? Und die geschlossenen wirklich gesendet? (draft show <id> zeigt den Betreff nur am Bildschirm)'
     if ($HtmlMessage) {
         $f = Get-MessageFacts $script:ExeFull $HtmlMessage
@@ -465,24 +495,33 @@ if (-not $Rueckweg) {
     Add-Info '3.4b' ('Suchtreffer fuer "xmlns" nachher: ' + $xa + ' (vorher ' + $script:XmlnsBefore + '; erwartet deutlich weniger, 0 bis auf Mails, die das Wort im sichtbaren Text haben)')
     $docAfter = Get-DoctorWarnings $script:ExeFull
     $old = @{}
-    foreach ($w in $docBefore.Warnings) { $old[(Get-WarningKey $w)] = $true }
+    foreach ($w in $script:DocBefore.Warnings) { $old[(Get-WarningKey $w)] = $true }
     $new = @($docAfter.Warnings | Where-Object { -not $old.ContainsKey((Get-WarningKey $_)) })
     Add-Check '3.5' 'doctor ohne neue Warnung' ($docAfter.Database -eq 'ok' -and $new.Count -eq 0) ('database ' + $docAfter.Database + "`nneu: " + (($new) -join "`n") + "`nalle: " + (($docAfter.Warnings) -join "`n"))
     $av = Invoke-Pk $script:ExeFull @('audit', 'verify', '--json') -TimeoutSec 1800
     $avj = Get-Json $av.Out
-    Add-Check '3.6' 'audit verify: ok' ($av.Exit -eq 0 -and $null -ne $avj -and $avj.status -eq 'ok') $av.Text
+    Add-Check '3.6' 'audit verify: ok' ($av.Exit -eq 0 -and $null -ne $avj -and $avj.status -eq 'ok') ('exit ' + $av.Exit + ', status ' + [string] $avj.status)
 
     # ------------------------------------------------------------ Teil 4
     Write-Log '--- Teil 4: Dauerbetrieb wieder an'
     Start-Tasks '4.1'
-} else {
-    # ------------------------------------------------------------ Rueckweg
+    $script:Restarted = $true
+}
+
+# Rueckweg rc3 -> rc2 (A05 hat keine Migration).
+function Invoke-Rueckweg {
     Write-Log '--- Rueckweg: altes Programm zurueck (keine Migration in A05)'
+    $rc3Copy = Join-Path (Split-Path -Parent $script:ExeFull) 'postkauz-rc3.exe'
     Add-Check 'R.0' 'aufgehobenes altes Programm vorhanden (postkauz-rc2.exe)' (Test-Path $OldCopy) $OldCopy
-    if (-not (Test-Path $OldCopy)) { Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL'); exit 1 }
+    if (-not (Test-Path $OldCopy)) { Stop-D11 'postkauz-rc2.exe fehlt; nichts geaendert' }
+    $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
+    Add-Check 'R.0b' ('laufendes Programm meldet ' + $ExpectVersion + ' und postkauz-rc3.exe gibt es noch nicht (sonst nichts ueberschreiben)') ($v.Out -match [regex]::Escape($ExpectVersion) -and -not (Test-Path $rc3Copy)) ($v.Text + "`npostkauz-rc3.exe vorhanden: " + (Test-Path $rc3Copy))
+    $o = Invoke-Pk $OldCopy @('version') -NoDirs
+    Add-Check 'R.0c' ('postkauz-rc2.exe meldet ' + $OldVersion) ($o.Out -match [regex]::Escape($OldVersion)) $o.Text
+    if ($script:NFail -gt 0) { Stop-D11 'Rueckweg nicht moeglich; nichts geaendert' }
     Stop-Tasks 'R.1'
-    if ($script:NFail -gt 0) { Start-Tasks 'R.1b'; Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL'); exit 1 }
-    Copy-Item -LiteralPath $script:ExeFull -Destination (Join-Path $dir 'postkauz-rc3.exe') -Force
+    if ($script:NFail -gt 0) { Stop-D11 'es laeuft noch ein postkauz.exe; nichts getauscht' }
+    Copy-Item -LiteralPath $script:ExeFull -Destination $rc3Copy
     Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     $d = Get-DoctorWarnings $script:ExeFull
@@ -492,15 +531,50 @@ if (-not $Rueckweg) {
         Add-Check 'R.3' ('show ' + $HtmlMessage + ' mit ' + $OldVersion + ': weiter ohne HTML-Tags (Texte mit Stand 4 bleiben)') ($f.Ok -and -not $f.Tags -and -not $f.Mismatch) $f.Detail
     }
     foreach ($acc in $Accounts) {
-        $s = Invoke-Pk $script:ExeFull @('sync', '-a', $acc) -TimeoutSec 3600
-        Add-Check 'R.4' ('sync -a <Konto> mit ' + $OldVersion + ' ohne Fehler') ($s.Exit -eq 0) ([string] $s.Err)
+        $s = Invoke-Pk $script:ExeFull @('sync', '-a', $acc, '--json') -TimeoutSec 3600
+        $j = Get-Json $s.Out
+        $line = 'exit ' + $s.Exit + ', stderr ' + (Get-LineCount $s.Err) + ' Zeilen'
+        if ($null -ne $j) { $line += ', neu ' + $j.new + ', Fehler ' + $j.errors }
+        Add-Check 'R.4' ('sync -a <Konto> mit ' + $OldVersion + ' ohne Fehler') ($s.Exit -eq 0) $line
     }
-    Add-Info 'R.5' 'Fall: ohne Migration. Die Sicherung wird nicht zurueckgespielt. Nach einem spaeteren Wechsel auf rc3 erfasst der erste Lauf auch, was rc2 inzwischen mit Stand 3 gespiegelt hat.'
+    Add-Info 'R.5' 'Fall: ohne Migration. Die Sicherung wird nicht zurueckgespielt. Grenze: Nach einem spaeteren Wechsel auf rc3 erfasst dessen erster Lauf nur Teil 3 nach (HTML im Klartext); Entwuerfe aus der rc2-Zeit, die nur der Rueckfall von Teil 1 erkannt haette, schliesst mark-sent oder der Weg thread (abnahme_D11.md, Abschnitt 5).'
     Start-Tasks 'R.6'
+    $script:Restarted = $true
 }
 
-Write-Log ''
-if ($script:Fails.Count -gt 0) { Write-Log ('Fehlgeschlagen: ' + ($script:Fails -join '; ')) }
-Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL')
+$script:ExeFull = [System.IO.Path]::GetFullPath($Exe)
+$dir = Split-Path -Parent $script:ExeFull
+if (-not $LogFile) { $LogFile = Join-Path $dir 'D11_windows.txt' }
+$script:Log = $LogFile
+$OldCopy = Join-Path $dir 'postkauz-rc2.exe'
+$script:Swapped = $false
+$script:Restarted = $false
+$mode = 'Umstellung'
+if ($Rueckweg) { $mode = 'Rueckweg' }
+Write-Log ('=== Abnahme D11 (' + $mode + '), ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ===')
+Write-Log ('Programm: ' + $script:ExeFull + '; Daten: ' + $DataDir + '; Konfiguration: ' + $Config)
+
+try {
+    if ($Rueckweg) { Invoke-Rueckweg } else { Invoke-Umstellung }
+} catch {
+    $msg = [string] $_.Exception.Message
+    if ($msg.StartsWith('D11-ABBRUCH: ')) {
+        Write-Log ('Abbruch: ' + $msg.Substring(13))
+    } else {
+        Add-Check 'X' ('unerwarteter Fehler im Skript: ' + $msg) $false
+    }
+} finally {
+    # Aufgaben wieder einschalten, wenn das Skript sie abgeschaltet hat und
+    # nicht bis zum Ende kam.
+    if ($script:WasEnabled.Count -gt 0 -and -not $script:Restarted) {
+        try { Start-Tasks 'E.1' } catch { Add-Check 'E.1' ('Aufgaben wieder einschalten: ' + $_.Exception.Message) $false }
+    }
+    if ($script:Swapped -and -not $Rueckweg) {
+        Write-Log ('Stand: ' + $script:ExeFull + ' ist das neue Programm; das alte liegt als postkauz-rc2.exe daneben.')
+    }
+    Write-Log ''
+    if ($script:Fails.Count -gt 0) { Write-Log ('Fehlgeschlagen: ' + ($script:Fails -join '; ')) }
+    Write-Log ('D11: ' + $script:NOk + ' OK, ' + $script:NFail + ' FAIL')
+}
 if ($script:NFail -gt 0) { exit 1 }
 exit 0
