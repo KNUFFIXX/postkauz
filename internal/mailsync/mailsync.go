@@ -280,6 +280,11 @@ type Engine struct {
 	// sie nach jedem fehlerfreien Lauf (Job sync, T2; syncrequest.go);
 	// nil = nicht.
 	Requests *SyncRequests
+
+	// cleanupDeferred: Die Neuaufbereitung dieses Laufs endete vorzeitig
+	// (ein Anhang ließ sich nur vorübergehend nicht ablegen); Nachrichten
+	// mit altem Stand sind übrig. Setzt reprocess.
+	cleanupDeferred bool
 }
 
 func (e *Engine) maxMessageBytes() int64 {
@@ -422,6 +427,22 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			return rep, err
 		}
 	}
+	// Nacharbeit (Threads und Neuaufbereitung älterer Stände) vor der
+	// Prüfung der Entwürfe (A05, Nachtrag 2, Punkt 5): Die Versanderkennung
+	// vergleicht sonst im ersten Lauf nach einem Update den alten Text (etwa
+	// HTML-Quelltext im Klartextteil), vermerkt die Neuprüfung des Rückfalls
+	// (sent_check_rev) als erledigt und prüft danach nie wieder. Endet die
+	// Nacharbeit nicht vollständig (Fehler oder vorübergehend nicht
+	// ablegbarer Anhang), läuft die Prüfung trotzdem, vermerkt aber nichts
+	// (KeepMark): Der nächste Lauf prüft dieselben Nachrichten erneut.
+	backlogErr := e.backlog(ctx)
+	if backlogErr != nil || e.cleanupDeferred {
+		check.KeepMark = true
+	}
+	if backlogErr != nil && fatal(ctx, backlogErr) {
+		rep.Duration = time.Since(start)
+		return rep, backlogErr
+	}
 	// S2.6: Entwürfe gegen den eben gespiegelten Stand prüfen (gesendet?
 	// Freigabe abgelaufen? Kopie im Entwürfe-Ordner noch da?). Ein Fehler
 	// der Prüfung zählt als Fehler des Laufs, hält aber Nacharbeit, Jobs und
@@ -440,9 +461,9 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 		e.log().Warn("draft check failed; repeating it in the next run", "error", err.Error())
 		e.emit(Event{Kind: "error", Mailbox: "drafts", Message: err.Error()})
 	}
-	if err := e.backlog(ctx); err != nil {
+	if backlogErr != nil {
 		rep.Duration = time.Since(start)
-		return rep, err
+		return rep, backlogErr
 	}
 	if e.Jobs != nil {
 		jr, err := e.Jobs.RunAccount(ctx, e.AccountID)

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
+
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
+	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
 
 // A05 Teil 3: HTML-Quelltext im Klartextteil.
@@ -167,5 +170,58 @@ func TestA05ReprocessOnlyPlainHTML(t *testing.T) {
 	}
 	if n := e.count(t, `SELECT count(*) FROM bodies WHERE clean_version != ?`, CleanVersion); n != 0 {
 		t.Fatalf("%d bodies with an old version", n)
+	}
+}
+
+// A05, Nachtrag 2, Punkt 5: Nach dem Update liegt eine gesendete Nachricht
+// im Stand von 0.3.0-rc2 vor (Klartextteil mit HTML-Quelltext, Stand 3),
+// und der Entwurf ist im Rückfall schon geprüft (Marke, fallback_checked_at,
+// kein sent_check_rev). Der erste Lauf bereitet den Text vor der Prüfung
+// der Entwürfe neu auf; die Neuprüfung des Rückfalls vergleicht deshalb den
+// sichtbaren Text und schließt den Entwurf (vorher verglich sie das HTML,
+// fand nichts und vermerkte die Neuprüfung als erledigt).
+func TestA05RecheckAfterCleanup(t *testing.T) {
+	e := newPushEnv(t, "Drafts", "Sent")
+	ctx := context.Background()
+	d := e.pushed(t, "Termin Heizung")
+	src := `<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"><title>x</title></head>` +
+		`<body><p>Hallo Termin Heizung</p></body></html>`
+	raw := strings.ReplaceAll("From: demo@example.org\nTo: b@example.org\nSubject: Re: Termin Heizung\n"+
+		"Date: "+time.Now().UTC().Format(time.RFC1123Z)+"\nMessage-ID: <webmail-html@example.org>\nMIME-Version: 1.0\n"+
+		"Content-Type: text/plain; charset=utf-8\n\n"+src+"\n", "\n", "\r\n")
+	if _, err := e.u.Append("Sent", lit([]byte(raw)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagSeen}}); err != nil {
+		t.Fatal(err)
+	}
+	expunge(t, imapSession(t, e.addr), "Drafts", imap.UID(d.RemoteUID))
+	// Nur Gesendet spiegeln: ohne Entwürfe-Ordner keine Versanderkennung.
+	if _, err := e.sync(t, ops.SyncOptions{Mailboxes: []string{"Sent"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Stand nach einem Lauf von rc2: HTML im Klartext, Stand 3, Entwurf
+	// geprüft, Marke gesetzt, keine Neuprüfung vermerkt.
+	for _, q := range []string{
+		`UPDATE bodies SET clean_version = 3, text_plain = '` + src + `', text_from_html = '', text_unquoted = '` + src + `'
+			WHERE message_id = (SELECT id FROM messages WHERE message_id_header = 'webmail-html@example.org')`,
+		`UPDATE drafts SET fallback_checked_at = content_changed_at`,
+		`INSERT INTO sent_check_marks(account_id, last_message_id) SELECT account_id, max(id) FROM messages GROUP BY account_id
+			ON CONFLICT(account_id) DO UPDATE SET last_message_id = excluded.last_message_id`,
+		`DELETE FROM meta WHERE key LIKE 'sent_check_rev/%'`,
+	} {
+		if err := e.st.ExecForTest(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := e.sync(t, ops.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.DraftCheck == nil || out.DraftCheck.SentByFallback != 1 {
+		t.Fatalf("check = %+v", out.DraftCheck)
+	}
+	if got := e.draft(t, d.ID); got.Status != string(drafts.StatusSentByHuman) {
+		t.Fatalf("draft = %s/%s", got.Status, got.RemoteState)
+	}
+	if n, err := e.st.SentCheckRev(ctx, e.acct); err != nil || n != drafts.SentCheckRev {
+		t.Fatalf("sent_check_rev = %d, %v", n, err)
 	}
 }

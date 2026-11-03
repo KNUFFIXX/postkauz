@@ -235,6 +235,7 @@ func Prepare(blobs *blob.Store, nm *store.NewMessage, r io.Reader, internal time
 func (e *Engine) reprocess(ctx context.Context) (int, error) {
 	total := 0
 	bumped := false
+	e.cleanupDeferred = false
 	for {
 		items, err := e.Store.ReprocessCandidates(ctx, e.AccountID, CleanVersion, 100)
 		if err != nil || len(items) == 0 {
@@ -273,6 +274,7 @@ func (e *Engine) reprocess(ctx context.Context) (int, error) {
 		total += len(out)
 		e.emit(Event{Kind: "backlog", Done: total, Message: "cleanup"})
 		if deferred > 0 {
+			e.cleanupDeferred = true
 			return total, nil
 		}
 	}
