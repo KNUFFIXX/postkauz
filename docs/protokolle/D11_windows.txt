@@ -1,0 +1,83 @@
+# Protokoll der Abnahme D11 auf dem Buero-PC (03.11.2026, Betreiber-Sitzung DRACO-PK13), Aufruf mit -KeepStdioMcp und abweichenden Pfaden/Aufgaben (abnahme_D11.md Abschnitt 6); Kontonamen und Pfade maskiert.
+=== Abnahme D11 (Umstellung), 2026-11-03 18:23:41 ===
+Programm: C:\PostKauz\<programmordner>\postkauz.exe; Daten: <datenordner>; Konfiguration: <datenordner>\config.toml
+--- Teil 0: Voraussetzungen
+OK 0.1 neues Programm angegeben und vorhanden
+      C:\PostKauz\d11\postkauz-windows-amd64.exe
+OK 0.2 Pruefsumme des neuen Programms passt zu SHA256SUMS
+      sha256 f7789cf35cfd9c16114b764add0e178bea61899da47a773ebb063f1f9e34e934
+      SHA256SUMS f7789cf35cfd9c16114b764add0e178bea61899da47a773ebb063f1f9e34e934
+OK 0.3 neues Programm meldet 0.3.0-rc3
+      > postkauz version
+      postkauz 0.3.0-rc3 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 0.4 altes Programm meldet 0.3.0-rc2
+      > postkauz version
+      postkauz 0.3.0-rc2 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 0.5 Ordner der Sicherung angegeben
+      <sicherung>
+OK 0.6 mindestens ein Konto fuer den ersten Lauf angegeben
+      Konten: 3
+--- Teil 1: Stand vorher (altes Programm), Sicherung
+INFO 1.1 Hilfsskripte beendet: 3; postkauz.exe (sync, --http, audit) nach 20 s beendet: 4
+OK 1.1 Aufgaben angehalten und abgeschaltet, ausser dem stdio-MCP der Claude-App laeuft kein postkauz.exe
+      uebrige postkauz.exe: 0, stdio-MCP (darf laufen): 2
+OK 1.2 draft list vorher: 2 offene Entwuerfe
+      JSON lesbar: True
+      draft 1: draft, reply, remote missing
+      draft 3: draft, reply, remote missing
+OK 1.3 doctor vorher
+      database ok
+      audit: 3 calls started more than 10 minutes ago without an end entry (crash or a failed audit write); see: audit --result started
+INFO 1.4 Nachricht 61482 vorher (erwartet: HTML-Tags im Text, alternative_mismatch meist true)
+      text_source plain, alternative_mismatch True, hidden_text_removed False, HTML-Tags im Text: True, Laenge 3662, exit 0
+INFO 1.4b Suchtreffer fuer "xmlns" vorher: 140
+OK 1.5 Sicherung geschrieben (betrieb.md 2.2): Exit 0 und "backup written to"
+      > postkauz backup create --to <sicherung>
+      backup written to <sicherung>
+        database:  postkauz-20261103T172419Z.db (schema 22)
+        blobs:     81475 (copied 81475, already there 0; 45.2 GB copied)
+        manifest:  <sicherung>\manifest.json, 81476 files (46.8 GB), sha256 c0505c5fe9c2d4665e750803001d92cb5aa86420e4056a701c4131ff1ca067f4
+        restore:   restore --from <backup folder> --data-dir <new folder>
+      [stderr] warning: the backup is not encrypted; keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or encrypt it (age, restic); see ENCRYPT-ME.txt
+      [exit 0]
+--- Teil 2: Programm tauschen
+OK 2.1 getauscht: C:\PostKauz\<programmordner>\postkauz.exe meldet 0.3.0-rc3, altes Programm als postkauz-rc2.exe aufgehoben
+      > postkauz version
+      postkauz 0.3.0-rc3 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 2.2 doctor: database ok (keine Migration, Schema 22)
+      database ok
+INFO 2.4 Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem alten Programm (postkauz-rc2.exe); erst danach nimmt er das neue.
+--- Teil 3: erster Lauf mit dem neuen Programm
+OK 3.1 sync -a <Konto> (erster Lauf, bereitet betroffene Texte neu auf)
+      exit 0, stderr 0 Zeilen, neu 0, Fehler 0, sent_by_message_id 0, sent_by_fallback 0, sent_by_thread 1, missing 0, taken_over 0
+OK 3.1 sync -a <Konto> (erster Lauf, bereitet betroffene Texte neu auf)
+      exit 0, stderr 0 Zeilen, neu 0, Fehler 0
+OK 3.1 sync -a <Konto> (erster Lauf, bereitet betroffene Texte neu auf)
+      exit 0, stderr 0 Zeilen, neu 0, Fehler 0
+OK 3.2 draft list nachher: 1 offene Entwuerfe von vorher jetzt sent_by_human, jeder mit Grund im Audit (message_id, fallback oder thread)
+      draft 1: sent_by_human, Grund thread
+      --- noch offen:
+      draft 3: draft, reply, remote missing
+INFO 3.3 Betreiber: Sind die noch offenen Entwuerfe wirklich nicht gesendet? Und die geschlossenen wirklich gesendet? (draft show <id> zeigt den Betreff nur am Bildschirm)
+OK 3.4 show 61482: keine HTML-Tags, text_source html, alternative_mismatch false
+      text_source html, alternative_mismatch False, hidden_text_removed False, HTML-Tags im Text: False, Laenge 1472, exit 0
+INFO 3.4b Suchtreffer fuer "xmlns" nachher: 80 (vorher 140; erwartet deutlich weniger, 0 bis auf Mails, die das Wort im sichtbaren Text haben)
+OK 3.5 doctor ohne neue Warnung
+      database ok
+      neu: 
+      alle:
+OK 3.6 audit verify: ok
+      exit 0, status ok
+--- Teil 4: Dauerbetrieb wieder an
+OK 4.1 Aufgaben wieder eingeschaltet und gestartet (Claude-App nach D11 neu starten, damit ihr MCP das neue Programm nimmt)
+      PostKauz sync watch <konto1>: Running
+      PostKauz sync watch <konto2>: Running
+      PostKauz sync watch <konto3>: Running
+      PostKauz mcp http: Running
+      postkauz.exe ohne stdio-MCP: 4
+Stand: C:\PostKauz\<programmordner>\postkauz.exe ist das neue Programm; das alte liegt als postkauz-rc2.exe daneben.
+
+D11: 20 OK, 0 FAIL
