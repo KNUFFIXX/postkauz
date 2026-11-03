@@ -146,7 +146,8 @@ var tools = []toolBinding{
 		desc: "Create a draft for a human to send: kind new, reply, reply_all or forward. reply, reply_all and forward need the " +
 			"original message as in_reply_to (local id from mail_search) or in_reply_to_message_id; a reply takes recipients and " +
 			"subject (Re:) from the original unless you give them, quotes it (quote=false: no quote) and appends the signature " +
-			"of the identity. Write the text as body_markdown (or body_html), at most 200000 characters; recipients as " +
+			"of the identity; reply, reply_all and forward stay in the thread of the original (In-Reply-To, References). " +
+			"Write the text as body_markdown (or body_html), at most 200000 characters; recipients as " +
 			"\"Name <address>\" or address, at most 50 per field. The draft is saved locally and copied into the Drafts folder " +
 			"of the mailbox by the next sync of the user (result remote=pending; a running sync --watch within about 10 s). " +
 			"The result shows your own text with source=draft and the quoted or forwarded original separately in original " +

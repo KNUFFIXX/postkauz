@@ -22,6 +22,8 @@ Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts:
 
 Jeder Entwurf bekommt beim Anlegen eine feste Message-ID (`pk.<20 Hex>@<Domain des Absenders>`, E11), die auch in der Kopie im Entwürfe-Ordner steht. Viele Mailprogramme behalten sie beim Senden. Liegt nach dem Sync in einem Ordner mit Rolle **`sent`** (Gesendet) oder **`all`** (Gmail „Alle Nachrichten") eine Nachricht mit dieser Message-ID, ist der Entwurf gesendet: `sent_by_human`, `sent_message_id` = lokale ID der gesendeten Nachricht, `closed_at` gesetzt, Audit `drafts.sent_detected` mit Grund **`message_id`**.
 
+**Thread-Kopfzeilen spielen keine Rolle** (A04 Teil 1, 03.11.2026): Seit 0.3.0-rc2 trägt auch eine Weiterleitung `In-Reply-To` und `References` der Ausgangsnachricht (vorher nur Antworten), damit Gmail sie im Verlauf des Originals lässt. Weder die Message-ID noch der Rückfall (Abschnitt 3) lesen diese Kopfzeilen; die Erkennung gesendeter Weiterleitungen ändert sich dadurch nicht. Im Spiegel landet die gesendete Weiterleitung jetzt im Thread des Originals.
+
 ## 3. Zweiter Weg: der Rückfall-Abgleich
 
 Manche Mailprogramme (erwartet: Gmail im Browser) bauen die Nachricht beim Senden neu und vergeben eine **neue** Message-ID. Für Entwürfe ohne Treffer über die Message-ID gilt deshalb der Rückfall; er trifft nur, wenn **alle** Bedingungen zugleich erfüllt sind:

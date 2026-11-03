@@ -49,14 +49,17 @@
 // # Regeln
 //
 //   - Kopfzeilen (E11): Message-ID `<pk.<20 Hex>@<Domain der Absenderadresse>>`;
-//     Date aus Now; Antwort: In-Reply-To = Message-ID der Ausgangsnachricht,
+//     Date aus Now; Antwort und Weiterleitung (seit A04, 03.11.2026; vorher
+//     ohne bei forward): In-Reply-To = Message-ID der Ausgangsnachricht,
 //     References = deren References + deren Message-ID (fehlen die
 //     References, deren In-Reply-To), ohne Dubletten, bei mehr als 20 der
 //     erste und die letzten 19. Betreff: Ein vorhandenes Antwortpräfix (Re:,
 //     AW:, Antw:, auch RE[2]:) bleibt bei einer Antwort, ein vorhandenes
 //     Weiterleitungspräfix (Fwd:, Fw:, WG:) bei einer Weiterleitung; sonst
 //     ReplyPrefix bzw. ForwardPrefix der Identität (Standard "Re: ",
-//     "Fwd: "). Weiterleitungen tragen keine In-Reply-To/References. Kein
+//     "Fwd: "). Weiterleitungen tragen In-Reply-To/References wie
+//     Antworten, damit sie im Verlauf des Originals bleiben (Gmail legt
+//     eine Nachricht ohne sie in einen neuen Verlauf). Kein
 //     X-Mailer, kein User-Agent. Bcc steht im Kopf (es ist ein Entwurf; der
 //     Mailclient entfernt Bcc beim Senden). Alles UTF-8, Kopfzeilen nach
 //     RFC 2047, gefaltet nach RFC 5322.
@@ -328,7 +331,7 @@ type Message struct {
 	Cc         []Address
 	Bcc        []Address
 	Subject    string
-	InReplyTo  string   // ohne <>; leer bei new/forward
+	InReplyTo  string   // ohne <>; leer bei new
 	References []string // ohne <>
 	// BodyHTML ist das fertige HTML-Dokument (wie im text/html-Teil),
 	// BodyText der Klartext daraus (wie im text/plain-Teil).

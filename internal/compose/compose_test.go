@@ -627,7 +627,9 @@ func TestForward(t *testing.T) {
 		{Filename: "Rechnung_2.pdf", ContentType: "application/pdf", Data: exe},
 	}
 	m := mustBuild(t, in)
-	if m.Subject != "Fwd: Termin Treppenhausreinigung" || m.InReplyTo != "" || len(m.References) != 0 {
+	// Seit A04 Teil 1 bleibt die Weiterleitung im Verlauf des Originals.
+	if m.Subject != "Fwd: Termin Treppenhausreinigung" || m.InReplyTo != "orig.42@example.org" ||
+		!slices.Equal(m.References, []string{"root@example.org", "parent@example.org", "orig.42@example.org"}) {
 		t.Errorf("subject %q, in-reply-to %q, references %v", m.Subject, m.InReplyTo, m.References)
 	}
 	for _, want := range []string{"Zur Info.", "---------- Forwarded message ----------", "From: Erika Beispiel <erika@example.org>",

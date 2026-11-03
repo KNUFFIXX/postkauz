@@ -63,7 +63,8 @@ func prefixed(orig, prefix, def string, has *regexp.Regexp) string {
 	return strings.TrimSpace(headerText(prefix) + " " + s)
 }
 
-// References liefert In-Reply-To und References einer Antwort auf o (E11):
+// References liefert In-Reply-To und References einer Antwort oder
+// Weiterleitung von o (E11, seit A04 auch für forward):
 // In-Reply-To = Message-ID von o; References = References von o (fehlen
 // sie, dann In-Reply-To von o) + Message-ID von o, ohne Dubletten und
 // ungültige Einträge, bei mehr als MaxReferences der erste und die letzten
@@ -362,7 +363,11 @@ func (b *builder) ids() error {
 		}
 		b.msg.MessageID = id
 	}
-	if in.Kind == KindReply || in.Kind == KindReplyAll {
+	// Antwort und Weiterleitung (A04 Teil 1): beide bleiben im Verlauf der
+	// Ausgangsnachricht. Gmail ordnet eine per IMAP abgelegte Nachricht ohne
+	// In-Reply-To/References einem neuen Verlauf zu; Gmails eigene
+	// Weiterleitung setzt beide auf die Message-ID des Originals.
+	if in.Original != nil && in.Kind != KindNew {
 		b.msg.InReplyTo, b.msg.References = References(*in.Original)
 		if b.msg.InReplyTo != "" {
 			b.derive(DerivedInReplyTo)
