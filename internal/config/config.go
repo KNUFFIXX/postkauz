@@ -73,6 +73,11 @@ type Config struct {
 	// laufen, damit ein Tippfehler den Dauerbetrieb (sync --watch) beim
 	// nächsten Start nicht stoppt. HTTP ist dann nicht verlässlich.
 	HTTPErr error `toml:"-" json:"-"`
+	// Remote: Abschnitte [remote.<name>] (A04 Teil 4): Ziele von
+	// mcp --remote. RemoteErr wie HTTPErr: Ein Fehler dort hält nur
+	// remote … und mcp --remote auf.
+	Remote    map[string]Remote `toml:"-"`
+	RemoteErr error             `toml:"-" json:"-"`
 }
 
 // fileConfig ist die Form beim Lesen der Datei: [http] erst als
@@ -80,7 +85,8 @@ type Config struct {
 // dort nur HTTPErr setzt.
 type fileConfig struct {
 	Config
-	HTTP toml.Primitive `toml:"http"`
+	HTTP   toml.Primitive `toml:"http"`
+	Remote toml.Primitive `toml:"remote"`
 }
 
 // Retention: Abschnitt [retention] der Konfiguration (E8, A11). Gelöscht
@@ -388,28 +394,44 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 			cfg.HTTPErr = fmt.Errorf("config: %s: [http]: %w", path, herr)
 		}
 	}
+	if err == nil && md.IsDefined("remote") {
+		if rerr := md.PrimitiveDecode(fc.Remote, &cfg.Remote); rerr != nil {
+			cfg.Remote = nil
+			cfg.RemoteErr = fmt.Errorf("config: %s: [remote]: %w", path, rerr)
+		} else if rerr := checkRemotes(cfg.Remote); rerr != nil {
+			cfg.RemoteErr = fmt.Errorf("config: %s: %w", path, rerr)
+		}
+	}
 	switch {
 	case err == nil:
 		p.ConfigExists = true
 		if und := md.Undecoded(); len(und) > 0 {
 			// Unbekannte Schlüssel nur unter [http] halten allein mcp --http
 			// auf (HTTPErr); jeder andere hält jedes Kommando auf.
-			var keys, httpKeys []string
+			var keys, httpKeys, remoteKeys []string
 			for _, k := range und {
-				if len(k) > 0 && k[0] == "http" {
+				switch {
+				case len(k) > 0 && k[0] == "http":
 					httpKeys = append(httpKeys, k.String())
-				} else {
+				case len(k) > 0 && k[0] == "remote":
+					remoteKeys = append(remoteKeys, k.String())
+				default:
 					keys = append(keys, k.String())
 				}
 			}
 			if len(keys) > 0 {
 				keys = append(keys, httpKeys...)
+				keys = append(keys, remoteKeys...)
 				sort.Strings(keys)
 				return cfg, p, fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(keys, ", "))
 			}
 			sort.Strings(httpKeys)
-			if cfg.HTTPErr == nil {
+			if cfg.HTTPErr == nil && len(httpKeys) > 0 {
 				cfg.HTTPErr = fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(httpKeys, ", "))
+			}
+			sort.Strings(remoteKeys)
+			if cfg.RemoteErr == nil && len(remoteKeys) > 0 {
+				cfg.RemoteErr = fmt.Errorf("config: %s: unknown keys: %s", path, strings.Join(remoteKeys, ", "))
 			}
 		}
 	case errors.Is(err, fs.ErrNotExist):

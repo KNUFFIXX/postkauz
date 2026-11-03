@@ -14,6 +14,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/prompt"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/remote"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -87,6 +88,12 @@ func classify(err error) (int, ErrorInfo) {
 	case errors.Is(err, store.ErrActionNotFound):
 		// Befund D7a-1: vorher Code error mit dem Text des Stores.
 		return ExitError, ErrorInfo{Code: "not_found", Message: "action not found", Hint: "list actions with: action list"}
+	case errors.Is(err, ops.ErrRemoteNotFound):
+		return ExitError, ErrorInfo{Code: "not_found", Message: "remote not found", Hint: "list remotes with: remote list; add one with: remote add <name> --url <https-url> --key-stdin"}
+	case errors.As(err, new(*ops.RemoteCheckError)):
+		var re *ops.RemoteCheckError
+		errors.As(err, &re)
+		return ExitError, ErrorInfo{Code: remoteErrCode(re.Code), Message: re.Msg, Hint: "see docs/betrieb.md, section 4.9"}
 	case errors.Is(err, store.ErrKeyExists):
 		return ExitError, ErrorInfo{Code: "exists", Message: err.Error(), Hint: "key names stay reserved, also after revoke; choose another name"}
 	case errors.Is(err, store.ErrKeyNotFound):
@@ -232,4 +239,23 @@ var deniedHints = map[string]string{
 	"invalid_subdir":        "use plain folder names in --subdir (no reserved names like CON, no : or control characters)",
 	"attachment_not_stored": "the attachment was not stored when the message was mirrored; save the message from the mail client instead",
 	"target_not_fresh":      "export only into a new or empty folder; choose another --to",
+}
+
+// remoteErrCode: fester Code je Fehler der Brücke (A04 Teil 4).
+func remoteErrCode(c int64) string {
+	switch c {
+	case remote.CodeUnreachable:
+		return "remote_unreachable"
+	case remote.CodeUnauthorized:
+		return "remote_key_refused"
+	case remote.CodeForbidden:
+		return "remote_key_revoked"
+	case remote.CodeSessionExpired:
+		return "remote_session_expired"
+	case remote.CodeRateLimited:
+		return "remote_rate_limited"
+	case remote.CodeUnavailable:
+		return "remote_unavailable"
+	}
+	return "remote_error"
 }

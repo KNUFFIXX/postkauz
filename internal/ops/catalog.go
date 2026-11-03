@@ -85,6 +85,12 @@ type Deps struct {
 	ExportDir string
 	// Export liefert Ordner und Nachrichten für messages.export.
 	Export ExportRepo
+	// Remotes: Ziele von mcp --remote in der Konfigurationsdatei (A04
+	// Teil 4; nil nur ohne Handler-Aufrufe), ConfigFile deren Pfad für die
+	// Ausgabe. RemoteCheck prüft ein Ziel (remote.test); nil = remote.Check.
+	Remotes     RemoteConfig
+	ConfigFile  string
+	RemoteCheck RemoteChecker
 }
 
 // Catalog ist die eine, ausdrücklich geschriebene Liste aller Operationen
@@ -147,6 +153,10 @@ func Catalog(d Deps) []Operation {
 		RetentionPurge(d),
 		BlobsGC(d),
 		AuditRotate(d.Audit, d.RetentionConfig.AuditRetain),
+		RemoteAdd(d.Remotes, d.Secrets, d.ConfigFile),
+		RemoteList(d.Remotes, d.Secrets),
+		RemoteRemove(d.Remotes, d.Secrets),
+		RemoteTest(d.Remotes, d.Secrets, d.RemoteCheck),
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,11 @@ type DoctorReport struct {
 	// HTTPError: Fehler in [http] (Nachbesserung T5, Punkt 9h); dann fehlt
 	// HTTP. Nur mcp --http startet nicht, doctor endet mit Exit 1.
 	HTTPError string `json:"http_error,omitempty"`
+	// Remotes: Namen der Ziele von mcp --remote ([remote.<name>], A04
+	// Teil 4; Adresse und Schlüssel zeigt remote list). RemoteError: Fehler
+	// dort; nur remote … und mcp --remote halten an, doctor endet mit Exit 1.
+	Remotes     []string `json:"remotes,omitempty"`
+	RemoteError string   `json:"remote_error,omitempty"`
 	// Secrets nur mit --secrets, Blobs nur mit --blobs.
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
@@ -207,6 +213,9 @@ func doctorCmd(a *app) *cobra.Command {
 			if rep.HTTPError != "" {
 				return errors.New("[http] is invalid (mcp --http does not start; other commands are not affected): " + rep.HTTPError)
 			}
+			if rep.RemoteError != "" {
+				return errors.New("[remote] is invalid (mcp --remote does not start; other commands are not affected): " + rep.RemoteError)
+			}
 			return nil
 		},
 	}
@@ -238,6 +247,13 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	} else {
 		rep.HTTP = doctorHTTP(a.cfg.HTTP)
 	}
+	if a.cfg.RemoteErr != nil {
+		rep.RemoteError = a.cfg.RemoteErr.Error()
+	}
+	for n := range a.cfg.Remote {
+		rep.Remotes = append(rep.Remotes, n)
+	}
+	sort.Strings(rep.Remotes)
 	pf := doctorPolicy(&rep, a.paths.ConfigFile)
 	if w := config.CloudSyncWarning(a.paths.DataDir); w != "" {
 		rep.Warnings = append(rep.Warnings, w)
@@ -673,6 +689,12 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	}
 	if r.HTTPError != "" {
 		fmt.Fprintf(w, "http:      INVALID: %s (mcp --http does not start; other commands are not affected) [http]\n", r.HTTPError)
+	}
+	if len(r.Remotes) > 0 {
+		fmt.Fprintf(w, "remote:    %s (mcp --remote; details: remote list) [remote]\n", strings.Join(r.Remotes, ", "))
+	}
+	if r.RemoteError != "" {
+		fmt.Fprintf(w, "remote:    INVALID: %s (mcp --remote does not start; other commands are not affected) [remote]\n", r.RemoteError)
 	}
 	if r.PDFTool != "" {
 		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)

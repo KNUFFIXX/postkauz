@@ -718,13 +718,114 @@ POSTKAUZ_VERSION=<version> docker compose up -d
 - Update: neue Programmdatei nach `/usr/local/bin/postkauz`, dann `systemctl restart postkauz-sync@<konto>.service postkauz-mcp-http.service`. Vor Updates mit neuer Schemaversion eine Sicherung (Abschnitt 2).
 - Sicherung: `postkauz backup create --to /pfad/auf/verschluesseltem/ziel` regelmäßig (Abschnitt 2), Audit-Export als Timer (`deploy/systemd/postkauz-audit-export.*`).
 
-### 4.9 Vorläufig: ein Windows-PC als Knoten (bis zum VPS)
+### 4.9 Ein Windows-PC als Knoten, Zugriff vom zweiten PC (dauerhaft)
 
 > **Achtung:** Dieser Abschnitt arbeitet mit deinem echten Datenverzeichnis. Das geht nur mit einem **Release von `main`**. Testbauten (Arbeitszweige, Abnahmen) laufen nur mit einem eigenen, neuen `--data-dir` und `--config` (siehe 4.2), sonst stellt der Testbau die Live-Datenbank auf ein neues Schema um.
 
-Bis über einen VPS entschieden ist, kann ein PC des Betreibers der Knoten sein (Abnahme D8, vorläufig): Tailscale für Windows installieren, Dauer-Sync wie in Abschnitt 1, `mcp --http` in einem eigenen Fenster wie in 4.2 (eine geplante Aufgabe dafür kommt mit dem Betriebsentscheid), dann in einer PowerShell als normaler Nutzer `tailscale serve --bg 8787` und `[http] resource` auf den Namen des PCs im Tailnet setzen. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS).
+Seit dem Lastenheft vom 03.11.2026 (Vorgang 6, Phase 2) ist das der **dauerhafte** Weg, kein Übergang bis zum VPS: Der Büro-PC ist der Knoten (Dauer-Sync wie in Abschnitt 1, dazu `mcp --http`), der zweite PC des Betreibers greift über Tailscale darauf zu. Kein eigener Server im Internet, kein Zugang vom Handy.
 
-**Grenze unter Windows:** Sync und `mcp --http` laufen hier unter **demselben Windows-Benutzer**. Das Betriebssystem trennt sie nicht; der HTTP-Prozess kommt nur deshalb nicht an ein Passwort, weil PostKauz ihm keins gibt (Secrets-Speicher `denied`, siehe 4.1). Getrennte Benutzer für Sync und HTTP-MCP unter Windows sind für später vorgemerkt.
+**Warum eine eigene Brücke:** Claude Desktop startet in `claude_desktop_config.json` nur lokale Programme (stdio). Seine Remote-Connectoren laufen über die Cloud des Anbieters und erreichen das Tailnet nicht. Fremde Brücken wie `npx mcp-remote` holen Code aus dem npm-Netz und tragen den Schlüssel im Klartext in die Konfiguration ein. PostKauz bringt die Brücke deshalb selbst mit: `postkauz mcp --remote <name>` auf dem zweiten PC reicht jede Nachricht unverändert an `mcp --http` auf dem Büro-PC weiter. Der Schlüssel liegt dabei nur im Windows-Anmeldeinformationsspeicher. Die Brücke öffnet keine Datenbank, braucht kein Datenverzeichnis und kennt kein Mailpasswort.
+
+```
+Claude Desktop (zweiter PC) --stdio--> postkauz mcp --remote buero --https, Tailnet--> tailscale serve (Büro-PC) --> postkauz mcp --http 127.0.0.1:8787
+```
+
+**Am Büro-PC (einmalig):**
+
+1. Tailscale für Windows installieren und anmelden (tailscale.com → Download → Windows). In der Admin-Konsole von Tailscale (login.tailscale.com) → **DNS** → **MagicDNS** einschalten, weiter unten **HTTPS Certificates** → **Enable HTTPS**. Den Namen des PCs im Tailnet zeigt eine PowerShell:
+
+   ```powershell
+   tailscale status --self --peers=false
+   ```
+
+   In den Beispielen unten heißt er `buero-pc.<tailnet>.ts.net`.
+2. Einen eigenen Schlüssel für den zweiten PC anlegen, mit der Rolle, die die Sitzung dort braucht (für die Vorgänge 1 bis 4 `assistant`):
+
+   ```powershell
+   C:\PostKauz\postkauz.exe key create --name zweiter-pc --role assistant --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml
+   ```
+
+   Der Schlüssel `pk_key_…` erscheint nur dieses eine Mal. Ihn **nicht** in eine Datei oder E-Mail legen, sondern am zweiten PC direkt bei `remote add` einfügen (Schritt 2 unten); bis dahin dieses Fenster offen lassen.
+3. In `C:\PostKauz\config.toml` den Abschnitt für `mcp --http` ergänzen (Editor: Startmenü → „Editor“ → Datei → Öffnen):
+
+   ```toml
+   [http]
+   listen   = "127.0.0.1:8787"
+   auth     = "key"
+   resource = "https://buero-pc.<tailnet>.ts.net/mcp"
+   ```
+
+   `resource` muss genau der Name aus Schritt 1 sein; aus ihm entsteht die Liste der erlaubten Host-Namen (sonst antwortet der Server mit 421). `doctor` zeigt danach die Zeile `http: mcp --http on 127.0.0.1:8787, auth key, resource https://buero-pc.<tailnet>.ts.net/mcp [http]`.
+4. `mcp --http` als geplante Aufgabe beim Anmelden starten, ohne Fenster. In einer PowerShell **als normaler Nutzer** (nicht als Administrator) einfügen:
+
+   ```powershell
+   $exe  = 'C:\PostKauz\postkauz.exe'
+   $arg  = 'mcp --http --data-dir C:\PostKauz\data --config C:\PostKauz\config.toml'
+   $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+   $action    = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument ("--headless `"$exe`" " + $arg)
+   $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $user
+   $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 5)
+   $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+   Register-ScheduledTask -TaskName 'PostKauz MCP HTTP' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'PostKauz: mcp --http for the second PC (Tailscale)' -Force | Out-Null
+   Start-ScheduledTask -TaskName 'PostKauz MCP HTTP'
+   ```
+
+   Prüfen (Erwartet: `204`):
+
+   ```powershell
+   (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8787/healthz).StatusCode
+   ```
+
+   Die Aufgabe steht danach in der Aufgabenplanung (Startmenü → „Aufgabenplanung“ → Aufgabenplanungsbibliothek → `PostKauz MCP HTTP`). Entfernen: `Unregister-ScheduledTask -TaskName 'PostKauz MCP HTTP' -Confirm:$false`.
+5. Die Weiterleitung von Tailscale einrichten (bleibt nach einem Neustart):
+
+   ```powershell
+   tailscale serve --bg 8787
+   ```
+
+   Erwartet: eine Zeile mit `https://buero-pc.<tailnet>.ts.net/` → `http://127.0.0.1:8787`. **Nie** `tailscale funnel` (das stellt den Dienst ins Internet).
+
+**Am zweiten PC (einmalig):**
+
+1. Tailscale installieren und mit **demselben** Tailnet anmelden. `postkauz.exe` (dasselbe Release wie am Büro-PC) zum Beispiel nach `C:\PostKauz\postkauz.exe` legen. Prüfen, dass der Büro-PC erreichbar ist (Erwartet: `204`):
+
+   ```powershell
+   (Invoke-WebRequest -UseBasicParsing https://buero-pc.<tailnet>.ts.net/healthz).StatusCode
+   ```
+
+2. Das Ziel eintragen. Der Schlüssel kommt über eine verdeckte Abfrage (einfügen mit Rechtsklick, dann Enter), nie als Argument:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe remote add buero --url https://buero-pc.<tailnet>.ts.net/mcp
+   ```
+
+   Erwartet: `remote buero added: https://buero-pc.<tailnet>.ts.net/mcp` und `key: stored in remote/buero (keyring), read back and compared`. Die Adresse steht danach in der Konfiguration dieses PCs (`%APPDATA%\postkauz\config.toml`, Abschnitt `[remote.buero]`), der Schlüssel nur im Anmeldeinformationsspeicher (Systemsteuerung → Benutzerkonten → Anmeldeinformationsverwaltung → Windows-Anmeldeinformationen, Eintrag mit `remote/buero`). `remote add` legt beim ersten Aufruf ein eigenes kleines Datenverzeichnis an (für das Audit dieser Änderung); `mcp --remote` braucht es nicht.
+3. Prüfen:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe remote test buero
+   ```
+
+   Erwartet: `server: postkauz 0.3.0-rc2 …`, `tools: 20`, `key: key:zweiter-pc (role assistant)` und `ok: mcp --remote buero reaches the server`. Fehler nennen den Grund: `remote_unreachable` (Büro-PC aus, Tailscale nicht verbunden, Aufgabe läuft nicht), `remote_key_refused` (401: falscher Schlüssel, `remote add` erneut), `remote_key_revoked` (403: Schlüssel widerrufen oder abgelaufen; am Büro-PC einen neuen anlegen), 421 (Name passt nicht zu `[http] resource`).
+4. Claude Desktop anbinden: Claude Desktop → Menü oben links ☰ → Datei → Einstellungen → **Entwickler** (Developer) → **Konfiguration bearbeiten** (Edit Config); heißen die Menüs in deiner Version anders, in den Einstellungen den Bereich „Entwickler“ suchen. Der Explorer zeigt die Datei `claude_desktop_config.json` (`%APPDATA%\Claude\`); mit dem Editor öffnen und eintragen (Backslashes im Pfad doppelt):
+
+   ```json
+   {
+     "mcpServers": {
+       "postkauz": {
+         "command": "C:\\PostKauz\\postkauz.exe",
+         "args": ["mcp", "--remote", "buero"]
+       }
+     }
+   }
+   ```
+
+   **Kein** Abschnitt `env` mit einem Schlüssel: Die Brücke holt ihn selbst aus dem Anmeldeinformationsspeicher; `POSTKAUZ_KEY` würde sie ignorieren. Steht in der Datei schon etwas, nur den Eintrag `postkauz` in `mcpServers` ergänzen. Speichern, dann Claude Desktop **ganz** beenden (Infobereich unten rechts → Claude-Symbol → Rechtsklick → Beenden; das Fenster zu schließen reicht nicht) und neu starten. In einem neuen Chat zeigt das Werkzeug-Symbol `postkauz` mit den Tools.
+5. Fertig im Sinne von Vorgang 6, Phase 2, wenn eine Sitzung am zweiten PC dieselben Vorgänge über PostKauz erledigt (lesen, suchen, Entwurf anlegen).
+
+**Was die Brücke tut und nicht tut:** Sie reicht Anfragen, Antworten, Abbrüche und Server-Nachrichten unverändert weiter (Streamable HTTP; `Mcp-Session-Id` und `MCP-Protocol-Version` übernimmt sie selbst). Was der Agent darf, bestimmt allein der Schlüssel `zweiter-pc` auf dem Büro-PC; dort steht jeder Aufruf im Audit mit `transport: http`. Fehler kommen als verständliche Meldung in Claude Desktop an; Warnungen schreibt die Brücke auf stderr, das Claude Desktop in `%APPDATA%\Claude\logs` ablegt (nie mit Schlüssel). Nur `https`, Zertifikate werden wie üblich geprüft, Umleitungen nicht verfolgt. Schlüssel tauschen: am Büro-PC `key revoke zweiter-pc` und einen neuen anlegen, am zweiten PC `remote add buero --url …` noch einmal. Ziel entfernen: `remote remove buero` (Abschnitt und Schlüssel).
+
+**Grenze unter Windows:** Sync und `mcp --http` laufen auf dem Büro-PC unter **demselben Windows-Benutzer**. Das Betriebssystem trennt sie nicht; der HTTP-Prozess kommt nur deshalb nicht an ein Passwort, weil PostKauz ihm keins gibt (Secrets-Speicher `denied`, siehe 4.1). Getrennte Benutzer für Sync und HTTP-MCP unter Windows sind für später vorgemerkt. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS); für den zweiten PC reicht `key`.
 
 ## 5. Löschkonzept
 

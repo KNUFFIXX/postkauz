@@ -44,4 +44,10 @@ var notOverMCP = map[string]string{
 	// Kein Tool, aber über MCP erreichbar: Resource (resources.go).
 	"drafts.style":       "offered as the resource mail://style/{identity} (S2.8)",
 	"mailboxes.overview": "offered as the resource mail://{account}/mailbox/{id}/overview; mail_search covers the same as a tool",
+	// Fernziele (A04 Teil 4): Wer ein Ziel einträgt, gibt dessen Schlüssel
+	// an jeden Prozess mit mcp --remote weiter.
+	"remote.add":    "admin, human only (A04): stores the API key of another PC in the keyring; CLI remote add",
+	"remote.list":   "admin, human only (A04); CLI remote list",
+	"remote.remove": "admin, human only (A04); CLI remote remove",
+	"remote.test":   "admin, human only (A04): signs in at the other PC with the stored key; CLI remote test",
 }

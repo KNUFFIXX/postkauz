@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,12 +21,14 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
+	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/oauth"
 	"github.com/KNUFFIXX/postkauz/internal/oauth/oauthtest"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/remote"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -289,6 +292,54 @@ var contractInputs = map[string]struct {
 	// (relatives to von messages.export liegt darunter).
 	"attachments.save": {input: `{"id":1,"message":1,"account":"demo","subdir":"belege/2026"}`},
 	"messages.export":  {input: `{"format":"eml","to":"archiv","account":"demo","mailbox":"INBOX","since":"3650d"}`},
+	// Fernziele (A04 Teil 4): Umgebung mit Ziel buero und seinem Schlüssel
+	// (contractRemotes), der Prüfer ist ein Fake.
+	"remote.add":    {input: `{"name":"neu","url":"https://office-pc.example.ts.net/mcp"}`, secret: KeyPrefix + canary},
+	"remote.list":   {input: `{}`},
+	"remote.remove": {input: `{"name":"buero"}`},
+	"remote.test":   {input: `{"name":"buero"}`},
+}
+
+// contractRemotes ist die Konfigurationsdatei der Fernziele im Speicher.
+type contractRemotes struct {
+	mu sync.Mutex
+	m  map[string]config.Remote
+}
+
+func (c *contractRemotes) Remotes() (map[string]config.Remote, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := map[string]config.Remote{}
+	for k, v := range c.m {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (c *contractRemotes) SetRemote(name, url string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[name] = config.Remote{URL: url}
+	return nil
+}
+
+func (c *contractRemotes) RemoveRemote(name string) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.m[name]
+	delete(c.m, name)
+	return ok, nil
+}
+
+func (c *contractRemotes) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	names := make([]string, 0, len(c.m))
+	for k, v := range c.m {
+		names = append(names, k+"="+v.URL)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 // contractBackup meldet Sicherungen, die schreiben dürften (DryRun=false).
@@ -462,6 +513,7 @@ type contractEnv struct {
 	importer *contractImporter
 	backup   *contractBackup
 	blobs    *memBlobs
+	remotes  *contractRemotes
 	deps     Deps
 }
 
@@ -507,6 +559,19 @@ func newContractEnv(t *testing.T) *contractEnv {
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
 	bindApproval(t, e.deps)
 	seedRetention(t, e)
+	// Fernziel buero mit Schlüssel (A04 Teil 4).
+	e.remotes = &contractRemotes{m: map[string]config.Remote{"buero": {URL: "https://office-pc.example.ts.net/mcp"}}}
+	if err := m.sec.Set(remote.KeyRef("buero"), KeyPrefix+"buero-0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	e.deps.Remotes, e.deps.ConfigFile = e.remotes, "/nonexistent/config.toml"
+	e.deps.RemoteCheck = func(_ context.Context, name, _ string, key secrets.Secret) (remote.TestResult, error) {
+		if key.Reveal() != KeyPrefix+"buero-0123456789abcdef" {
+			return remote.TestResult{}, &remote.Error{Code: remote.CodeUnauthorized, Message: "wrong key"}
+		}
+		return remote.TestResult{ProtocolVersion: "2025-06-18", ServerName: "postkauz", ServerVersion: "test", Tools: 3,
+			ToolNames: []string{"a", "b", "c"}, KeyName: "zweiter-pc", Role: "assistant"}, nil
+	}
 	return e
 }
 
@@ -562,6 +627,7 @@ func (e *contractEnv) fingerprint(t *testing.T) string {
 		b.WriteString("backup wrote\n")
 	}
 	fmt.Fprintf(&b, "blob puts %d\n", e.blobs.puts)
+	fmt.Fprintf(&b, "remotes %s\n", e.remotes)
 	// Dateien unter export_dir (attachments.save, messages.export).
 	_ = filepath.WalkDir(e.deps.ExportDir, func(p string, d fs.DirEntry, err error) error {
 		if err == nil {

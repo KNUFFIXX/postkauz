@@ -332,6 +332,15 @@ Slice 3 (since 0.3.0-rc1; built in part T5, acceptance D8 parts A to C passed, p
 
 Every call is audited with `transport: http` and the key name, never a token. On a Linux server the sync service gets the mailbox password as a systemd credential (`LoadCredential=`), never through its environment, and the HTTP service cannot see it; use systemd 257 or newer (for example Debian 13) so that `PrivatePIDs=` separates the two services completely. Linux services (`deploy/systemd/`), Docker (`deploy/docker/`) and the step-by-step guide (German): [docs/betrieb.md](docs/betrieb.md), section 4.
 
+**Claude Desktop on a second PC** (since 0.3.0-rc2): Claude Desktop starts only local programs as MCP servers, and its remote connectors run through the vendor's cloud, which cannot reach your Tailscale network. PostKauz brings its own bridge instead of a third-party package such as `npx mcp-remote` (which needs the key in plain text in the configuration):
+
+```
+postkauz remote add office --url https://office-pc.<tailnet>.ts.net/mcp    # hidden prompt for the API key; stored only in the keyring
+postkauz remote test office                                                # tools: 20, key: key:second-pc (role assistant)
+```
+
+Then in `claude_desktop_config.json`: `"postkauz": {"command": "C:\\PostKauz\\postkauz.exe", "args": ["mcp", "--remote", "office"]}`, with no `env` and no key. `mcp --remote` passes every MCP message unchanged to `mcp --http` on the other PC; it opens no database and knows no mail password. Guide for both PCs (German): [docs/betrieb.md](docs/betrieb.md), section 4.9.
+
 ## Daily audit export
 
 The audit log is append-only; its real tamper protection is a daily export to a **second location** (another disk, a network share or a synced folder such as Google Drive). Each day becomes one JSONL file whose lines form a SHA-256 hash chain across all days, plus a manifest (`postkauz-audit-manifest.json`) with checksum and chain head per file. `postkauz audit verify` compares the export with the database and the chain and names the first changed line (`mismatch`, exit code 1). Set the target once in the configuration (`postkauz doctor` shows its path), for example:

@@ -196,7 +196,9 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		// backup.create (S3.4): Schnappschuss, Blobs, Audit-Archive; der
 		// Tar-Strom geht auf die Standardausgabe.
 		Backup:       &backup.Runner{Store: st, Blobs: blobs, DataDir: a.paths.DataDir, Version: a.version},
-		BackupStdout: a.stdout}
+		BackupStdout: a.stdout,
+		// Fernziele für mcp --remote (A04 Teil 4) in der Konfigurationsdatei.
+		Remotes: config.RemoteFile{Path: a.paths.ConfigFile}, ConfigFile: a.paths.ConfigFile}
 	// E4 (T2): Standard für key create ohne --dry-run-default.
 	dryDefault := a.policy.DryRunDefault()
 	deps.KeyDryRunDefault = &dryDefault

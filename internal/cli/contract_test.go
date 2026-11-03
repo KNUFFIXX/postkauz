@@ -19,6 +19,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/provider"
+	"github.com/KNUFFIXX/postkauz/internal/remote"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -137,6 +138,7 @@ type cliSample struct {
 // verbunden), etwa das Passwort bei --password-stdin.
 var sampleStdin = map[string]string{
 	"account set demo --password-stdin":                                     canary + "\n",
+	"remote add buero --url {remoteurl} --key-stdin":                        remoteStubKey + "\n",
 	"draft new -a demo --to a@example.org --html-file - --attach notiz.txt": "<p>Hallo <b>Welt</b></p>",
 }
 
@@ -235,6 +237,11 @@ var cliSamples = []cliSample{
 	{"retention.purge", []string{"purge", "--older-than", "30d", "-a", "demo"}, false},
 	{"blobs.gc", []string{"blob", "gc", "--dry-run"}, false},
 	{"audit.rotate", []string{"audit", "rotate", "--dry-run"}, false},
+	// A04 Teil 4: Fernziel gegen remoteStub (Schlüssel über stdin).
+	{"remote.add", []string{"remote", "add", "buero", "--url", "{remoteurl}", "--key-stdin"}, false},
+	{"remote.list", []string{"remote", "list"}, false},
+	{"remote.test", []string{"remote", "test", "buero"}, false},
+	{"remote.remove", []string{"remote", "remove", "buero"}, false},
 }
 
 // sampleCode: erwarteter Exit-Code je Beispiel, wenn nicht 0 (Antrag auf
@@ -305,6 +312,7 @@ func TestCLIContractRegistry(t *testing.T) {
 	t.Setenv("POSTKAUZ_PASSWORD_ZWEI", "x")
 	t.Setenv("POSTKAUZ_PASSWORD_LEER", "x")
 	ph := seedS16(t)
+	ph["remoteurl"] = remoteStub(t)
 	// Dateien für Entwürfe und Identität; Anhänge nur aus attach_dir.
 	files := t.TempDir()
 	for name, text := range map[string]string{"body": "**Hallo**", "html-body": "<p>Hallo</p>", "sigtext": "Gruß", "sightml": "<p>Gruß</p>"} {
@@ -468,6 +476,14 @@ func TestExitCodesMatchDocs(t *testing.T) {
 		{ops.ErrUnknownOperation, ExitError, "unknown_operation"},
 		{&ops.PanicError{Operation: "x"}, ExitError, "internal"},
 		{store.ErrAccountExists, ExitError, "exists"},
+		{ops.ErrRemoteNotFound, ExitError, "not_found"},
+		{&ops.RemoteCheckError{Code: remote.CodeUnreachable, Msg: "x"}, ExitError, "remote_unreachable"},
+		{&ops.RemoteCheckError{Code: remote.CodeUnauthorized, Msg: "x"}, ExitError, "remote_key_refused"},
+		{&ops.RemoteCheckError{Code: remote.CodeForbidden, Msg: "x"}, ExitError, "remote_key_revoked"},
+		{&ops.RemoteCheckError{Code: remote.CodeSessionExpired, Msg: "x"}, ExitError, "remote_session_expired"},
+		{&ops.RemoteCheckError{Code: remote.CodeRateLimited, Msg: "x"}, ExitError, "remote_rate_limited"},
+		{&ops.RemoteCheckError{Code: remote.CodeUnavailable, Msg: "x"}, ExitError, "remote_unavailable"},
+		{&ops.RemoteCheckError{Code: remote.CodeBadResponse, Msg: "x"}, ExitError, "remote_error"},
 		{store.ErrMigrationBlocked, ExitError, "migration_blocked"},
 		{store.ErrDatabaseBusy, ExitError, "database_busy"},
 		{fmt.Errorf("%w: x", store.ErrMigrationMismatch), ExitError, "schema_mismatch"},
