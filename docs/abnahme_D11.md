@@ -18,7 +18,7 @@ Stand: 03.11.2026 (Auftrag [A05](../auftraege/A05_erkennung.md), Teil 4). Skript
 ## 1. Was das Skript tut und was nicht
 
 - Es arbeitet am **Live-Datenverzeichnis** (`C:\PostKauz\data`, `C:\PostKauz\config.toml`), weil genau dort geprüft werden soll. Vorher macht es eine **Sicherung** nach [betrieb.md](betrieb.md) 2.2/2.3; ohne Sicherung tauscht es nichts.
-- Es hält die Aufgaben `PostKauz sync watch`, `PostKauz audit export` und (falls vorhanden) `PostKauz MCP HTTP` an und schaltet sie ab, wie beim Update in [betrieb.md](betrieb.md) 1.7. Läuft danach noch ein `postkauz.exe` (meist die Claude-App), bricht es ab, ohne etwas zu ändern.
+- Es hält die Aufgaben `PostKauz sync watch`, `PostKauz audit export` und (falls vorhanden) `PostKauz MCP HTTP` an und schaltet sie ab, wie beim Update in [betrieb.md](betrieb.md) 1.7 (andere Namen mit `-Tasks`, Abschnitt 6). Danach beendet es Hilfsskripte `Run-SyncWatch.ps1`/`run-sync-watch.ps1`, die `sync --watch` neu starten würden, und nach 20 s noch laufende `postkauz.exe` mit `sync`, `--http` oder `audit`. Läuft danach noch ein `postkauz.exe` (meist die Claude-App), bricht es ab, ohne etwas zu ändern (Ausnahme: `-KeepStdioMcp`, Abschnitt 6).
 - **Abbrüche:** Fehlt eine Voraussetzung (Teil 0), läuft noch ein `postkauz.exe` (1.1), ist der Stand vorher nicht lesbar (1.2, 1.3) oder fehlt die Sicherung (1.5), tauscht das Skript nichts. Scheitert 2.1 oder 2.2 oder bricht der Tausch mit einem Fehler ab (etwa: das neue Programm startet nicht, `2.x`), kopiert es `postkauz-rc2.exe` zurück, bevor das neue Programm einen `sync` macht und bevor die Aufgaben wieder anlaufen. In jedem Fall, auch bei einem unerwarteten Fehler, schaltet es die Aufgaben wieder ein, die es abgeschaltet hat (`E.1`), und schreibt die Schlusszeile `D11: … OK, … FAIL`.
 - Das alte Programm bleibt als `C:\PostKauz\postkauz-rc2.exe` liegen (für den Rückweg).
 - **Keine Migration:** A05 ändert das Schema nicht (Schema 22). Die Texte bekommen nur einen neuen Aufbereitungsstand (4); das alte Programm kann damit weiterarbeiten (Abschnitt 5).
@@ -97,3 +97,23 @@ Erwartet: `R.0` bis `R.0c` (`postkauz-rc2.exe` da und meldet rc2; `postkauz.exe`
 **Grenze nach einem Rückweg:** Wechselst du später wieder auf rc3, erfasst dessen erster Lauf die Nachrichten, die rc2 inzwischen mit Stand 3 gespiegelt hat, **nur für Teil 3** (HTML im Klartextteil). Die einmalige Neuprüfung des Rückfalls (Teil 1, `sent_check_rev`) ist dann schon vermerkt und läuft nicht noch einmal: Entwürfe aus der rc2-Zeit, die nur der Rückfall von Teil 1 erkannt hätte (Antwort auf eine Mail mit Outlook-Verlauf, unverändert gesendet), schließt der Weg über den Verlauf (Teil 2, wenn die Kopie fehlt und `In-Reply-To` passt) oder du selbst mit `draft mark-sent <id>`.
 
 Nur wenn ein künftiger Build eine Migration hätte, verweigerte das alte Programm den Start (`ErrSchemaTooNew`, `doctor`: `database too_new`); dann hilft nur die Wiederherstellung der Sicherung nach [betrieb.md](betrieb.md) 2.5. **Für rc3 gilt dieser Fall nicht.**
+
+## 6. Abweichende Einrichtung
+
+Weicht der Büro-PC vom Standard in [betrieb.md](betrieb.md) ab (anderer Ordner, eigene Aufgabe je Konto), gibt man Pfade und Aufgaben als Parameter an; ohne diese Parameter bleibt alles wie oben.
+
+- `-Exe`, `-DataDir`, `-Config`: das Programm des Dauerbetriebs, das Datenverzeichnis und die Konfiguration.
+- `-Tasks`: alle geplanten Aufgaben, die PostKauz starten (mit Komma getrennt). Aufgaben mit „audit export“ im Namen schaltet das Skript am Ende nur wieder ein, es startet sie nicht.
+- `-KeepStdioMcp`: Die Claude-App bleibt offen; ihr MCP-Server (`postkauz.exe mcp` ohne `--http`) darf weiterlaufen. Nötig, wenn Claude das Skript über die App steuert: Beendet man die App, bricht diese Verbindung ab. Dann zählt 1.1 nur die übrigen `postkauz.exe`, und das Programm wird **umbenannt** statt überschrieben (Windows erlaubt das Umbenennen einer laufenden Exe): das alte wird `postkauz-rc2.exe`, das neue kommt an seine Stelle; eine Rückkopie in Teil 2 geht denselben Weg zurück. Der MCP der App läuft bis zu ihrem nächsten Neustart mit dem alten Programm weiter (INFO 2.4). Das geht nur, weil rc3 keine Migration hat; ein Build mit Migration würde dabei mit `ErrMigrationBlocked` anhalten.
+
+Beispiel (Platzhalter in spitzen Klammern):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PostKauz\d11\abnahme_D11.ps1 `
+  -Exe <Ordner des Programms>\postkauz.exe -DataDir <Datenordner> -Config <Datenordner>\config.toml `
+  -NewExe C:\PostKauz\d11\postkauz-windows-amd64.exe -BackupTo <Sicherungsordner> `
+  -Tasks "PostKauz sync watch <konto1>,PostKauz sync watch <konto2>,PostKauz audit export,PostKauz mcp http" `
+  -KeepStdioMcp -Accounts <konto1>,<konto2> -HtmlMessage <id>
+```
+
+Mit `-KeepStdioMcp` musst du die Claude-App in Schritt 2.4 **nicht** beenden. Starte sie erst **nach** D11 neu (Rechtsklick auf das Claude-Symbol unten rechts → „Beenden“, dann wieder öffnen), damit ihr MCP das neue Programm nimmt. Den Rückweg (Abschnitt 5) ruft man mit denselben Parametern und `-Rueckweg` auf.

@@ -12,7 +12,10 @@
       Teil 0  Voraussetzungen: beide Programme (Version, Pruefsumme),
               Aufgaben vorhanden, Zielordner der Sicherung.
       Teil 1  Mit dem alten Programm (rc2): Aufgaben anhalten und
-              abschalten (betrieb.md 1.7), kein postkauz.exe laeuft mehr,
+              abschalten (betrieb.md 1.7; -Tasks), Hilfsskripte
+              run-sync-watch.ps1 und uebrige postkauz.exe (sync, --http,
+              audit) beenden, kein postkauz.exe laeuft mehr (mit
+              -KeepStdioMcp ausser dem stdio-MCP der Claude-App),
               Stand vorher festhalten (draft list, show der Nachricht mit
               HTML im Klartextteil, doctor), Sicherung (betrieb.md 2.2).
       Teil 2  Programm tauschen: altes als postkauz-rc2.exe aufheben, neues
@@ -84,6 +87,22 @@
 .PARAMETER Rueckweg
     Statt der Umstellung den Rueckweg auf das alte Programm pruefen.
 
+.PARAMETER Tasks
+    Geplante Aufgaben des Dauerbetriebs (Standard: "PostKauz sync watch",
+    "PostKauz audit export", "PostKauz MCP HTTP"; mehrere mit Komma). Das
+    Skript haelt sie an, schaltet sie ab und am Ende die vorher
+    eingeschalteten wieder ein; Aufgaben mit "audit export" im Namen werden
+    nur eingeschaltet, nicht gestartet.
+
+.PARAMETER KeepStdioMcp
+    Der stdio-MCP der Claude-App (postkauz.exe mcp ohne --http) darf
+    weiterlaufen (die App bleibt offen, etwa weil Claude ueber sie das
+    Skript steuert). 1.1 zaehlt dann nur die uebrigen postkauz.exe; das
+    Programm wird per Umbenennen getauscht (eine laufende Exe laesst sich
+    umbenennen, nicht ueberschreiben). Der stdio-MCP laeuft bis zum
+    naechsten Neustart der Claude-App mit dem alten Programm. Nur ohne
+    Migration moeglich (A05 hat keine).
+
 .PARAMETER LogFile
     Protokolldatei. Standard: D11_windows.txt neben dem Programm.
 
@@ -101,6 +120,8 @@ param(
     [string] $ExpectVersion = '0.3.0-rc3',
     [string] $OldVersion = '0.3.0-rc2',
     [switch] $Rueckweg,
+    [string[]] $Tasks = @('PostKauz sync watch', 'PostKauz audit export', 'PostKauz MCP HTTP'),
+    [switch] $KeepStdioMcp,
     [string] $LogFile = ''
 )
 
@@ -108,14 +129,12 @@ $ErrorActionPreference = 'Stop'
 # Mit powershell.exe -File kommt "-Accounts a,b" in PS 5.1 als ein Text an
 # (wie -Live in abnahme_D9.ps1): selbst trennen.
 $Accounts = @($Accounts | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$Tasks = @($Tasks | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $script:Utf8 = New-Object System.Text.UTF8Encoding $false
 $script:NOk = 0
 $script:NFail = 0
 $script:Log = $null
 $script:Fails = New-Object System.Collections.Generic.List[string]
-$script:TaskSync = 'PostKauz sync watch'
-$script:TaskAudit = 'PostKauz audit export'
-$script:TaskHttp = 'PostKauz MCP HTTP'
 # Aufgaben, die vor dem Anhalten eingeschaltet waren (nur die kommen wieder an).
 $script:WasEnabled = @{}
 try { [Console]::OutputEncoding = $script:Utf8 } catch { }
@@ -241,46 +260,121 @@ function Get-Sha256 {
     try { return (($sha.ComputeHash($fs) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $fs.Dispose() }
 }
 
-# Laufende postkauz.exe (alle Pfade), ohne Kommandozeile im Protokoll.
+# Laufende postkauz.exe (alle Pfade); die Kommandozeile dient nur der
+# Einordnung und kommt nie ins Protokoll.
 function Get-PkProcesses {
-    return @(Get-CimInstance Win32_Process -Filter "Name = 'postkauz.exe'" -ErrorAction SilentlyContinue)
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'postkauz.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue)
+}
+
+# stdio-MCP der Claude-App: postkauz.exe mcp ohne --http.
+function Test-StdioMcp {
+    param($P)
+    $c = [string] $P.CommandLine
+    return ($c -match '(?i)\smcp(\s|$)' -and $c -notmatch '(?i)--http')
+}
+
+# postkauz.exe, die vor dem Tausch beendet sein muessen (mit -KeepStdioMcp
+# ohne den stdio-MCP der Claude-App).
+function Get-BlockingPk {
+    $all = Get-PkProcesses
+    if ($KeepStdioMcp) { return @($all | Where-Object { -not (Test-StdioMcp $_) }) }
+    return $all
+}
+
+# Aufgaben, die nur eingeschaltet, nicht gestartet werden (Audit-Export
+# laeuft taeglich nach Zeitplan).
+function Test-AuditTask {
+    param([string] $Name)
+    return ($Name -match '(?i)audit export')
 }
 
 function Stop-Tasks {
     param([string] $Nr)
-    foreach ($tn in @($script:TaskSync, $script:TaskAudit, $script:TaskHttp)) {
+    foreach ($tn in $Tasks) {
         $t = Get-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue
         if ($null -eq $t) { Add-Info $Nr ('Aufgabe "' + $tn + '" nicht vorhanden'); continue }
         if (-not $script:WasEnabled.ContainsKey($tn)) { $script:WasEnabled[$tn] = ($t.State -ne 'Disabled') }
         try { Stop-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue } catch { }
         Disable-ScheduledTask -TaskName $tn | Out-Null
     }
-    # sync --watch und mcp --http beenden sich nach dem Stoppen der Aufgabe;
-    # bis zu 60 s warten.
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-PkProcesses).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-    $n = (Get-PkProcesses).Count
-    Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, kein postkauz.exe laeuft (Claude-App vorher ganz beenden)' ($n -eq 0) ('laufende postkauz.exe: ' + $n)
+    # Hilfsskripte, die sync --watch nach dem Ende neu starten
+    # (Run-SyncWatch.ps1 bzw. run-sync-watch.ps1), zuerst beenden.
+    $helpers = @(Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 5 -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessId -ne $PID -and ([string] $_.CommandLine) -match '(?i)run-?sync-?watch\.ps1' })
+    foreach ($h in $helpers) { try { Stop-Process -Id $h.ProcessId -Force -ErrorAction Stop } catch { } }
+    # sync --watch, mcp --http und audit export beenden sich nach dem
+    # Stoppen meist selbst; bis zu 20 s warten, danach beenden.
+    $isService = { param($P) ([string] $P.CommandLine) -match '(?i)\s(sync|audit)(\s|$)|--http' }
+    $deadline = (Get-Date).AddSeconds(20)
+    while (@(Get-PkProcesses | Where-Object { & $isService $_ }).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    $killed = 0
+    foreach ($p in @(Get-PkProcesses | Where-Object { & $isService $_ })) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $killed++ } catch { }
+    }
+    Add-Info $Nr ('Hilfsskripte beendet: ' + $helpers.Count + '; postkauz.exe (sync, --http, audit) nach 20 s beendet: ' + $killed)
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-BlockingPk).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    $n = (Get-BlockingPk).Count
+    if ($KeepStdioMcp) {
+        $stdio = @(Get-PkProcesses | Where-Object { Test-StdioMcp $_ }).Count
+        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, ausser dem stdio-MCP der Claude-App laeuft kein postkauz.exe' ($n -eq 0) ('uebrige postkauz.exe: ' + $n + ', stdio-MCP (darf laufen): ' + $stdio)
+    } else {
+        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, kein postkauz.exe laeuft (Claude-App vorher ganz beenden)' ($n -eq 0) ('laufende postkauz.exe: ' + $n)
+    }
 }
 
 function Start-Tasks {
     param([string] $Nr)
     $started = @()
-    foreach ($tn in @($script:TaskSync, $script:TaskAudit, $script:TaskHttp)) {
+    foreach ($tn in $Tasks) {
         if ($null -eq (Get-ScheduledTask -TaskName $tn -ErrorAction SilentlyContinue)) { continue }
         if ($script:WasEnabled.ContainsKey($tn) -and -not $script:WasEnabled[$tn]) { continue }
         Enable-ScheduledTask -TaskName $tn | Out-Null
-        if ($tn -ne $script:TaskAudit) { Start-ScheduledTask -TaskName $tn; $started += $tn }
+        if (-not (Test-AuditTask $tn)) { Start-ScheduledTask -TaskName $tn; $started += $tn }
     }
     if ($started.Count -eq 0) {
         Add-Info $Nr 'keine Aufgabe fuer den Dauerbetrieb gestartet; von Hand starten (betrieb.md 1.3)'
         return
     }
     $deadline = (Get-Date).AddSeconds(30)
-    while ((Get-PkProcesses).Count -lt $started.Count -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
+    while ((Get-BlockingPk).Count -lt $started.Count -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
     $states = @($started | ForEach-Object { $_ + ': ' + (Get-ScheduledTask -TaskName $_).State })
     $running = @($started | Where-Object { (Get-ScheduledTask -TaskName $_).State -eq 'Running' })
-    Add-Check $Nr 'Aufgaben wieder eingeschaltet und gestartet (Claude-App danach wieder starten)' ($running.Count -eq $started.Count) (($states -join "`n") + "`npostkauz.exe: " + (Get-PkProcesses).Count)
+    $hint = 'Claude-App danach wieder starten'
+    if ($KeepStdioMcp) { $hint = 'Claude-App nach D11 neu starten, damit ihr MCP das neue Programm nimmt' }
+    Add-Check $Nr ('Aufgaben wieder eingeschaltet und gestartet (' + $hint + ')') ($running.Count -eq $started.Count) (($states -join "`n") + "`npostkauz.exe ohne stdio-MCP: " + (Get-BlockingPk).Count)
+}
+
+# Programm an $script:ExeFull durch $From ersetzen; das bisherige bleibt als
+# $Keep. Mit -KeepStdioMcp per Umbenennen (die laufende Exe des stdio-MCP
+# laesst sich umbenennen, nicht ueberschreiben), sonst per Kopie.
+# $script:Swapped wird gesetzt, sobald $script:ExeFull nicht mehr das alte
+# Programm sein kann.
+function Install-Program {
+    param([string] $From, [string] $Keep)
+    if ($KeepStdioMcp) {
+        if (Test-Path $Keep) { Remove-Item -LiteralPath $Keep -Force }
+        Rename-Item -LiteralPath $script:ExeFull -NewName (Split-Path -Leaf $Keep)
+        $script:Swapped = $true
+        Copy-Item -LiteralPath $From -Destination $script:ExeFull -Force
+    } else {
+        Copy-Item -LiteralPath $script:ExeFull -Destination $Keep -Force
+        $script:Swapped = $true
+        Copy-Item -LiteralPath $From -Destination $script:ExeFull -Force
+    }
+}
+
+# Das aufgehobene Programm $Keep wieder an $script:ExeFull (Rueckkopie in
+# Teil 2), auf demselben Weg wie Install-Program.
+function Restore-Program {
+    param([string] $Keep)
+    if ($KeepStdioMcp) {
+        if (Test-Path $script:ExeFull) { Remove-Item -LiteralPath $script:ExeFull -Force }
+        Rename-Item -LiteralPath $Keep -NewName (Split-Path -Leaf $script:ExeFull)
+    } else {
+        Copy-Item -LiteralPath $Keep -Destination $script:ExeFull -Force
+    }
+    $script:Swapped = $false
 }
 
 # Entwuerfe in diesen Zustaenden als Liste (ID, Status, Art, remote), ohne
@@ -443,11 +537,9 @@ function Invoke-Umstellung {
     # Programm weiter.
     $why = ''
     try {
-        Copy-Item -LiteralPath $script:ExeFull -Destination $OldCopy -Force
-        # Ab hier gilt der Tausch als begonnen (auch ein halb geschriebenes
-        # Programm wird zurueckkopiert).
-        $script:Swapped = $true
-        Copy-Item -LiteralPath $newFull -Destination $script:ExeFull -Force
+        # Ab dem Umbenennen bzw. der Kopie gilt der Tausch als begonnen
+        # (auch ein halb geschriebenes Programm wird zurueckgeholt).
+        Install-Program $newFull $OldCopy
         $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
         Add-Check '2.1' ('getauscht: ' + $script:ExeFull + ' meldet ' + $ExpectVersion + ', altes Programm als postkauz-rc2.exe aufgehoben') ($v.Out -match [regex]::Escape($ExpectVersion) -and (Test-Path $OldCopy)) $v.Text
         $d = Get-DoctorWarnings $script:ExeFull
@@ -459,10 +551,13 @@ function Invoke-Umstellung {
     }
     if ($why) {
         # Vor dem ersten sync zurueck auf das alte Programm.
-        if ($script:Swapped -and (Test-Path $OldCopy)) { Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force; $script:Swapped = $false }
+        if ($script:Swapped -and (Test-Path $OldCopy)) { Restore-Program $OldCopy }
         $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
         Add-Info '2.3' ('altes Programm zurueckkopiert, meldet: ' + $v.Out.Trim())
         Stop-D11 ($why + '; altes Programm wieder in Betrieb, kein sync mit dem neuen')
+    }
+    if ($KeepStdioMcp) {
+        Add-Info '2.4' 'Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem alten Programm (postkauz-rc2.exe); erst danach nimmt er das neue.'
     }
 
     # ------------------------------------------------------------ Teil 3
@@ -538,8 +633,16 @@ function Invoke-Rueckweg {
     if ($script:NFail -gt 0) { Stop-D11 'Rueckweg nicht moeglich; nichts geaendert' }
     Stop-Tasks 'R.1'
     if ($script:NFail -gt 0) { Stop-D11 'es laeuft noch ein postkauz.exe; nichts getauscht' }
-    Copy-Item -LiteralPath $script:ExeFull -Destination $rc3Copy
-    Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
+    if ($KeepStdioMcp) {
+        # Laufende Exe umbenennen, das alte Programm daneben kopieren
+        # (postkauz-rc2.exe bleibt erhalten).
+        Rename-Item -LiteralPath $script:ExeFull -NewName (Split-Path -Leaf $rc3Copy)
+        Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
+        Add-Info 'R.1b' 'Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem bisherigen Programm (jetzt postkauz-rc3.exe).'
+    } else {
+        Copy-Item -LiteralPath $script:ExeFull -Destination $rc3Copy
+        Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
+    }
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     $d = Get-DoctorWarnings $script:ExeFull
     Add-Check 'R.2' ('altes Programm laeuft mit der Datenbank: ' + $OldVersion + ', database ok (kein too_new)') ($v.Out -match [regex]::Escape($OldVersion) -and $d.Database -eq 'ok') ($v.Text + "`ndatabase " + $d.Database)
