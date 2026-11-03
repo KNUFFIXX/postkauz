@@ -16,8 +16,9 @@ import (
 // der Kontosperre. Sie
 //
 //  1. erkennt gesendete Entwürfe (E5, sentmatch.go): sent_by_human,
-//     sent_message_id, Audit drafts.sent_detected mit Grund message_id
-//     oder fallback (Akteur system, nur IDs und Zustände),
+//     sent_message_id, Audit drafts.sent_detected mit Grund message_id,
+//     fallback oder thread (A05 Teil 2; Akteur system, nur IDs und
+//     Zustände),
 //  2. lässt abgelaufene Freigaben verfallen (E7, Entscheid 38: ready und
 //     pending_approval älter als approval_ttl → draft, Freigabe expired,
 //     Audit drafts.expire mit Grund approval_expired),
@@ -39,9 +40,11 @@ import (
 // CheckReport fasst die Prüfung nach dem Spiegeln zusammen (Zähler und
 // Draft-IDs, kein Inhalt).
 type CheckReport struct {
-	// SentByMessageID, SentByFallback: als gesendet erkannte Entwürfe.
+	// SentByMessageID, SentByFallback, SentByThread: als gesendet erkannte
+	// Entwürfe je Weg (SentByThread seit A05 Teil 2).
 	SentByMessageID int `json:"sent_by_message_id,omitempty"`
 	SentByFallback  int `json:"sent_by_fallback,omitempty"`
+	SentByThread    int `json:"sent_by_thread,omitempty"`
 	// Expired: Entwürfe, deren Freigabe abgelaufen ist (zurück auf draft).
 	Expired int `json:"approval_expired,omitempty"`
 	// Missing, TakenOver: Entwürfe, deren Kopie im Entwürfe-Ordner jetzt
@@ -64,13 +67,14 @@ type CheckReport struct {
 
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
-	return r.SentByMessageID+r.SentByFallback+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+r.LostAttempts == 0
+	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+r.LostAttempts == 0
 }
 
 // Add zählt o dazu (Dauerbetrieb: eine Prüfung je Runde).
 func (r *CheckReport) Add(o CheckReport) {
 	r.SentByMessageID += o.SentByMessageID
 	r.SentByFallback += o.SentByFallback
+	r.SentByThread += o.SentByThread
 	r.Expired += o.Expired
 	r.Missing += o.Missing
 	r.TakenOver += o.TakenOver
@@ -165,8 +169,9 @@ func (s *Service) settleClosedAttempts(ctx context.Context, accountID int64, rep
 }
 
 // detectSent erkennt gesendete Entwürfe: zuerst über die Message-ID, für
-// die übrigen über den Rückfall-Abgleich. Eine gesendete Nachricht schließt
-// höchstens einen Entwurf; passen im Rückfall mehrere, gewinnt die höchste
+// die übrigen über den Rückfall-Abgleich, danach über den Verlauf (A05
+// Teil 2, detectThread). Eine gesendete Nachricht schließt höchstens einen
+// Entwurf; passen im Rückfall bzw. im Verlauf mehrere, gewinnt die höchste
 // Ähnlichkeit, dann die älteste Nachricht, dann der älteste Entwurf.
 //
 // Der Weg über die Message-ID fragt je offenem Entwurf den Index
@@ -205,7 +210,21 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		}
 		rest = append(rest, d)
 	}
-	return s.detectFallback(ctx, accountID, rest, claimed, copies, keepMark, rep)
+	before := len(rep.SentDraftIDs)
+	if err := s.detectFallback(ctx, accountID, rest, claimed, copies, keepMark, rep); err != nil {
+		return err
+	}
+	closed := map[int64]bool{}
+	for _, id := range rep.SentDraftIDs[before:] {
+		closed[id] = true
+	}
+	left := rest[:0:0]
+	for _, d := range rest {
+		if !closed[d.ID] {
+			left = append(left, d)
+		}
+	}
+	return s.detectThread(ctx, accountID, left, claimed, copies, rep)
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe

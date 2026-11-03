@@ -162,6 +162,44 @@ func scanSentMessages(rows *sql.Rows) ([]SentMessage, error) {
 	return out, rows.Err()
 }
 
+// trimIDChars sind die Zeichen, die beim Vergleich einer Message-ID mit
+// In-Reply-To wegfallen: Spitzklammern und Leerraum (A05 Teil 2).
+const trimIDChars = `' <>' || char(9,10,13)`
+
+// SentReplies liefert die gesendeten Nachrichten (siehe oben) des Kontos,
+// deren In-Reply-To die Message-ID der Nachricht original ist (ohne <> und
+// Leerraum verglichen), älteste zuerst (A05 Teil 2, Weg über den Verlauf).
+// Gesucht wird ohne eigenen Index über thread_refs (Konto, Message-ID des
+// Originals) → Thread → Index messages_thread, gefiltert auf In-Reply-To;
+// gelesen werden also nur Nachrichten aus dem Verlauf des Originals. Hat
+// das Original keine Message-ID oder fehlt es, ist die Liste leer.
+func (s *SQLite) SentReplies(ctx context.Context, accountID, original int64) ([]SentMessage, error) {
+	// Zwei Schritte mit gebundenem Wert: Eine Verknüpfung mit der
+	// Message-ID des Originals in derselben Abfrage ließ SQLite alle
+	// Nachrichten des Kontos lesen (BenchmarkCheckAfterSync22k,
+	// steady_replies: 1,8 s je Lauf).
+	var h string
+	err := s.db.QueryRowContext(ctx, `SELECT trim(COALESCE(message_id_header, ''), `+trimIDChars+`) FROM messages
+		WHERE id = ? AND account_id = ?`, original, accountID).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && h == "") {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// CROSS JOIN legt die Reihenfolge fest: erst der Thread über
+	// thread_refs, dann seine Nachrichten über messages_thread (sonst nahm
+	// SQLite den Index über das Konto und las alle seine Nachrichten).
+	rows, err := s.db.QueryContext(ctx, `SELECT `+sentCandidateCols+` FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
+		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
+		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
+		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, h, h)
+	if err != nil {
+		return nil, err
+	}
+	return scanSentMessages(rows)
+}
+
 // MaxMessageID liefert die höchste messages.id (aller Konten; 0 = keine).
 // Nachrichten werden nie gelöscht, die IDs steigen: Alles bis zu dieser ID
 // ist gespiegelt (W2, Hochwassermarke).

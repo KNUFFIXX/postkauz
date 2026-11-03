@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall). Davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a). Davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -10,19 +10,19 @@ Nach **jedem** Sync-Lauf, also bei `postkauz sync` und in jeder Runde von `postk
 
 Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfterSync`; die Versanderkennung kommt seit der Gegenprüfung S2.6–S2.8, W1, **vor** dem Ablauf: Hat der Mensch einen freigegebenen Entwurf vor Ablauf der Freigabe gesendet und sieht der Sync die Nachricht erst danach, ist der Entwurf gesendet, nicht abgelaufen):
 
-1. **Versanderkennung** (E5, Abschnitt 2 und 3): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`.
+1. **Versanderkennung** (E5, Abschnitte 2, 3 und 3a): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`.
 2. **Ablauf der Freigabe** (E7, Entscheid 38): Ein Entwurf in `ready` oder `pending_approval`, dessen Freigabe älter als `[draft] approval_ttl` ist (Standard 168 h, ab Vorlage bzw. ab `approve`), fällt auf `draft` zurück; die Freigabe wird `expired`; Audit `drafts.expire`, Grund `approval_expired`, Akteur `system`. Dasselbe geschah schon seit S2.1 beim Lesen (`draft show`, `draft list`, MCP); seit S2.6 auch beim Sync, ohne dass jemand liest.
 3. **Stand der Serverkopie** (E6): Ist die zuletzt abgelegte Kopie eines noch offenen Entwurfs aus dem Entwürfe-Ordner verschwunden, wird `remote_state` `missing`; hat ein Mailprogramm eine bearbeitete Fassung gespeichert, `taken_over` (Audit `drafts.remote_check`). Vorher stellte das nur `drafts.update` bzw. der nächste Push fest; jetzt zeigt `draft list` es nach dem nächsten Sync.
 
 Scheitert die Prüfung (etwa weil die Datenbank gerade gesperrt ist), zählt das als Fehler des Laufs (`errors`, Log ohne Mailinhalt); der Rest des Laufs (Nacharbeit, Extraktion, Suchindex) läuft weiter, und der nächste Lauf prüft erneut (Gegenprüfung S2.6–S2.8, K5). Nur Abbruch, Verbindungs- oder Anmeldefehler und ein interner Fehler (Panic) beenden den Lauf.
 
-Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`). Ohne Änderung erscheint nichts.
+Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`). Ohne Änderung erscheint nichts.
 
 ## 2. Erster Weg: die Message-ID
 
 Jeder Entwurf bekommt beim Anlegen eine feste Message-ID (`pk.<20 Hex>@<Domain des Absenders>`, E11), die auch in der Kopie im Entwürfe-Ordner steht. Viele Mailprogramme behalten sie beim Senden. Liegt nach dem Sync in einem Ordner mit Rolle **`sent`** (Gesendet) oder **`all`** (Gmail „Alle Nachrichten") eine Nachricht mit dieser Message-ID, ist der Entwurf gesendet: `sent_by_human`, `sent_message_id` = lokale ID der gesendeten Nachricht, `closed_at` gesetzt, Audit `drafts.sent_detected` mit Grund **`message_id`**.
 
-**Thread-Kopfzeilen spielen keine Rolle** (A04 Teil 1, 03.11.2026): Seit 0.3.0-rc2 trägt auch eine Weiterleitung `In-Reply-To` und `References` der Ausgangsnachricht (vorher nur Antworten), damit Gmail sie im Verlauf des Originals lässt. Weder die Message-ID noch der Rückfall (Abschnitt 3) lesen diese Kopfzeilen; die Erkennung gesendeter Weiterleitungen ändert sich dadurch nicht. Im Spiegel landet die gesendete Weiterleitung jetzt im Thread des Originals.
+**Thread-Kopfzeilen spielen keine Rolle** (A04 Teil 1, 03.11.2026): Seit 0.3.0-rc2 trägt auch eine Weiterleitung `In-Reply-To` und `References` der Ausgangsnachricht (vorher nur Antworten), damit Gmail sie im Verlauf des Originals lässt. Weder die Message-ID noch der Rückfall (Abschnitt 3) lesen diese Kopfzeilen; die Erkennung gesendeter Weiterleitungen ändert sich dadurch für diese beiden Wege nicht. Im Spiegel landet die gesendete Weiterleitung jetzt im Thread des Originals. Seit A05 (Teil 2) gibt es einen **dritten Weg**, der `In-Reply-To` liest (Abschnitt 3a); er gilt für Antworten und Weiterleitungen.
 
 ## 3. Zweiter Weg: der Rückfall-Abgleich
 
@@ -55,6 +55,40 @@ Ein paar Folgen, die man kennen sollte:
 - **Änderung während der Prüfung:** Der Rückfall vergleicht den Stand, den er zu Beginn gelesen hat. Ändert ein Agent oder der Mensch den Inhalt, bevor der Entwurf geschlossen ist, wird er nicht geschlossen (der Vergleich gilt nicht mehr); die nächste Prüfung vergleicht den neuen Stand (Gegenprüfung S2.6–S2.8, K4).
 - **„Alle Nachrichten" (Rolle `all`):** Dort liegen auch empfangene Mails. Im Rückfall zählt eine Nachricht, die **nur** dort liegt, deshalb nur, wenn ihr Absender eine eigene Adresse ist: Kontoadresse, Anmeldename, Identitäten samt Reply-To und Aliasse (`account set --aliases`, Entscheid 26). Seit der Nachbesserung T3 (Punkt 15, Befund D7a B1) gelten bei `gmail.com`/`googlemail.com` Schreibweisen mit Punkten im lokalen Teil, mit Zusatz ab `+` und mit `googlemail.com` als dieselbe eigene Adresse (`internal/mailaddr`); andere Anbieter unverändert. Für Gesendet (Rolle `sent`) gilt diese Bedingung nicht. Für die Message-ID gilt sie nie (die ID ist eindeutig).
 
+## 3a. Dritter Weg: der Verlauf
+
+Seit A05 Teil 2 (03.11.2026). Befund aus dem Dauerbetrieb: Der Betreiber hatte einen Antwort-Entwurf vor dem Senden in Gmail um einen Satz ergänzt (eigener Text etwa 30 Wörter, Ähnlichkeit 0,86). Die Message-ID ist neu, der Rückfall braucht 0,9; der Entwurf blieb `draft` mit `remote: missing`, und nur der Mensch konnte ihn mit `draft mark-sent` schließen. Der dritte Weg schließt solche Entwürfe als **Systemregel** (Akteur `system`, wie Message-ID und Rückfall); ein Agent kann einen Entwurf weiterhin nie für gesendet erklären (E2).
+
+Er läuft nach Message-ID und Rückfall und trifft nur, wenn **alle** Bedingungen zugleich erfüllt sind:
+
+| | Bedingung |
+|---|---|
+| (a) | Der Entwurf ist eine Antwort (`reply`, `reply_all`) oder Weiterleitung (`forward`) **mit Original** (`in_reply_to_msg` gesetzt); H ist die Message-ID des Originals. Fehlt das Original im Spiegel (etwa nach `purge`; die Spalte ist dann leer), gilt der Weg nicht. |
+| (b) | Die gesendete Nachricht liegt in einem Ordner mit Rolle `sent` oder `all` (bei `all` nur mit eigenem Absender), trägt nirgends `\Draft`, liegt in keinem Entwürfe-Ordner und ist keine Kopie, die PostKauz abgelegt hat (Abschnitt 4). |
+| (c) | Ihr `In-Reply-To` ist H (Spitzklammern und Leerraum zählen nicht). Nachgeschlagen ohne eigenen Index und ohne Migration: Message-ID des Originals → Thread (`thread_refs`) → Nachrichten des Threads (Index `messages_thread`) mit diesem `In-Reply-To`. |
+| (d) | Gleiche Empfängermenge aus To und Cc wie beim Rückfall (Bcc zählt nicht). |
+| (e) | Zeitfenster wie beim Rückfall: `content_changed_at − 1 h` bis `+ 14 Tage`. |
+| (f) | Die Kopie des Entwurfs **fehlt** im Entwürfe-Ordner: Der Entwurf wurde abgelegt (`pushed_content_hash`), und laut Spiegel liegen dort weder die zuletzt abgelegte Kopie noch eine neuere Fassung mit seiner Message-ID (übernommen). Geprüft am Spiegel wie beim Stand der Serverkopie, **unabhängig vom gespeicherten `remote_state`** (`pushed`, `missing` oder `taken_over`: Gmail speichert beim Bearbeiten selbst, und ein laufender `sync --watch` setzt dann `taken_over`), und beim Schließen in derselben Transaktion noch einmal. Ein nie abgelegter Entwurf erfüllt (f) nicht. |
+| (g) | Ähnlichkeit (dieselbe wie beim Rückfall, mit der zweiten Lesart und der Kürzung aus Abschnitt 3) **≥ 0,5**, und der eigene Text des Entwurfs hat ohne Signatur **mindestens 8 verschiedene Wörter**. Kürzere Entwürfe schließen nur Message-ID und Rückfall; sonst gälte ein verworfenes „Vielen Dank, erledigt." nach einer eigenen Antwort „Vielen Dank!" als gesendet. |
+
+Der **Betreff** wird nicht verglichen (`In-Reply-To` ist das stärkere Merkmal). Treffer → `sent_by_human`, Grund **`thread`**. Wie beim Rückfall schließt eine gesendete Nachricht höchstens einen Entwurf (Rangfolge: höchste Ähnlichkeit, dann älteste Nachricht, dann ältester Entwurf), und ändert sich der Inhalt während der Prüfung, wird nicht geschlossen.
+
+**Bei jedem Lauf, ohne Hochwassermarke:** Wie der Weg über die Message-ID schlägt er für jeden offenen Entwurf mit Original gezielt nach. Er greift deshalb auch, wenn die gesendete Nachricht schon in einem früheren Lauf gespiegelt wurde und die Kopie erst später aus dem Entwürfe-Ordner verschwindet, und er braucht keine Neuprüfung nach dem Update. Gelesen werden nur Nachrichten aus dem Verlauf des Originals mit passendem `In-Reply-To`, ihr Text erst, wenn (d), (e) und (f) erfüllt sind. Gemessen mit `BenchmarkCheckAfterSync22k` (22.000 Nachrichten in „Alle Nachrichten", jede zweite eine Antwort; 30 offene neue Entwürfe; im Teil `steady_replies` dazu 30 offene, abgelegte Antworten mit Original, deren Kandidaten nicht zu den Empfängern passen), Cloud-Container mit 4 Kernen, je drei Läufe, Zeit je Prüfung:
+
+| Teil | vor A05 Teil 2 | mit A05 Teil 2 |
+|---|---|---|
+| `steady` (keine neue Nachricht) | 4,5–4,7 ms | 4,4–4,6 ms |
+| `one_new` (eine neue Nachricht) | 8,4–8,6 ms | 8,3–8,9 ms |
+| `steady_replies` (dazu 30 offene Antworten) | 8,6–8,8 ms | 15,2–15,7 ms |
+
+Der Weg über den Verlauf kostet also etwa 0,2 ms je offener, abgelegter Antwort und Lauf. Eine erste Fassung der Abfrage las alle Nachrichten des Kontos (1,8 s je Lauf); seitdem legt sie die Reihenfolge fest (erst `thread_refs`, dann `messages_thread`).
+
+**Bekannte Grenzen:**
+
+- Verwirft der Mensch den Entwurf und schreibt im selben Verlauf binnen 14 Tagen an dieselben Empfänger eine eigene Antwort mit mindestens der Hälfte gleicher Wörter, gilt der Entwurf als gesendet statt verworfen. Das ändert nur den Zustand in PostKauz, nie einen Versand.
+- Webmail, die `In-Reply-To` beim Senden entfernt (D5, zweites Postfach beim anderen Anbieter), bleibt beim Rückfall (Abschnitt 3).
+- Ohne Original im Spiegel (`purge`, Entwurf ohne `in_reply_to_msg`) und ohne abgelegte Kopie gilt der Weg nicht; dann schließt der Mensch den Entwurf (Abschnitt 5).
+
 ## 4. Was nie als gesendet zählt
 
 - Nachrichten mit dem Flag **`\Draft`** in irgendeinem Ordner.
@@ -66,7 +100,7 @@ Grund (Befund K8 der Gegenprüfung von S2.4/S2.5): **Gmail führt jede Entwurfsk
 
 ## 5. Kein Treffer ist kein Fehler
 
-Findet die Prüfung nichts, bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon`. Änderungen sind dann `draft_taken_over`. Der Mensch schließt ihn selbst:
+Findet die Prüfung nichts (auch nicht über den Verlauf, Abschnitt 3a), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon`. Änderungen sind dann `draft_taken_over`. Der Mensch schließt ihn selbst:
 
 - `postkauz draft mark-sent <id>` → `sent_by_human` (er hat gesendet),
 - `postkauz draft abandon <id>` → `abandoned` (er hat verworfen).
@@ -75,7 +109,7 @@ Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human
 
 ## 6. Audit
 
-Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id` oder `fallback`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
+Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback` oder (seit A05) `thread`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
 ## 7. Ablage geänderter Entwürfe (Entscheid 43)
 
@@ -83,7 +117,7 @@ Damit nicht jeder Zwischenstand eine weitere Kopie im Entwürfe-Ordner hinterlä
 
 ## 8. Gmail und andere Anbieter (nur dokumentiert, gemessen in D5)
 
-- **Testserver (Integrationstest `TestIntegrationSentDetection`, `make integration`):** gegen Dovecot, Stalwart und GreenMail geprüft, je mit einem zweiten IMAP-Client als Mailprogramm, das in Gesendet ablegt und die Kopie aus den Entwürfen entfernt: (A) Kopie mit derselben Message-ID → `sent_by_human` (`message_id`); (B) neue Message-ID, gleicher Text, Betreff mit `Re:` → `sent_by_human` (`fallback`); (C) neue Message-ID, stark geänderter Text → bleibt `ready`, `remote: missing`; `ready` älter als `approval_ttl` → `draft`; `draft mark-sent`/`draft abandon` mit Schlüssel → `human_only`. Dovecot und Stalwart melden Gesendet per SPECIAL-USE, GreenMail hat keinen Ordner Gesendet (der Test legt `Sent` an, Rolle per Name).
+- **Testserver (Integrationstest `TestIntegrationSentDetection`, `make integration`):** gegen Dovecot, Stalwart und GreenMail geprüft, je mit einem zweiten IMAP-Client als Mailprogramm, das in Gesendet ablegt und die Kopie aus den Entwürfen entfernt: (A) Kopie mit derselben Message-ID → `sent_by_human` (`message_id`); (B) neue Message-ID, gleicher Text, Betreff mit `Re:` → `sent_by_human` (`fallback`); (C) neue Message-ID, stark geänderter Text → bleibt `ready`, `remote: missing`; `ready` älter als `approval_ttl` → `draft`; `draft mark-sent`/`draft abandon` mit Schlüssel → `human_only`. Seit A05 (`TestIntegrationSentDetectionReplies`, Antworten auf eine Mail mit Outlook-Verlauf, Zitat ohne „>"): (F) unverändert gesendet ohne `In-Reply-To` → `sent_by_human` (`fallback`, Teil 1); (D) neue Message-ID, ein Satz ergänzt, `In-Reply-To` gleich, Kopie entfernt → `sent_by_human` (`thread`); (E) wie D ohne `In-Reply-To` → bleibt offen, `remote: missing`. Dovecot und Stalwart melden Gesendet per SPECIAL-USE, GreenMail hat keinen Ordner Gesendet (der Test legt `Sent` an, Rolle per Name).
 - Entwürfe-Ordner: `[Gmail]/Drafts` bzw. lokalisiert (`[Gmail]/Entwürfe`), Rolle `drafts` aus SPECIAL-USE `\Drafts`.
 - Gesendet: `[Gmail]/Sent Mail` (lokalisiert `[Gmail]/Gesendet`), Rolle `sent`; zugleich in `[Gmail]/All Mail` (Rolle `all`). Beide Rollen gelten für die Erkennung; dieselbe Nachricht in beiden Ordnern ist im Spiegel **eine** Nachricht (gleiche Message-ID und Größe) und schließt höchstens einen Entwurf.
 - **Gemessen (D5 Runde 1, 23.10.2026, Gmail im Browser):** neue Message-ID beim Senden (Rückfall nötig), Kopie aus „Entwürfe" entfernt, gesendete Nachricht in Posteingang (Mail an sich selbst) und Gesendet, Gesprächsverlauf richtig. Gmail bricht den Klartext neu um und sendet das Zitat **ohne „>"** (Einleitungszeile, Leerzeile, Zitattext) → mit 0.2.0-rc1 verfehlte der Rückfall (Ähnlichkeit 0,58), seit N1 zählt die zweite Lesart (Abschnitt 3). Ordnernamen dieses (deutschen) Kontos: `[Google Mail]/Entwürfe`, `[Google Mail]/Gesendet`.

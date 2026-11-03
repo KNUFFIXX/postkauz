@@ -25,6 +25,14 @@ func TestRenderDraftCheck(t *testing.T) {
 	if b.String() != want {
 		t.Fatalf("got  %q\nwant %q", b.String(), want)
 	}
+	// A05 Teil 2: dritter Weg über den Verlauf.
+	b.Reset()
+	renderDraftCheck(&b, &drafts.CheckReport{SentByFallback: 1, SentByThread: 1, SentDraftIDs: []int64{7, 8}})
+	want = "drafts: 2 sent in the mail client, now sent_by_human (1 by recipients, subject and text, 1 by thread " +
+		"(reply to the same message, same recipients, similar text); draft 7, 8)\n"
+	if b.String() != want {
+		t.Fatalf("got  %q\nwant %q", b.String(), want)
+	}
 	// Die Zeile steht vor den beiden Schlusszeilen, die Skripte auswerten.
 	b.Reset()
 	if err := renderSync(&b, ops.SyncOutput{Account: "demo", Mode: "incremental", DraftCheck: &drafts.CheckReport{TakenOver: 1}}); err != nil {

@@ -220,9 +220,9 @@ func (e *Engine) checkDrafts(ctx context.Context, o drafts.CheckOptions) (*draft
 		rep, err = e.Drafts.Pusher.AfterSync(ctx, e.AccountID, o)
 		return err
 	})
-	if n := rep.SentByMessageID + rep.SentByFallback; n > 0 {
+	if n := rep.SentByMessageID + rep.SentByFallback + rep.SentByThread; n > 0 {
 		e.log().Info("drafts sent by the human detected", "count", n, "by_message_id", rep.SentByMessageID,
-			"by_fallback", rep.SentByFallback, "draft_ids", rep.SentDraftIDs)
+			"by_fallback", rep.SentByFallback, "by_thread", rep.SentByThread, "draft_ids", rep.SentDraftIDs)
 	}
 	if rep.Expired > 0 {
 		e.log().Info("approvals ran out; drafts back to status draft", "count", rep.Expired)

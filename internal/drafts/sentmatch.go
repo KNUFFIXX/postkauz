@@ -43,6 +43,9 @@ import (
 const (
 	DetectMessageID = "message_id"
 	DetectFallback  = "fallback"
+	// DetectThread: dritter Weg über den Verlauf (A05 Teil 2, detect.go,
+	// detectThread).
+	DetectThread = "thread"
 )
 
 // Grenzen des Rückfall-Abgleichs (E5).
@@ -50,6 +53,13 @@ const (
 	FallbackBefore     = time.Hour
 	FallbackAfter      = 14 * 24 * time.Hour
 	FallbackMinJaccard = 0.9
+	// ThreadMinJaccard und ThreadMinWords: Grenzen des Wegs über den
+	// Verlauf (A05 Teil 2, Standardantworten von Claude): ScoreSent ≥ 0,5
+	// und der eigene Text des Entwurfs ohne Signatur hat mindestens 8
+	// verschiedene Wörter (kürzere Entwürfe nur über Message-ID und
+	// Rückfall).
+	ThreadMinJaccard = 0.5
+	ThreadMinWords   = 8
 )
 
 // subjectPrefixRe erkennt ein Antwort- oder Weiterleitungspräfix am Anfang.

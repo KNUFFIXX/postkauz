@@ -74,6 +74,7 @@ func TestIntegrationSentDetectionReplies(t *testing.T) {
 			}
 			return out
 		}
+		origs := map[int64]string{} // Entwurf → Message-ID des Originals
 		reply := func(name string) store.Draft {
 			t.Helper()
 			mid := fmt.Sprintf("orig-%s-%d@example.com", name, time.Now().UnixNano())
@@ -94,6 +95,7 @@ func TestIntegrationSentDetectionReplies(t *testing.T) {
 				t.Fatalf("push %s: %+v", name, out.Drafts)
 			}
 			d := e.draft(o.DraftID)
+			origs[d.ID] = mid
 			if !strings.Contains(d.BodyText, "Ursprüngliche Nachricht") {
 				t.Fatalf("%s: quote without the history: %q", name, d.BodyText)
 			}
@@ -111,6 +113,33 @@ func TestIntegrationSentDetectionReplies(t *testing.T) {
 		}
 		if d := e.draft(f.ID); d.Status != string(drafts.StatusSentByHuman) {
 			t.Fatalf("F = %s/%s", d.Status, d.RemoteState)
+		}
+
+		// (D, Teil 2) neue Message-ID, ein Satz ergänzt, In-Reply-To gleich,
+		// Kopie entfernt → sent_by_human über den Verlauf. (E) wie D ohne
+		// In-Reply-To → bleibt offen (Rückfall unter 0,9).
+		added := "Der Hausmeister kommt am Montag vorbei und bringt die Schlüssel."
+		dd, de := reply("D"), reply("E")
+		midD := fmt.Sprintf("webmail-d-%d@example.org", time.Now().UnixNano())
+		e.appendSent(sent, a05Reply(midD, origs[dd.ID], dd.Subject, gmailText(dd, added)), midD, &sentMids)
+		e.removeDraftCopy(dd)
+		midE := fmt.Sprintf("webmail-e-%d@example.org", time.Now().UnixNano())
+		e.appendSent(sent, a05Reply(midE, "", de.Subject, gmailText(de, added)), midE, &sentMids)
+		e.removeDraftCopy(de)
+		out = sync()
+		if out.DraftCheck == nil || out.DraftCheck.SentByThread != 1 || out.DraftCheck.SentByFallback != 0 || out.DraftCheck.Missing != 1 {
+			t.Fatalf("D/E: check = %+v", out.DraftCheck)
+		}
+		if d := e.draft(dd.ID); d.Status != string(drafts.StatusSentByHuman) || d.SentMessageID == 0 {
+			t.Fatalf("D = %s", d.Status)
+		}
+		if d := e.draft(de.ID); d.Status != string(drafts.StatusDraft) || d.RemoteState != drafts.RemoteMissing {
+			t.Fatalf("E = %s/%s", d.Status, d.RemoteState)
+		}
+		n, err := e.st.QueryIntForTest(`SELECT count(*) FROM audit_events WHERE operation = ? AND reason = ? AND actor_type = 'system'`,
+			drafts.OpSentDetected, drafts.DetectThread)
+		if err != nil || n != 1 {
+			t.Fatalf("audit thread: %d, %v", n, err)
 		}
 	})
 }
