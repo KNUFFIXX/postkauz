@@ -19,7 +19,7 @@ Auftrag A05 „Erkennung und Text“ (03.11.2026, Zweig `claude/quirky-feynman-1
 
 - `docs/versanderkennung.md` Abschnitt 3 (symmetrische Kürzung, Neuprüfung nach dem Update) und neuer Abschnitt 3a „Dritter Weg: der Verlauf“ mit Messung und bekannten Grenzen; Abschnitte 1, 2, 5, 6, 8 angepasst. `docs/mcp.md` (`text_source`, HTML im Klartextteil, Wege der Versanderkennung), `docs/cli.md`, `docs/datenmodell.md` (`clean_version` 4). `docs/roadmap.md`: Entschiedene Fragen 70 (Nachtrag) und 73, Stand, Offene Fragen. Abnahme D11 (`docs/abnahme_D11.md`, `docs/abnahme_D11.ps1`).
 
-## [0.3.0-rc2] – 2026-11-03 (Release-Kandidat; Dauerbetrieb auf dem Büro-PC seit 03.11.2026, kein Tag)
+## [0.3.0-rc2] – 2026-11-03 (Release-Kandidat; im Dauerbetrieb seit 03.11.2026, Tag `v0.3.0-rc2` an `7231758`, GitHub-Release)
 
 Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (kein Tag, kein Release; Build-Commit `7231758` und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
 
