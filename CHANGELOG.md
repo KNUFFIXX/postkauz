@@ -4,7 +4,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Nichts seit 0.3.0-rc1.
+Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (kein Tag, kein Release; Build-Commit und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
+
+### Changed
+
+- Weiterleitungen (`draft forward`, `drafts.create` mit `kind: "forward"`) tragen `In-Reply-To` und `References` wie Antworten (`compose.References`, höchstens 20 Einträge, `derived_from_email` mit `in_reply_to`/`references`). Gmail legt eine per IMAP abgelegte Weiterleitung ohne diese Kopfzeilen in einen neuen Verlauf; jetzt bleibt sie im Verlauf des Originals (Lastenheft Vorgang 4). Ändert A02 E11 (Entschiedene Fragen 70). Ein vor rc2 freigegebener Weiterleitungs-Entwurf fällt beim nächsten Push auf `draft` zurück (`approval_stale`).
+
+### Added
+
+- `drafts.create` nimmt `derive_recipients` (Standard `true`); `false` legt eine Antwort im Verlauf ohne aus der Ausgangsnachricht abgeleitete Empfänger an (nur genannte To/Cc/Bcc, auch keine; Warnung „the draft has no recipient“, `request_ready` lehnt mit `no_recipients` ab). CLI: `draft reply --no-derive-recipients` (Entschiedene Fragen 71).
+
+### Docs
+
+- `docs/roadmap.md`: Abnahmemaßstab nach dem Lastenheft vom 03.11.2026 (Vorgang 1 „Eingänge sichten“, Vorgang 6 Phase 2 über Tailscale, neuer Stand-Satz), Entschiedene Fragen 70 und 71, Offene Frage 1 (VPS und D8 Teil D ruhen). `docs/cli.md`, `docs/mcp.md`, `docs/versanderkennung.md`, `docs/architektur.md`, README, Paketkommentar `internal/compose`. Auftrag `auftraege/A04_alltag.md`.
 
 ## [0.3.0-rc1] – 2026-10-29 (Release-Kandidat; vom Betreiber angenommen (D10), Tag `v0.3.0-rc1` an `502da91`, GitHub-Release)
 
