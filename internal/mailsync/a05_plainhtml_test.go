@@ -3,12 +3,14 @@ package mailsync
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
 
+	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 )
@@ -229,5 +231,71 @@ func TestA05RecheckAfterCleanup(t *testing.T) {
 	}
 	if n, err := e.st.SentCheckRev(ctx, e.acct); err != nil || n != drafts.SentCheckRev {
 		t.Fatalf("sent_check_rev = %d, %v", n, err)
+	}
+}
+
+// A05, Nachtrag 4: Endet die Neuaufbereitung vorzeitig (ein Anhang lässt
+// sich nur vorübergehend nicht ablegen, die Sperre des Blob-Ordners ist
+// belegt), läuft die Prüfung der Entwürfe mit KeepMark: sent_check_rev
+// bleibt ungesetzt, und der nächste Lauf nach der Freigabe der Sperre
+// prüft neu und schließt den Entwurf.
+func TestA05RecheckWaitsForDeferredCleanup(t *testing.T) {
+	e := newPushEnv(t, "Drafts", "Sent")
+	ctx := context.Background()
+	// Kurze Wartezeit an der Sperre (Standard 10 s), derselbe Blob-Ordner.
+	bs, err := blob.Open(filepath.Join(e.dir, "blobs"), blob.Options{LockWait: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Blobs = bs
+	d := e.pushed(t, "Termin Heizung")
+	src := `<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"></head><body><p>Hallo Termin Heizung</p></body></html>`
+	raw := strings.ReplaceAll("From: demo@example.org\nTo: b@example.org\nSubject: Re: Termin Heizung\n"+
+		"Date: "+time.Now().UTC().Format(time.RFC1123Z)+"\nMessage-ID: <webmail-att@example.org>\nMIME-Version: 1.0\n"+
+		"Content-Type: multipart/mixed; boundary=B\n\n--B\nContent-Type: text/plain; charset=utf-8\n\n"+src+"\n"+
+		"--B\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=r.pdf\n\n%PDF-1.4 x\n--B--\n", "\n", "\r\n")
+	if _, err := e.u.Append("Sent", lit([]byte(raw)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagSeen}}); err != nil {
+		t.Fatal(err)
+	}
+	expunge(t, imapSession(t, e.addr), "Drafts", imap.UID(d.RemoteUID))
+	if _, err := e.sync(t, ops.SyncOptions{Mailboxes: []string{"Sent"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`UPDATE bodies SET clean_version = 3, text_plain = '` + src + `', text_from_html = '', text_unquoted = '` + src + `'
+			WHERE message_id = (SELECT id FROM messages WHERE message_id_header = 'webmail-att@example.org')`,
+		`UPDATE drafts SET fallback_checked_at = content_changed_at`,
+		`INSERT INTO sent_check_marks(account_id, last_message_id) SELECT account_id, max(id) FROM messages GROUP BY account_id
+			ON CONFLICT(account_id) DO UPDATE SET last_message_id = excluded.last_message_id`,
+		`DELETE FROM meta WHERE key LIKE 'sent_check_rev/%'`,
+	} {
+		if err := e.st.ExecForTest(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock, err := bs.LockForGC(ctx, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		lock.Release()
+		t.Fatal(err)
+	}
+	lock.Release()
+	if n, _ := e.st.SentCheckRev(ctx, e.acct); n != 0 {
+		t.Fatalf("sent_check_rev = %d after a deferred cleanup, want 0", n)
+	}
+	if got := e.draft(t, d.ID); got.Status == string(drafts.StatusSentByHuman) {
+		t.Fatalf("draft closed while its sent message still had the old text")
+	}
+	out, err := e.sync(t, ops.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.DraftCheck == nil || out.DraftCheck.SentByFallback != 1 {
+		t.Fatalf("check after the lock = %+v", out.DraftCheck)
+	}
+	if n, _ := e.st.SentCheckRev(ctx, e.acct); n != drafts.SentCheckRev {
+		t.Fatalf("sent_check_rev = %d", n)
 	}
 }

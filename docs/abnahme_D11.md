@@ -19,7 +19,7 @@ Stand: 03.11.2026 (Auftrag [A05](../auftraege/A05_erkennung.md), Teil 4). Skript
 
 - Es arbeitet am **Live-Datenverzeichnis** (`C:\PostKauz\data`, `C:\PostKauz\config.toml`), weil genau dort geprüft werden soll. Vorher macht es eine **Sicherung** nach [betrieb.md](betrieb.md) 2.2/2.3; ohne Sicherung tauscht es nichts.
 - Es hält die Aufgaben `PostKauz sync watch`, `PostKauz audit export` und (falls vorhanden) `PostKauz MCP HTTP` an und schaltet sie ab, wie beim Update in [betrieb.md](betrieb.md) 1.7. Läuft danach noch ein `postkauz.exe` (meist die Claude-App), bricht es ab, ohne etwas zu ändern.
-- **Abbrüche:** Fehlt eine Voraussetzung (Teil 0), läuft noch ein `postkauz.exe` (1.1), ist der Stand vorher nicht lesbar (1.2, 1.3) oder fehlt die Sicherung (1.5), tauscht das Skript nichts. Scheitert 2.1 oder 2.2, kopiert es `postkauz-rc2.exe` zurück, bevor das neue Programm einen `sync` macht. In jedem Fall, auch bei einem unerwarteten Fehler, schaltet es die Aufgaben wieder ein, die es abgeschaltet hat (`E.1`), und schreibt die Schlusszeile `D11: … OK, … FAIL`.
+- **Abbrüche:** Fehlt eine Voraussetzung (Teil 0), läuft noch ein `postkauz.exe` (1.1), ist der Stand vorher nicht lesbar (1.2, 1.3) oder fehlt die Sicherung (1.5), tauscht das Skript nichts. Scheitert 2.1 oder 2.2 oder bricht der Tausch mit einem Fehler ab (etwa: das neue Programm startet nicht, `2.x`), kopiert es `postkauz-rc2.exe` zurück, bevor das neue Programm einen `sync` macht und bevor die Aufgaben wieder anlaufen. In jedem Fall, auch bei einem unerwarteten Fehler, schaltet es die Aufgaben wieder ein, die es abgeschaltet hat (`E.1`), und schreibt die Schlusszeile `D11: … OK, … FAIL`.
 - Das alte Programm bleibt als `C:\PostKauz\postkauz-rc2.exe` liegen (für den Rückweg).
 - **Keine Migration:** A05 ändert das Schema nicht (Schema 22). Die Texte bekommen nur einen neuen Aufbereitungsstand (4); das alte Programm kann damit weiterarbeiten (Abschnitt 5).
 - Ins Protokoll kommen nur IDs, Zustände, Gründe und Zähler, nie Betreff, Adressen oder Mailtext. Von `sync` stehen nur Exit-Code und die **Zahl** der Zeilen auf stderr drin (dort können Ordnernamen stehen; die Protokolle landen in `docs/protokolle`).
@@ -53,7 +53,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PostKauz\d11\abnahme_
   -Accounts <konto1>,<konto2> -HtmlMessage <id>
 ```
 
-Das Protokoll steht danach in `C:\PostKauz\D11_windows.txt`. Letzte Zeile: `D11: <n> OK, 0 FAIL`.
+`-Accounts` nimmt mehrere Konten mit Komma (das Skript trennt sie selbst; `powershell.exe -File` übergibt die Liste als einen Text). Das Protokoll steht danach in `C:\PostKauz\D11_windows.txt`. Letzte Zeile: `D11: <n> OK, 0 FAIL`.
 
 ## 4. Erwartet
 
@@ -62,7 +62,7 @@ Das Protokoll steht danach in `C:\PostKauz\D11_windows.txt`. Letzte Zeile: `D11:
 | 0.1 bis 0.4 | neues Programm, Prüfsumme, Versionen | rc3 passt zu `SHA256SUMS`, das laufende Programm ist rc2 |
 | 0.5, 0.6 | Sicherungsordner, Konten | angegeben |
 | 1.1 | Aufgaben anhalten | kein `postkauz.exe` läuft mehr |
-| 1.2 | `draft list` vorher | Liste der offenen Entwürfe (ID, Status, Art, `remote`) |
+| 1.2 | `draft list` vorher | Exit 0 und lesbares JSON; Liste der offenen Entwürfe (ID, Status, Art, `remote`); sonst Abbruch ohne Tausch |
 | 1.3 | `doctor` vorher | `database ok`; die Warnungen werden für 3.5 gemerkt |
 | 1.4, 1.4b | Nachricht vorher (INFO) | HTML-Tags im Text, meist `alternative_mismatch true`; Suchtreffer für „xmlns“ |
 | 1.5 | Sicherung | Exit 0 **und** `backup written to …` (sonst Abbruch ohne Tausch) |

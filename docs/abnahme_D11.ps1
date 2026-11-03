@@ -105,6 +105,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Mit powershell.exe -File kommt "-Accounts a,b" in PS 5.1 als ein Text an
+# (wie -Live in abnahme_D9.ps1): selbst trennen.
+$Accounts = @($Accounts | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $script:Utf8 = New-Object System.Text.UTF8Encoding $false
 $script:NOk = 0
 $script:NFail = 0
@@ -289,10 +292,11 @@ function Get-Drafts {
     $r = Invoke-Pk $Prog $a
     $j = Get-Json $r.Out
     $list = @()
-    if ($null -ne $j -and $null -ne $j.drafts) {
+    $parsed = ($null -ne $j -and $null -ne $j.drafts)
+    if ($parsed) {
         foreach ($d in $j.drafts) { $list += New-Object PSObject -Property @{ Id = [int64] $d.draft_id; Status = [string] $d.status; Remote = [string] $d.remote; Kind = [string] $d.kind } }
     }
-    return New-Object PSObject -Property @{ Exit = $r.Exit; List = $list; Text = $r.Text }
+    return New-Object PSObject -Property @{ Exit = $r.Exit; List = $list; Parsed = $parsed; Text = $r.Text }
 }
 
 function Format-Drafts {
@@ -414,7 +418,7 @@ function Invoke-Umstellung {
     Stop-Tasks '1.1'
     if ($script:NFail -gt 0) { Stop-D11 'es laeuft noch ein postkauz.exe (Claude-App oder Aufgabe); nichts getauscht' }
     $script:Before = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
-    Add-Check '1.2' ('draft list vorher: ' + $script:Before.List.Count + ' offene Entwuerfe') ($script:Before.Exit -eq 0) (Format-Drafts $script:Before.List)
+    Add-Check '1.2' ('draft list vorher: ' + $script:Before.List.Count + ' offene Entwuerfe') ($script:Before.Exit -eq 0 -and $script:Before.Parsed) ('JSON lesbar: ' + $script:Before.Parsed + "`n" + (Format-Drafts $script:Before.List))
     $script:DocBefore = Get-DoctorWarnings $script:ExeFull
     Add-Check '1.3' 'doctor vorher' ($script:DocBefore.Database -eq 'ok') ('database ' + $script:DocBefore.Database + "`n" + (($script:DocBefore.Warnings) -join "`n"))
     # Ohne Liste vorher waere 3.2 wertlos (leere Liste = OK).
@@ -433,19 +437,32 @@ function Invoke-Umstellung {
 
     # ------------------------------------------------------------ Teil 2
     Write-Log '--- Teil 2: Programm tauschen'
-    Copy-Item -LiteralPath $script:ExeFull -Destination $OldCopy -Force
-    Copy-Item -LiteralPath $newFull -Destination $script:ExeFull -Force
-    $script:Swapped = $true
-    $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
-    Add-Check '2.1' ('getauscht: ' + $script:ExeFull + ' meldet ' + $ExpectVersion + ', altes Programm als postkauz-rc2.exe aufgehoben') ($v.Out -match [regex]::Escape($ExpectVersion) -and (Test-Path $OldCopy)) $v.Text
-    $d = Get-DoctorWarnings $script:ExeFull
-    Add-Check '2.2' 'doctor: database ok (keine Migration, Schema 22)' ($d.Database -eq 'ok') ('database ' + $d.Database)
-    if ($script:NFail -gt 0) {
+    # Eigenes try/catch: Auch eine Ausnahme (etwa: das neue Programm startet
+    # nicht) bringt das alte Programm zurueck, bevor finally die Aufgaben
+    # wieder einschaltet; sonst liefe der Dauerbetrieb mit dem ungeprueften
+    # Programm weiter.
+    $why = ''
+    try {
+        Copy-Item -LiteralPath $script:ExeFull -Destination $OldCopy -Force
+        # Ab hier gilt der Tausch als begonnen (auch ein halb geschriebenes
+        # Programm wird zurueckkopiert).
+        $script:Swapped = $true
+        Copy-Item -LiteralPath $newFull -Destination $script:ExeFull -Force
+        $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
+        Add-Check '2.1' ('getauscht: ' + $script:ExeFull + ' meldet ' + $ExpectVersion + ', altes Programm als postkauz-rc2.exe aufgehoben') ($v.Out -match [regex]::Escape($ExpectVersion) -and (Test-Path $OldCopy)) $v.Text
+        $d = Get-DoctorWarnings $script:ExeFull
+        Add-Check '2.2' 'doctor: database ok (keine Migration, Schema 22)' ($d.Database -eq 'ok') ('database ' + $d.Database)
+        if ($script:NFail -gt 0) { $why = 'Tausch nicht in Ordnung' }
+    } catch {
+        Add-Check '2.x' ('Fehler beim Tausch: ' + $_.Exception.Message) $false
+        $why = 'Fehler beim Tausch'
+    }
+    if ($why) {
         # Vor dem ersten sync zurueck auf das alte Programm.
-        if (Test-Path $OldCopy) { Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force; $script:Swapped = $false }
+        if ($script:Swapped -and (Test-Path $OldCopy)) { Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force; $script:Swapped = $false }
         $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
         Add-Info '2.3' ('altes Programm zurueckkopiert, meldet: ' + $v.Out.Trim())
-        Stop-D11 'Tausch nicht in Ordnung; altes Programm wieder in Betrieb, kein sync mit dem neuen'
+        Stop-D11 ($why + '; altes Programm wieder in Betrieb, kein sync mit dem neuen')
     }
 
     # ------------------------------------------------------------ Teil 3
@@ -483,7 +500,7 @@ function Invoke-Umstellung {
         $lines += ('draft ' + $c.Id + ': sent_by_human, Grund ' + $r)
     }
     $open = @($after.List | Where-Object { @('draft', 'pending_approval', 'ready') -contains $_.Status })
-    Add-Check '3.2' ('draft list nachher: ' + $closed.Count + ' offene Entwuerfe von vorher jetzt sent_by_human, jeder mit Grund im Audit (message_id, fallback oder thread)') ($after.Exit -eq 0 -and $au.Exit -eq 0 -and $missingReason -eq 0) ((@($lines) -join "`n") + "`n--- noch offen:`n" + (Format-Drafts $open))
+    Add-Check '3.2' ('draft list nachher: ' + $closed.Count + ' offene Entwuerfe von vorher jetzt sent_by_human, jeder mit Grund im Audit (message_id, fallback oder thread)') ($after.Exit -eq 0 -and $after.Parsed -and $au.Exit -eq 0 -and $missingReason -eq 0) ((@($lines) -join "`n") + "`n--- noch offen:`n" + (Format-Drafts $open))
     Add-Info '3.3' 'Betreiber: Sind die noch offenen Entwuerfe wirklich nicht gesendet? Und die geschlossenen wirklich gesendet? (draft show <id> zeigt den Betreff nur am Bildschirm)'
     if ($HtmlMessage) {
         $f = Get-MessageFacts $script:ExeFull $HtmlMessage

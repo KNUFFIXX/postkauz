@@ -137,6 +137,10 @@ affb0a75e45104902fb07769d63ed3c6eef5d75dc2d0e5553b70fcfef1bf7ca1  postkauz-darwi
 
 Windows-Programm: 22.616.064 Byte. Der frühere rc3-Build an `5cdab24` (Windows `2ca5dd97…ef60228`) ist ersetzt; nicht verwenden. Das Abnahmeskript gehört zum Stand `b96e424` (`docs/abnahme_D11.ps1`), nicht zum Programmpaket.
 
+## 7a. Nachtrag 4
+
+Nachprüfung von `b96e424` (Anforderungen 1 bis 6 aus Nachtrag 2 erfüllt; rc3 an `28941b7` vom Betreiber bytegleich nachgebaut, Windows `f7789cf3…e934` stimmt mit Abschnitt 7.2 überein). Ein Commit: `abnahme_D11.ps1` trennt `-Accounts a,b` selbst (mit `powershell.exe -File` kommt die Liste in PS 5.1 als ein Text an; sonst lief 3.1 mit `sync -a "a,b"` nach dem Tausch in FAIL), Teil 2 hat ein eigenes try/catch (auch eine Ausnahme beim Tausch kopiert `postkauz-rc2.exe` zurück, bevor `finally` die Aufgaben einschaltet), 1.2 verlangt lesbares JSON; Test `TestA05RecheckWaitsForDeferredCleanup` (belegte Sperre des Blob-Ordners → Neuaufbereitung vorzeitig beendet → `KeepMark`, `sent_check_rev` bleibt ungesetzt; ohne den Zweig rot). Nur `_test.go` und Doku geändert; der Build bleibt an `28941b7`. Die Roadmap hat nach Nachtrag 3 zwei Offene Fragen.
+
 ## 8. Offen
 
 - Abnahme D11 auf dem Büro-PC ([abnahme_D11.md](../abnahme_D11.md)); das Skript ist in der Cloud weder ausgeführt noch von PowerShell geparst (kein PowerShell im Container), nur gegen die CLI-Ausgaben geprüft.
