@@ -160,16 +160,10 @@ func extractPlan(a store.NewAttachment, t magic.Type) (status, reason string) {
 // gemeldet, Links gesammelt); text_source ist dann html, und
 // alternative_mismatch bleibt false (der Agent liest, was der Mensch sieht).
 func fillClean(nm *store.NewMessage, m *mimeparse.Message, atts []store.NewAttachment) {
-	nm.TextPlain = sanitize.Text(m.Text)
+	var html string
+	var plainHTML bool
+	nm.TextPlain, html, plainHTML = sanitize.PlainAndHTML(m.Text, m.HTML)
 	nm.TextCharset = m.TextCharset
-	html := m.HTML
-	plainHTML := sanitize.PlainIsHTML(nm.TextPlain)
-	if plainHTML {
-		if strings.TrimSpace(html) == "" {
-			html = nm.TextPlain
-		}
-		nm.TextPlain = ""
-	}
 	main := nm.TextPlain
 	links := []sanitize.Link{}
 	if html != "" {

@@ -45,6 +45,25 @@ func PlainIsHTML(s string) bool {
 	return false
 }
 
+// PlainAndHTML ist die gemeinsame Regel für Sync und compose (A05 Teil 3,
+// Nachtrag 2, F10): plain ist der Klartextteil, html der HTML-Teil der
+// Mail. Ist der Klartext HTML-Quelltext (PlainIsHTML), gilt er nicht als
+// Klartext (p = ""); Quelle des Texts ist dann der HTML-Teil, und nur
+// ohne HTML-Teil (leer oder nur Leerraum) das Klartext-HTML. Ergibt ein
+// vorhandener HTML-Teil keinen Text, wird nicht auf das Klartext-HTML
+// zurückgegriffen: Der Mensch sieht im Mailprogramm den HTML-Teil.
+// p ist mit Text bereinigt (unsichtbare Zeichen entfernt).
+func PlainAndHTML(plain, html string) (p, h string, plainWasHTML bool) {
+	p, h = Text(plain), html
+	if !PlainIsHTML(p) {
+		return p, h, false
+	}
+	if strings.TrimSpace(h) == "" {
+		h = p
+	}
+	return "", h, true
+}
+
 // startsTag: s beginnt mit p (Groß-/Kleinschreibung egal), danach endet
 // der Name (Leerraum, „>", „/" oder Textende); „<header>" ist also kein
 // „<head", „<metadata>" kein „<meta".

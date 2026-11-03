@@ -37,3 +37,25 @@ func TestPlainIsHTML(t *testing.T) {
 		}
 	}
 }
+
+// Nachtrag 2, F10: gemeinsame Regel für Sync und compose.
+func TestPlainAndHTML(t *testing.T) {
+	const src = "<html><body><p>Hallo</p></body></html>"
+	for _, c := range []struct {
+		name, plain, html, wantP, wantH string
+		wantWas                         bool
+	}{
+		{"plain text", "Hallo", "<p>Hallo</p>", "Hallo", "<p>Hallo</p>", false},
+		{"html in plain, html part", src, "<p>Hallo HTML</p>", "", "<p>Hallo HTML</p>", true},
+		{"html in plain, no html part", src, "", "", src, true},
+		{"html in plain, blank html part", src, " \r\n", "", src, true},
+		// Ein HTML-Teil ohne Text bleibt die Quelle (kein Rückgriff).
+		{"html in plain, html part without text", src, "<html><body></body></html>", "", "<html><body></body></html>", true},
+		{"invisible characters removed", "Hal​lo", "", "Hallo", "", false},
+	} {
+		p, h, was := PlainAndHTML(c.plain, c.html)
+		if p != c.wantP || h != c.wantH || was != c.wantWas {
+			t.Errorf("%s: got (%q, %q, %v)", c.name, p, h, was)
+		}
+	}
+}

@@ -62,6 +62,9 @@ func TestA05PlainPartWithHTML(t *testing.T) {
 		"xml-prolog":   a05Raw("xml-prolog", `<?xml version="1.0" encoding="utf-8"?>`+"\r\n<!DOCTYPE html>\r\n"+a05HTMLSource, ""),
 		"name-quote":   a05Raw("name-quote", "<Anna Beispiel> schrieb:\r\nDie Ablesung ist am Dienstag.", ""),
 		"bold-in-text": a05Raw("bold-in-text", "Hallo,\r\n<b>wichtig</b>: die Ablesung ist am Dienstag.", ""),
+		// Nachtrag 2, F10: HTML-Teil ohne Text; kein Rückgriff auf das
+		// Klartext-HTML (wie compose).
+		"empty-html": a05Raw("empty-html", a05HTMLSource, "<html><body><div style=\"display:none\">x</div></body></html>"),
 	}
 	for _, raw := range mails {
 		if _, err := u.Append("INBOX", lit(raw), &imap.AppendOptions{Time: time.Now()}); err != nil {
@@ -90,6 +93,9 @@ func TestA05PlainPartWithHTML(t *testing.T) {
 		if b.version != CleanVersion {
 			t.Errorf("%s: clean_version %d", id, b.version)
 		}
+	}
+	if b := e.a05Body(t, "empty-html"); b.plain != "" || b.fromHTML != "" || b.mismatch || strings.Contains(b.snippet, "Dienstag") {
+		t.Errorf("empty-html: %+v", b)
 	}
 	for id, want := range map[string]string{"name-quote": "<Anna Beispiel> schrieb:", "bold-in-text": "<b>wichtig</b>"} {
 		if b := e.a05Body(t, id); !strings.Contains(b.plain, want) || b.fromHTML != "" {

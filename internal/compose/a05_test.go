@@ -37,3 +37,17 @@ func TestQuoteOfPlainPartWithHTML(t *testing.T) {
 		t.Fatalf("plain text changed:\n%s", m.BodyText)
 	}
 }
+
+// Nachtrag 2, F10: Hat die Mail einen HTML-Teil ohne Text und ist der
+// Klartext HTML-Quelltext, bleibt das Zitat leer wie der Text im Spiegel
+// (kein Rückgriff auf das Klartext-HTML).
+func TestQuoteHTMLPartWithoutText(t *testing.T) {
+	in := baseInput(KindReply)
+	in.Original.Text = `<html><body><p>Nur im Klartext-HTML: Donnerstag.</p></body></html>`
+	in.Original.HTML = `<html><body><div style="display:none">versteckt</div></body></html>`
+	in.BodyMarkdown = "Danke."
+	m := mustBuild(t, in)
+	if strings.Contains(m.BodyText, "Donnerstag") || strings.Contains(m.BodyText, "versteckt") || strings.Contains(m.BodyText, "<html") {
+		t.Fatalf("quote:\n%s", m.BodyText)
+	}
+}

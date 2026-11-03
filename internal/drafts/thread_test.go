@@ -202,6 +202,17 @@ func TestThreadConditions(t *testing.T) {
 			e.send(thSent{role: "all", from: "Anna <anna@example.org>"})
 			return d
 		}},
+		// Nachtrag 2, F8: Byte für Byte eine Kopie, die PostKauz abgelegt
+		// hat (Inhalts-Hash), zählt nie, auch nicht in Gesendet.
+		{"(b) copy put by PostKauz (content hash)", func(e *thEnv) store.Draft {
+			d := e.draftOf(KindReply, thOwn, true)
+			e.dropCopy(d)
+			id := e.send(thSent{})
+			if err := e.st.ExecForTest(`UPDATE messages SET content_hash = ? WHERE id = ?`, d.PushedContentHash, id); err != nil {
+				e.t.Fatal(err)
+			}
+			return d
+		}},
 		{"(c) other In-Reply-To", func(e *thEnv) store.Draft {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)

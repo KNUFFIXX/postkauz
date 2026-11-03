@@ -75,17 +75,19 @@ func textToHTML(s string) string {
 // HTML-Quelltext (A05 Teil 3, sanitize.PlainIsHTML; manche
 // Absender-Software schreibt so in text/plain), wird er wie HTML
 // bereinigt, damit Zitat und Weiterleitung kein rohes HTML enthalten.
+//
+// Dieselbe Regel wie der Sync (sanitize.PlainAndHTML, Nachtrag 2, F10):
+// Hat die Mail einen HTML-Teil, der keinen Text ergibt, und ist der
+// Klartext HTML-Quelltext, bleibt das Zitat leer (kein Rückgriff auf das
+// Klartext-HTML).
 func originalText(o *Original) string {
-	if strings.TrimSpace(o.HTML) != "" {
-		if t := sanitize.HTML(o.HTML).Text; strings.TrimSpace(t) != "" {
+	plain, html, _ := sanitize.PlainAndHTML(o.Text, o.HTML)
+	if strings.TrimSpace(html) != "" {
+		if t := sanitize.HTML(html).Text; strings.TrimSpace(t) != "" {
 			return t
 		}
 	}
-	t := sanitize.Text(o.Text)
-	if sanitize.PlainIsHTML(t) {
-		return sanitize.HTML(t).Text
-	}
-	return t
+	return plain
 }
 
 // quotedText ist originalText, gekürzt auf MaxQuoteChars (an einem
