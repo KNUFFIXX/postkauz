@@ -169,8 +169,16 @@ func runMCPRemote(ctx context.Context, a *app, name string) error {
 	if a.cfg.RemoteErr != nil {
 		return a.cfg.RemoteErr
 	}
+	// Gegenprüfung Teil 4, W1: Aus Claude Desktop (App-Paket) gestartet,
+	// sieht dieser Prozess %APPDATA% umgeleitet.
+	for _, w := range config.RemoteRedirectWarnings(a.paths) {
+		fmt.Fprintln(a.stderr, "warning: "+w)
+	}
 	r, ok := a.cfg.Remote[name]
 	if !ok {
+		if !a.paths.ConfigExists {
+			return fmt.Errorf("%w: no configuration file at %s; give the file that remote add wrote with --config (from Claude Desktop always, e.g. --config C:\\PostKauz\\config.toml; docs/betrieb.md, section 4.9)", ops.ErrRemoteNotFound, a.paths.ConfigFile)
+		}
 		return ops.ErrRemoteNotFound
 	}
 	if os.Getenv(EnvKey) != "" || os.Getenv(EnvKeyFile) != "" {

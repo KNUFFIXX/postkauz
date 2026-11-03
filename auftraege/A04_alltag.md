@@ -23,3 +23,15 @@ K3: docs/mcp.md bei mail_get_thread: Hinweis, dass gesendete Weiterleitungen (un
 K4: Audit: redactDraftInput soll den Wahrheitswert von derive_recipients in params mitschreiben (wie kind).
 K5: Tests ergänzen: Weiterleitung eines Originals ohne Message-ID aber mit References (References ohne In-Reply-To wie bei reply); drafts.update ohne to nach derive_recipients=false behält die leere Empfängerliste.
 Danach make check + cross (+ integration, wenn Docker geht), Build 0.3.0-rc2 neu nach betrieb.md §7 aus dem letzten Commit (Teil 1–4 + Nachbesserung), SHA256 nennen, A04_stand.md fortschreiben, Zweig pushen. Weiter kein Tag, kein Release, kein Merge.
+
+Nachtrag 3 zu A04 (nach Nachtrag 2; eigener Commit „Nachbesserung Teil 4 nach Gegenprüfung“, danach rc2 noch einmal neu bauen). Gegenprüfung (Opus) von 8175b51: PASS, kein Blocker. Bitte umsetzen:
+W1 (wichtig): docs/betrieb.md 4.9, zweiter PC: nicht den Standardpfad %APPDATA%\postkauz\config.toml verwenden — Claude Desktop ist ein MSIX-Paket, Windows leitet %APPDATA%/%LOCALAPPDATA% für dessen Kindprozesse um (Befund D3.3c, internal/config/redirect.go). Durchgängig --config C:\PostKauz\config.toml bei remote add/test und in args ["mcp","--remote","<name>","--config","C:\\PostKauz\\config.toml"]. Zusätzlich: mcp --remote gibt die Umleitungswarnung auf stderr aus, wenn es die Umleitung erkennt (wie doctor).
+W2 (wichtig): internal/remote/bridge.go — notify läuft synchron in der Leseschleife (bis 30 s notifyTimeout); hängt der POST einer Benachrichtigung, steht jede folgende Anfrage (gemessen: ping erst nach 30,1 s). cancelCall vor notify aufrufen und Benachrichtigungen/Client-Antworten über eine eigene geordnete Warteschlange (eine Goroutine) senden; Test „hängende Benachrichtigung blockiert ping nicht“.
+K1: Panic in der Anfrage-Goroutine → Fehlerantwort -32603 mit derselben id an den Client schreiben.
+K5: ops/remote.go: scheitert beim Neuanlegen eines Ziels ohne vorherigen Schlüssel das Schreiben der Konfiguration, auch dann den neuen Schlüssel wieder aus dem Schlüsselbund löschen.
+K6: Tests ergänzen: selbstsigniertes Zertifikat (httptest.NewTLSServer) → -32010; Antwort über 16 MiB als JSON und SSE; Batch in einer Serverantwort; Ende von stdin bei hängendem Server (Ablauf ≈10 s); Loopback-Grenzfälle als fester Test (abgelehnt: 127.1, localhost., foo.localhost, 0.0.0.0, 127.0.0.1.nip.io, fe80::1%lo, 127.0.0.1@evil.com; erlaubt: localhost, [::1], 127.0.0.2).
+K7: betrieb.md 4.9: Hinweis HTTPS_PROXY/NO_PROXY (*.ts.net nicht über einen Proxy).
+K8: Config.Remote zusätzlich json:"-" wie RemoteErr.
+K9: CHANGELOG: ältere Versionen halten an unbekannten Schlüsseln in [remote] an (Rückfall nur mit Abschnitt entfernt).
+K2–K4 (zustandsbehaftete Server: reinit-Wettlauf, GET-Strom nach 404, SSE-Wiederaufnahme mit Last-Event-ID) nur in docs/mcp.md als bekannte Grenze nennen, nicht bauen.
+Danach make check + cross (+ integration), rc2 neu aus dem letzten Commit nach betrieb.md §7, A04_stand.md mit Build-Commit, SHA256 und Läufen fortschreiben, Zweig pushen. Kein Tag, kein Release, kein Merge.

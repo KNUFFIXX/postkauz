@@ -210,10 +210,9 @@ func RemoteAdd(cfg RemoteConfig, sec secrets.Store, configFile string) Operation
 				}
 				return out, nil
 			}
-			var old secrets.Secret
-			if exists {
-				old, _ = st.Get(ref)
-			}
+			// Vorheriger Schlüssel (auch ohne Abschnitt in der Datei), damit
+			// ein Fehler beim Schreiben genau diesen Stand zurückbringt.
+			old, _ := st.Get(ref)
 			if err := st.Set(ref, key); err != nil {
 				return nil, fmt.Errorf("storing the key in the keyring: %w", err)
 			}
@@ -223,10 +222,12 @@ func RemoteAdd(cfg RemoteConfig, sec secrets.Store, configFile string) Operation
 			}
 			out.KeyVerified = true
 			if err := cfg.SetRemote(in.Name, in.URL); err != nil {
-				// Schlüsselbund zurück auf den alten Stand.
-				if exists && !old.IsZero() {
+				// Schlüsselbund zurück auf den alten Stand (Gegenprüfung Teil 4,
+				// K5): gab es vorher keinen Schlüssel, ist der neue wieder weg,
+				// auch wenn der Abschnitt in der Datei schon stand.
+				if !old.IsZero() {
 					_ = st.Set(ref, old)
-				} else if !exists {
+				} else {
 					_ = st.Delete(ref)
 				}
 				return nil, err

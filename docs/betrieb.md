@@ -787,43 +787,47 @@ Claude Desktop (zweiter PC) --stdio--> postkauz mcp --remote buero --https, Tail
 
 **Am zweiten PC (einmalig):**
 
-1. Tailscale installieren und mit **demselben** Tailnet anmelden. `postkauz.exe` (dasselbe Release wie am Büro-PC) zum Beispiel nach `C:\PostKauz\postkauz.exe` legen. Prüfen, dass der Büro-PC erreichbar ist (Erwartet: `204`):
+> **Wichtig, Ordner außerhalb von `%APPDATA%`:** Claude Desktop ist unter Windows ein App-Paket (MSIX). Programme, die es startet, sehen `%APPDATA%` und `%LOCALAPPDATA%` umgeleitet in einen eigenen Paketordner (Befund D3.3c). `mcp --remote` fände dort eine andere, leere Konfiguration als die, die `remote add` im normalen PowerShell-Fenster geschrieben hat, und meldete `remote not found`. Deshalb liegt am zweiten PC alles unter `C:\PostKauz`, und jeder Aufruf nennt `--config C:\PostKauz\config.toml` (auch der Eintrag in Claude Desktop). Erkennt `mcp --remote` die Umleitung, schreibt es eine Warnung auf stderr (im Log von Claude Desktop).
+
+1. Tailscale installieren und mit **demselben** Tailnet anmelden. `postkauz.exe` (dasselbe Release wie am Büro-PC) nach `C:\PostKauz\postkauz.exe` legen. Prüfen, dass der Büro-PC erreichbar ist (Erwartet: `204`):
 
    ```powershell
    (Invoke-WebRequest -UseBasicParsing https://buero-pc.<tailnet>.ts.net/healthz).StatusCode
    ```
 
-2. Das Ziel eintragen. Der Schlüssel kommt über eine verdeckte Abfrage (einfügen mit Rechtsklick, dann Enter), nie als Argument:
+   Läuft auf diesem PC ein Proxy (Umgebungsvariable `HTTPS_PROXY` gesetzt, etwa in einem Firmennetz), dürfen Adressen im Tailnet nicht über ihn gehen: `NO_PROXY` muss `.ts.net` enthalten (Windows: Startmenü → „Umgebungsvariablen für dieses Konto bearbeiten“ → Neu → Name `NO_PROXY`, Wert `.ts.net`; bei einer vorhandenen Variable `,.ts.net` anhängen). Danach Claude Desktop neu starten. `mcp --remote` nimmt den Proxy aus der Umgebung wie jedes Go-Programm; ohne `HTTPS_PROXY` ist nichts zu tun.
+2. Die leere Konfigurationsdatei anlegen (nur, wenn es sie noch nicht gibt) und das Ziel eintragen. Der Schlüssel kommt über eine verdeckte Abfrage (einfügen mit Rechtsklick, dann Enter), nie als Argument:
 
    ```powershell
-   C:\PostKauz\postkauz.exe remote add buero --url https://buero-pc.<tailnet>.ts.net/mcp
+   if (!(Test-Path C:\PostKauz\config.toml)) { New-Item -ItemType File C:\PostKauz\config.toml | Out-Null }
+   C:\PostKauz\postkauz.exe remote add buero --url https://buero-pc.<tailnet>.ts.net/mcp --config C:\PostKauz\config.toml --data-dir C:\PostKauz\data
    ```
 
-   Erwartet: `remote buero added: https://buero-pc.<tailnet>.ts.net/mcp` und `key: stored in remote/buero (keyring), read back and compared`. Die Adresse steht danach in der Konfiguration dieses PCs (`%APPDATA%\postkauz\config.toml`, Abschnitt `[remote.buero]`), der Schlüssel nur im Anmeldeinformationsspeicher (Systemsteuerung → Benutzerkonten → Anmeldeinformationsverwaltung → Windows-Anmeldeinformationen, Eintrag mit `remote/buero`). `remote add` legt beim ersten Aufruf ein eigenes kleines Datenverzeichnis an (für das Audit dieser Änderung); `mcp --remote` braucht es nicht.
+   Erwartet: `remote buero added: https://buero-pc.<tailnet>.ts.net/mcp`, `key: stored in remote/buero (keyring), read back and compared` und `configuration: C:\PostKauz\config.toml`. Die Adresse steht danach in `C:\PostKauz\config.toml` (Abschnitt `[remote.buero]`), der Schlüssel nur im Anmeldeinformationsspeicher (Systemsteuerung → Benutzerkonten → Anmeldeinformationsverwaltung → Windows-Anmeldeinformationen, Eintrag mit `remote/buero`). `remote add` legt in `C:\PostKauz\data` ein kleines Datenverzeichnis für das Audit dieser Änderung an; `mcp --remote` braucht es nicht.
 3. Prüfen:
 
    ```powershell
-   C:\PostKauz\postkauz.exe remote test buero
+   C:\PostKauz\postkauz.exe remote test buero --config C:\PostKauz\config.toml --data-dir C:\PostKauz\data
    ```
 
-   Erwartet: `server: postkauz 0.3.0-rc2 …`, `tools: 20`, `key: key:zweiter-pc (role assistant)` und `ok: mcp --remote buero reaches the server`. Fehler nennen den Grund: `remote_unreachable` (Büro-PC aus, Tailscale nicht verbunden, Aufgabe läuft nicht), `remote_key_refused` (401: falscher Schlüssel, `remote add` erneut), `remote_key_revoked` (403: Schlüssel widerrufen oder abgelaufen; am Büro-PC einen neuen anlegen), 421 (Name passt nicht zu `[http] resource`).
-4. Claude Desktop anbinden: Claude Desktop → Menü oben links ☰ → Datei → Einstellungen → **Entwickler** (Developer) → **Konfiguration bearbeiten** (Edit Config); heißen die Menüs in deiner Version anders, in den Einstellungen den Bereich „Entwickler“ suchen. Der Explorer zeigt die Datei `claude_desktop_config.json` (`%APPDATA%\Claude\`); mit dem Editor öffnen und eintragen (Backslashes im Pfad doppelt):
+   Erwartet: `server: postkauz 0.3.0-rc2 …`, `tools: 20`, `key: key:zweiter-pc (role assistant)` und `ok: mcp --remote buero reaches the server`. Fehler nennen den Grund: `remote_unreachable` (Büro-PC aus, Tailscale nicht verbunden, Aufgabe läuft nicht, Proxy, siehe Schritt 1), `remote_key_refused` (401: falscher Schlüssel, `remote add` erneut), `remote_key_revoked` (403: Schlüssel widerrufen oder abgelaufen; am Büro-PC einen neuen anlegen), 421 (Name passt nicht zu `[http] resource`).
+4. Claude Desktop anbinden: Claude Desktop → Menü oben links ☰ → Datei → Einstellungen → **Entwickler** (Developer) → **Konfiguration bearbeiten** (Edit Config); heißen die Menüs in deiner Version anders, in den Einstellungen den Bereich „Entwickler“ suchen. Der Explorer zeigt die Datei `claude_desktop_config.json`; mit dem Editor öffnen und eintragen (Backslashes doppelt; `--config` ist Pflicht, siehe oben):
 
    ```json
    {
      "mcpServers": {
        "postkauz": {
          "command": "C:\\PostKauz\\postkauz.exe",
-         "args": ["mcp", "--remote", "buero"]
+         "args": ["mcp", "--remote", "buero", "--config", "C:\\PostKauz\\config.toml"]
        }
      }
    }
    ```
 
-   **Kein** Abschnitt `env` mit einem Schlüssel: Die Brücke holt ihn selbst aus dem Anmeldeinformationsspeicher; `POSTKAUZ_KEY` würde sie ignorieren. Steht in der Datei schon etwas, nur den Eintrag `postkauz` in `mcpServers` ergänzen. Speichern, dann Claude Desktop **ganz** beenden (Infobereich unten rechts → Claude-Symbol → Rechtsklick → Beenden; das Fenster zu schließen reicht nicht) und neu starten. In einem neuen Chat zeigt das Werkzeug-Symbol `postkauz` mit den Tools.
+   **Kein** Abschnitt `env` mit einem Schlüssel: Die Brücke holt ihn selbst aus dem Anmeldeinformationsspeicher; `POSTKAUZ_KEY` würde sie ignorieren. Steht in der Datei schon etwas, nur den Eintrag `postkauz` in `mcpServers` ergänzen. Speichern, dann Claude Desktop **ganz** beenden (Infobereich unten rechts → Claude-Symbol → Rechtsklick → Beenden; das Fenster zu schließen reicht nicht) und neu starten. In einem neuen Chat zeigt das Werkzeug-Symbol `postkauz` mit den Tools. Fehlt es, steht der Grund im Log von Claude Desktop (Ordner `logs` neben `claude_desktop_config.json`, in der Regel die Datei `mcp-server-postkauz.log`): etwa `remote not found … give the file that remote add wrote with --config` oder eine Zeile `warning: mcp --remote: … redirected …`.
 5. Fertig im Sinne von Vorgang 6, Phase 2, wenn eine Sitzung am zweiten PC dieselben Vorgänge über PostKauz erledigt (lesen, suchen, Entwurf anlegen).
 
-**Was die Brücke tut und nicht tut:** Sie reicht Anfragen, Antworten, Abbrüche und Server-Nachrichten unverändert weiter (Streamable HTTP; `Mcp-Session-Id` und `MCP-Protocol-Version` übernimmt sie selbst). Was der Agent darf, bestimmt allein der Schlüssel `zweiter-pc` auf dem Büro-PC; dort steht jeder Aufruf im Audit mit `transport: http`. Fehler kommen als verständliche Meldung in Claude Desktop an; Warnungen schreibt die Brücke auf stderr, das Claude Desktop in `%APPDATA%\Claude\logs` ablegt (nie mit Schlüssel). Nur `https`, Zertifikate werden wie üblich geprüft, Umleitungen nicht verfolgt. Schlüssel tauschen: am Büro-PC `key revoke zweiter-pc` und einen neuen anlegen, am zweiten PC `remote add buero --url …` noch einmal. Ziel entfernen: `remote remove buero` (Abschnitt und Schlüssel).
+**Was die Brücke tut und nicht tut:** Sie reicht Anfragen, Antworten, Abbrüche und Server-Nachrichten unverändert weiter (Streamable HTTP; `Mcp-Session-Id` und `MCP-Protocol-Version` übernimmt sie selbst). Was der Agent darf, bestimmt allein der Schlüssel `zweiter-pc` auf dem Büro-PC; dort steht jeder Aufruf im Audit mit `transport: http`. Fehler kommen als verständliche Meldung in Claude Desktop an; Warnungen schreibt die Brücke auf stderr, das Claude Desktop in sein Log schreibt (nie mit Schlüssel). Nur `https`, Zertifikate werden wie üblich geprüft, Umleitungen nicht verfolgt. Schlüssel tauschen: am Büro-PC `key revoke zweiter-pc` und einen neuen anlegen, am zweiten PC `remote add buero --url … --config C:\PostKauz\config.toml` noch einmal. Ziel entfernen: `remote remove buero --config C:\PostKauz\config.toml` (Abschnitt und Schlüssel). Auch mit `--config` bleibt der Schlüssel im Anmeldeinformationsspeicher des Windows-Benutzers; der Speicher wird nicht umgeleitet.
 
 **Grenze unter Windows:** Sync und `mcp --http` laufen auf dem Büro-PC unter **demselben Windows-Benutzer**. Das Betriebssystem trennt sie nicht; der HTTP-Prozess kommt nur deshalb nicht an ein Passwort, weil PostKauz ihm keins gibt (Secrets-Speicher `denied`, siehe 4.1). Getrennte Benutzer für Sync und HTTP-MCP unter Windows sind für später vorgemerkt. Den Modus `oauth` braucht Authelia auf Linux (WSL2 oder VPS); für den zweiten PC reicht `key`.
 

@@ -160,3 +160,47 @@ func TestA04RemoteErrDoesNotStopLoad(t *testing.T) {
 		t.Fatalf("valid: %v %v %v", err, cfg.RemoteErr, cfg.Remote)
 	}
 }
+
+// Gegenprüfung Teil 4, W1: mcp --remote warnt, wenn es in einem App-Paket
+// läuft und die Konfiguration unter %APPDATA%/%LOCALAPPDATA% liegt oder
+// umgeleitet ist; außerhalb davon schweigt es.
+func TestA04RemoteRedirectWarnings(t *testing.T) {
+	local, roaming := fakeAppData(t)
+	cfg := filepath.Join(roaming, "postkauz", "config.toml")
+	p := Paths{ConfigFile: cfg}
+	if w := RemoteRedirectWarnings(p); len(w) != 0 {
+		t.Fatalf("no package view: %v", w)
+	}
+	redirect(t, filepath.Join(local, "Claude"), filepath.Join(local, "Packages", "Claude_abc", "LocalCache", "Local", "Claude"), false)
+	w := RemoteRedirectWarnings(p)
+	if len(w) != 1 || !strings.Contains(w[0], "Claude_abc") || !strings.Contains(w[0], `"--config", "C:\\PostKauz\\config.toml"`) {
+		t.Fatalf("package view, config under APPDATA: %v", w)
+	}
+	// Umgeleitete Konfigurationsdatei.
+	redirect(t, cfg, filepath.Join(local, "Packages", "Claude_abc", "LocalCache", "Roaming", "postkauz", "config.toml"), true)
+	p.ConfigExists = true
+	if w := RemoteRedirectWarnings(p); len(w) != 1 || !strings.Contains(w[0], "redirected by Windows to") {
+		t.Fatalf("redirected config: %v", w)
+	}
+	// Konfiguration außerhalb: keine Warnung.
+	p = Paths{ConfigFile: filepath.Join(filepath.Dir(local), "PostKauz", "config.toml")}
+	if w := RemoteRedirectWarnings(p); len(w) != 0 {
+		t.Fatalf("outside app data: %v", w)
+	}
+}
+
+// Gegenprüfung Teil 4, K6: Grenzfälle der Loopback-Regel für http.
+func TestA04RemoteURLLoopbackEdges(t *testing.T) {
+	for _, h := range []string{"127.1", "localhost.", "foo.localhost", "0.0.0.0", "127.0.0.1.nip.io", "[fe80::1%25lo]", "127.0.0.1@evil.com"} {
+		u := "http://" + h + ":8787/mcp"
+		if _, err := CheckRemoteURL(u); err == nil {
+			t.Errorf("%s accepted", u)
+		}
+	}
+	for _, h := range []string{"localhost", "[::1]", "127.0.0.2"} {
+		u := "http://" + h + ":8787/mcp"
+		if _, err := CheckRemoteURL(u); err != nil {
+			t.Errorf("%s refused: %v", u, err)
+		}
+	}
+}

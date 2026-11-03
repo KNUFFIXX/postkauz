@@ -57,7 +57,15 @@ func TestA04RemoteAddVerifiesAndRollsBack(t *testing.T) {
 	if _, err := sec.Get(remote.KeyRef("buero")); !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatalf("key left behind: %v", err)
 	}
+	// Gegenprüfung Teil 4, K5: Abschnitt steht schon, aber ohne Schlüssel:
+	// Auch dann ist der neue Schlüssel nach dem Fehler wieder weg.
 	bc.m["buero"] = config.Remote{URL: "https://alt.example.ts.net/mcp"}
+	if _, err := RemoteAdd(bc, sec, "").Handler(ctx, Call{Input: in, Secret: key}); err == nil {
+		t.Fatal("broken configuration accepted")
+	}
+	if _, err := sec.Get(remote.KeyRef("buero")); !errors.Is(err, secrets.ErrNotFound) {
+		t.Fatalf("key left behind for an existing section: %v", err)
+	}
 	_ = sec.Set(remote.KeyRef("buero"), "pk_key_alt")
 	_, _ = RemoteAdd(bc, sec, "").Handler(ctx, Call{Input: in, Secret: key})
 	if v, _ := sec.Get(remote.KeyRef("buero")); v.Reveal() != "pk_key_alt" {

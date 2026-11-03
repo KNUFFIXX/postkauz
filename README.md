@@ -335,11 +335,11 @@ Every call is audited with `transport: http` and the key name, never a token. On
 **Claude Desktop on a second PC** (since 0.3.0-rc2): Claude Desktop starts only local programs as MCP servers, and its remote connectors run through the vendor's cloud, which cannot reach your Tailscale network. PostKauz brings its own bridge instead of a third-party package such as `npx mcp-remote` (which needs the key in plain text in the configuration):
 
 ```
-postkauz remote add office --url https://office-pc.<tailnet>.ts.net/mcp    # hidden prompt for the API key; stored only in the keyring
-postkauz remote test office                                                # tools: 20, key: key:second-pc (role assistant)
+postkauz remote add office --url https://office-pc.<tailnet>.ts.net/mcp --config C:\PostKauz\config.toml   # hidden prompt for the API key; stored only in the keyring
+postkauz remote test office --config C:\PostKauz\config.toml                                                  # tools: 20, key: key:second-pc (role assistant)
 ```
 
-Then in `claude_desktop_config.json`: `"postkauz": {"command": "C:\\PostKauz\\postkauz.exe", "args": ["mcp", "--remote", "office"]}`, with no `env` and no key. `mcp --remote` passes every MCP message unchanged to `mcp --http` on the other PC; it opens no database and knows no mail password. Guide for both PCs (German): [docs/betrieb.md](docs/betrieb.md), section 4.9.
+Then in `claude_desktop_config.json`: `"postkauz": {"command": "C:\\PostKauz\\postkauz.exe", "args": ["mcp", "--remote", "office", "--config", "C:\\PostKauz\\config.toml"]}`, with no `env` and no key. Keep the configuration outside `%APPDATA%`: Claude Desktop is an app package, and Windows redirects `%APPDATA%` for the programs it starts. `mcp --remote` passes every MCP message unchanged to `mcp --http` on the other PC; it opens no database and knows no mail password. Guide for both PCs (German): [docs/betrieb.md](docs/betrieb.md), section 4.9.
 
 ## Daily audit export
 

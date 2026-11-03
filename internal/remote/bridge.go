@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -43,6 +44,9 @@ type Bridge struct {
 	// DefaultMaxMessageBytes.
 	CallTimeout     time.Duration
 	MaxMessageBytes int
+	// DrainTimeout: so lange bekommen laufende Anfragen und die
+	// Warteschlange nach dem Ende von stdin noch; 0 = drainTimeout (10 s).
+	DrainTimeout time.Duration
 }
 
 // Protokollversion, ab der der GET-Strom entfällt und Mcp-Method/Mcp-Name
@@ -77,10 +81,27 @@ type bridge struct {
 	reinitN    int
 
 	reinitMu sync.Mutex
-	// calls: laufende Anfragen; streams: der GET-Strom.
+	// calls: laufende Anfragen; streams: der GET-Strom; sends: die
+	// Warteschlange out für Benachrichtigungen und Antworten des Clients.
 	calls   sync.WaitGroup
 	streams sync.WaitGroup
+	sends   sync.WaitGroup
+	out     chan outItem
 }
+
+// outItem ist eine Benachrichtigung oder Antwort des Clients für die
+// Warteschlange; after läuft, nachdem sie gesendet ist.
+type outItem struct {
+	msg   jsonrpc.Message
+	after func()
+}
+
+// outQueue: Plätze der Warteschlange; ist sie voll, wartet die
+// Leseschleife (Obergrenze für den Speicher).
+const outQueue = 1024
+
+// testCallHook läuft zu Beginn jeder Anfrage (nur Tests: Panic).
+var testCallHook func(*jsonrpc.Request)
 
 // Run liest Nachrichten von local, bis local endet (EOF) oder ctx
 // abläuft. Ein Ende von local ist kein Fehler; laufende Anfragen bekommen
@@ -97,17 +118,40 @@ func (b *Bridge) Run(ctx context.Context, local sdk.Connection) error {
 	if u, err := url.Parse(b.URL); err == nil {
 		s.host = u.Host
 	}
+	drain := b.DrainTimeout
+	if drain <= 0 {
+		drain = drainTimeout
+	}
 	ctx, cancel := context.WithCancel(ctx)
+	// Benachrichtigungen und Antworten des Clients gehen in ihrer
+	// Reihenfolge über eine eigene Goroutine (Gegenprüfung Teil 4, W2):
+	// Hängt ihr POST (bis notifyTimeout), laufen Anfragen trotzdem weiter.
+	s.out = make(chan outItem, outQueue)
+	s.sends.Add(1)
+	go func() {
+		defer s.sends.Done()
+		for it := range s.out {
+			_ = crash.Do("remote notify", func() error {
+				s.notify(ctx, it.msg)
+				if it.after != nil {
+					it.after()
+				}
+				return nil
+			})
+		}
+	}()
 	defer func() {
+		close(s.out)
 		done := make(chan struct{})
-		go func() { s.calls.Wait(); close(done) }()
+		go func() { s.calls.Wait(); s.sends.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-ctx.Done():
-		case <-time.After(drainTimeout):
+		case <-time.After(drain):
 		}
 		cancel()
 		s.calls.Wait()
+		s.sends.Wait()
 		s.streams.Wait()
 		s.closeSession()
 	}()
@@ -125,17 +169,27 @@ func (b *Bridge) Run(ctx context.Context, local sdk.Connection) error {
 				s.startCall(ctx, m)
 				continue
 			}
-			s.notify(ctx, m)
+			it := outItem{msg: m}
 			switch m.Method {
 			case "notifications/cancelled":
+				// Erst die eigene HTTP-Anfrage abbrechen, dann den Server
+				// benachrichtigen (W2: nicht hinter einem hängenden POST).
 				s.cancelCall(m.Params)
 			case "notifications/initialized":
-				s.startListen(ctx)
+				it.after = func() { s.startListen(ctx) }
 			}
+			s.enqueue(ctx, it)
 		case *jsonrpc.Response:
 			// Antwort des Clients auf eine Anfrage des Servers.
-			s.notify(ctx, m)
+			s.enqueue(ctx, outItem{msg: m})
 		}
+	}
+}
+
+func (s *bridge) enqueue(ctx context.Context, it outItem) {
+	select {
+	case s.out <- it:
+	case <-ctx.Done():
 	}
 }
 
@@ -178,10 +232,21 @@ func (s *bridge) startCall(ctx context.Context, req *jsonrpc.Request) {
 			delete(s.canceled, key)
 			s.mu.Unlock()
 		}()
-		_ = crash.Do("remote call", func() error {
-			s.call(ctx, cctx, req)
+		var replied atomic.Bool
+		err := crash.Do("remote call", func() error {
+			if testCallHook != nil {
+				testCallHook(req)
+			}
+			s.call(ctx, cctx, req, &replied)
 			return nil
 		})
+		// K1: Ein Panic beim Weiterreichen lässt den Client nicht ohne
+		// Antwort warten.
+		var pe *crash.PanicError
+		if errors.As(err, &pe) && !replied.Load() && ctx.Err() == nil {
+			s.write(ctx, &jsonrpc.Response{ID: req.ID, Error: &jsonrpc.Error{Code: jsonrpc.CodeInternalError,
+				Message: s.prefix() + "internal error in the bridge; the request was not completed"}})
+		}
 	}()
 }
 
@@ -215,8 +280,13 @@ func (s *bridge) wasCanceled(id jsonrpc.ID) bool {
 
 // call reicht eine Anfrage weiter und schreibt alles, was zurückkommt, an
 // den Client; ohne Antwort einen Fehler mit derselben ID.
-func (s *bridge) call(runCtx, ctx context.Context, req *jsonrpc.Request) {
-	answered, err := s.roundTrip(ctx, req, func(m jsonrpc.Message) { s.write(runCtx, m) })
+func (s *bridge) call(runCtx, ctx context.Context, req *jsonrpc.Request, replied *atomic.Bool) {
+	answered, err := s.roundTrip(ctx, req, func(m jsonrpc.Message) {
+		if r, ok := m.(*jsonrpc.Response); ok && r.ID.Raw() == req.ID.Raw() {
+			replied.Store(true)
+		}
+		s.write(runCtx, m)
+	})
 	if answered || s.wasCanceled(req.ID) || runCtx.Err() != nil {
 		return
 	}
@@ -235,6 +305,7 @@ func (s *bridge) call(runCtx, ctx context.Context, req *jsonrpc.Request) {
 	default:
 		we = &jsonrpc.Error{Code: CodeBadResponse, Message: s.prefix() + "the request failed"}
 	}
+	replied.Store(true)
 	s.write(runCtx, &jsonrpc.Response{ID: req.ID, Error: we})
 }
 

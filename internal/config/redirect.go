@@ -236,3 +236,30 @@ func relTo(base, path string) string {
 	}
 	return strings.TrimPrefix(cp[len(cb):], string(filepath.Separator))
 }
+
+// RemoteRedirectWarnings: Warnungen für mcp --remote (A04, Gegenprüfung
+// Teil 4, W1). Claude Desktop ist ein App-Paket; ein von ihm gestartetes
+// mcp --remote sieht %APPDATA% und %LOCALAPPDATA% umgeleitet, also womöglich
+// eine andere (leere) Konfigurationsdatei als remote add im normalen
+// Fenster. Gemeldet wird eine umgeleitete Konfigurationsdatei und, wenn der
+// Prozess in einem Paket läuft, eine Konfiguration unter diesen Ordnern.
+// Das Datenverzeichnis spielt für mcp --remote keine Rolle.
+func RemoteRedirectWarnings(p Paths) []string {
+	if !redirectCheck {
+		return nil
+	}
+	local, roaming := os.Getenv("LOCALAPPDATA"), os.Getenv("APPDATA")
+	const advice = "give the configuration outside %%LOCALAPPDATA%% and %%APPDATA%% in the args of the MCP client, e.g. \"--config\", \"C:\\\\PostKauz\\\\config.toml\" (docs/betrieb.md, section 4.9)"
+	var out []string
+	if p.ConfigExists {
+		if rp, pkg, ok := redirectTarget(p.ConfigFile, local, roaming); ok {
+			return append(out, fmt.Sprintf("mcp --remote: the configuration file is redirected by Windows to %s (this program runs inside the app package %s, e.g. Claude Desktop); remote add in a normal window writes a different file; "+advice, rp, pkg))
+		}
+	}
+	if underBase(p.ConfigFile, local) || underBase(p.ConfigFile, roaming) {
+		if pkg := packageView(local); pkg != "" {
+			out = append(out, fmt.Sprintf("mcp --remote: this program runs inside the app package %s (e.g. Claude Desktop); Windows redirects %%APPDATA%% and %%LOCALAPPDATA%%, so the configuration %s may not be the one remote add wrote; "+advice, pkg, p.ConfigFile))
+		}
+	}
+	return out
+}

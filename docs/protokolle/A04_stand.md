@@ -27,6 +27,20 @@ Gegenprüfung (Opus) der Commits bis `0ad5911`: PASS, kein Blocker. Umgesetzt:
 - **K4:** `redactDraftInput` schreibt `params.derive_recipients` (Wahrheitswert) ins Audit.
 - **K5:** Tests `TestA04ForwardWithoutMessageIDKeepsReferences` (Original ohne Message-ID mit References: References ohne In-Reply-To, wie bei reply) und `TestA04ReviewDeriveRecipients` (K1, K4, `drafts.update` ohne `to` behält die leere Empfängerliste).
 
+## 1b. Nachbesserung Teil 4 nach der Gegenprüfung (Nachtrag 3)
+
+Gegenprüfung (Opus) von `8175b51`: PASS, kein Blocker. Umgesetzt:
+
+- **W1:** `docs/betrieb.md` 4.9, zweiter PC: durchgängig `--config C:\PostKauz\config.toml` (und `--data-dir C:\PostKauz\data`) bei `remote add`/`remote test`, in `claude_desktop_config.json` `"args": ["mcp", "--remote", "buero", "--config", "C:\\PostKauz\\config.toml"]`; README ebenso. `mcp --remote` schreibt die Umleitungswarnung auf stderr (`config.RemoteRedirectWarnings`: umgeleitete Konfigurationsdatei oder Konfiguration unter `%APPDATA%`/`%LOCALAPPDATA%` in einem App-Paket); fehlt die Konfigurationsdatei, nennt `remote not found` ihren Pfad und `--config`.
+- **W2:** Benachrichtigungen und Antworten des Clients über eine eigene geordnete Warteschlange (eine Goroutine); `cancelCall` vor dem Einreihen. Test `TestReview4HangingNotificationDoesNotBlockPing` (ping nach hängender Benachrichtigung in unter 2 s).
+- **K1:** Panic in der Anfrage-Goroutine → `-32603` mit derselben `id` (`TestReview4PanicAnswersInternalError`, Text ohne Inhalt des Panics).
+- **K5:** `remote add` liest den vorherigen Schlüssel immer und stellt nach einem Schreibfehler genau diesen Stand her (ohne vorherigen Schlüssel: gelöscht, auch wenn der Abschnitt schon stand); Test vorher rot, nachher grün.
+- **K6:** `TestReview4SelfSignedCertificate` (`-32010`, „TLS certificate not accepted“), `TestReview4TooLargeAnswer` (über 16 MiB als JSON und SSE), `TestReview4BatchInAnswer`, `TestReview4StdinEndWithHangingServer` (Ende nach 10,1 s; unter `-short` übersprungen), `TestA04RemoteURLLoopbackEdges` (abgelehnt `127.1`, `localhost.`, `foo.localhost`, `0.0.0.0`, `127.0.0.1.nip.io`, `fe80::1%lo`, `127.0.0.1@evil.com`; erlaubt `localhost`, `[::1]`, `127.0.0.2`), `TestA04RemoteRedirectWarnings`.
+- **K7:** Hinweis `HTTPS_PROXY`/`NO_PROXY` (`.ts.net`) in 4.9.
+- **K8:** `Config.Remote` mit `json:"-"`.
+- **K9:** CHANGELOG: ältere Versionen halten an `[remote]` an; Rückfall nur mit entfernten Abschnitten.
+- **K2 bis K4:** nur als bekannte Grenze in `docs/mcp.md` (Wettlauf bei der Neuanmeldung, GET-Strom nach 404, Wiederaufnahme eines SSE-Stroms mit `Last-Event-ID`).
+
 ## 2. Prüfläufe
 
 Umgebung: Cloud-Sitzung, Go 1.27.3 (einmal über `GOTOOLCHAIN=go1.27.3 go version` geholt, danach `GOTOOLCHAIN=local`, Ausnahme laut CLAUDE.md).

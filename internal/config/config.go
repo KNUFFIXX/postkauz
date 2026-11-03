@@ -76,7 +76,7 @@ type Config struct {
 	// Remote: Abschnitte [remote.<name>] (A04 Teil 4): Ziele von
 	// mcp --remote. RemoteErr wie HTTPErr: Ein Fehler dort hält nur
 	// remote … und mcp --remote auf.
-	Remote    map[string]Remote `toml:"-"`
+	Remote    map[string]Remote `toml:"-" json:"-"`
 	RemoteErr error             `toml:"-" json:"-"`
 }
 

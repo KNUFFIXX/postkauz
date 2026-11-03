@@ -89,7 +89,7 @@ func classify(err error) (int, ErrorInfo) {
 		// Befund D7a-1: vorher Code error mit dem Text des Stores.
 		return ExitError, ErrorInfo{Code: "not_found", Message: "action not found", Hint: "list actions with: action list"}
 	case errors.Is(err, ops.ErrRemoteNotFound):
-		return ExitError, ErrorInfo{Code: "not_found", Message: "remote not found", Hint: "list remotes with: remote list; add one with: remote add <name> --url <https-url> --key-stdin"}
+		return ExitError, ErrorInfo{Code: "not_found", Message: err.Error(), Hint: "list remotes with: remote list; add one with: remote add <name> --url <https-url> --key-stdin"}
 	case errors.As(err, new(*ops.RemoteCheckError)):
 		var re *ops.RemoteCheckError
 		errors.As(err, &re)
