@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -194,5 +196,34 @@ func (s *SQLite) SetSentCheckMark(ctx context.Context, accountID, last int64) er
 func (s *SQLite) SetFallbackChecked(ctx context.Context, draftID int64, contentChangedAt time.Time) error {
 	ms := contentChangedAt.UnixMilli()
 	_, err := s.db.ExecContext(ctx, `UPDATE drafts SET fallback_checked_at = ? WHERE id = ? AND content_changed_at = ?`, ms, draftID, ms)
+	return err
+}
+
+// sentCheckRevKey ist der Schlüssel in meta, unter dem steht, nach welchem
+// Stand der Regeln die offenen Entwürfe eines Kontos zuletzt vollständig
+// im Rückfall geprüft wurden (A05 Teil 1, ohne Migration).
+func sentCheckRevKey(accountID int64) string { return fmt.Sprintf("sent_check_rev/%d", accountID) }
+
+// SentCheckRev liefert den Stand der Regeln, nach dem der Rückfall die
+// offenen Entwürfe des Kontos zuletzt vollständig geprüft hat (0 = nie,
+// also vor A05).
+func (s *SQLite) SentCheckRev(ctx context.Context, accountID int64) (int, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, sentCheckRevKey(accountID)).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, _ := strconv.Atoi(v) // unlesbar: 0, die nächste Prüfung prüft neu
+	return n, nil
+}
+
+// SetSentCheckRev vermerkt den Stand der Regeln nach einer vollständigen
+// Prüfung.
+func (s *SQLite) SetSentCheckRev(ctx context.Context, accountID int64, rev int) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, sentCheckRevKey(accountID), strconv.Itoa(rev))
 	return err
 }

@@ -294,3 +294,119 @@ func TestQuoteOf(t *testing.T) {
 		t.Fatal("quote without intro line")
 	}
 }
+
+// A05 Teil 1: Antwort auf eine Mail mit Verlauf im Outlook-Stil. StripQuotes
+// schneidet den gesendeten Text am Outlook-Kopfblock ab; das Zitat des
+// Entwurfs wird vor dem Vergleich genauso gekürzt (symmetrische Kürzung).
+const (
+	a05Body = "Hallo,\n\nanbei die Unterlagen zur Wohnung im zweiten Stock. Bitte prüfen Sie die Abrechnung bis Ende der Woche\nund geben Sie uns kurz Bescheid, ob alles passt.\n\nMit freundlichen Grüßen\nHausverwaltung Beispiel"
+	// a05History: langer Verlauf mit Wörtern, die im eigenen Text und im
+	// zitierten Text nicht vorkommen.
+	a05History = "Sehr geehrte Damen und Herren,\n\nwir beantragen eine Ratenzahlung für die Nachforderung aus der Heizkostenabrechnung 2025.\nDer Heizungsmonteur kommt laut Terminplan erst im Dezember, das Thermostat im Badezimmer klemmt weiterhin.\nZusätzlich fehlt seit Juli die Beleuchtung im Treppenhaus, der Hausmeister wurde mehrfach informiert.\nFreundliche Grüße\nFamilie Muster"
+)
+
+// a05Forms sind alle Formen aus originalRe und der Kopfblock ohne Trennlinie,
+// deutsch und englisch.
+var a05Forms = []struct{ name, head string }{
+	{"ursprüngliche nachricht", "-----Ursprüngliche Nachricht-----\nVon: Familie Muster <muster@example.com>\nGesendet: Montag, 2. November 2026 10:00\nAn: info@example.org\nBetreff: Heizung"},
+	{"original message", "-----Original Message-----\nFrom: Familie Muster <muster@example.com>\nSent: Monday, November 2, 2026 10:00 AM\nTo: info@example.org\nSubject: Heizung"},
+	{"originalnachricht", "-----Originalnachricht-----\nVon: Familie Muster <muster@example.com>\nDatum: 02.11.2026\nBetreff: Heizung"},
+	{"message d'origine", "-----Message d'origine-----\nDe: Familie Muster <muster@example.com>\nEnvoyé: lundi 2 novembre 2026 10:00\nObjet: Heizung"},
+	{"underscore line", "________________________________\nVon: Familie Muster <muster@example.com>\nGesendet: Montag, 2. November 2026 10:00\nAn: info@example.org\nBetreff: Heizung"},
+	{"header block de", "Von: Familie Muster <muster@example.com>\nGesendet: Montag, 2. November 2026 10:00\nAn: info@example.org\nBetreff: Heizung"},
+	{"header block en", "From: Familie Muster <muster@example.com>\nSent: Monday, November 2, 2026 10:00 AM\nTo: info@example.org\nSubject: Heizung"},
+}
+
+// gmailSent baut den Text, den Gmail im Browser sendet: eigener Text (neu
+// umbrochen), Einleitung, Leerzeile, Zitat ohne „>".
+func gmailSent(own, intro, quote string) string {
+	return strings.Replace(own, "PostKauz angelegt.", "PostKauz\nangelegt.", 1) + "\n\n" + intro + "\n\n" + quote + "\n"
+}
+
+// (1) Unverändert gesendet, Zitat ohne „>": Rückfall trifft mit 1,0, für
+// jede Form des Verlaufs.
+func TestFallbackOutlookHistory(t *testing.T) {
+	for _, f := range a05Forms {
+		quote := a05Body + "\n\n" + f.head + "\n\n" + a05History
+		d := d5Draft(d5Own, d5Intro, quote)
+		fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+		sent := sentTextOf(gmailSent(d5Own, d5Intro, quote))
+		if strings.Contains(sent, "Ratenzahlung") {
+			t.Fatalf("%s: StripQuotes did not cut at the history: %q", f.name, sent)
+		}
+		if full := fd.Score(Words(SentOwnText(sent))); full >= FallbackMinJaccard {
+			t.Fatalf("%s: test is too weak: the full text already scores %.2f", f.name, full)
+		}
+		m := fbSent("Re: Termin am Montag", d.UpdatedAt.Add(3*time.Minute))
+		if s, ok := fd.Match(m, sent); !ok || s != 1 {
+			t.Errorf("%s: unchanged draft not matched (score %.3f)", f.name, s)
+		}
+	}
+}
+
+// Innere Zitate: Der Entwurf zitiert eine Mail, die selbst ein Zitat mit
+// „>" trägt (body_text: „> > …"). Das Mailprogramm sendet das äußere Zitat
+// ohne „>", das innere mit „>" (StripQuotes entfernt es dann) oder ganz
+// ohne „>"; beides trifft.
+func TestFallbackNestedQuote(t *testing.T) {
+	inner := "> " + strings.ReplaceAll(a05History, "\n", "\n> ")
+	quote := a05Body + "\n\nAm 01.11.2026 schrieb Familie Muster <muster@example.com>:\n" + inner
+	d := d5Draft(d5Own, d5Intro, quote)
+	fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+	m := fbSent("Re: Termin am Montag", d.UpdatedAt.Add(3*time.Minute))
+	for name, q := range map[string]string{"inner quote kept": quote, "no marker at all": a05Body + "\n\nAm 01.11.2026 schrieb Familie Muster <muster@example.com>:\n" + a05History} {
+		if s, ok := fd.Match(m, sentTextOf(gmailSent(d5Own, d5Intro, q))); !ok {
+			t.Errorf("%s: not matched (score %.3f)", name, s)
+		}
+	}
+}
+
+// (2) Langes Zitat mit Outlook-Verlauf und ein Nachsatz unter dem
+// zitierten Text aus Wörtern des Verlaufs: kein Schnitt (Jaccard, nicht
+// „Enthaltensein"; die Gegenprüfung rechnete mit Enthaltensein 0,94).
+func TestFallbackOutlookHistoryPostscript(t *testing.T) {
+	for _, f := range a05Forms[:2] {
+		quote := a05Body + "\n\n" + f.head + "\n\n" + a05History
+		d := d5Draft(d5Own, d5Intro, quote)
+		fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+		ps := "PS: Die Ratenzahlung für die Nachforderung aus der Heizkostenabrechnung klären wir mit dem Hausmeister, Thermostat und Beleuchtung im Treppenhaus folgen im Dezember."
+		sent := sentTextOf(gmailSent(d5Own, d5Intro, a05Body+"\n\n"+ps+"\n\n"+f.head+"\n\n"+a05History))
+		if _, ok := CutAtQuote(SentOwnText(sent), fd.Quote); ok {
+			t.Errorf("%s: postscript under the quote was cut away", f.name)
+		}
+		if s, ok := fd.Match(fbSent("Re: Termin am Montag", d.UpdatedAt), sent); ok {
+			t.Errorf("%s: matched (score %.3f)", f.name, s)
+		}
+		// Enthaltensein hätte geschnitten: Das gekürzte Zitat steht ganz im Rest.
+		rest := Words(sent[strings.Index(sent, "Am 23.10.2026"):])
+		in := 0
+		for w := range fd.Quote.Words {
+			if _, ok := rest[w]; ok {
+				in++
+			}
+		}
+		if float64(in)/float64(len(fd.Quote.Words)) < FallbackMinJaccard {
+			t.Fatalf("%s: test is too weak: containment would not cut either", f.name)
+		}
+	}
+}
+
+// (3) Eine Zeile wie die Einleitung des Entwurfs, danach mehrere eigene
+// Sätze statt des Zitats: kein Schnitt, auch mit Outlook-Verlauf im Zitat.
+func TestFallbackOutlookHistoryLookAlikeIntro(t *testing.T) {
+	quote := a05Body + "\n\n" + a05Forms[0].head + "\n\n" + a05History
+	d := d5Draft(d5Own, d5Intro, quote)
+	fd := NewFallbackDraft(d, compose.OwnText(d.BodyMarkdown, ""), "")
+	own := "Die Abrechnung habe ich gelesen. Leider stimmen die Zählerstände nicht.\nBitte schicken Sie mir die Ablesebelege vom Januar. Danach melde ich mich wieder.\nDer Termin am Montag fällt aus."
+	for _, sent := range []string{
+		d5Own + "\n\n" + d5Intro + "\n\n" + own,
+		d5Own + "\n\nAm Freitag schrieb mir der Hausmeister:\n" + own,
+	} {
+		if _, ok := CutAtQuote(SentOwnText(sentTextOf(sent)), fd.Quote); ok {
+			t.Errorf("cut at a look-alike intro: %q", sent)
+		}
+		if s, ok := fd.Match(fbSent("Re: Termin am Montag", d.UpdatedAt), sentTextOf(sent)); ok {
+			t.Errorf("matched (score %.3f): %q", s, sent)
+		}
+	}
+}

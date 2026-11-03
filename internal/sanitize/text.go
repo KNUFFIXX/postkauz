@@ -70,16 +70,7 @@ var (
 // kommt der Text unverändert zurück.
 func StripQuotes(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	cut := len(lines)
-	for i, l := range lines {
-		if forwardRe.MatchString(l) {
-			break // ab hier Weiterleitung: nichts mehr abschneiden
-		}
-		if originalRe.MatchString(l) || (fromRe.MatchString(l) && headerBlock(lines[i:])) {
-			cut = i
-			break
-		}
-	}
+	cut := originalCut(lines)
 	var out []string
 	for i := 0; i < cut; i++ {
 		l := lines[i]
@@ -101,6 +92,33 @@ func StripQuotes(text string) string {
 		return strings.TrimSpace(text)
 	}
 	return res
+}
+
+// originalCut liefert den Index der ersten Zeile einer Originalnachricht im
+// Outlook-Stil (Trennlinie wie „-----Ursprüngliche Nachricht-----", eine
+// Unterstrich-Linie oder ein Kopfblock Von:/Gesendet:/An:/Betreff:), sonst
+// len(lines). Steht vorher die Trennzeile einer Weiterleitung, wird nicht
+// geschnitten (der weitergeleitete Inhalt bleibt).
+func originalCut(lines []string) int {
+	for i, l := range lines {
+		if forwardRe.MatchString(l) {
+			break // ab hier Weiterleitung: nichts mehr abschneiden
+		}
+		if originalRe.MatchString(l) || (fromRe.MatchString(l) && headerBlock(lines[i:])) {
+			return i
+		}
+	}
+	return len(lines)
+}
+
+// CutAtOriginal liefert den Text vor einer Originalnachricht im Outlook-Stil,
+// nach derselben Regel, mit der StripQuotes dort abschneidet (originalCut);
+// ohne eine solche Stelle den Text unverändert. Zeilen mit „>" bleiben.
+// Die Versanderkennung kürzt damit das Zitat eines Entwurfs genauso, wie
+// StripQuotes den gesendeten Text gekürzt hat (A05 Teil 1).
+func CutAtOriginal(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	return strings.Join(lines[:originalCut(lines)], "\n")
 }
 
 // quoteFollows: Nach Leerzeilen folgt eine Zitatzeile oder nichts mehr.

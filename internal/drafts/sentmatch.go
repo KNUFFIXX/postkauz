@@ -231,15 +231,46 @@ func (f FallbackDraft) Score(sentWords map[string]struct{}) float64 {
 // hat: die Wörter der Einleitungszeile („Am … schrieb …:" oder was
 // [draft] quote_line vorgibt) und die Wörter von Einleitung und Zitat.
 // Leer (Line == nil), wenn der Entwurf kein Zitat hat.
+//
+// Seit A05 Teil 1 ist das Zitat so gekürzt, wie StripQuotes den gesendeten
+// Text kürzt: ohne „>"-Präfixe und ab einer Originalnachricht im
+// Outlook-Stil abgeschnitten (sanitize.CutAtOriginal). Words entfernt dafür
+// alle Ebenen von „>" (das Mailprogramm sendet das Zitat ganz ohne „>"),
+// Nested nur die äußere und wendet dann StripQuotes an wie auf den
+// gesendeten Text (das Mailprogramm sendet innere Zitate mit „>";
+// StripQuotes entfernt sie samt ihrer Einleitung). Sonst enthielte das Zitat des Entwurfs
+// einen Outlook-Verlauf, den der gesendete Text nicht mehr hat, und ein
+// unverändert gesendeter Entwurf bliebe offen (Befund A05: 0,26 statt
+// ≥ 0,9).
 type DraftQuote struct {
-	Line  map[string]struct{}
-	Words map[string]struct{}
+	Line   map[string]struct{}
+	Words  map[string]struct{}
+	Nested map[string]struct{}
+}
+
+// quoteMarkRe ist ein „>" am Zeilenanfang samt Leerraum davor und einem
+// Leerzeichen danach.
+var quoteMarkRe = regexp.MustCompile(`^[ \t]*> ?`)
+
+// unquote entfernt von jeder Zeile eine Ebene „>" (all=false) bzw. alle
+// Ebenen (all=true).
+func unquote(lines []string, all bool) []string {
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		l = quoteMarkRe.ReplaceAllString(l, "")
+		for all && quoteMarkRe.MatchString(l) {
+			l = quoteMarkRe.ReplaceAllString(l, "")
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // QuoteOf liest das Zitat aus dem gebauten Klartext eines Entwurfs
 // (drafts.body_text): der letzte zusammenhängende Block aus Zeilen mit „>"
 // und die letzte nicht leere Zeile davor als Einleitung. Zeilen mit „>",
 // die ein Agent im eigenen Text schrieb, stehen davor und zählen nicht.
+// Das Zitat ist gekürzt wie der gesendete Text (siehe DraftQuote).
 func QuoteOf(bodyText string) DraftQuote {
 	lines := strings.Split(strings.ReplaceAll(bodyText, "\r\n", "\n"), "\n")
 	isQuote := func(l string) bool { return strings.HasPrefix(strings.TrimLeft(l, " \t"), ">") }
@@ -271,7 +302,26 @@ func QuoteOf(bodyText string) DraftQuote {
 	if len(line) == 0 {
 		return DraftQuote{}
 	}
-	return DraftQuote{Line: line, Words: Words(strings.Join(lines[at:last+1], "\n"))}
+	quoted := lines[first : last+1]
+	// Ganz ohne „>": nur am Outlook-Verlauf schneiden. Innere Zitate mit
+	// „>": StripQuotes wie beim gesendeten Text (entfernt innere Zitate
+	// samt ihrer Einleitung und schneidet am Outlook-Verlauf).
+	all := sanitize.CutAtOriginal(lines[at] + "\n" + strings.Join(unquote(quoted, true), "\n"))
+	nested := sanitize.StripQuotes(lines[at] + "\n" + strings.Join(unquote(quoted, false), "\n"))
+	return DraftQuote{Line: line, Words: Words(all), Nested: Words(nested)}
+}
+
+// quoteMatches meldet, ob der Rest rest (ab der Einleitungszeile) zum Zitat
+// des Entwurfs passt: Jaccard ≥ 0,9 mit einer der beiden gekürzten
+// Fassungen (Words, Nested). Nur Jaccard, kein „Enthaltensein": Ein
+// Nachsatz unter dem Zitat, auch aus Wörtern des abgeschnittenen Verlaufs,
+// drückt die Ähnlichkeit unter 0,9 und verhindert den Schnitt (A05 Teil 1,
+// Gegenprüfung).
+func (q DraftQuote) quoteMatches(rest map[string]struct{}) bool {
+	if Jaccard(rest, q.Words) >= FallbackMinJaccard {
+		return true
+	}
+	return q.Nested != nil && Jaccard(rest, q.Nested) >= FallbackMinJaccard
 }
 
 // CutAtQuote liefert den Teil des gesendeten Texts vor dem Zitat des
@@ -280,9 +330,10 @@ func QuoteOf(bodyText string) DraftQuote {
 // dann stehen). Geschnitten wird nur an einer Zeile, deren Wörter der
 // Einleitungszeile des Entwurfs entsprechen (Jaccard ≥ 0,9, auch über zwei
 // Zeilen umbrochen), und nur, wenn der Rest ab dort zum Zitat des Entwurfs
-// passt (Jaccard ≥ 0,9): Eigener Text nach einer Zeile, die nur wie eine
-// Einleitung aussieht, oder ein Nachsatz unter dem Zitat bleiben so stehen
-// (Gegenprüfung N1, W1). ok=false: kein Schnitt.
+// passt (Jaccard ≥ 0,9 mit dem gekürzten Zitat, quoteMatches): Eigener
+// Text nach einer Zeile, die nur wie eine Einleitung aussieht, oder ein
+// Nachsatz unter dem Zitat bleiben so stehen (Gegenprüfung N1, W1).
+// ok=false: kein Schnitt.
 func CutAtQuote(sent string, q DraftQuote) (string, bool) {
 	if q.Line == nil {
 		return "", false
@@ -299,7 +350,7 @@ func CutAtQuote(sent string, q DraftQuote) (string, bool) {
 		if !hit {
 			continue
 		}
-		if Jaccard(Words(strings.Join(lines[i:], "\n")), q.Words) < FallbackMinJaccard {
+		if !q.quoteMatches(Words(strings.Join(lines[i:], "\n"))) {
 			return "", false
 		}
 		return strings.Join(lines[:i], "\n"), true

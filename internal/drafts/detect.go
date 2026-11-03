@@ -245,13 +245,21 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 	if err != nil {
 		return err
 	}
+	// A05 Teil 1: Nach einer Änderung der Regeln (SentCheckRev) wird jeder
+	// offene Entwurf einmal neu über sein ganzes Fenster geprüft, auch
+	// wenn sein Inhalt gleich blieb.
+	rev, err := s.Store.SentCheckRev(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	recheck := rev < SentCheckRev
 	// Entwürfe, deren ganzes Fenster zu prüfen ist (neu oder geändert);
 	// ohne Empfänger in To/Cc kann der Rückfall nie treffen (K7: ihr Fenster
 	// zählt nicht).
 	var changed []store.Draft
 	var windows [][2]time.Time
 	for _, d := range open {
-		if marked && d.FallbackCheckedAt.Equal(d.ContentChangedAt) {
+		if marked && !recheck && d.FallbackCheckedAt.Equal(d.ContentChangedAt) {
 			continue
 		}
 		changed = append(changed, d)
@@ -298,11 +306,25 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 			return err
 		}
 	}
+	if recheck {
+		if err := s.Store.SetSentCheckRev(ctx, accountID, SentCheckRev); err != nil {
+			return err
+		}
+	}
 	if upto > last || !marked {
 		return s.Store.SetSentCheckMark(ctx, accountID, upto)
 	}
 	return nil
 }
+
+// SentCheckRev ist der Stand der Regeln des Rückfalls. Erhöhen, wenn sich
+// eine Regel so ändert, dass schon geprüfte offene Entwürfe jetzt treffen
+// könnten; die nächste vollständige Prüfung prüft dann jeden offenen
+// Entwurf einmal über sein ganzes Fenster (wie einen neuen) und vermerkt
+// den Stand erst danach (nicht bei KeepMark, nicht nach einem Fehler).
+//
+//	1  A05 Teil 1: symmetrische Kürzung des Zitats (Outlook-Verlauf)
+const SentCheckRev = 1
 
 // changedAt ist die letzte Inhaltsänderung eines Entwurfs (Bestand ohne
 // content_changed_at: updated_at).
