@@ -10,7 +10,8 @@ Auftrag [auftraege/A05_erkennung.md](../../auftraege/A05_erkennung.md) (Betreibe
 | `8ebe47b` | Teil 1: symmetrische Kürzung des Zitats im Rückfall (Outlook-Verlauf), einmalige Neuprüfung offener Entwürfe (`meta` `sent_check_rev/<Konto>`) |
 | `88c05be` | Teil 2: dritter Weg der Versanderkennung über den Verlauf (Grund `thread`) |
 | `fb920eb` | Teil 3: HTML-Quelltext im Klartextteil gilt als HTML (`sanitize.PlainIsHTML`, Aufbereitungsstand 4, gezielte Neuaufbereitung) |
-| (Teil 4) | CHANGELOG (rc2 festgeschrieben, neuer Abschnitt „Unreleased“), Roadmap, Abnahme D11, dieses Protokoll; Build-Commit siehe Abschnitt 4 |
+| `5cdab24` | Teil 4: CHANGELOG (rc2 festgeschrieben, neuer Abschnitt „Unreleased“), Roadmap, Abnahme D11, Protokoll (erste Fassung); **Build-Commit von 0.3.0-rc3** |
+| (danach) | dieses Protokoll mit Build und Prüfsummen |
 
 ## 2. Festlegungen (Standardantworten von Claude, Einspruch bis zum Merge)
 
@@ -48,10 +49,10 @@ Umgebung: Cloud-Sitzung, Go 1.27.3 (einmal über `GOTOOLCHAIN=go1.27.3 go versio
 
 | Lauf | Ergebnis |
 |---|---|
-| `make check` | grün vor jedem Commit (Laufzeit 5:17 bis 7:16 min) |
+| `make check` | grün vor jedem Commit (Laufzeit 5:17 bis 7:16 min, an `5cdab24` 2:28 min mit Testcache) |
 | `make integration IT=dovecot,stalwart,greenmail` an `fb920eb` | grün (Exit 0, 3:44 min): 44 PASS (mit Untertests), 0 FAIL, 2 SKIP (`TestIntegrationAuthelia` nicht gewählt; `TestIntegrationMailboxActions/greenmail`, bekannt). Neu: `TestIntegrationSentDetectionReplies` (Fälle F, D, E je Server); Fall F mit dem alten Code rot (`Missing:1`), mit Teil 1 grün |
 | `make race` an `fb920eb` | grün (Exit 0, 28:32 min; 40 Pakete ok, kein Data Race; `internal/cli` 27:16 min, `internal/mailsync` 13:43 min, `internal/ops` 13:15 min, `internal/drafts` 4:05 min) |
-| `make cross` | siehe Abschnitt 5 |
+| `make cross` an `5cdab24` | grün (linux/amd64, windows/amd64, darwin/arm64) |
 | `make vuln` | nicht gelaufen (in der Cloud gesperrt) |
 | Rückweg-Probe (Linux, Dovecot, Abschnitt 6) | rc2 läuft mit der von rc3 aufbereiteten Datenbank weiter |
 
@@ -59,7 +60,19 @@ Neue Tests: `TestFallbackOutlookHistory` (alle Formen aus `originalRe`, deutsch 
 
 ## 5. Build 0.3.0-rc3
 
-(wird nach dem Bau eingetragen)
+Nach [betrieb.md](../betrieb.md) Abschnitt 7: zwei frische Klone ohne Tags (`git clone --no-tags --branch claude/quirky-feynman-1jsuxj`), je `git checkout 5cdab24` (Teil 1 bis 3 und die Doku von Teil 4), `git status --short` leer, keine Tags, `make release VERSION=0.3.0-rc3`. **Build-Commit `5cdab24`**; danach kam nur dieses Protokoll dazu.
+
+- `dist/SHA256SUMS` beider Klone gleich (ohne die Zeile `VERSION`, sie enthält die Bauzeit).
+- `go version -m` beider Windows-Programme gleich: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261103143458-5cdab2453bc2`, `vcs.revision=5cdab2453bc2d3fb2720daa7145a698c848895f9`, `vcs.modified=false`.
+- `postkauz version`: `postkauz 0.3.0-rc3 (go1.27.3 linux/amd64)`. Rauchtest mit dem gebauten Linux-Programm an der Datenbank der Rückweg-Probe (Abschnitt 6): `doctor` `database ok`, Schema 22, `sync` 0 Fehler, `show` `text_source html`, `alternative_mismatch false`, keine Tags.
+
+```
+2ca5dd97f86d468cb646c35be8f34f01b6b66f04008e4df696722e557ef60228  postkauz-windows-amd64.exe
+981a77d1a4b2744243a001a1b5634c11ad88de84c185a4943d7549dd70e5ea66  postkauz-linux-amd64
+7af53469d3bafc8557e264f42f002fbae9284067a9bd7f6da40613d89c3314c8  postkauz-darwin-arm64
+```
+
+Windows-Programm: 22.615.040 Byte. `make cross` an `5cdab24` grün.
 
 ## 6. Rückweg-Probe
 
