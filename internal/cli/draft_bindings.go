@@ -34,7 +34,7 @@ var draftBindings = []binding{
 	{op: "drafts.create", path: []string{"draft", "reply"}, use: "<message-id|Message-ID>", args: cobra.ExactArgs(1), flags: draftReplyFlags,
 		input: draftCreateInput("reply"), human: renderDraftWrite,
 		covers: []string{"account", "kind", "in_reply_to", "in_reply_to_message_id", "identity", "to", "cc", "bcc", "subject",
-			"body_markdown", "body_html", "attachments", "quote", "signature"}},
+			"body_markdown", "body_html", "attachments", "quote", "signature", "derive_recipients"}},
 	{op: "drafts.create", path: []string{"draft", "forward"}, use: "<message-id|Message-ID>", args: cobra.ExactArgs(1), flags: draftForwardFlags,
 		input: draftCreateInput("forward"), human: renderDraftWrite,
 		covers: []string{"account", "kind", "in_reply_to", "in_reply_to_message_id", "identity", "to", "cc", "bcc", "subject",
@@ -133,6 +133,7 @@ func draftReplyFlags(cmd *cobra.Command) {
 	draftNewFlags(cmd)
 	cmd.Flags().Bool("all", false, "reply to all (others of To/Cc in Cc, without own addresses)")
 	cmd.Flags().Bool("no-quote", false, "do not quote the original message")
+	cmd.Flags().Bool("no-derive-recipients", false, "do not take recipients from the original message: only --to/--cc/--bcc, or none at all")
 }
 
 func draftForwardFlags(cmd *cobra.Command) {
@@ -247,6 +248,9 @@ func draftCreateInput(verb string) func(*cobra.Command, []string, *app) (json.Ra
 		}
 		if no, _ := f.GetBool("no-attachments"); no {
 			m["include_attachments"] = false
+		}
+		if no, _ := f.GetBool("no-derive-recipients"); no {
+			m["derive_recipients"] = false
 		}
 		return marshalInput(m)
 	}

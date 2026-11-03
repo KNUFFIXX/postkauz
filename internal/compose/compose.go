@@ -245,7 +245,8 @@ type Input struct {
 
 	To, Cc, Bcc []string
 	// ExplicitRecipients: To, Cc und Bcc sind die vollständigen Listen
-	// (Änderung eines gespeicherten Entwurfs, S2.3); bei reply/reply_all
+	// (Änderung eines gespeicherten Entwurfs, S2.3; seit A04 auch
+	// drafts.create mit derive_recipients=false); bei reply/reply_all
 	// werden keine Empfänger aus der Ausgangsnachricht abgeleitet.
 	ExplicitRecipients bool
 	Subject            string

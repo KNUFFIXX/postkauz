@@ -263,6 +263,11 @@ type DraftsCreateInput struct {
 	Quote              *bool                  `json:"quote,omitempty"`
 	Signature          *bool                  `json:"signature,omitempty"`
 	IncludeAttachments *bool                  `json:"include_attachments,omitempty"`
+	// DeriveRecipients (A04 Teil 2): false = bei reply/reply_all keine
+	// Empfänger aus der Ausgangsnachricht, nur die genannten To/Cc/Bcc (auch
+	// gar keine); nil = true. Bei new und forward ohne Wirkung (dort wird nie
+	// abgeleitet).
+	DeriveRecipients *bool `json:"derive_recipients,omitempty"`
 }
 
 // DraftsUpdateInput ist die Eingabe von drafts.update. Ein fehlendes Feld
@@ -916,7 +921,8 @@ func DraftsCreate(d Deps) Operation {
     "attachments": ` + draftAttachmentInputSchema + `,
     "quote": {"type": "boolean", "description": "quote the original (reply, reply_all; default true)"},
     "signature": {"type": "boolean", "description": "append the signature of the identity (default true)"},
-    "include_attachments": {"type": "boolean", "description": "forward: include the attachments of the original (default true)"}
+    "include_attachments": {"type": "boolean", "description": "forward: include the attachments of the original (default true)"},
+    "derive_recipients": {"type": "boolean", "description": "reply, reply_all: take the recipients from the original (default true); false = only the given to/cc/bcc, also none at all (the draft stays in the thread; a human adds the recipient later)"}
   },
   "required": ["kind"],
   "additionalProperties": false
@@ -990,6 +996,9 @@ func DraftsCreate(d Deps) Operation {
 				ci.Identity = composeIdentity(ident)
 			}
 			ci.To, ci.Cc, ci.Bcc, ci.Subject = in.To, in.Cc, in.Bcc, in.Subject
+			// A04 Teil 2: derive_recipients=false wie beim Ändern eines
+			// gespeicherten Entwurfs: nur die genannten Empfänger.
+			ci.ExplicitRecipients = !boolOr(in.DeriveRecipients, true)
 			ci.BodyMarkdown, ci.BodyHTML = in.BodyMarkdown, in.BodyHTML
 			ci.Quote, ci.Signature, ci.IncludeAttachments = opts.Quote, opts.Signature, boolOr(in.IncludeAttachments, true)
 			for _, a := range atts {

@@ -249,7 +249,7 @@ var contractInputs = map[string]struct {
 	// 1 (draft) und Entwurf 2 (pending_approval, Freigabe 1).
 	"drafts.create": {input: `{"account":"demo","kind":"reply","in_reply_to":1,"identity":"demo@example.org","to":["Zweit <zweit@example.net>"],` +
 		`"cc":["c@example.net"],"bcc":["b@example.net"],"subject":"Antwort","body_markdown":"**Hallo**","attachments":[{"attachment_id":1}],` +
-		`"quote":true,"signature":true,"include_attachments":false}`},
+		`"quote":true,"signature":true,"include_attachments":false,"derive_recipients":false}`},
 	"drafts.update":          {input: `{"draft_id":1,"to":["neu@example.org"],"subject":"Neu","body_html":"<p>Neuer Text</p>","quote":false,"signature":false}`},
 	"drafts.get":             {input: `{"draft_id":1}`},
 	"drafts.list":            {input: `{"account":"demo","status":["draft","pending_approval"],"limit":5}`},

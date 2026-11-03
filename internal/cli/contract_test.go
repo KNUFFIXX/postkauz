@@ -192,7 +192,7 @@ var cliSamples = []cliSample{
 	{"identities.set_default", []string{"identity", "set-default", "1"}, false},
 	{"drafts.create", []string{"draft", "reply", "{html}", "--all", "--to", "Zweit <zweit@example.net>", "--cc", "c@example.net", "--bcc",
 		"b@example.net", "--subject", "Re: Rechnung", "--body-file", "{body}", "--attach", "{att}", "--no-quote", "--no-signature",
-		"--identity", "demo@example.org"}, false},
+		"--identity", "demo@example.org", "--no-derive-recipients"}, false},
 	{"drafts.create", []string{"draft", "new", "-a", "demo", "--to", "a@example.org", "--html-file", "-", "--attach", "notiz.txt"}, false},
 	{"drafts.create", []string{"draft", "forward", "antwort@example.org", "-a", "demo", "--to", "a@example.org", "--no-attachments"}, false},
 	{"drafts.update", []string{"draft", "edit", "1", "--to", "neu@example.org", "--cc", "", "--bcc", "", "--subject", "Neu", "--body-file", "{body}",
