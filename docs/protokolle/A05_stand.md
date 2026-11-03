@@ -104,8 +104,41 @@ Linux-Programme aus `7231758` (rc2) und dem Arbeitsstand von Teil 3 (rc3) an **e
 
 Ergebnis: **Fall „ohne Migration“.** rc2 startet mit der Datenbank (`database: ok`, kein `too_new`), lässt Texte mit Stand 4 unverändert (es bereitet nur Stände unter 3 neu auf) und spiegelt neue Mails mit Stand 3; der nächste Lauf von rc3 erfasst sie. Eine Wiederherstellung der Sicherung ist für den Rückweg nicht nötig.
 
-## 7. Offen
+## 7. Nachtrag 2: Gegenprüfung von `5cdab24`/`1e30ec6`
+
+Gegenprüfung der Betreiber-Sitzung (drei unabhängige Läufe, 2× Opus, 1× GPT, Nachprüfung am Quelltext): Code PASS mit Hinweisen, Abnahmeskript D11 so nicht einsatzfähig; der rc3-Build an `5cdab24` ist vom Betreiber bytegleich nachgebaut. Umgesetzt, je Gruppe ein Commit:
+
+| Commit | Inhalt |
+|---|---|
+| `515d9b4` | Punkt 5: Nacharbeit (Threads, Neuaufbereitung) **vor** der Prüfung der Entwürfe. Gewählt statt „sent_check_rev erst setzen, wenn keine HTML-Kandidaten mehr übrig sind“, weil es einfacher ist (eine Verschiebung, keine neue Abfrage je Lauf, und der Weg über den Verlauf sieht frisch zugeordnete Threads). Endet die Nacharbeit nicht vollständig (Fehler oder vorübergehend nicht ablegbarer Anhang), läuft die Prüfung mit `KeepMark` und vermerkt nichts. Test `TestA05RecheckAfterCleanup` (gesendete Nachricht im Stand von rc2 mit HTML im Klartext): mit der alten Reihenfolge rot (`SentByFallback 0`, `Missing 1`), jetzt grün |
+| `28941b7` | F10: eine Regel `sanitize.PlainAndHTML` für Sync und compose (ein HTML-Teil ohne Text wird nicht durch das Klartext-HTML ersetzt; Tests `TestPlainAndHTML`, `TestQuoteHTMLPartWithoutText`, Golden-Fall `empty-html`). F8: Tests für den Ausschluss per Inhalts-Hash auf dem Weg thread (ohne den Filter rot) und `TestSentRepliesNormalizesInReplyTo` (Spitzklammern und Leerraum auf beiden Seiten, Posteingang zählt nicht, ohne Message-ID nichts). **Letzter Code-Commit, Build-Commit des neuen rc3** |
+| `b96e424` | Punkte 1 bis 4, F3, F6 in `abnahme_D11.ps1` (NDJSON für `audit` und `search`, try/catch/finally mit Aufgaben wieder an und Schlusszeile, Abbrüche vor dem Tausch, Rückkopie bei FAIL in 2.1/2.2, kein stderr von `sync` im Protokoll, Rückweg nur ohne vorhandene `postkauz-rc3.exe`); F11 (Upgrade-Folge `approval_stale`) in CHANGELOG und `abnahme_D11.md`; F12 (Grenze von `sent_check_rev` nach einem Rückweg) in `abnahme_D11.md` Abschnitt 5; F9 als Offene Frage 4 in der Roadmap |
+
+Das Skript ist weiterhin nur von Hand geprüft (Klammern, Funktionsnamen, Aufrufe gegen die CLI-Ausgaben: `audit` und `search` liefern mit `--json` NDJSON, `draft list`, `show`, `doctor`, `sync` ohne `--watch` und `audit verify` ein Objekt); PowerShell gibt es im Container nicht.
+
+### 7.1 Prüfläufe Nachtrag 2
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` | grün vor jedem der drei Commits |
+| `make cross` an `b96e424` | grün |
+| `make integration IT=dovecot,stalwart,greenmail` an `b96e424` | grün (Exit 0, 4:00 min): 44 PASS, 0 FAIL, 2 SKIP (wie oben) |
+| `make race` an `b96e424` | grün (Exit 0, 29:57 min; 40 Pakete ok, kein Data Race; `internal/cli` 29:31 min, parallel lief der Nachbau) |
+
+### 7.2 Build 0.3.0-rc3 (neu, ersetzt den Build an `5cdab24`)
+
+Nach [betrieb.md](../betrieb.md) Abschnitt 7: zwei frische Klone ohne Tags, je `git checkout 28941b7` (letzter Code-Commit), `git status --short` leer, `make release VERSION=0.3.0-rc3`. `dist/SHA256SUMS` beider Klone gleich (ohne `VERSION`); `go version -m` beider Windows-Programme gleich: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261103160518-28941b790c3f`, `vcs.revision=28941b790c3f51de78fc2a7feaf5da4e9eea7ba1`, `vcs.modified=false`. `postkauz version`: `postkauz 0.3.0-rc3 (go1.27.3 linux/amd64)`.
+
+```
+f7789cf35cfd9c16114b764add0e178bea61899da47a773ebb063f1f9e34e934  postkauz-windows-amd64.exe
+5677538c9984d1eac667762a8891c78b83d230584ccc8f556c6f623feb4183a6  postkauz-linux-amd64
+affb0a75e45104902fb07769d63ed3c6eef5d75dc2d0e5553b70fcfef1bf7ca1  postkauz-darwin-arm64
+```
+
+Windows-Programm: 22.616.064 Byte. Der frühere rc3-Build an `5cdab24` (Windows `2ca5dd97…ef60228`) ist ersetzt; nicht verwenden. Das Abnahmeskript gehört zum Stand `b96e424` (`docs/abnahme_D11.ps1`), nicht zum Programmpaket.
+
+## 8. Offen
 
 - Abnahme D11 auf dem Büro-PC ([abnahme_D11.md](../abnahme_D11.md)); das Skript ist in der Cloud weder ausgeführt noch von PowerShell geparst (kein PowerShell im Container), nur gegen die CLI-Ausgaben geprüft.
 - Ob Gmail im Browser beim Senden eines Antwort-Entwurfs `In-Reply-To` behält (Voraussetzung für den Weg über den Verlauf), zeigt erst D11 bzw. der Alltag; der Testserver-Fall D bildet es nach.
-- Offene Fragen 2 und 3 der Roadmap (Defaults von Teil 2 und 3).
+- Offene Fragen 2 bis 4 der Roadmap (Defaults von Teil 2 und 3, Bedingung (f) wie gebaut).
