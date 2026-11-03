@@ -21,7 +21,7 @@ Auftrag A05 „Erkennung und Text“ (03.11.2026, Zweig `claude/quirky-feynman-1
 
 ## [0.3.0-rc2] – 2026-11-03 (Release-Kandidat; im Dauerbetrieb seit 03.11.2026, Tag `v0.3.0-rc2` an `7231758`, GitHub-Release)
 
-Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (kein Tag, kein Release; Build-Commit `7231758` und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
+Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (Build-Commit `7231758` und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
 
 ### Changed
 
