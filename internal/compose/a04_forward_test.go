@@ -66,3 +66,26 @@ func TestA04ForwardCarriesThreadHeaders(t *testing.T) {
 		t.Errorf("new: %q %v", m.InReplyTo, m.References)
 	}
 }
+
+// Nachbesserung A04, K5: Ausgangsnachricht ohne Message-ID, aber mit
+// References: References wie bei einer Antwort (ohne eigene ID), kein
+// In-Reply-To.
+func TestA04ForwardWithoutMessageIDKeepsReferences(t *testing.T) {
+	for _, kind := range []Kind{KindForward, KindReply} {
+		in := baseInput(kind)
+		in.Original.MessageID = ""
+		in.Original.InReplyTo = nil
+		in.Original.References = []string{"root@example.org", "parent@example.org"}
+		m := mustBuild(t, in)
+		if m.InReplyTo != "" || !slices.Equal(m.References, []string{"root@example.org", "parent@example.org"}) {
+			t.Errorf("%s: in-reply-to %q references %v", kind, m.InReplyTo, m.References)
+		}
+		if slices.Contains(m.Derived, DerivedInReplyTo) || !slices.Contains(m.Derived, DerivedReferences) {
+			t.Errorf("%s: derived %v", kind, m.Derived)
+		}
+		head, _, _ := strings.Cut(strings.ReplaceAll(string(m.Raw), "\r\n", "\n"), "\n\n")
+		if strings.Contains(head, "In-Reply-To:") || !strings.Contains(head, "References: <root@example.org> <parent@example.org>") {
+			t.Errorf("%s: header block:\n%s", kind, head)
+		}
+	}
+}

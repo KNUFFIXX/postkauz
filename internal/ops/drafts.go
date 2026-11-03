@@ -265,8 +265,9 @@ type DraftsCreateInput struct {
 	IncludeAttachments *bool                  `json:"include_attachments,omitempty"`
 	// DeriveRecipients (A04 Teil 2): false = bei reply/reply_all keine
 	// Empfänger aus der Ausgangsnachricht, nur die genannten To/Cc/Bcc (auch
-	// gar keine); nil = true. Bei new und forward ohne Wirkung (dort wird nie
-	// abgeleitet).
+	// gar keine); nil = true. false bei new und forward ist ein
+	// Eingabefehler (Nachbesserung A04, K1: dort wird nie abgeleitet, ein
+	// stilles Ignorieren verdeckte einen Irrtum des Aufrufers).
 	DeriveRecipients *bool `json:"derive_recipients,omitempty"`
 }
 
@@ -922,7 +923,7 @@ func DraftsCreate(d Deps) Operation {
     "quote": {"type": "boolean", "description": "quote the original (reply, reply_all; default true)"},
     "signature": {"type": "boolean", "description": "append the signature of the identity (default true)"},
     "include_attachments": {"type": "boolean", "description": "forward: include the attachments of the original (default true)"},
-    "derive_recipients": {"type": "boolean", "description": "reply, reply_all: take the recipients from the original (default true); false = only the given to/cc/bcc, also none at all (the draft stays in the thread; a human adds the recipient later)"}
+    "derive_recipients": {"type": "boolean", "description": "reply, reply_all: add the given to/cc/bcc to the recipients taken from the original (default true); false = only the given to/cc/bcc, none is allowed (the draft stays in the thread; a human adds the recipient later); false with kind new or forward is invalid input"}
   },
   "required": ["kind"],
   "additionalProperties": false
@@ -948,6 +949,8 @@ func DraftsCreate(d Deps) Operation {
 				return nil, inputErr("give either in_reply_to or in_reply_to_message_id")
 			case in.BodyMarkdown != "" && in.BodyHTML != "":
 				return nil, inputErr("give either body_markdown or body_html")
+			case in.DeriveRecipients != nil && !*in.DeriveRecipients && kind != compose.KindReply && kind != compose.KindReplyAll:
+				return nil, inputErr("derive_recipients: false is allowed only with kind reply or reply_all")
 			}
 
 			// Konto: das der Ausgangsnachricht, sonst das genannte bzw. einzige.
@@ -2203,6 +2206,11 @@ func redactDraftInput(raw json.RawMessage) (json.RawMessage, []string) {
 	}
 	if v, ok := m["kind"]; ok && json.Unmarshal(v, &s) == nil && slices.Contains(draftKinds, s) {
 		params["kind"] = s
+	}
+	// Nachbesserung A04, K4: ob Empfänger abgeleitet wurden, steht im Audit.
+	var derive bool
+	if v, ok := m["derive_recipients"]; ok && json.Unmarshal(v, &derive) == nil {
+		params["derive_recipients"] = derive
 	}
 	var list []json.RawMessage
 	for _, k := range []string{"to", "cc", "bcc", "attachments"} {

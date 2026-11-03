@@ -14,6 +14,17 @@ Auftrag [auftraege/A04_alltag.md](../../auftraege/A04_alltag.md) (Betreiber-Sitz
 | `0ad5911` | dieses Protokoll, erste Fassung |
 | `8175b51` | Teil 4 (Nachtrag): `mcp --remote` und `remote add|list|remove|test`; **Build-Commit von 0.3.0-rc2** |
 
+## 1a. Nachbesserung Teil 1/2 nach der Gegenprüfung (Nachtrag 2)
+
+Gegenprüfung (Opus) der Commits bis `0ad5911`: PASS, kein Blocker. Umgesetzt:
+
+- **W1:** Beschreibung von `mail_create_draft`, `docs/cli.md` (`draft reply`) und `docs/mcp.md`: genannte Empfänger kommen zu den abgeleiteten hinzu; `derive_recipients=false` (nur reply/reply_all): nur die genannten, auch keine.
+- **K1:** `derive_recipients: false` bei `new`/`forward` → `invalid_input` (`derive_recipients: false is allowed only with kind reply or reply_all`, kein Wert in der Meldung); `true` bleibt erlaubt.
+- **K2:** Upgrade-Folgen von Teil 1 für alte, offene Weiterleitungs-Entwürfe dokumentiert und hingenommen (CHANGELOG, Entschiedene Fragen 70): `ready` fällt beim Push zurück; `pending_approval` scheitert schon bei `approve` mit `approval_stale`; `drafts.get` zeigt leere `in_reply_to`/`references` bis zum nächsten `drafts.update`; `draft show --eml` meldet „changed after the copy“ ohne menschliche Änderung.
+- **K3:** `docs/mcp.md` bei `mail_get_thread`: Weiterleitungen (und ihre Entwurfskopie) stehen jetzt im Thread des Originals; Unterscheidung über Betreffpräfix und Empfänger.
+- **K4:** `redactDraftInput` schreibt `params.derive_recipients` (Wahrheitswert) ins Audit.
+- **K5:** Tests `TestA04ForwardWithoutMessageIDKeepsReferences` (Original ohne Message-ID mit References: References ohne In-Reply-To, wie bei reply) und `TestA04ReviewDeriveRecipients` (K1, K4, `drafts.update` ohne `to` behält die leere Empfängerliste).
+
 ## 2. Prüfläufe
 
 Umgebung: Cloud-Sitzung, Go 1.27.3 (einmal über `GOTOOLCHAIN=go1.27.3 go version` geholt, danach `GOTOOLCHAIN=local`, Ausnahme laut CLAUDE.md).
