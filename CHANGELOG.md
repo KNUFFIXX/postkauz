@@ -4,7 +4,24 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (kein Tag, kein Release; Build-Commit und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
+Auftrag A05 „Erkennung und Text“ (03.11.2026, Zweig `claude/quirky-feynman-1jsuxj`, Basis `main` `cb8919d` = Stand 0.3.0-rc2), Build **0.3.0-rc3** (kein Tag, kein Release; Build-Commit und Prüfsummen: `docs/protokolle/A05_stand.md`). Kein Schema-Upgrade (Schema 22), keine Migration; Aufbereitungsstand der Texte 4 (`clean_version`).
+
+### Fixed
+
+- **Rückfall-Abgleich bei Antworten auf Mails mit Outlook-Verlauf** (Teil 1): Gmail im Browser sendet das Zitat ohne „>“; StripQuotes schneidet den gesendeten Text am Outlook-Kopfblock ab (`Von:/Gesendet:/An:/Betreff:`, `From:/Sent:/To:/Subject:`, auch nach `-----Ursprüngliche Nachricht-----`, `-----Original Message-----` oder einer Unterstrich-Linie), das Zitat des Entwurfs enthielt aber den ganzen Verlauf. Selbst ein unverändert gesendeter Entwurf blieb offen (Ähnlichkeit 0,53). Jetzt wird das Zitat des Entwurfs vor dem Vergleich genauso gekürzt (`sanitize.CutAtOriginal`); weiter Jaccard ≥ 0,9, ein Nachsatz unter dem zitierten Text verhindert den Schnitt. Offene Entwürfe von vor dem Update prüft der erste vollständige Lauf einmal neu (`meta` `sent_check_rev/<Konto>`, ohne Migration).
+- **HTML-Quelltext im Klartextteil** (Teil 3): Beginnt der text/plain-Teil nach Leerraum mit `<!doctype html`, `<html`, `<head`, `<body`, `<meta` oder einem XML-Prolog vor `<html`, gilt er als HTML (`sanitize.PlainIsHTML`): `text_plain` leer, Text aus dem HTML-Teil bzw. aus dem Klartext-HTML (versteckter Text entfernt, Links gesammelt), `text_source` `html`, `alternative_mismatch` false; Snippet, Suchindex, `mail_get_message`/`mail_get_thread`, `show`/`thread` und Zitat bzw. Weiterleitungsteil neuer Entwürfe ohne rohes HTML. Bestand: Der nächste Sync bereitet nur die betroffenen Nachrichten neu auf und hebt alle übrigen in einem `UPDATE` auf Stand 4 (gemessen: 100 betroffene Nachrichten in 58 ms, 61.370 übrige einmal in 1,6 s), bei jedem Lauf erneut (auch für Nachrichten, die ein älteres Programm nach einem Rückweg mit Stand 3 spiegelt).
+
+### Added
+
+- **Versanderkennung, dritter Weg über den Verlauf** (Teil 2): Ein Antwort- oder Weiterleitungs-Entwurf mit Original wird `sent_by_human` (Grund `thread`), wenn eine gesendete Nachricht mit `In-Reply-To` = Message-ID des Originals an dieselben Empfänger (To+Cc) im Zeitfenster liegt, die Kopie des Entwurfs aus dem Entwürfe-Ordner verschwunden ist (am Spiegel, unabhängig von `remote_state`) und der Text zu mindestens 50 % gleich ist (eigener Text mindestens 8 verschiedene Wörter). Für Entwürfe, die der Mensch vor dem Senden geändert hat; `draft mark-sent` entfällt dann. Systemregel, ein Agent erklärt nie etwas für gesendet (E2). `sync` nennt `… by thread (…)`, `--json` `draft_check.sent_by_thread`, Log `by_thread`. Bei jedem Lauf je offenem Entwurf nachgeschlagen, ohne Migration; mit 30 offenen Antworten 8,7 → 15,5 ms je Lauf (`BenchmarkCheckAfterSync22k`).
+
+### Docs
+
+- `docs/versanderkennung.md` Abschnitt 3 (symmetrische Kürzung, Neuprüfung nach dem Update) und neuer Abschnitt 3a „Dritter Weg: der Verlauf“ mit Messung und bekannten Grenzen; Abschnitte 1, 2, 5, 6, 8 angepasst. `docs/mcp.md` (`text_source`, HTML im Klartextteil, Wege der Versanderkennung), `docs/cli.md`, `docs/datenmodell.md` (`clean_version` 4). `docs/roadmap.md`: Entschiedene Fragen 70 (Nachtrag) und 73, Stand, Offene Fragen. Abnahme D11 (`docs/abnahme_D11.md`, `docs/abnahme_D11.ps1`).
+
+## [0.3.0-rc2] – 2026-11-03 (Release-Kandidat; Dauerbetrieb auf dem Büro-PC seit 03.11.2026, kein Tag)
+
+Auftrag A04 „Alltag“ (03.11.2026, Zweig `claude/auftrag-a04-alltag-2jwww9`), Build **0.3.0-rc2** für windows-amd64 (kein Tag, kein Release; Build-Commit `7231758` und Prüfsummen: `docs/protokolle/A04_stand.md`). Kein Schema-Upgrade (Schema 22).
 
 ### Changed
 
