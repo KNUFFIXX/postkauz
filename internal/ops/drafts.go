@@ -399,11 +399,11 @@ const addrListSchema = `{"type": "array", "maxItems": 50, "items": {"type": "str
 
 // --- Hilfen -------------------------------------------------------------------
 
+// formatAddr schreibt eine Adresse RFC-5322-sicher (A06 Teil 1,
+// compose.FormatAddress): Der Text geht an Agenten und CLI und kommt in
+// drafts.update und im Neubau zurück in den Parser.
 func formatAddr(a store.Addr) string {
-	if a.Name == "" {
-		return a.Address
-	}
-	return a.Name + " <" + a.Address + ">"
+	return compose.FormatAddress(a.Name, a.Address)
 }
 
 func formatAddrs(l []store.Addr) []string {

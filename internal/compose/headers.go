@@ -215,6 +215,44 @@ func ReplyRecipients(o Original, own []string, all bool) (to, cc []Address) {
 	return to, cc
 }
 
+// addrSpecials sind die Sonderzeichen nach RFC 5322, Abschnitt 3.2.3; ein
+// Name mit einem davon steht in Anführungszeichen.
+const addrSpecials = `()<>[]:;@\,."`
+
+// FormatAddress schreibt eine Adresse als Text, den parseAddress (net/mail)
+// wieder liest (A06 Teil 1): Name leer oder gleich der Adresse
+// (Groß/Klein egal) → nur die Adresse; Name mit einem Sonderzeichen nach
+// RFC 5322 3.2.3 oder mit "=?" (sonst dekodierte der Parser ihn als
+// encoded-word) → in Anführungszeichen, `"` und `\` maskiert; mehrfacher
+// Leerraum wird ein Leerzeichen. Nicht-ASCII bleibt lesbar (kein
+// encoded-word): Der Text ist für Vorschau, JSON, CLI und den Neubau; die
+// Kodierung beim Schreiben der Nachricht macht addrList.
+//
+// Benutzt für jeden Adresstext eines Entwurfs, der wieder geparst oder an
+// Agenten ausgegeben wird (ops: drafts.update, Neubau, drafts.get,
+// Vorschau). Nicht für messages.from_addr (mailsync, Spiegel bleibt
+// einheitlich) und nicht für Einleitungszeile und Weiterleitungskopf
+// (formatAddr, wird nicht wieder geparst).
+func FormatAddress(name, address string) string {
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" || strings.EqualFold(name, strings.TrimSpace(address)) {
+		return address
+	}
+	if strings.ContainsAny(name, addrSpecials) || strings.Contains(name, "=?") {
+		var b strings.Builder
+		b.WriteByte('"')
+		for _, r := range name {
+			if r == '"' || r == '\\' {
+				b.WriteByte('\\')
+			}
+			b.WriteRune(r)
+		}
+		b.WriteByte('"')
+		name = b.String()
+	}
+	return name + " <" + address + ">"
+}
+
 // parseAddress prüft eine Adresse nach RFC 5322 (net/mail) und bereinigt
 // den Namen.
 func parseAddress(field, s string) (Address, error) {
