@@ -108,7 +108,7 @@ func quoteHTML(line, text string) string {
 		b.WriteString(gmailQuoteOpen)
 		level := 0
 		for i, l := range lines {
-			k, content := quoteLevel(sanitize.Text(l))
+			k, content := quoteLevel(sanitize.Text(l), maxQuoteDepth-1)
 			for ; level < k; level++ {
 				b.WriteString(gmailQuoteOpen)
 			}
@@ -117,8 +117,11 @@ func quoteHTML(line, text string) string {
 			}
 			b.WriteString(html.EscapeString(content))
 			// Eine leere letzte Zeile auf einer inneren Ebene braucht ihr
-			// <br>, sonst fiele sie weg (rc3 schrieb sie als „> >“).
-			if i < len(lines)-1 || (k > 0 && strings.TrimSpace(content) == "") {
+			// <br>, sonst fiele sie weg (rc3 schrieb sie als „> >“). „Leer“
+			// heißt: ergibt nach sanitize.HTML keinen Text (auch NUL und
+			// andere Zeichen, die die Umwandlung entfernt; Fuzz-Fund der
+			// Gegenprüfung).
+			if i < len(lines)-1 || (k > 0 && strings.TrimSpace(sanitize.HTML(html.EscapeString(content)).Text) == "") {
 				b.WriteString("<br>\n")
 			}
 		}
@@ -128,16 +131,24 @@ func quoteHTML(line, text string) string {
 	return b.String()
 }
 
+// maxQuoteDepth begrenzt die Verschachtelung des Zitats (Nachbesserung 1,
+// Gegenprüfung): höchstens 20 blockquote ineinander, das äußere
+// mitgezählt. Tiefere „> “ bleiben wörtlicher Text auf der letzten Ebene;
+// der Klartext bleibt so Byte für Byte wie in rc3, und weder sanitize
+// (maxDepth) noch ein Mailprogramm muss beliebig tiefe Bäume verarbeiten.
+const maxQuoteDepth = 20
+
 // quoteLevel zerlegt eine Zitatzeile in Ebene und Inhalt (kanonische Form,
-// siehe quoteHTML): k-mal „> “ vorn ist Ebene k; eine Zeile aus k-mal „> “
-// ohne das letzte Leerzeichen ist leer auf Ebene k.
-func quoteLevel(l string) (int, string) {
+// siehe quoteHTML): k-mal „> “ vorn ist Ebene k (höchstens max); eine
+// Zeile aus k-mal „> “ ohne das letzte Leerzeichen ist leer auf Ebene k.
+// Über max hinaus bleibt der Rest samt „> “ Inhalt.
+func quoteLevel(l string, max int) (int, string) {
 	k := 0
-	for strings.HasPrefix(l, "> ") {
+	for k < max && strings.HasPrefix(l, "> ") {
 		l = l[2:]
 		k++
 	}
-	if l == ">" {
+	if k < max && l == ">" {
 		return k + 1, ""
 	}
 	return k, l

@@ -868,6 +868,15 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 							t.Fatalf("output lacks required field %q: %s", f, b)
 						}
 					}
+					// Jedes Feld der Ausgabe steht im OutputSchema (A06
+					// Nachbesserung 1: closed_reason fehlte bei drafts.get).
+					if len(props) > 0 {
+						for k := range out {
+							if _, ok := props[k]; !ok {
+								t.Fatalf("output field %q is not in the OutputSchema: %s", k, b)
+							}
+						}
+					}
 					if _, ok := props["dry_run"]; ok && out["dry_run"] != effDry {
 						t.Fatalf("output dry_run=%v, want %v", out["dry_run"], effDry)
 					}

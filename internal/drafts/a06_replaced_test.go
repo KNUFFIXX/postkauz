@@ -25,14 +25,25 @@ func TestA06ReplacedByOwnReply(t *testing.T) {
 	if _, err := e.svc.RequestReady(ctx, d.ID, "key:agent", HookPass, Checked{MessageHash: "mh"}); err != nil {
 		t.Fatal(err)
 	}
-	d = e.draft(d.ID)
+	// Nach der Vorlage legt der Push die Kopie neu ab (wie im Betrieb).
+	d = e.pushAt(e.draft(d.ID), e.now)
+	if d.RemoteState != RemotePushed {
+		t.Fatalf("remote = %s", d.RemoteState)
+	}
 	fd := NewFallbackDraft(d, d.BodyMarkdown, "")
 	if sc := fd.ScoreSent(NewSentWords(thRewritten)); sc < 0.2 || sc >= ThreadMinJaccard {
 		t.Fatalf("score %.2f, want about 0.3", sc)
 	}
 	e.dropCopy(d)
 	reply := e.send(thSent{text: thRewritten})
+	// Nachbesserung 1, Sicherung (a): Im Lauf, der das Fehlen der Kopie
+	// erst feststellt, wird nicht ersetzt (eine eben gesendete Nachricht
+	// könnte noch kommen und den Entwurf als gesendet schließen).
 	rep := e.check()
+	if rep.ReplacedInThread != 0 || rep.Missing != 1 || e.status(d) != string(StatusPendingApproval) {
+		t.Fatalf("first run = %+v, draft %s", rep, e.status(d))
+	}
+	rep = e.check()
 	if rep.ReplacedInThread != 1 || len(rep.ReplacedDraftIDs) != 1 || rep.ReplacedDraftIDs[0] != d.ID || len(rep.SentDraftIDs) != 0 ||
 		rep.Missing != 0 || rep.Empty() {
 		t.Fatalf("report = %+v", rep)
@@ -91,6 +102,9 @@ func TestA06TwoVersionsOneSent(t *testing.T) {
 		t.Fatalf("second while its copy is there = %s", got)
 	}
 	e.dropCopy(second)
+	if rep = e.check(); rep.Missing != 1 || rep.ReplacedInThread != 0 {
+		t.Fatalf("run that finds the copy gone = %+v", rep)
+	}
 	rep = e.check()
 	if rep.ReplacedInThread != 1 || rep.ReplacedDraftIDs[0] != second.ID || len(rep.SentDraftIDs) != 0 {
 		t.Fatalf("second run = %+v", rep)
@@ -106,72 +120,111 @@ func TestA06TwoVersionsOneSent(t *testing.T) {
 // Jede zusätzliche Bedingung einzeln verletzt → der Entwurf bleibt offen.
 func TestA06ReplacedConditions(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		run  func(e *thEnv) (store.Draft, CheckOptions)
+		name  string
+		run   func(e *thEnv) (store.Draft, CheckOptions)
+		after func(e *thEnv, d store.Draft) // nach dem ersten Lauf
 	}{
 		{"copy still in the Drafts folder", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.send(thSent{text: thRewritten})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"never put", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, false)
 			e.send(thSent{text: thRewritten})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"other recipients", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten, to: []store.Addr{{Address: "bert@example.org"}}})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"without In-Reply-To", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten, inReplyTo: " "})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"keep mark", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten})
 			return d, CheckOptions{KeepMark: true}
-		}},
+		}, nil},
 		{"reply dated before the content change", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten, date: e.now.Add(-10 * time.Minute)})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"reply dated before the last push", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, false)
 			d = e.pushAt(d, e.now.Add(20*time.Minute))
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten, date: e.now.Add(10 * time.Minute)})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"reply only in the inbox", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindReply, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten, role: "inbox"})
 			return d, CheckOptions{}
-		}},
+		}, nil},
 		{"kind new", func(e *thEnv) (store.Draft, CheckOptions) {
 			d := e.draftOf(KindNew, thOwn, true)
 			e.dropCopy(d)
 			e.send(thSent{text: thRewritten})
 			return d, CheckOptions{}
+		}, nil},
+		// Nachbesserung 1, Sicherung (b): Ablageordner nicht mehr bekannt
+		// (Ordner entfernt, ON DELETE SET NULL) bzw. nicht gespiegelt.
+		{"mailbox gone", func(e *thEnv) (store.Draft, CheckOptions) {
+			d := e.draftOf(KindReply, thOwn, true)
+			e.dropCopy(d)
+			e.send(thSent{text: thRewritten})
+			return d, CheckOptions{}
+		}, func(e *thEnv, d store.Draft) {
+			if err := e.st.ExecForTest(`UPDATE drafts SET remote_mailbox_id = NULL WHERE id = ?`, d.ID); err != nil {
+				e.t.Fatal(err)
+			}
 		}},
+		{"mailbox not mirrored", func(e *thEnv) (store.Draft, CheckOptions) {
+			d := e.draftOf(KindReply, thOwn, true)
+			e.dropCopy(d)
+			e.send(thSent{text: thRewritten})
+			return d, CheckOptions{}
+		}, func(e *thEnv, d store.Draft) {
+			if err := e.st.ExecForTest(`UPDATE mailboxes SET sync_phase = 'new' WHERE id = ?`, e.m.boxes["drafts"]); err != nil {
+				e.t.Fatal(err)
+			}
+		}},
+		// Sicherung (c): In Gmail unter neuer Message-ID weiterbearbeitet
+		// (Entwurf mit In-Reply-To = Original, nach der Ablage datiert).
+		{"edited under a new Message-ID", func(e *thEnv) (store.Draft, CheckOptions) {
+			d := e.draftOf(KindReply, thOwn, true)
+			e.dropCopy(d)
+			e.send(thSent{role: "drafts", draftFlag: true, text: "noch in Arbeit", date: e.now.Add(5 * time.Minute)})
+			e.send(thSent{text: thRewritten})
+			return d, CheckOptions{}
+		}, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newThEnv(t)
 			d, o := c.run(e)
-			rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, o)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if rep.ReplacedInThread != 0 || len(rep.SentDraftIDs) != 0 {
-				t.Fatalf("report = %+v", rep)
+			// Zwei Läufe: der erste stellt das Fehlen der Kopie fest, erst
+			// der zweite dürfte ersetzen.
+			for run := 1; run <= 2; run++ {
+				rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, o)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if rep.ReplacedInThread != 0 || len(rep.SentDraftIDs) != 0 {
+					t.Fatalf("run %d: report = %+v", run, rep)
+				}
+				if run == 1 && c.after != nil {
+					c.after(e, d)
+				}
 			}
 			if got := e.status(d); got != string(StatusDraft) {
 				t.Fatalf("draft = %s", got)
@@ -184,6 +237,7 @@ func TestA06ReplacedConditions(t *testing.T) {
 	d = e.pushAt(d, e.now.Add(20*time.Minute))
 	e.dropCopy(d)
 	e.send(thSent{text: thRewritten, date: e.now.Add(30 * time.Minute)})
+	e.check()
 	if rep := e.check(); rep.ReplacedInThread != 1 {
 		t.Fatalf("reply after the push: %+v", rep)
 	}
@@ -234,5 +288,32 @@ func TestA06ReplacedRechecksInTransaction(t *testing.T) {
 	}
 	if got := e2.status(d2); got != string(StatusDraft) {
 		t.Fatalf("draft = %s", got)
+	}
+}
+
+// Nachbesserung 1: Erst adoptOrphan, dann checkCopy. Liegt die Kopie eines
+// abgebrochenen Ablageversuchs im Entwürfe-Ordner, übernimmt Replaced sie
+// und schließt nicht (wie draft_changed).
+func TestA06ReplacedAdoptsOrphanFirst(t *testing.T) {
+	ctx := context.Background()
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	e.dropCopy(d)
+	reply := e.send(thSent{text: thRewritten})
+	if rep := e.check(); rep.Missing != 1 {
+		t.Fatalf("first run = %+v", rep)
+	}
+	d = e.draft(d.ID)
+	if err := e.svc.Attempt(ctx, d.ID, store.PushAttempt{MailboxID: e.m.boxes["drafts"], UIDValidity: 1, ContentHash: d.MessageIDHeader + "verwaist",
+		MessageHash: "mh", Date: e.now.Format(time.RFC1123Z), Fingerprint: Fingerprint(d)}); err != nil {
+		t.Fatal(err)
+	}
+	e.m.put("drafts", sentMsg{messageID: d.MessageIDHeader, subject: d.Subject, draftFlag: true, date: e.now, text: "verwaist"})
+	d = e.draft(d.ID)
+	if done, err := e.svc.markReplaced(ctx, d.ID, reply, Fingerprint(d)); err != nil || done {
+		t.Fatalf("orphan copy: done %v, %v", done, err)
+	}
+	if got := e.draft(d.ID); got.Status != string(StatusDraft) {
+		t.Fatalf("draft = %s", got.Status)
 	}
 }

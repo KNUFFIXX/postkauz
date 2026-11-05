@@ -45,6 +45,13 @@ func TestA06QuoteHTMLKeepsBodyText(t *testing.T) {
 		"onlyemptyq":    ">\n> >",
 		"truncatedmark": "Text\n> zitiert\n" + QuoteTruncatedMarker,
 		"gtwords":       "> > > >\n>>>>\n> > > > x",
+		// Nachbesserung 1: Tiefe begrenzt (600 Ebenen), NUL in einer
+		// leeren letzten Zitatzeile (Fuzz-Fund).
+		"deep600":    "Text\n" + strings.Repeat("> ", 600) + "tief\n" + strings.Repeat("> ", 599) + ">\n" + strings.Repeat("> ", 30) + "mittel\n> flach",
+		"deep600end": "Text\n" + strings.Repeat("> ", 600) + "tief\n" + strings.Repeat("> ", 600),
+		"edge20":     "Text\n" + strings.Repeat("> ", 18) + "a\n" + strings.Repeat("> ", 19) + "b\n" + strings.Repeat("> ", 20) + "c\n" + strings.Repeat("> ", 18) + ">\n" + strings.Repeat("> ", 19) + ">",
+		"nulend":     "Text\n> eins\n> \x00",
+		"nulmid":     "Text\n> \x00\n> zwei\n> > \x00",
 	}
 	for name, txt := range originals {
 		for _, kind := range []Kind{KindReply, KindReplyAll} {
@@ -101,5 +108,29 @@ func TestA06QuoteHTMLForm(t *testing.T) {
 	// Weiterleitung bleibt wie bisher (kein gmail_quote).
 	if m := mustBuild(t, baseInput(KindForward)); strings.Contains(m.BodyHTML, "gmail_quote") {
 		t.Fatalf("forward:\n%s", m.BodyHTML)
+	}
+}
+
+// Nachbesserung 1: Das HTML hat höchstens maxQuoteDepth verschachtelte
+// blockquote, auch bei 600 Zitatebenen.
+func TestA06QuoteHTMLDepthLimit(t *testing.T) {
+	in := baseInput(KindReply)
+	in.Original.HTML = ""
+	in.Original.Text = "Text\n" + strings.Repeat("> ", 600) + "tief"
+	m := mustBuild(t, in)
+	depth, max := 0, 0
+	for _, tok := range strings.SplitAfter(m.BodyHTML, ">") {
+		switch {
+		case strings.Contains(tok, "<blockquote"):
+			depth++
+			if depth > max {
+				max = depth
+			}
+		case strings.Contains(tok, "</blockquote>"):
+			depth--
+		}
+	}
+	if max != maxQuoteDepth || depth != 0 {
+		t.Fatalf("blockquote depth %d (end %d), want %d", max, depth, maxQuoteDepth)
 	}
 }

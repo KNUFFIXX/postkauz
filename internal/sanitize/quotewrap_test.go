@@ -37,6 +37,19 @@ func TestJoinWrappedQuotes(t *testing.T) {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
 	}
+	// Bekannte Grenze (Nachbesserung 1, hingenommen): Eine eigene
+	// Inline-Zeile ohne Leerzeile direkt unter einer 73 bis 80 Byte
+	// langen „>“-Zeile ist von einer Fortsetzung nicht zu unterscheiden
+	// und wird angehängt (danach mit dem Zitat entfernt).
+	for _, n := range []int{73, 76, 80} {
+		in := q(n) + "\nJa, das passt so."
+		if got := JoinWrappedQuotes(in); got != q(n)+" Ja, das passt so." {
+			t.Errorf("inline line under a %d byte quote line: %q", n, got)
+		}
+		if got := StripQuotes(JoinWrappedQuotes("Danke.\n\n" + in)); got != "Danke." {
+			t.Errorf("inline line under a %d byte quote line, stripped: %q", n, got)
+		}
+	}
 	// Zeichen statt Bytes hätten den letzten Fall nicht verbunden.
 	if n := len([]rune("> "+strings.Repeat("ü", 6)+strings.Repeat("a", 58))) + 1 + 3; n > WrapMinWidth {
 		t.Fatalf("test case does not separate bytes from characters: %d", n)

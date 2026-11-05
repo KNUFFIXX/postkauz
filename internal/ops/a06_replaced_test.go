@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -28,6 +29,21 @@ func TestA06DraftGetNamesReplaced(t *testing.T) {
 	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": id}).(DraftDetail)
 	if got.ClosedReason != "replaced" || got.ReplacedByMessageID != 42 || got.SentMessageID != 0 {
 		t.Fatalf("replaced draft: reason %q, reply %d", got.ClosedReason, got.ReplacedByMessageID)
+	}
+	// Nachbesserung 1: Beide Felder stehen im OutputSchema von drafts.get.
+	b, _ := json.Marshal(got)
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+	_, props := requiredFields(t, DraftsGet(e.deps).OutputSchema)
+	for _, k := range []string{"closed_reason", "replaced_by_message_id"} {
+		if _, ok := out[k]; !ok {
+			t.Fatalf("output lacks %s: %s", k, b)
+		}
+	}
+	for k := range out {
+		if _, ok := props[k]; !ok {
+			t.Fatalf("output field %q is not in the OutputSchema of drafts.get", k)
+		}
 	}
 	if got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": other}).(DraftDetail); got.ClosedReason != "" {
 		t.Fatalf("abandoned by the human: reason %q", got.ClosedReason)

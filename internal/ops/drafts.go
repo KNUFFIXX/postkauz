@@ -921,7 +921,22 @@ func (o *draftOps) subjectDiffers(ctx context.Context, d store.Draft) (bool, err
 	if err != nil {
 		return false, err
 	}
-	return drafts.NormalizeSubject(m.Subject) != drafts.NormalizeSubject(d.Subject), nil
+	own := drafts.NormalizeSubject(d.Subject)
+	if own == drafts.NormalizeSubject(m.Subject) {
+		return false, nil
+	}
+	// Nachbesserung 1: wie der Nachrichtenbau ableitet (Präfix der
+	// Identität, auf 500 Zeichen gekürzt); ein langer Originalbetreff ist
+	// sonst nie gleich dem gekürzten.
+	prefix := ""
+	if d.IdentityID > 0 {
+		if id, err := o.svc.Store.Identity(ctx, d.IdentityID); err == nil {
+			prefix = id.ReplyPrefix
+		} else if !drafts.IsNotFound(err) {
+			return false, err
+		}
+	}
+	return own != drafts.NormalizeSubject(compose.DerivedReplySubject(m.Subject, prefix)), nil
 }
 
 // --- drafts.create -------------------------------------------------------------
@@ -1395,9 +1410,12 @@ func DraftsGet(d Deps) Operation {
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
     "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
     "older_copies": {"type": "integer"}, "older_copy_uids": {"type": "array", "items": {"type": "integer"}},
+    "updated_by": {"type": "string", "description": "who changed the content last"}, "push_hold": {"type": "string", "description": "why the push holds the draft back (key no longer valid)"},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
-    "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"}
+    "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
+    "closed_reason": {"type": "string", "enum": ["replaced"], "description": "why the system closed the draft: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent)"},
+    "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"}
   },
   "required": ["source", "draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
     "quote", "signature", "attachments", "warnings", "remote", "preview_hash", "created_by", "created_at", "updated_at"]

@@ -362,6 +362,24 @@ func (b *builder) valid(list []Address) []Address {
 	return out
 }
 
+// truncateSubject kürzt einen abgeleiteten Betreff auf max Zeichen.
+func truncateSubject(s string, max int) (string, bool) {
+	if utf8.RuneCountInString(s) <= max {
+		return s, false
+	}
+	return strings.TrimSpace(string([]rune(s)[:max])), true
+}
+
+// DerivedReplySubject ist der Betreff, den der Nachrichtenbau für eine
+// Antwort auf einen Betreff orig ableitet (ReplySubject mit prefix, auf
+// DefaultLimits.MaxSubjectChars gekürzt). Für den Vergleich in der
+// Betreff-Warnung (A06 Teil 5, Nachbesserung 1: ein Originalbetreff über
+// 500 Zeichen ergab sonst eine falsche Warnung).
+func DerivedReplySubject(orig, prefix string) string {
+	s, _ := truncateSubject(ReplySubject(orig, prefix), DefaultLimits.MaxSubjectChars)
+	return s
+}
+
 func (b *builder) subject() error {
 	in := b.in
 	if s := headerText(in.Subject); s != "" || in.Kind == KindNew {
@@ -377,8 +395,8 @@ func (b *builder) subject() error {
 	} else {
 		s = ReplySubject(in.Original.Subject, in.Identity.ReplyPrefix)
 	}
-	if utf8.RuneCountInString(s) > b.lim.MaxSubjectChars {
-		s = strings.TrimSpace(string([]rune(s)[:b.lim.MaxSubjectChars]))
+	s, cut := truncateSubject(s, b.lim.MaxSubjectChars)
+	if cut {
 		b.note(NoteSubjectTruncated)
 	}
 	b.msg.Subject = s

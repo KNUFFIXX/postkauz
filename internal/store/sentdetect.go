@@ -298,7 +298,8 @@ func (s *SQLite) DraftReplacedBy(ctx context.Context, draftID int64, closedAt ti
 	var params string
 	err = s.db.QueryRowContext(ctx, `SELECT params_redacted FROM audit_events WHERE ts BETWEEN ? AND ?
 		AND operation = 'drafts.replaced_detected' AND result = 'ok'
-		AND EXISTS (SELECT 1 FROM json_each(audit_events.targets) WHERE value = ?) ORDER BY id DESC LIMIT 1`,
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
+		WHERE value = ?) ORDER BY id DESC LIMIT 1`,
 		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&params)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, false, nil
@@ -313,4 +314,35 @@ func (s *SQLite) DraftReplacedBy(ctx context.Context, draftID int64, closedAt ti
 		return 0, false, fmt.Errorf("store: audit params of a replaced draft: %w", err)
 	}
 	return p.Reply, true, nil
+}
+
+// EditedReplyInDrafts meldet, ob im Entwürfe-Ordner eine Nachricht des
+// Kontos liegt, die nach after datiert ist, deren In-Reply-To die
+// Message-ID des Originals original ist und die keine von PostKauz
+// abgelegte Kopie ist (Message-ID keines Entwurfs des Kontos): Der Mensch
+// bearbeitet die Antwort dann in Gmail unter neuer Message-ID weiter (A06
+// Nachbesserung 1, Sicherung c für ersetzte Entwürfe). „Im Entwürfe-Ordner“
+// heißt hier vorsichtig: in irgendeinem Ordner mit \Draft, mit Rolle
+// drafts oder im Ablageordner eines Entwurfs. Ohne eigenen Index (nur für
+// Entwürfe, die alle übrigen Bedingungen erfüllen).
+func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time) (bool, error) {
+	var h string
+	err := x.tx.QueryRowContext(x.ctx, `SELECT trim(COALESCE(message_id_header, ''), `+trimIDChars+`) FROM messages
+		WHERE id = ? AND account_id = ?`, original, accountID).Scan(&h)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && h == "") {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var found bool
+	err = x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM messages m WHERE m.account_id = ?
+		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
+		AND COALESCE(m.date_header, m.internal_date, 0) > ?
+		AND EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
+			WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
+				OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
+		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header))`,
+		accountID, h, after.UnixMilli()).Scan(&found)
+	return found, err
 }

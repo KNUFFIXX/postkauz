@@ -3,7 +3,9 @@ package ops
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -72,5 +74,26 @@ func TestA06SubjectDiffersWarning(t *testing.T) {
 	}
 	if differs, err := o.subjectDiffers(context.Background(), store.Draft{Kind: "reply", InReplyToMsg: orig, Subject: "Termin"}); err != nil || !differs {
 		t.Fatalf("direct check with original: %v, %v", differs, err)
+	}
+}
+
+// Nachbesserung 1: Ein Originalbetreff über 500 Zeichen wird für die
+// Antwort gekürzt; das ist keine Abweichung (vorher falsche Warnung).
+func TestA06SubjectWarningLongOriginal(t *testing.T) {
+	e := newDraftEnv(t, true)
+	long := strings.Repeat("Heizungsabrechnung ", 40) // 760 Zeichen
+	long = strings.TrimSpace(long)
+	raw := "From: Anna Beispiel <anna@example.org>\r\nTo: Demo <demo@example.org>\r\nMessage-ID: <a06-lang@example.org>\r\nSubject: " + long + "\r\n\r\nText"
+	orig := e.addOriginalAt(t, 51, "a06-lang@example.org", "Anna Beispiel <anna@example.org>", long, raw)
+	out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": orig, "body_markdown": "Danke."}).(DraftsWriteOutput)
+	if n := utf8.RuneCountInString(out.Preview.Subject); n > 500 || n < 400 {
+		t.Fatalf("subject %d characters, want shortened to at most 500", n)
+	}
+	if slices.Contains(out.Warnings, SubjectDiffersWarning) {
+		t.Fatalf("warning for the shortened derived subject: %q", out.Warnings)
+	}
+	up := e.must(t, assistant, "drafts.update", map[string]any{"draft_id": out.DraftID, "body_markdown": "Danke!"}).(DraftsWriteOutput)
+	if slices.Contains(up.Warnings, SubjectDiffersWarning) {
+		t.Fatalf("update: warning for the shortened derived subject")
 	}
 }

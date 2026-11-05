@@ -271,6 +271,14 @@ func TestThreadConditions(t *testing.T) {
 			e := newThEnv(t)
 			d := c.run(e)
 			rep := e.check()
+			if strings.HasPrefix(c.name, "(g)") {
+				// Seit A06 Nachbesserung 1 ersetzt erst der Lauf nach dem,
+				// der das Fehlen der Kopie feststellt.
+				if rep.ReplacedInThread != 0 || e.status(d) != string(StatusDraft) {
+					t.Fatalf("first run = %+v", rep)
+				}
+				rep = e.check()
+			}
 			if rep.SentByThread+rep.SentByFallback+rep.SentByMessageID != 0 {
 				t.Fatalf("report = %+v", rep)
 			}
@@ -375,7 +383,11 @@ func TestThreadOneDraftPerMessage(t *testing.T) {
 		t.Fatalf("near = %s", got.Status)
 	}
 	// Seit A06 Teil 4: Die Antwort ersetzt die zweite Fassung (abandoned,
-	// ohne sent_message_id).
+	// ohne sent_message_id), seit Nachbesserung 1 im Lauf danach.
+	if got := e.status(far); got != string(StatusDraft) {
+		t.Fatalf("far in the first run = %s", got)
+	}
+	rep = e.check()
 	if got := e.draft(far.ID); got.Status != string(StatusAbandoned) || got.SentMessageID != 0 || rep.ReplacedInThread != 1 {
 		t.Fatalf("far = %s, sent %d, report %+v", got.Status, got.SentMessageID, rep)
 	}
