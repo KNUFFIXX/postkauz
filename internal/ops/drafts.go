@@ -422,6 +422,15 @@ func toStoreAddrs(l []compose.Address) []store.Addr {
 	return out
 }
 
+// SubjectDiffersWarning steht in warnings von drafts.create und
+// drafts.update, wenn der Betreff einer Antwort (reply, reply_all) nach
+// Entfernen der Präfixe (drafts.NormalizeSubject) von dem des Originals
+// abweicht (A06 Teil 5, Offene Frage 3): Gmail im Browser sendete eine
+// solche Antwort ohne In-Reply-To und References in einen neuen Verlauf,
+// und der Weg über den Verlauf der Versanderkennung greift dann nicht.
+// Nichts wird verhindert. Ohne Original im Spiegel (purge) keine Warnung.
+const SubjectDiffersWarning = "the subject differs from the original; Gmail may start a new conversation and drop In-Reply-To"
+
 // NoRecipientsWarning steht in warnings von drafts.create und
 // drafts.update, solange der Entwurf keinen Empfänger hat (To, Cc und Bcc
 // leer): Anlegen und Ändern geht (Entwurf in Arbeit), drafts.request_ready
@@ -875,6 +884,11 @@ func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Resul
 	if drafts.CheckRecipients(d) != nil {
 		out.Warnings = append(out.Warnings, NoRecipientsWarning)
 	}
+	if differs, err := o.subjectDiffers(ctx, d); err != nil {
+		return DraftsWriteOutput{}, err
+	} else if differs {
+		out.Warnings = append(out.Warnings, SubjectDiffersWarning)
+	}
 	for _, n := range append(res.Notes, notes...) {
 		out.Notes = addNote(out.Notes, n)
 	}
@@ -890,6 +904,24 @@ func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Resul
 		}
 	}
 	return out, nil
+}
+
+// subjectDiffers meldet, ob der Betreff einer Antwort nach
+// NormalizeSubject von dem ihres Originals im Spiegel abweicht (A06 Teil 5,
+// SubjectDiffersWarning). Weiterleitungen, neue Entwürfe und Antworten ohne
+// Original im Spiegel: false.
+func (o *draftOps) subjectDiffers(ctx context.Context, d store.Draft) (bool, error) {
+	if (d.Kind != string(drafts.KindReply) && d.Kind != string(drafts.KindReplyAll)) || d.InReplyToMsg <= 0 {
+		return false, nil
+	}
+	m, err := o.svc.Store.MessageByID(ctx, d.InReplyToMsg)
+	if errors.Is(err, store.ErrMessageNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return drafts.NormalizeSubject(m.Subject) != drafts.NormalizeSubject(d.Subject), nil
 }
 
 // --- drafts.create -------------------------------------------------------------
