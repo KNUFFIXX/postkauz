@@ -77,9 +77,12 @@
 //   - Zitat und Weiterleitung nutzen den bereinigten Text der
 //     Ausgangsnachricht (Text aus ihrem HTML ohne versteckten Text, sonst
 //     ihr Klartext), nie ihr rohes HTML: So gelangt weder versteckter Text
-//     noch Remote-Inhalt der fremden Mail in den Entwurf. Zitat als
-//     <blockquote> (im Text „> "), Einleitungszeile `On <Date>, <From>
-//     wrote:`; Weiterleitung mit Kopfblock (From, Date, Subject, To, Cc).
+//     noch Remote-Inhalt der fremden Mail in den Entwurf. Zitat seit A06
+//     Teil 2 in Gmails Form (div.gmail_quote, Einleitungszeile `On <Date>,
+//     <From> wrote:` in div.gmail_attr, blockquote.gmail_quote mit
+//     type="cite", innere Ebenen verschachtelt; im Text „> " wie bisher,
+//     Byte für Byte, quoteHTML); Weiterleitung mit Kopfblock (From, Date,
+//     Subject, To, Cc).
 //   - Struktur: multipart/alternative (text/plain, text/html, je
 //     quoted-printable); mit Anhängen darum multipart/mixed (Anhänge
 //     base64).

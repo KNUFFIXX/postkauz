@@ -301,7 +301,8 @@ func TestQuoteAndSignature(t *testing.T) {
 			t.Errorf("quote contains %q", bad)
 		}
 	}
-	if !strings.Contains(m.BodyHTML, "<blockquote>") || strings.Index(text, "Mit freundlichen") > strings.Index(text, "On Wed") {
+	// Seit A06 Teil 2 in Gmails Form (gmail_quote, type="cite").
+	if !strings.Contains(m.BodyHTML, `<blockquote class="gmail_quote" type="cite"`) || strings.Index(text, "Mit freundlichen") > strings.Index(text, "On Wed") {
 		t.Errorf("structure:\n%s", m.BodyHTML)
 	}
 	// Eigene Vorlage, ohne Zitat, ohne Signatur.

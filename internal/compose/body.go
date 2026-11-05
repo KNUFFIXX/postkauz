@@ -70,6 +70,79 @@ func textToHTML(s string) string {
 	return strings.Join(lines, "<br>\n")
 }
 
+// gmailQuoteStyle und gmailQuoteOpen sind der Zitatblock, wie Gmail ihn
+// selbst baut (A06 Teil 2); type="cite" zusätzlich für Thunderbird und
+// Apple Mail.
+const (
+	gmailQuoteStyle = "margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"
+	gmailQuoteOpen  = `<blockquote class="gmail_quote" type="cite" style="` + gmailQuoteStyle + `">`
+)
+
+// quoteHTML baut Einleitungszeile und Zitat in Gmails Form (A06 Teil 2):
+//
+//	<div class="gmail_quote"><div dir="ltr" class="gmail_attr">Einleitung<br></div>
+//	<blockquote class="gmail_quote" type="cite" style="…">…</blockquote></div>
+//
+// Innere Zitatebenen des Originaltexts (Zeilen mit „> “) werden
+// verschachtelte blockquote derselben Form statt wörtlichem „>“. Grund:
+// Gmail im Browser baut beim Senden den Klartext aus dem HTML; aus
+// wörtlichem „>“ im Blockquote wurden umbrochene Zeilen, deren
+// Fortsetzungen kein „>“ trugen (Befund Dauerbetrieb, Teil 3).
+//
+// Pflicht: Der Klartext des Entwurfs (sanitize.HTML(final).Text, daraus
+// body_text, QuoteOf und preview_hash) bleibt Byte für Byte wie in rc3
+// (<div>Einleitung</div><blockquote> + textToHTML). Deshalb verschachtelt
+// nur die kanonische Form: Eine Zeile beginnt mit k-mal „> “ (k ≥ 0), der
+// Rest ist der Inhalt auf Ebene k; eine Zeile, die nur aus k-mal „> “ ohne
+// das letzte Leerzeichen besteht („>“, „> >“), ist eine leere Zeile auf
+// Ebene k. sanitize schreibt je Ebene „> “ davor, also wieder genau die
+// Zeichen von rc3. Alles andere („>foo“, „>>foo“, „> >foo“ ab dem ersten
+// nicht kanonischen „>“) bleibt wörtlicher Text auf seiner Ebene, sonst
+// änderte sich der Klartext.
+func quoteHTML(line, text string) string {
+	var b strings.Builder
+	b.WriteString(`<div class="gmail_quote"><div dir="ltr" class="gmail_attr">` + html.EscapeString(line) + "<br></div>")
+	if strings.TrimSpace(text) != "" {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+		lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+		b.WriteString(gmailQuoteOpen)
+		level := 0
+		for i, l := range lines {
+			k, content := quoteLevel(sanitize.Text(l))
+			for ; level < k; level++ {
+				b.WriteString(gmailQuoteOpen)
+			}
+			for ; level > k; level-- {
+				b.WriteString("</blockquote>")
+			}
+			b.WriteString(html.EscapeString(content))
+			// Eine leere letzte Zeile auf einer inneren Ebene braucht ihr
+			// <br>, sonst fiele sie weg (rc3 schrieb sie als „> >“).
+			if i < len(lines)-1 || (k > 0 && strings.TrimSpace(content) == "") {
+				b.WriteString("<br>\n")
+			}
+		}
+		b.WriteString(strings.Repeat("</blockquote>", level+1))
+	}
+	b.WriteString("</div>\n")
+	return b.String()
+}
+
+// quoteLevel zerlegt eine Zitatzeile in Ebene und Inhalt (kanonische Form,
+// siehe quoteHTML): k-mal „> “ vorn ist Ebene k; eine Zeile aus k-mal „> “
+// ohne das letzte Leerzeichen ist leer auf Ebene k.
+func quoteLevel(l string) (int, string) {
+	k := 0
+	for strings.HasPrefix(l, "> ") {
+		l = l[2:]
+		k++
+	}
+	if l == ">" {
+		return k + 1, ""
+	}
+	return k, l
+}
+
 // originalText ist der bereinigte Text der Ausgangsnachricht: aus ihrem
 // HTML ohne versteckten Text, sonst ihr Klartext. Ist der Klartext
 // HTML-Quelltext (A05 Teil 3, sanitize.PlainIsHTML; manche
@@ -197,10 +270,7 @@ func (b *builder) body() error {
 	}
 	switch o := in.Original; {
 	case (in.Kind == KindReply || in.Kind == KindReplyAll) && in.Quote:
-		doc.WriteString("<div><br></div>\n<div>" + html.EscapeString(b.quoteLine(o)) + "</div>\n")
-		if t := b.quotedText(o); strings.TrimSpace(t) != "" {
-			doc.WriteString("<blockquote>" + textToHTML(t) + "</blockquote>\n")
-		}
+		doc.WriteString("<div><br></div>\n" + quoteHTML(b.quoteLine(o), b.quotedText(o)))
 	case in.Kind == KindForward:
 		lines := []string{"---------- Forwarded message ----------"}
 		add := func(k, v string) {
