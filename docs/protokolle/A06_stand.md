@@ -12,7 +12,7 @@ Auftrag [auftraege/A06_alltag2.md](../../auftraege/A06_alltag2.md) (Betreiber-Si
 | `748edd7` | Teil 3: verwaiste Fortsetzungszeilen (`sanitize.JoinWrappedQuotes`), `SentCheckRev` 2 |
 | `544d725` | Teil 4: ersetzte Entwürfe (`abandoned`, Grund `replaced`) |
 | `e821a3e` | Teil 5: Warnung bei abweichendem Betreff |
-| (Teil 6) | CHANGELOG, Roadmap, Abnahme D12, dieses Protokoll; **Build-Commit von 0.3.0-rc4** |
+| `fc46320` | Teil 6: CHANGELOG, Roadmap, Abnahme D12, dieses Protokoll (erste Fassung); **Build-Commit von 0.3.0-rc4** |
 | (danach) | Prüfsummen und Prüfläufe in diesem Protokoll |
 
 Die Teile 1 bis 4 sind aus einem gemeinsamen Arbeitsstand in Einzel-Commits zerlegt; jeder Zwischenstand ist geprüft (frischer Arbeitsbaum je Commit: `gofmt -l` leer, `go vet ./...`, `go test -short` für compose, ops, drafts, cli, sanitize, store, mailsync: alle grün).
@@ -46,11 +46,60 @@ Teil 3 liest nicht mehr Nachrichten als vorher (der Text wird weiter erst für K
 
 ## 4. Prüfläufe
 
-Folgen im Abschluss der Sitzung.
+Umgebung: Cloud-Sitzung, Go 1.27.3 (einmal über `GOTOOLCHAIN=go1.27.3 go version` geholt, danach `GOTOOLCHAIN=local`, Ausnahme laut CLAUDE.md). **Kein Docker** in dieser Sitzung.
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` auf dem Gesamtstand vor dem Zerlegen | grün (8:13 min; gofmt, vet, alle Tests, Guards, PII-Gate) |
+| Zwischenstände `0b4cae1`, `7c724ce`, `748edd7`, `544d725` | je grün (gofmt, `go vet ./...`, `go test -short` der berührten Pakete) |
+| `make check` an `fc46320` | grün (Code unverändert, Testcache) |
+| `make cross` an `fc46320` | grün (linux/amd64, windows/amd64, darwin/arm64) |
+| `make race` an `fc46320` | grün (Exit 0, 36:25 min; 41 Pakete ok, kein Data Race; `internal/cli` 34:48 min, `internal/importer` 20:20 min, `internal/ops` 16:42 min, `internal/mailsync` 16:31 min). `internal/cli` nähert sich der Zeitgrenze von 45 min (vorher 27 bis 30 min). |
+| `make integration` | nicht gelaufen (kein Docker) |
+| `make vuln` | nicht gelaufen (in der Cloud gesperrt) |
+
+Tests: 23 neue Testfunktionen (A06: `TestA06…` in compose, ops, cli, drafts; `TestJoinWrappedQuotes`, `TestJoinWrappedQuotesThenStrip` in sanitize); geändert: `TestQuoteAndSignature` (Prüfung auf `blockquote.gmail_quote`), `TestGoldenReplyAll` (Golden-Datei neu), `TestThreadConditions` und `TestThreadOneDraftPerMessage` (ersetzt statt offen). Im Repository jetzt 1.072 Testfunktionen. Die Pflichttests zu Teil 1 bis 3 sind gegen den alten Code rot (Teil 1: `invalid_address`; Teil 3: Fall A, B und Umlaut-Kante bleiben offen) und mit der Änderung grün.
 
 ## 5. Build 0.3.0-rc4
 
-Folgt nach dem Build-Commit.
+Nach [betrieb.md](../betrieb.md) Abschnitt 7: zwei frische Klone ohne Tags von GitHub (`git clone --no-tags --branch claude/youthful-wright-fimlkq`), je `git checkout fc46320`, `git status --short` leer, keine Tags, `make release VERSION=0.3.0-rc4`. **Build-Commit `fc46320`**; danach kam nur dieser Nachtrag zum Protokoll dazu.
+
+- `dist/SHA256SUMS` beider Klone gleich (ohne die Zeile `VERSION`).
+- `go version -m` beider Windows-Programme gleich: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261105143031-fc463206ecc8`, `vcs.revision=fc463206ecc83a81f0e24c313bf886b808b38a6f`, `vcs.modified=false`.
+- `postkauz version`: `postkauz 0.3.0-rc4 (go1.27.3 linux/amd64)`; `doctor --json` an einem leeren Datenverzeichnis: `schema_known 22` (keine Migration).
+
+```
+f4f0ef69cd28b2a97a08be1aff9241c5ba27fb122dec5dd30138cfe7c5e37085  postkauz-windows-amd64.exe
+773e018d6ddb2a2735d2c56803be01577662a300dd5bdcc36b24c1fdc7bdd32e  postkauz-linux-amd64
+db3939bd2449a80e3b178dc6b63f454b2c226f942bd5704bf73e457f70c88b2d  postkauz-darwin-arm64
+```
+
+Windows-Programm: 22.638.080 Byte. Das Abnahmeskript gehört zum Stand des Zweigs (`docs/abnahme_D12.ps1`), nicht zum Programmpaket.
+
+### 5.1 Diff der Golden-Datei (Teil 2)
+
+`internal/compose/testdata/reply_all.golden.eml`: Der Klartextteil ist unverändert; anders sind nur der HTML-Teil und die MIME-Grenzen (sie hängen am Inhalt):
+
+```
+-<div>On Wed, 21 Oct 2026 09:15 +0200, Erika Beispiel &lt;erika@example.org&=
+-gt; wrote:</div>
+-<blockquote>Guten Tag,<br>
++<div class=3D"gmail_quote"><div dir=3D"ltr" class=3D"gmail_attr">On Wed, 21=
++ Oct 2026 09:15 +0200, Erika Beispiel &lt;erika@example.org&gt; wrote:<br><=
++/div><blockquote class=3D"gmail_quote" type=3D"cite" style=3D"margin:0px 0p=
++x 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">Guten =
++Tag,<br>
+ …
+-Erika</blockquote>
++Erika</blockquote></div>
+```
+
+## 5a. Bestand und Upgrade
+
+- **Teil 1:** Gespeicherte Entwürfe halten Name und Adresse getrennt (`store.Addr`); sie heilen ohne Datenkorrektur beim nächsten `update`/`request_ready` (Test `TestA06StoredDraftHealsOnUpdate`: mit dem alten Code `invalid_address`, mit dem neuen `pending_approval`). Ein abgelegter Entwurf mit Klammern im Empfängernamen trug bisher den gekürzten Namen in der Kopie; nach dem Update ergibt der Neubau den vollen Namen, `draft show --eml` meldet dann `changed after the copy`.
+- **Teil 2:** offene Antwort-Entwürfe mit Zitat: `approve` → `approval_stale`, `ready` → `draft` beim Push, `--eml` „changed after the copy“; `preview_hash` und Übernahme-Erkennung stabil (body_text gleich).
+- **Teil 3:** `SentCheckRev` 2 → einmalige Neuprüfung aller offenen Entwürfe im ersten vollständigen Lauf.
+- **Teil 4:** greift ab dem ersten Lauf bei jedem Lauf (ohne Hochwassermarke), also auch für Entwürfe von vor dem Update.
 
 ## 6. Offen
 
