@@ -421,6 +421,12 @@ func (p *DraftPusher) AfterSync(ctx context.Context, accountID int64, o drafts.C
 	return p.o.svc.CheckAfterSync(ctx, accountID, o)
 }
 
+// MissingDrafts liefert die offenen Entwürfe mit remote_state missing vor
+// Beginn eines Laufs (A06 Nachbesserung 2, drafts.CheckOptions.MissingBefore).
+func (p *DraftPusher) MissingDrafts(ctx context.Context, accountID int64) (map[int64]bool, error) {
+	return p.o.svc.MissingDrafts(ctx, accountID)
+}
+
 // approvedMessage meldet, ob die gebaute Nachricht (Hash ohne Date) die
 // ist, die der Mensch freigegeben hat: erteilte Freigabe des Entwurfs mit
 // demselben message_hash.

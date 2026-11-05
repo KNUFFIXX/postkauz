@@ -323,8 +323,10 @@ func (s *SQLite) DraftReplacedBy(ctx context.Context, draftID int64, closedAt ti
 // bearbeitet die Antwort dann in Gmail unter neuer Message-ID weiter (A06
 // Nachbesserung 1, Sicherung c für ersetzte Entwürfe). „Im Entwürfe-Ordner“
 // heißt hier vorsichtig: in irgendeinem Ordner mit \Draft, mit Rolle
-// drafts oder im Ablageordner eines Entwurfs. Ohne eigenen Index (nur für
-// Entwürfe, die alle übrigen Bedingungen erfüllen).
+// drafts oder im Ablageordner eines Entwurfs. Gesucht wird wie bei
+// SentReplies nur im Verlauf des Originals (thread_refs → messages_thread);
+// Gmail führt eine weiterbearbeitete Antwort dort, weil sie References auf
+// das Original trägt.
 func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time) (bool, error) {
 	var h string
 	err := x.tx.QueryRowContext(x.ctx, `SELECT trim(COALESCE(message_id_header, ''), `+trimIDChars+`) FROM messages
@@ -335,14 +337,18 @@ func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time
 	if err != nil {
 		return false, err
 	}
+	// Wie replies(): erst der Thread des Originals über thread_refs, dann
+	// seine Nachrichten über messages_thread (Nachbesserung 2; vorher alle
+	// Nachrichten des Kontos).
 	var found bool
-	err = x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM messages m WHERE m.account_id = ?
+	err = x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
+		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
 		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
 		AND COALESCE(m.date_header, m.internal_date, 0) > ?
 		AND EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
 			WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
 				OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
 		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header))`,
-		accountID, h, after.UnixMilli()).Scan(&found)
+		accountID, h, h, after.UnixMilli()).Scan(&found)
 	return found, err
 }

@@ -235,8 +235,11 @@ const addrSpecials = `()<>[]:;@\,."`
 // (formatAddr, wird nicht wieder geparst).
 func FormatAddress(name, address string) string {
 	name = strings.Join(strings.Fields(name), " ")
+	// Der lokale Teil steht in Anführungszeichen, wenn er sie braucht
+	// (`"a b"@example.com`; net/mail liefert ihn ohne). Nachbesserung 2.
+	addr := strings.TrimSuffix(strings.TrimPrefix((&mail.Address{Address: address}).String(), "<"), ">")
 	if name == "" || strings.EqualFold(name, strings.TrimSpace(address)) {
-		return address
+		return addr
 	}
 	if strings.ContainsAny(name, addrSpecials) || strings.Contains(name, "=?") {
 		var b strings.Builder
@@ -250,7 +253,7 @@ func FormatAddress(name, address string) string {
 		b.WriteByte('"')
 		name = b.String()
 	}
-	return name + " <" + address + ">"
+	return name + " <" + addr + ">"
 }
 
 // parseAddress prüft eine Adresse nach RFC 5322 (net/mail) und bereinigt
@@ -331,6 +334,12 @@ func (b *builder) addresses() error {
 					continue
 				}
 				seen[n] = true
+				// A06 Nachbesserung 2: Name gleich der Adresse schon beim
+				// Bau weglassen (wie FormatAddress), sonst änderte das erste
+				// drafts.update Empfänger und preview_hash.
+				if strings.EqualFold(strings.TrimSpace(a.Name), a.Address) {
+					a.Name = ""
+				}
 				out = append(out, a)
 			}
 		}

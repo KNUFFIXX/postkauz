@@ -66,8 +66,35 @@ func TestDraftCheckOptionsFollowMirroredMailboxes(t *testing.T) {
 		if _, err := e.sync(t, ops.SyncOptions{Mailboxes: x.boxes}); err != nil {
 			t.Fatal(err)
 		}
-		if len(rec.got) != 1 || rec.got[0] != x.want {
+		// MissingBefore liest der Lauf vor dem Push (A06 Nachbesserung 2);
+		// hier nur, dass es gesetzt ist (nie nil aus dem Sync).
+		if len(rec.got) == 1 && rec.got[0].MissingBefore == nil {
+			t.Fatalf("mailboxes %v: MissingBefore not set by the run", x.boxes)
+		}
+		if len(rec.got) == 1 {
+			rec.got[0].MissingBefore = nil
+		}
+		if len(rec.got) != 1 || rec.got[0].SkipSent != x.want.SkipSent || rec.got[0].KeepMark != x.want.KeepMark {
 			t.Fatalf("mailboxes %v: options %+v, want %+v", x.boxes, rec.got, x.want)
 		}
+	}
+}
+
+// A06 Nachbesserung 2: Der Lauf reicht der Prüfung die Entwürfe weiter, die
+// schon vor seinem Beginn missing waren (gelesen vor dem Push).
+func TestDraftCheckGetsMissingBeforeRun(t *testing.T) {
+	e := newPushEnv(t, "Drafts", "Sent")
+	rec := &recordingCheck{DraftPusher: e.runner.Pusher}
+	e.runner.Pusher = rec
+	gone := e.newDraft(t, "Weg")
+	open := e.newDraft(t, "Offen")
+	if err := e.st.ExecForTest(`UPDATE drafts SET remote_state = 'missing' WHERE id = ?`, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.sync(t, ops.SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.got) != 1 || !rec.got[0].MissingBefore[gone.ID] || rec.got[0].MissingBefore[open.ID] {
+		t.Fatalf("missing before = %+v", rec.got)
 	}
 }

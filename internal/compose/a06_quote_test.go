@@ -50,8 +50,11 @@ func TestA06QuoteHTMLKeepsBodyText(t *testing.T) {
 		"deep600":    "Text\n" + strings.Repeat("> ", 600) + "tief\n" + strings.Repeat("> ", 599) + ">\n" + strings.Repeat("> ", 30) + "mittel\n> flach",
 		"deep600end": "Text\n" + strings.Repeat("> ", 600) + "tief\n" + strings.Repeat("> ", 600),
 		"edge20":     "Text\n" + strings.Repeat("> ", 18) + "a\n" + strings.Repeat("> ", 19) + "b\n" + strings.Repeat("> ", 20) + "c\n" + strings.Repeat("> ", 18) + ">\n" + strings.Repeat("> ", 19) + ">",
-		"nulend":     "Text\n> eins\n> \x00",
-		"nulmid":     "Text\n> \x00\n> zwei\n> > \x00",
+		// Nachbesserung 2: leeres Zitat (nur die Einleitungszeile).
+		"onlyintro": "   ",
+		"onlyblank": "\n\n",
+		"nulend":    "Text\n> eins\n> \x00",
+		"nulmid":    "Text\n> \x00\n> zwei\n> > \x00",
 	}
 	for name, txt := range originals {
 		for _, kind := range []Kind{KindReply, KindReplyAll} {

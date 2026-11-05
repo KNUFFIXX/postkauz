@@ -3,6 +3,7 @@ package sanitize
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // A06 Teil 3: Regel von JoinWrappedQuotes an den Kanten.
@@ -50,6 +51,16 @@ func TestJoinWrappedQuotes(t *testing.T) {
 			t.Errorf("inline line under a %d byte quote line, stripped: %q", n, got)
 		}
 	}
+	// Die Grenze gilt für jede „>“-Zeile bis 80 Bytes, nicht nur für lange
+	// (Nachbesserung 2): 60 Bytes + 1 + „Entschuldigung,“ (15) = 76 > 72.
+	in := q(60) + "\nEntschuldigung, das habe ich übersehen."
+	if got := JoinWrappedQuotes(in); got != q(60)+" Entschuldigung, das habe ich übersehen." {
+		t.Errorf("own line under a 60 byte quote line: %q", got)
+	}
+	// Mit kurzem erstem Wort bleibt sie stehen: 60 + 1 + 2 = 63.
+	if got := JoinWrappedQuotes(q(60) + "\nJa, das habe ich übersehen."); got != q(60)+"\nJa, das habe ich übersehen." {
+		t.Errorf("short first word: %q", got)
+	}
 	// Zeichen statt Bytes hätten den letzten Fall nicht verbunden.
 	if n := len([]rune("> "+strings.Repeat("ü", 6)+strings.Repeat("a", 58))) + 1 + 3; n > WrapMinWidth {
 		t.Fatalf("test case does not separate bytes from characters: %d", n)
@@ -71,5 +82,26 @@ func TestJoinWrappedQuotesThenStrip(t *testing.T) {
 	inline := "Am 01.11.2026 schrieb Anna <anna@example.org>:\n> Kommt der Monteur?\nJa, am Freitag.\n> Und die Rechnung?\nKommt mit der Post."
 	if got := StripQuotes(JoinWrappedQuotes(inline)); got != "Ja, am Freitag.\nKommt mit der Post." {
 		t.Fatalf("inline answers = %q", got)
+	}
+}
+
+// Nachbesserung 2: linear auch bei einer sehr langen Kette (etwa 10 MiB
+// Fortsetzungen unter einer „>“-Zeile); vorher quadratisch.
+func TestJoinWrappedQuotesLongChainIsLinear(t *testing.T) {
+	line := strings.Repeat("x", 74) // 74 + 1 + 74 > 72, höchstens 80
+	n := 10 << 20 / (len(line) + 1)
+	var b strings.Builder
+	b.WriteString("> " + strings.Repeat("q", 74) + "\n")
+	for i := 0; i < n; i++ {
+		b.WriteString(line + "\n")
+	}
+	in := b.String()
+	start := time.Now()
+	got := JoinWrappedQuotes(in)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("10 MiB chain took %v", d)
+	}
+	if strings.Count(got, "\n") != 1 || len(got) != len(in) {
+		t.Fatalf("chain not joined into one line: %d newlines, %d of %d bytes", strings.Count(got, "\n"), len(got), len(in))
 	}
 }

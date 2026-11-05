@@ -114,6 +114,29 @@ type CheckOptions struct {
 	// kann noch in Gesendet hinzukommen, und der nächste vollständige Lauf
 	// soll sie als neu prüfen.
 	KeepMark bool
+	// MissingBefore: die offenen Entwürfe, deren remote_state schon vor
+	// Beginn des Sync-Laufs missing war (A06 Nachbesserung 2, Sicherung a
+	// für ersetzte Entwürfe). Der Sync liest den Stand vor dem Push zu
+	// Beginn des Laufs (PushCheck kann missing im selben Lauf setzen,
+	// MissingDrafts). nil: CheckAfterSync liest den Stand selbst zu Beginn
+	// der Prüfung (direkte Aufrufe).
+	MissingBefore map[int64]bool
+}
+
+// MissingDrafts liefert die offenen Entwürfe des Kontos mit remote_state
+// missing (für CheckOptions.MissingBefore, vor Beginn eines Laufs).
+func (s *Service) MissingDrafts(ctx context.Context, accountID int64) (map[int64]bool, error) {
+	open, err := s.Store.ListDrafts(ctx, store.DraftFilter{AccountID: accountID, Status: openStatuses})
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]bool{}
+	for _, d := range open {
+		if d.RemoteState == RemoteMissing {
+			out[d.ID] = true
+		}
+	}
+	return out, nil
 }
 
 // CheckAfterSync führt die Prüfung nach dem Spiegeln für ein Konto aus
@@ -123,7 +146,14 @@ type CheckOptions struct {
 func (s *Service) CheckAfterSync(ctx context.Context, accountID int64, o CheckOptions) (CheckReport, error) {
 	var rep CheckReport
 	if !o.SkipSent {
-		if err := s.detectSent(ctx, accountID, o.KeepMark, &rep); err != nil {
+		if o.MissingBefore == nil {
+			m, err := s.MissingDrafts(ctx, accountID)
+			if err != nil {
+				return rep, err
+			}
+			o.MissingBefore = m
+		}
+		if err := s.detectSent(ctx, accountID, o.KeepMark, o.MissingBefore, &rep); err != nil {
 			return rep, err
 		}
 	}
@@ -188,7 +218,7 @@ func (s *Service) settleClosedAttempts(ctx context.Context, accountID int64, rep
 // Der Weg über die Message-ID fragt je offenem Entwurf den Index
 // messages_message_id (billig, jedes Mal vollständig). Der Rückfall prüft
 // nur, was neu ist (Gegenprüfung S2.6–S2.8, W2; detectFallback).
-func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool, rep *CheckReport) error {
+func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool, missingBefore map[int64]bool, rep *CheckReport) error {
 	open, err := s.Store.ListDrafts(ctx, store.DraftFilter{AccountID: accountID, Status: openStatuses})
 	if err != nil {
 		return err
@@ -254,7 +284,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 			rest = append(rest, d)
 		}
 	}
-	return s.detectReplaced(ctx, accountID, rest, copies, rep)
+	return s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep)
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe

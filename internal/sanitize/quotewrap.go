@@ -33,7 +33,17 @@ const (
 // Spiegel, Suche, Snippet und mail_get_message bleiben unverändert.
 func JoinWrappedQuotes(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	// Linear (Nachbesserung 2): Je Ausgabezeile die Teile sammeln und
+	// einmal zusammensetzen; Anhängen an einen wachsenden String wäre bei
+	// langen Ketten quadratisch.
 	out := make([]string, 0, len(lines))
+	var parts []string // Teile der letzten Ausgabezeile, solange eine Kette läuft
+	flush := func() {
+		if len(parts) > 0 {
+			out[len(out)-1] = strings.Join(parts, " ")
+			parts = parts[:0]
+		}
+	}
 	prev := ""       // vorige physische Zeile
 	inQuote := false // vorige Zeile ist eine „>“-Zeile oder eine Fortsetzung
 	for _, l := range lines {
@@ -42,13 +52,18 @@ func JoinWrappedQuotes(text string) string {
 		quote := strings.HasPrefix(t, ">")
 		if !quote && inQuote && strings.TrimSpace(l) != "" && len(prev) <= WrapMaxLine &&
 			len(prev)+1+len(firstWord(t)) > WrapMinWidth {
-			out[len(out)-1] += " " + strings.TrimSpace(l)
+			if len(parts) == 0 {
+				parts = append(parts, out[len(out)-1])
+			}
+			parts = append(parts, strings.TrimSpace(l))
 			prev = l
 			continue
 		}
+		flush()
 		out = append(out, l)
 		prev, inQuote = l, quote
 	}
+	flush()
 	return strings.Join(out, "\n")
 }
 

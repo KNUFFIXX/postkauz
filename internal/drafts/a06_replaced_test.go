@@ -261,54 +261,98 @@ func (e *thEnv) pushAt(d store.Draft, at time.Time) store.Draft {
 	return e.draft(d.ID)
 }
 
-// Inhalt ändert sich während der Prüfung (Fingerabdruck) bzw. eine neue
-// Kopie liegt im Entwürfe-Ordner (f): Replaced schließt nicht.
-func TestA06ReplacedRechecksInTransaction(t *testing.T) {
-	ctx := context.Background()
-	e := newThEnv(t)
+// closableReplaced baut einen Entwurf im sonst schließbaren Zustand: Kopie
+// in einem früheren Lauf als fehlend vermerkt (missing), eigene Antwort mit
+// anderem Text gesendet. Liefert Entwurf und Antwort.
+func closableReplaced(t *testing.T, e *thEnv) (store.Draft, int64) {
+	t.Helper()
 	d := e.draftOf(KindReply, thOwn, true)
 	e.dropCopy(d)
 	reply := e.send(thSent{text: thRewritten})
-	// Der verglichene Stand ist nicht mehr der gespeicherte (ein anderer
-	// Schreiber hat den Inhalt zwischen Vergleich und Schließen geändert):
-	// anderer Fingerabdruck.
-	stale := Fingerprint(e.draft(d.ID)) + "-alt"
-	if done, err := e.svc.markReplaced(ctx, d.ID, reply, stale); err != nil || done {
-		t.Fatalf("changed content: done %v, %v", done, err)
+	before, _ := e.svc.MissingDrafts(context.Background(), e.acc)
+	if rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, CheckOptions{MissingBefore: before}); err != nil || rep.Missing != 1 {
+		t.Fatalf("run that finds the copy gone = %+v, %v", rep, err)
 	}
-	if got := e.status(d); got != string(StatusDraft) {
-		t.Fatalf("draft = %s", got)
+	d = e.draft(d.ID)
+	if d.RemoteState != RemoteMissing {
+		t.Fatalf("remote = %s", d.RemoteState)
 	}
-	// Die Kopie ist wieder da (laut Spiegel): (f) gilt nicht mehr.
-	e2 := newThEnv(t)
-	d2 := e2.draftOf(KindReply, thOwn, true)
-	reply2 := e2.send(thSent{text: thRewritten})
-	if done, err := e2.svc.markReplaced(ctx, d2.ID, reply2, Fingerprint(e2.draft(d2.ID))); err != nil || done {
-		t.Fatalf("copy present: done %v, %v", done, err)
-	}
-	if got := e2.status(d2); got != string(StatusDraft) {
-		t.Fatalf("draft = %s", got)
+	return d, reply
+}
+
+// Nachbesserung 2: Die Prüfungen in der Transaktion von Replaced. Jeder Fall
+// startet aus einem sonst schließbaren missing-Zustand, verletzt genau eine
+// Bedingung (Replaced schließt nicht) und hebt sie wieder auf (Replaced
+// schließt dann; so ist belegt, dass genau diese Bedingung gehalten hat).
+func TestA06ReplacedRechecksInTransaction(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name         string
+		break_, mend func(e *thEnv, d store.Draft)
+		staleFprint  bool
+	}{
+		{name: "content changed (fingerprint)", staleFprint: true},
+		{name: "copy back in the Drafts folder", break_: func(e *thEnv, d store.Draft) {
+			e.m.link("drafts", e.copyID(d), true)
+		}, mend: func(e *thEnv, d store.Draft) {
+			e.exec(`DELETE FROM message_mailboxes WHERE mailbox_id = ? AND message_id = ?`, e.m.boxes["drafts"], e.copyID(d))
+		}},
+		{name: "remote_state no longer missing", break_: func(e *thEnv, d store.Draft) {
+			e.exec(`UPDATE drafts SET remote_state = 'pushed' WHERE id = ?`, d.ID)
+		}, mend: func(e *thEnv, d store.Draft) {
+			e.exec(`UPDATE drafts SET remote_state = 'missing' WHERE id = ?`, d.ID)
+		}},
+		{name: "mailbox unknown", break_: func(e *thEnv, d store.Draft) {
+			e.exec(`UPDATE drafts SET remote_mailbox_id = NULL WHERE id = ?`, d.ID)
+		}, mend: func(e *thEnv, d store.Draft) {
+			e.exec(`UPDATE drafts SET remote_mailbox_id = ? WHERE id = ?`, d.RemoteMailboxID, d.ID)
+		}},
+		{name: "edited under a new Message-ID", break_: func(e *thEnv, d store.Draft) {
+			e.send(thSent{role: "drafts", draftFlag: true, messageID: "gmail-edit@example.org", text: "noch in Arbeit", date: e.now.Add(5 * time.Minute)})
+		}, mend: func(e *thEnv, d store.Draft) {
+			e.exec(`DELETE FROM message_mailboxes WHERE message_id = (SELECT id FROM messages WHERE message_id_header = 'gmail-edit@example.org')`)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThEnv(t)
+			d, reply := closableReplaced(t, e)
+			fp := Fingerprint(d)
+			if c.staleFprint {
+				if done, err := e.svc.markReplaced(ctx, d.ID, reply, fp+"-alt"); err != nil || done {
+					t.Fatalf("broken: done %v, %v", done, err)
+				}
+			} else {
+				c.break_(e, d)
+				if done, err := e.svc.markReplaced(ctx, d.ID, reply, fp); err != nil || done {
+					t.Fatalf("broken: done %v, %v", done, err)
+				}
+				c.mend(e, d)
+			}
+			if got := e.status(d); got != string(StatusDraft) {
+				t.Fatalf("draft after the broken attempt = %s", got)
+			}
+			if done, err := e.svc.markReplaced(ctx, d.ID, reply, fp); err != nil || !done {
+				t.Fatalf("mended: done %v, %v", done, err)
+			}
+		})
 	}
 }
 
-// Nachbesserung 1: Erst adoptOrphan, dann checkCopy. Liegt die Kopie eines
-// abgebrochenen Ablageversuchs im Entwürfe-Ordner, übernimmt Replaced sie
-// und schließt nicht (wie draft_changed).
+// Nachbesserung 2: Erst adoptOrphan, dann checkCopy. Die Kopie eines
+// abgebrochenen Ablageversuchs liegt in einem anderen Ordner als die
+// verschwundene Kopie; ohne Übernahme hielte checkCopy den Entwurf für
+// missing und Replaced schlösse ihn. Nur die Übernahme verhindert das
+// Schließen (die übernommene Kopie ist danach die abgelegte).
 func TestA06ReplacedAdoptsOrphanFirst(t *testing.T) {
 	ctx := context.Background()
 	e := newThEnv(t)
-	d := e.draftOf(KindReply, thOwn, true)
-	e.dropCopy(d)
-	reply := e.send(thSent{text: thRewritten})
-	if rep := e.check(); rep.Missing != 1 {
-		t.Fatalf("first run = %+v", rep)
-	}
-	d = e.draft(d.ID)
-	if err := e.svc.Attempt(ctx, d.ID, store.PushAttempt{MailboxID: e.m.boxes["drafts"], UIDValidity: 1, ContentHash: d.MessageIDHeader + "verwaist",
+	d, reply := closableReplaced(t, e)
+	other := e.m.boxes["all"]
+	if err := e.svc.Attempt(ctx, d.ID, store.PushAttempt{MailboxID: other, UIDValidity: 1, ContentHash: d.MessageIDHeader + "verwaist",
 		MessageHash: "mh", Date: e.now.Format(time.RFC1123Z), Fingerprint: Fingerprint(d)}); err != nil {
 		t.Fatal(err)
 	}
-	e.m.put("drafts", sentMsg{messageID: d.MessageIDHeader, subject: d.Subject, draftFlag: true, date: e.now, text: "verwaist"})
+	e.m.put("all", sentMsg{messageID: d.MessageIDHeader, subject: d.Subject, draftFlag: true, date: e.now, text: "verwaist"})
 	d = e.draft(d.ID)
 	if done, err := e.svc.markReplaced(ctx, d.ID, reply, Fingerprint(d)); err != nil || done {
 		t.Fatalf("orphan copy: done %v, %v", done, err)
@@ -316,4 +360,84 @@ func TestA06ReplacedAdoptsOrphanFirst(t *testing.T) {
 	if got := e.draft(d.ID); got.Status != string(StatusDraft) {
 		t.Fatalf("draft = %s", got.Status)
 	}
+}
+
+// Nachbesserung 2, Sicherung (a): „missing schon vor dem Lauf“ gilt für den
+// Stand vor Beginn des Sync-Laufs. Setzt PushCheck (Push zu Beginn des
+// Laufs) missing erst in diesem Lauf, wird nicht ersetzt, erst im
+// Folgelauf.
+func TestA06ReplacedMissingSetByPushCheckInSameRun(t *testing.T) {
+	ctx := context.Background()
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	// Geändert nach der Ablage: wartet auf den nächsten Push (pending).
+	c := Content{To: d.To, Cc: d.Cc, Subject: d.Subject, BodyMarkdown: thOwn + " Danke.", BodyText: d.BodyText + " Danke."}
+	if _, err := e.svc.Update(ctx, d.ID, c, Fingerprint(d)); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.draft(d.ID); got.RemoteState != RemotePending {
+		t.Fatalf("remote = %s", got.RemoteState)
+	}
+	e.dropCopy(d)
+	e.send(thSent{text: thRewritten})
+	// Lauf 1: Stand vor dem Lauf lesen, dann PushCheck (setzt missing).
+	before, err := e.svc.MissingDrafts(ctx, e.acc)
+	if err != nil || before[d.ID] {
+		t.Fatalf("missing before run 1 = %v, %v", before, err)
+	}
+	if _, st, err := e.svc.PushCheck(ctx, d.ID); err != nil || st != RemoteMissing {
+		t.Fatalf("PushCheck = %q, %v", st, err)
+	}
+	rep, err := e.svc.CheckAfterSync(ctx, e.acc, CheckOptions{MissingBefore: before})
+	if err != nil || rep.ReplacedInThread != 0 || e.status(d) != string(StatusDraft) {
+		t.Fatalf("run 1 = %+v, %v, draft %s", rep, err, e.status(d))
+	}
+	// Lauf 2: jetzt war der Entwurf vor dem Lauf missing.
+	before, _ = e.svc.MissingDrafts(ctx, e.acc)
+	if rep, err := e.svc.CheckAfterSync(ctx, e.acc, CheckOptions{MissingBefore: before}); err != nil || rep.ReplacedInThread != 1 {
+		t.Fatalf("run 2 = %+v, %v", rep, err)
+	}
+}
+
+// Nachbesserung 2, Sicherung (c): Grenze ist die letzte Ablage. Eine
+// Gmail-Fassung zwischen Ablage und einer späteren lokalen Änderung hält
+// den Entwurf offen.
+func TestA06ReplacedEditedBetweenPushAndLocalChange(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, false)
+	d = e.pushAt(d, e.now) // Ablage um 09:00
+	// Gmail speichert um 09:10 eine weiterbearbeitete Fassung unter neuer
+	// Message-ID; lokal geändert (Inhalt) um 09:20.
+	e.send(thSent{role: "drafts", draftFlag: true, text: "noch in Arbeit", date: e.now.Add(10 * time.Minute)})
+	if err := e.st.ExecForTest(`UPDATE drafts SET content_changed_at = ? WHERE id = ?`, e.now.Add(20*time.Minute).UnixMilli(), d.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.dropCopy(d)
+	e.send(thSent{text: thRewritten, date: e.now.Add(30 * time.Minute)})
+	for run := 1; run <= 2; run++ {
+		if rep := e.check(); rep.ReplacedInThread != 0 {
+			t.Fatalf("run %d = %+v", run, rep)
+		}
+	}
+	if got := e.status(d); got != string(StatusDraft) {
+		t.Fatalf("draft = %s", got)
+	}
+}
+
+func (e *thEnv) exec(q string, args ...any) {
+	e.t.Helper()
+	if err := e.st.ExecForTest(q, args...); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// copyID ist die lokale ID der Kopie des Entwurfs (Nachricht mit seiner
+// Message-ID), auch wenn sie keinem Ordner mehr zugeordnet ist.
+func (e *thEnv) copyID(d store.Draft) int64 {
+	e.t.Helper()
+	n, err := e.st.QueryIntForTest(`SELECT min(id) FROM messages WHERE message_id_header = ?`, d.MessageIDHeader)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return int64(n)
 }

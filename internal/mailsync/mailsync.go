@@ -348,6 +348,18 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 			}
 		}
 	}()
+	// A06 Nachbesserung 2: Welche Entwürfe schon vor diesem Lauf als
+	// missing galten, wird vor dem Push gelesen (PushCheck kann missing im
+	// selben Lauf setzen). Scheitert das Lesen, ersetzt dieser Lauf nichts
+	// (leere Menge).
+	missingBefore := map[int64]bool{}
+	if e.Drafts != nil && e.Drafts.Pusher != nil {
+		if m, err := e.Drafts.Pusher.MissingDrafts(ctx, e.AccountID); err != nil {
+			e.log().Warn("drafts missing before the run not read; no draft is closed as replaced in this run", "error", err.Error())
+		} else {
+			missingBefore = m
+		}
+	}
 	// Zuerst die Entwürfe (A02 E1): Der Spiegel sieht ihre Kopien dann in
 	// diesem Lauf. Ein Push-Fehler hält den Lauf nur bei Verbindungs- und
 	// Anmeldefehlern auf (die Entwürfe bleiben pending, der nächste Lauf
@@ -386,7 +398,7 @@ func (e *Engine) SyncAll(ctx context.Context, o Options) (Report, error) {
 	}
 	// K3: Was dieser Lauf (fehlerfrei) gespiegelt hat, bestimmt, was die
 	// Prüfung der Entwürfe danach darf (drafts.CheckOptions).
-	var check drafts.CheckOptions
+	check := drafts.CheckOptions{MissingBefore: missingBefore}
 	for _, mb := range local {
 		isDrafts := e.isDraftsMailbox(mb)
 		isSent := mb.Role == string(provider.RoleSent) || mb.Role == string(provider.RoleAll)

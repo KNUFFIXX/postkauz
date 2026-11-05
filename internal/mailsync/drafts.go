@@ -43,6 +43,10 @@ type DraftPusher interface {
 	// Freigabe, Versanderkennung, Stand der Serverkopie; o sagt, was der
 	// Lauf gespiegelt hat (K3).
 	AfterSync(ctx context.Context, accountID int64, o drafts.CheckOptions) (drafts.CheckReport, error)
+	// MissingDrafts: offene Entwürfe mit remote_state missing, gelesen vor
+	// dem Push zu Beginn des Laufs (A06 Nachbesserung 2,
+	// CheckOptions.MissingBefore).
+	MissingDrafts(ctx context.Context, accountID int64) (map[int64]bool, error)
 }
 
 var _ DraftPusher = (*ops.DraftPusher)(nil)

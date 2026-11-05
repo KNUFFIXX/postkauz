@@ -104,3 +104,28 @@ func TestA06StoredDraftHealsOnUpdate(t *testing.T) {
 		t.Fatalf("request_ready: %+v", r)
 	}
 }
+
+// Nachbesserung 2: Ein Antwort-Entwurf an einen Absender, dessen Name
+// gleich seiner Adresse ist, speichert den Namen schon beim Anlegen leer.
+// Das erste drafts.update ohne Änderung ändert weder Empfänger noch
+// preview_hash und setzt die Vorlage nicht zurück.
+func TestA06NameEqualsAddressFirstUpdateKeepsApproval(t *testing.T) {
+	e := newDraftEnv(t, true)
+	raw := "From: \"x@example.com\" <x@example.com>\r\nTo: Demo <demo@example.org>\r\nMessage-ID: <a06-gleich2@example.org>\r\nSubject: Heizung\r\n\r\nText"
+	orig := e.addOriginalAt(t, 61, "a06-gleich2@example.org", "x@example.com <x@example.com>", "Heizung", raw)
+	cr := e.must(t, assistant, "drafts.create", map[string]any{"kind": "reply", "in_reply_to": orig, "body_markdown": "Danke."}).(DraftsWriteOutput)
+	var to string
+	if err := e.st.DBForTest().QueryRow(`SELECT to_addrs FROM drafts WHERE id = ?`, cr.DraftID).Scan(&to); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(to, `"name":"x@example.com"`) {
+		t.Fatalf("stored to_addrs = %s", to)
+	}
+	if r := e.must(t, assistant, "drafts.request_ready", map[string]any{"draft_id": cr.DraftID}).(DraftsRequestOutput); r.Status != "pending_approval" {
+		t.Fatalf("request_ready: %+v", r)
+	}
+	up := e.must(t, assistant, "drafts.update", map[string]any{"draft_id": cr.DraftID, "quote": true}).(DraftsWriteOutput)
+	if up.Changed || up.Status != "pending_approval" || up.PreviewHash != cr.PreviewHash || up.ApprovalSuperseded != 0 {
+		t.Fatalf("first update: changed %v, status %s, preview hash %v, superseded %d", up.Changed, up.Status, up.PreviewHash == cr.PreviewHash, up.ApprovalSuperseded)
+	}
+}

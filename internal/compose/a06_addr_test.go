@@ -35,6 +35,22 @@ func TestA06FormatAddressRoundtrip(t *testing.T) {
 		{"  Hans  ", "Hans", "Hans <h@example.com>"},
 		{"   ", "", "h@example.com"},
 	}
+	// Nachbesserung 2: lokaler Teil, der Anführungszeichen braucht.
+	for _, c := range []struct{ name, address, text string }{
+		{"", "a b@example.com", `"a b"@example.com`},
+		{"Hans", "a b@example.com", `Hans <"a b"@example.com>`},
+		{"", `a"b@example.com`, `"a\"b"@example.com`},
+		{"", "a.b@example.com", "a.b@example.com"},
+	} {
+		text := FormatAddress(c.name, c.address)
+		if text != c.text {
+			t.Errorf("FormatAddress(%q, %q) = %q, want %q", c.name, c.address, text, c.text)
+		}
+		got, err := parseAddress("to[0]", text)
+		if err != nil || got.Address != c.address || got.Name != c.name {
+			t.Errorf("parse(format(%q, %q)) = %+v, %v", c.name, c.address, got, err)
+		}
+	}
 	for _, c := range cases {
 		text := FormatAddress(c.name, addr)
 		if text != c.text {
@@ -67,5 +83,23 @@ func TestA06FormatAddressBuildsMessage(t *testing.T) {
 	}
 	if raw := strings.ReplaceAll(string(m.Raw), "\r\n ", " "); !strings.Contains(raw, "To: \"Nachname, Vorname\" <h@example.com>, <x@example.com>, =?utf-8?") {
 		t.Fatalf("To header:\n%s", m.Raw)
+	}
+}
+
+// Nachbesserung 2: Name gleich der Adresse fällt schon beim Bau weg; das
+// erste drafts.update ändert dann weder Empfänger noch preview_hash.
+func TestA06NameEqualsAddressNormalizedOnBuild(t *testing.T) {
+	in := baseInput(KindNew)
+	in.To = []string{`"x@example.com" <x@example.com>`, `"X@Example.com" <x@example.com>`, `"Hans" <h@example.com>`}
+	m := mustBuild(t, in)
+	if len(m.To) != 2 || m.To[0].Name != "" || m.To[1].Name != "Hans" {
+		t.Fatalf("to = %+v", m.To)
+	}
+	in = baseInput(KindReply)
+	in.Original.From = []Address{{Name: "anna@example.org", Address: "anna@example.org"}}
+	in.Original.ReplyTo = nil
+	m = mustBuild(t, in)
+	if len(m.To) != 1 || m.To[0].Name != "" || m.To[0].Address != "anna@example.org" {
+		t.Fatalf("derived to = %+v", m.To)
 	}
 }

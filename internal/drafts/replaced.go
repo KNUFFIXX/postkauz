@@ -40,11 +40,13 @@ import (
 //   - der Ablageordner des Entwurfs ist bekannt und gespiegelt
 //     (remote_mailbox_id gesetzt, Ordner im Spiegel; fehlerfrei in diesem
 //     Lauf garantiert CheckOptions.SkipSent);
-//   - im Entwürfe-Ordner liegt keine nach der letzten Ablage datierte
-//     Nachricht mit In-Reply-To = Original, die keine Kopie von PostKauz
-//     ist (in Gmail unter neuer Message-ID weiterbearbeitet);
-//   - beim Schließen zuerst adoptOrphan, dann checkCopy (wie Update); wurde
-//     eine abgebrochene Ablage übernommen, gilt das wie draft_changed.
+//   - im Entwürfe-Ordner liegt keine nach der letzten Ablage (Push-Zeitpunkt,
+//     lastPushAt) datierte Nachricht mit In-Reply-To = Original, die keine
+//     Kopie von PostKauz ist (in Gmail unter neuer Message-ID
+//     weiterbearbeitet);
+//   - beim Schließen zuerst adoptOrphan, dann checkCopy (wie Update): Die
+//     Kopie eines abgebrochenen Ablageversuchs, auch in einem anderen
+//     Ordner, wird übernommen, und der Entwurf bleibt offen.
 //
 // Ergebnis: abandoned (nicht sent_by_human: der Text des Entwurfs ging
 // nicht hinaus), eine Freigabe wird superseded (wie EvAbandon), Akteur
@@ -62,7 +64,8 @@ const ReasonReplaced = "replaced"
 // detectReplaced schließt die nach allen drei Wegen noch offenen Entwürfe
 // open, die eine eigene Antwort ersetzt hat (siehe oben). copies:
 // Inhalts-Hashes der Entwurfskopien (nie eine Antwort).
-func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []store.Draft, copies []string, rep *CheckReport) error {
+func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []store.Draft, copies []string, missingBefore map[int64]bool,
+	rep *CheckReport) error {
 	isCopy := map[string]bool{}
 	for _, h := range copies {
 		isCopy[h] = true
@@ -73,8 +76,8 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 		if !threadKinds[d.Kind] || d.InReplyToMsg <= 0 || rk == "" || d.PushedContentHash == "" {
 			continue // (a), (d) ohne Empfänger, (f) nie abgelegt
 		}
-		if d.RemoteState != RemoteMissing || d.RemoteMailboxID == 0 {
-			continue // erst in einem früheren Lauf als missing festgestellt; Ablageordner bekannt
+		if !missingBefore[d.ID] || d.RemoteState != RemoteMissing || d.RemoteMailboxID == 0 {
+			continue // schon vor Beginn des Laufs missing (Nachbesserung 2); Ablageordner bekannt
 		}
 		list, err := s.Store.OwnReplies(ctx, accountID, d.InReplyToMsg) // (b), (c), auch zugeordnete
 		if err != nil {
@@ -137,6 +140,18 @@ func replacedAfter(d store.Draft) time.Time {
 	return at.Truncate(time.Second)
 }
 
+// lastPushAt ist der Zeitpunkt der letzten Ablage (Date der abgelegten
+// Kopie, pushed_date), auf Sekunden; ohne lesbares Datum der Zeitpunkt der
+// letzten Inhaltsänderung. Grenze für Sicherung (c) (Nachbesserung 2): Eine
+// Fassung, die Gmail nach der Ablage gespeichert hat, zählt auch dann, wenn
+// der Entwurf danach lokal geändert wurde.
+func lastPushAt(d store.Draft) time.Time {
+	if t, err := time.Parse(time.RFC1123Z, d.PushedDate); err == nil {
+		return t.Truncate(time.Second)
+	}
+	return changedAt(d).Truncate(time.Second)
+}
+
 // markReplaced schließt einen Entwurf als ersetzt (Replaced). Wie markSent:
 // inzwischen abgeschlossen, geändert oder mit Kopie im Entwürfe-Ordner ist
 // kein Fehler; done ist dann false.
@@ -176,24 +191,26 @@ func (s *Service) Replaced(ctx context.Context, id, replyID int64, expect string
 		if Fingerprint(d) != expect || d.RemoteState != RemoteMissing || d.RemoteMailboxID == 0 {
 			return changed(d.ID)
 		}
-		// Erst eine abgebrochene Ablage übernehmen, dann die Kopie prüfen
-		// (wie Update); eine übernommene Kopie ist eine neue Lage.
+		// Erst die Kopie eines abgebrochenen Ablageversuchs übernehmen,
+		// dann die Kopie prüfen (wie Update). Die Übernahme macht die
+		// übernommene Kopie zur zuletzt abgelegten (auch in einem anderen
+		// Ordner als remote_mailbox_id); die Prüfung danach findet sie, ohne
+		// Übernahme hielte checkCopy den Entwurf für missing. Wurde etwas
+		// übernommen, wird ausdrücklich nicht geschlossen (wie draft_changed).
+		// Ein nicht gespiegelter Ablageordner braucht keine eigene Prüfung:
+		// checkCopy liefert dann nie missing (copyState), und ein entfernter
+		// Ordner setzt remote_mailbox_id auf 0 (oben ausgeschlossen).
 		if adopted, err := s.adoptOrphan(x, &d, now); err != nil {
 			return err
 		} else if adopted {
 			return changed(d.ID)
-		}
-		if mc, err := x.MirrorCopy(d.RemoteMailboxID, 0, "", ""); err != nil {
-			return err
-		} else if !mc.MailboxFound || !mc.Synced {
-			return changed(d.ID) // Ablageordner nicht (mehr) im Spiegel
 		}
 		if st, err := checkCopy(x, d); err != nil {
 			return err
 		} else if st != RemoteMissing {
 			return changed(d.ID)
 		}
-		if edited, err := x.EditedReplyInDrafts(d.AccountID, d.InReplyToMsg, replacedAfter(d)); err != nil {
+		if edited, err := x.EditedReplyInDrafts(d.AccountID, d.InReplyToMsg, lastPushAt(d)); err != nil {
 			return err
 		} else if edited {
 			return changed(d.ID) // in Gmail unter neuer Message-ID weiterbearbeitet

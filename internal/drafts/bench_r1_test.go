@@ -133,4 +133,26 @@ func BenchmarkCheckAfterSync22k(b *testing.B) {
 			}
 		}
 	})
+	// A06 Nachbesserung 2: Sicherung (c) der ersetzten Entwürfe, eine
+	// Abfrage je Original (über thread_refs und messages_thread statt über
+	// alle Nachrichten des Kontos); Zeit je Abfrage.
+	var origs []int64
+	for j := 0; j < 30; j++ {
+		id, err := st.QueryIntForTest(fmt.Sprintf(`SELECT id FROM messages WHERE message_id_header = 's%d@example.org'`, j*700))
+		if err != nil {
+			b.Fatal(err)
+		}
+		origs = append(origs, int64(id))
+	}
+	b.Run("edited_reply_lookup", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			o := origs[n%len(origs)]
+			if err := st.DraftTx(ctx, func(x *store.DraftTx) error {
+				_, err := x.EditedReplyInDrafts(acc, o, now.Add(-24*time.Hour))
+				return err
+			}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
