@@ -4,7 +4,25 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Noch nichts.
+Auftrag A06 „Alltag 2: Adressen, Zitat, Erkennung“ (05.11.2026, Zweig `claude/youthful-wright-fimlkq`, Basis `main` `ed76b6a` = Stand 0.3.0-rc3), Build **0.3.0-rc4** (noch kein Tag; Prüfsummen: `docs/protokolle/A06_stand.md`). Befunde aus dem Dauerbetrieb 03.–05.11.2026 (23 Entwürfe im geteilten Postfach, 20 erkannt, 3 gesendet und nicht erkannt). Kein Schema-Upgrade (Schema 22), keine Migration: Das alte Programm läuft mit den Daten weiter. Abnahme: `docs/abnahme_D12.md`.
+
+### Fixed
+
+- **Namen mit Sonderzeichen machen Antwort-Entwürfe unbrauchbar** (Teil 1): Vorschau, `drafts.get`/`draft show`, `drafts.update` und der Neubau (`request_ready`, `approve`, Push) schrieben Adressen als `Name <adresse>` ohne Anführungszeichen; ein Absender `x@example.com <x@example.com>` oder `"Nachname, Vorname" <…>` ließ `drafts.update` und `mail_request_ready` mit `to[0]: not an RFC 5322 address` scheitern, ein Name mit Klammern verlor still den Teil in Klammern. Jetzt `compose.FormatAddress`: Name leer oder gleich der Adresse → nur die Adresse, Name mit Sonderzeichen nach RFC 5322 in Anführungszeichen, Umlaute lesbar. Gespeicherte Entwürfe heilen ohne Datenkorrektur beim nächsten `draft edit`/`draft request`.
+- **Versanderkennung: verwaiste Fortsetzungszeilen** (Teil 3, „Als Nächstes“ 0b): Gmail im Browser bricht innere Zitatzeilen beim Senden neu um, die Fortsetzungen stehen ohne „>“ und blieben nach der Zitatentfernung im gesendeten Text; zwei unverändert gesendete Antworten blieben offen (0,833 und 0,106). Rückfall und Verlauf lesen jetzt den Text vor der Zitatentfernung und verbinden Fortsetzungszeilen vorher (`sanitize.JoinWrappedQuotes`: direkt unter einer „>“-Zeile, vorige Zeile höchstens 80 Bytes, Bytes(vorige) + 1 + Bytes(erstes Wort) > 72). Nur der Vergleich ändert sich; Spiegel, Suche, Snippet und `mail_get_message` bleiben. `SentCheckRev` 2: Offene Entwürfe von vor dem Update prüft der erste vollständige Lauf einmal neu.
+
+### Changed
+
+- **Zitat im HTML in Gmails Form** (Teil 2): `div.gmail_quote` mit der Einleitungszeile in `div.gmail_attr` und `blockquote.gmail_quote` mit `type="cite"`; innere Zitatebenen (Zeilen mit `> `) als verschachtelte Blockquotes statt wörtlichem „>“. Der Klartextteil (`body_text`, Prüf-Hook, `preview_hash`) bleibt Byte für Byte wie in rc3. **Folge für offene Antwort-Entwürfe mit Zitat von vor dem Update:** Der Neubau ergibt anderes HTML; `approve` einer älteren Vorlage scheitert mit `approval_stale` (dann `draft request` erneut), ein `ready`-Entwurf fällt beim nächsten Ablegen auf `draft` zurück, `draft show --eml` meldet `changed after the copy …`. `reply_all.golden.eml` neu erzeugt (nur der HTML-Teil und die daraus abgeleiteten MIME-Grenzen).
+
+### Added
+
+- **Ersetzte Entwürfe** (Teil 4): Hat der Mensch statt eines Antwort-Entwurfs eine eigene Antwort im Verlauf gesendet (Bedingungen (a) bis (f) des Wegs über den Verlauf, Text anders, Antwort nach der letzten Ablage datiert), schließt der Sync den Entwurf als `abandoned` (Systemregel, Akteur `system`, Audit `drafts.replaced_detected` mit Grund `replaced` und `reply_message_id`; nicht bei unvollständig gespiegeltem Gesendet; Kopie und Inhalt in derselben Transaktion erneut geprüft). Sync-Zeile `… replaced by an own reply in the thread …, now abandoned (draft N)`, `--json` `draft_check.replaced_in_thread`/`replaced_draft_ids`, `draft show` nennt den Grund (`closed_reason: "replaced"`, `replaced_by_message_id`). Ein Agent kann weiterhin keinen Entwurf schließen.
+- **Warnung bei abweichendem Betreff einer Antwort** (Teil 5, Offene Frage 3): `drafts.create`/`draft reply` und `drafts.update`/`draft edit` nennen `the subject differs from the original; Gmail may start a new conversation and drop In-Reply-To`, wenn der Betreff nach Entfernen der Präfixe vom Original abweicht; nichts wird verhindert.
+
+### Docs
+
+- `docs/versanderkennung.md` Abschnitte 1, 3, 3a, neuer Abschnitt 3b „Ersetzte Entwürfe“, 5, 6; `docs/sicherheit.md` Abschnitt 5 (Tabelle, Diagramm, Erkennung); `docs/datenmodell.md` (`sent_message_id` bei ersetzten Entwürfen); `docs/mcp.md` und `docs/cli.md` (Adressformat, Zitatform, Betreff-Warnung, ersetzte Entwürfe); `docs/roadmap.md` (Stand, „Als Nächstes“ 0b erledigt, Entschiedene Fragen 76 und 77, neue Offene Frage 3); Abnahme D12 (`docs/abnahme_D12.md`, `docs/abnahme_D12.ps1`); Protokoll `docs/protokolle/A06_stand.md`.
 
 ## [0.3.0-rc3] – 2026-11-03 (Release-Kandidat; im Dauerbetrieb seit 03.11.2026, Tag `v0.3.0-rc3` an `28941b7`, GitHub-Release)
 
