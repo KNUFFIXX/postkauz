@@ -4,6 +4,12 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+Noch nichts.
+
+## [0.3.0-rc4] – 2026-11-05 (Release-Kandidat; Dauerbetrieb seit 05.11.2026, noch kein Tag)
+
+Abnahme D12 auf dem Büro-PC bestanden (05.11.2026, Teil A 35 OK / 0 FAIL, Teil B 8 OK / 0 FAIL; `docs/protokolle/D12_windows.txt`, `docs/protokolle/D12_teilB.txt`); Dauerbetrieb seit 05.11.2026 18:42 auf rc4. Gmail im Browser sendet eine Antwort mit Zitat in der neuen Form mit „>“ vor jeder Zitatzeile (19 von 19).
+
 Auftrag A06 „Alltag 2: Adressen, Zitat, Erkennung“ (05.11.2026, Zweig `claude/youthful-wright-fimlkq`, Basis `main` `ed76b6a` = Stand 0.3.0-rc3), Build **0.3.0-rc4** an `b41f9eb` nach Nachbesserung 2 (noch kein Tag; Windows `bd7abd97…a16e`, Prüfsummen und Prüfläufe: `docs/protokolle/A06_stand.md` Abschnitt 5c; die Builds an `fc46320` und `985ae3b` sind ersetzt). Befunde aus dem Dauerbetrieb 03.–05.11.2026 (23 Entwürfe im geteilten Postfach, 20 erkannt, 3 gesendet und nicht erkannt). Kein Schema-Upgrade (Schema 22), keine Migration: Das alte Programm läuft mit den Daten weiter. Abnahme: `docs/abnahme_D12.md`.
 
 ### Fixed

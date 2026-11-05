@@ -1,0 +1,122 @@
+# Protokoll der Abnahme D12 Teil A auf dem Buero-PC (05.11.2026, Betreiber-Sitzung DRACO-PK14), Aufruf mit -KeepStdioMcp, -ExpectSha256 und abweichenden Pfaden/Aufgaben (abnahme_D12.md Abschnitt 3); Kontonamen, Pfade und Sicherungsordner maskiert.
+=== Abnahme D12 (Teil A, Umstellung), 2026-11-05 18:25:14 ===
+Programm: C:\PostKauz\<programmordner>\postkauz.exe; Daten: <datenordner>; Konfiguration: <datenordner>\config.toml
+--- Teil 0: Voraussetzungen
+OK 0.1 neues Programm angegeben und vorhanden
+      C:\PostKauz\d12\postkauz-windows-amd64.exe
+OK 0.2 Pruefsumme des neuen Programms passt zu SHA256SUMS
+      sha256 bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e
+      SHA256SUMS bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e
+OK 0.2b Pruefsumme des neuen Programms gleich -ExpectSha256 (aus dem Protokoll des Builds)
+      sha256 bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e
+      erwartet bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e
+      vcs.revision b41f9ebc4e7606bec2feaae4a3d7bf175f78ece4
+OK 0.3 neues Programm meldet 0.3.0-rc4
+      > postkauz version
+      postkauz 0.3.0-rc4 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 0.4 altes Programm meldet 0.3.0-rc3
+      > postkauz version
+      postkauz 0.3.0-rc3 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 0.5 Ordner der Sicherung angegeben
+      <sicherung>
+OK 0.6 -Accounts entspricht genau den konfigurierten Konten (accounts list)
+      angegeben: 3, konfiguriert: 3, nicht konfiguriert: 0, konfiguriert, aber nicht angegeben: 0
+OK 0.7 -Tasks angegeben (Pflicht) und jede Aufgabe vorhanden
+      Aufgaben: 5, nicht gefunden: 0
+      PostKauz sync watch <konto1>
+      PostKauz sync watch <konto2>
+      PostKauz sync watch <konto3>
+      PostKauz audit export
+      PostKauz mcp http
+OK 0.8 Erwartung: -ExpectSent und -ExpectReplaced ohne gemeinsame ID
+      erwartet sent_by_human: 15, 3
+      erwartet ersetzt: 4
+--- Teil 1: Stand vorher (altes Programm), Sicherung
+INFO 1.1 Hilfsskripte beendet: 3; postkauz.exe (sync, --http, audit) aus dem Ordner von -Exe nach 20 s beendet: 4
+OK 1.1 Aufgaben angehalten und abgeschaltet, ausser dem stdio-MCP der Claude-App laeuft kein postkauz.exe
+      uebrige postkauz.exe: 0, stdio-MCP (darf laufen): 2
+OK 1.2 draft list vorher: 4 offene Entwuerfe (unter der Grenze von 500)
+      JSON lesbar: True
+      draft 3: draft, reply, remote missing
+      draft 4: draft, reply, remote missing
+      draft 15: draft, reply, remote missing
+      draft 27: draft, reply, remote pending
+OK 1.3 doctor vorher: database ok, Schema 22
+      database ok, schema 22
+      audit: 3 calls started more than 10 minutes ago without an end entry (crash or a failed audit write); see: audit --result started
+OK 1.2b jeder erwartete Entwurf ist vorher offen
+      nicht offen: (keine)
+OK 1.2c jeder Entwurf aus -ExpectReplaced hat vorher remote missing
+      nicht missing: (keine)
+OK 1.4 Entwurf 27: Antwort im Status draft, remote pushed oder pending, nicht in der Erwartung, ein Empfaengername mit Komma oder @ oder gleich der Adresse
+      gefunden: True, Art reply, Status draft, remote pending, Name gleich Adresse: 0, Name mit Komma oder @: 1, in -ExpectSent/-ExpectReplaced: False
+INFO 1.4b mit 0.3.0-rc3: draft edit 27 --dry-run ohne Aenderung (erwartet: denied invalid_address)
+      exit 3, Grund invalid_address
+OK 1.5 Sicherung geschrieben (betrieb.md 2.2): Exit 0 und "backup written to"
+      > postkauz backup create --to <sicherung>
+      backup written to <sicherung>
+        database:  postkauz-<zeit>.db (schema 22)
+        blobs:     81643 (copied 81643, already there 0; 45.3 GB copied)
+        manifest:  <sicherung>\manifest.json, 81644 files (46.8 GB), sha256 ea345f6657cbab4840a00a3224ac14b17e95b1e4cfd71bc3e95c179f8f8fb71b
+        restore:   restore --from <backup folder> --data-dir <new folder>
+      [stderr] warning: the backup is not encrypted; keep it only on an encrypted drive (BitLocker, LUKS, VeraCrypt) or encrypt it (age, restic); see ENCRYPT-ME.txt
+      [exit 0]
+--- Teil 2: Programm tauschen
+OK 2.1 getauscht: C:\PostKauz\<programmordner>\postkauz.exe meldet 0.3.0-rc4, altes Programm als postkauz-rc3.exe aufgehoben
+      > postkauz version
+      postkauz 0.3.0-rc4 (go1.27.3 windows/amd64)
+      [exit 0]
+OK 2.2 doctor: database ok, Schema 22 (keine Migration)
+      database ok, schema 22
+INFO 2.4 Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem alten Programm (postkauz-rc3.exe).
+--- Teil 3: erster vollstaendiger Lauf mit dem neuen Programm
+OK 3.1 sync -a <Konto> (erster vollstaendiger Lauf): Exit 0 und errors 0
+      exit 0, stderr 0 Zeilen, neu 0, Fehler 0, sent_by_message_id 0, sent_by_fallback 2, sent_by_thread 0, replaced_in_thread 1, missing 0, taken_over 0
+OK 3.1 sync -a <Konto> (erster vollstaendiger Lauf): Exit 0 und errors 0
+      exit 0, stderr 0 Zeilen, neu 4, Fehler 0
+OK 3.1 sync -a <Konto> (erster vollstaendiger Lauf): Exit 0 und errors 0
+      exit 0, stderr 0 Zeilen, neu 0, Fehler 0
+OK 3.2 alle im ersten Lauf geschlossenen Entwuerfe mit Grund aus dem Audit (3)
+      draft 15: sent_by_human, Grund fallback
+      draft 4: abandoned, Grund replaced
+      draft 3: sent_by_human, Grund fallback
+      ohne passenden Grund: (keine)
+      vorher offen, jetzt weder offen noch geschlossen lesbar: (keine)
+OK 3.2b kein nicht erwarteter Abschluss
+      nicht erwartet: (keine)
+OK 3.2c jeder erwartete Abschluss mit dem erwarteten Ergebnis (-ExpectSent: sent_by_human, -ExpectReplaced: abandoned/replaced)
+      sent_by_human: 3, 15
+      ersetzt: 4
+      fehlt: (keine)
+INFO 3.3 Betreiber: Stimmen die Abschluesse (draft show <id> zeigt den Betreff nur am Bildschirm)? Noch offen:
+      draft 27: draft, reply, remote pushed
+OK 3.4 draft edit 27 --dry-run ohne Aenderung: kein invalid_address
+      exit 0, Grund , invalid_address in der Ausgabe: False
+OK 3.4b draft request 27 --dry-run: kein invalid_address (ganze Ausgabe geprueft)
+      exit 0, Grund , invalid_address in der Ausgabe: False
+OK 3.4c draft show: Name gleich Adresse als blosse Adresse, Name mit Komma oder @ in Anfuehrungszeichen
+      nur Adresse (Name gleich Adresse): 0, in Anfuehrungszeichen: 1, falsch: 0 (von 1 aus 1.4)
+OK 3.4d die Pruefung hat die vorher offenen Entwuerfe nicht veraendert (Zahl gleich)
+      vorher offen und jetzt offen: 1 / 1; neu seit dem Tausch (stdio-MCP, kein Fehler): 0
+OK 3.5 doctor ohne neue Warnung, Schema 22 (keine Migration)
+      database ok, schema 22
+      neu: 
+      alle:
+OK 3.6 audit verify: ok
+      exit 0, status ok
+--- Teil 4: Dauerbetrieb wieder an
+OK 4.1 Aufgabe "PostKauz sync watch <konto1>" wieder eingeschaltet und gestartet (Claude-App nach D12 neu starten, damit ihr MCP das aktuelle Programm nimmt)
+      Zustand Running
+OK 4.1 Aufgabe "PostKauz sync watch <konto2>" wieder eingeschaltet und gestartet (Claude-App nach D12 neu starten, damit ihr MCP das aktuelle Programm nimmt)
+      Zustand Running
+OK 4.1 Aufgabe "PostKauz sync watch <konto3>" wieder eingeschaltet und gestartet (Claude-App nach D12 neu starten, damit ihr MCP das aktuelle Programm nimmt)
+      Zustand Running
+OK 4.1 Aufgabe "PostKauz audit export" wieder eingeschaltet (Claude-App nach D12 neu starten, damit ihr MCP das aktuelle Programm nimmt)
+      Zustand Ready
+OK 4.1 Aufgabe "PostKauz mcp http" wieder eingeschaltet und gestartet (Claude-App nach D12 neu starten, damit ihr MCP das aktuelle Programm nimmt)
+      Zustand Running
+Stand: C:\PostKauz\<programmordner>\postkauz.exe ist das neue Programm; das alte liegt als postkauz-rc3.exe daneben.
+
+D12: 35 OK, 0 FAIL

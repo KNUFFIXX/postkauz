@@ -1,0 +1,26 @@
+# Protokoll der Abnahme D12 Teil B auf dem Buero-PC (05.11.2026, Betreiber-Sitzung DRACO-PK14): Antwort auf eine eigene Mail mit ">"-Zitat, in Gmail im Browser unveraendert gesendet (abnahme_D12.md Abschnitt 6); Pfade maskiert.
+=== Abnahme D12 (Teil B), 2026-11-05 18:45:11 ===
+Programm: C:\PostKauz\<programmordner>\postkauz.exe; Daten: <datenordner>; Konfiguration: <datenordner>\config.toml
+--- Teil B: Gmail-Zitat an einer Mail an sich selbst (Mitmach)
+OK B.0 Programm meldet 0.3.0-rc4
+      > postkauz version
+      postkauz 0.3.0-rc4 (go1.27.3 windows/amd64)
+      [exit 0]
+OK B.0b eigene Mail angegeben (-SelfMessage)
+      61677
+OK B.1 Mail 61677 enthaelt ein ">"-Zitat (damit eine innere Ebene vorkommt)
+      exit 0, Zeilen mit ">": 4
+OK B.2 sync --watch laeuft (legt den Entwurf ab und spiegelt die gesendete Nachricht)
+      sync --watch: 3
+OK B.3 Antwort-Entwurf angelegt
+      exit 0, draft 28
+OK B.4 Entwurf 28 im Entwuerfe-Ordner abgelegt (remote pushed)
+      remote pushed
+INFO B.5 JETZT: Entwurf 28 in Gmail im Browser oeffnen und UNVERAENDERT senden. Das Skript wartet bis zu 25 Minuten auf den Sync.
+OK B.6 Entwurf 28 als gesendet erkannt (Grund aus dem Audit)
+      Status sent_by_human, Grund fallback
+OK B.7 gesendete Nachricht gefunden
+      ueber sent_message_id, Nachricht 61695
+INFO B.8 Zeilen ab der Einleitungszeile (leere nicht gezaehlt): mit ">" 19, ohne ">" 0 (erwartet mit gmail_quote: alle mit ">"; text_source plain)
+
+D12: 8 OK, 0 FAIL

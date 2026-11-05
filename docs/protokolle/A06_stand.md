@@ -190,8 +190,17 @@ bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e  postkauz-windo
 
 Windows-Programm: 22.646.784 Byte. **Build-Commit `b41f9eb`; danach kamen nur der Skript-Commit `818b35c` (nur `docs/abnahme_D12.ps1` und `docs/abnahme_D12.md`, nicht Teil des Programmpakets) und dieser Nachtrag (nur Doku) dazu.** Für D12: `-ExpectSha256 bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e`, Skript vom Stand des Zweigs.
 
+## 5d. Abnahme D12 (05.11.2026)
+
+Abnahme D12 auf dem Büro-PC bestanden, Programm 0.3.0-rc4 an `b41f9eb` (Windows `bd7abd97…a16e`, im Skript per `-ExpectSha256` und `vcs.revision` geprüft):
+
+- **Teil A** (18:25, Aufruf mit `-KeepStdioMcp`, `-ExpectSha256` und abweichenden Pfaden/Aufgaben): **35 OK, 0 FAIL**, Protokoll [D12_windows.txt](D12_windows.txt) (wörtlich abgelegt, maskiert). Sicherung vor dem Tausch 81.644 Dateien, 46,8 GB; doctor vorher und nachher `database ok`, Schema 22 (keine Migration); `audit verify` ok. Erster vollständiger Lauf: Entwürfe 3 und 15 `sent_by_human` (Rückfall, Teil 3), Entwurf 4 `abandoned` mit Grund `replaced` (Teil 4), keine weiteren Abschlüsse; Entwurf 27 (Empfängername mit Komma): mit rc3 `invalid_address`, mit rc4 `draft edit`/`draft request` im Trockenlauf ohne `invalid_address` und Name in Anführungszeichen (Teil 1). Dauerbetrieb seit 05.11.2026 18:42 auf rc4, das alte Programm liegt als `postkauz-rc3.exe` daneben; der stdio-MCP der Claude-App läuft bis zu ihrem Neustart noch mit rc3.
+- **Teil B** (18:45, Mitmach): **8 OK, 0 FAIL**, Protokoll [D12_teilB.txt](D12_teilB.txt). Antwort-Entwurf 28 auf eine eigene Mail mit „>“-Zitat in Gmail im Browser unverändert gesendet, erkannt als `sent_by_human` (Rückfall); in der gesendeten Nachricht stehen ab der Einleitungszeile **19 von 19** Zitatzeilen mit „>“. Damit ist Teil 2 (Zitat in Gmails Form) am echten Gmail bestätigt (Messtabelle in [versanderkennung.md](../versanderkennung.md) Abschnitt 9).
+- **Einordnung der doctor-Zeile in 1.3** („3 calls started more than 10 minutes ago without an end entry“): Es sind die drei `sync --watch` (je Konto einer), die 1.1 hart beendet hat (Stop-Process nach 20 s); ihr Start-Eintrag liegt Stunden zurück, ein Abschluss fehlt. Der nächste `sync` des Kontos schließt solche Einträge als `process_ended` (dokumentiert in [betrieb.md](../betrieb.md), Abschnitt zum Stoppen der Aufgaben); in 3.5 steht die Warnung deshalb nicht mehr. Kein Fehler.
+- Freigabe: Der Betreiber hat rc4 über das Board freigegeben (Karte PK14-1: rc4 nach Prüfung einsetzen, danach nach `main`).
+
 ## 6. Offen
 
-- Abnahme D12 (Teil A und Teil B).
+- ~~Abnahme D12 (Teil A und Teil B)~~ bestanden (Abschnitt 5d).
 - Integrationstest-Fall für Teil 3: nicht geschrieben, Docker gibt es in dieser Sitzung nicht (`make integration` lief nicht); ungeprüften Integrationscode wollte ich nicht ablegen.
 - `abnahme_D12.ps1` ist nur von Hand geprüft (PowerShell gibt es im Container nicht; Klammerbilanz und Zeichensatz maschinell geprüft); die Anleitung beginnt deshalb mit einem Parser-Check auf dem Büro-PC.
