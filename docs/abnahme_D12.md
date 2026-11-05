@@ -22,7 +22,8 @@ Stand: 05.11.2026 (Auftrag [A06](../auftraege/A06_alltag2.md), Teil 6). Skript: 
 - **Umbenennen statt Überschreiben** mit `-KeepStdioMcp` wie D11 Abschnitt 6: Das alte Programm wird `postkauz-rc3.exe`, das neue kommt an seine Stelle. Der MCP der Claude-App läuft bis zu ihrem nächsten Neustart mit dem alten Programm weiter. Das geht nur, weil rc4 **keine Migration** hat (Schema 22; das Skript prüft das vorher und nachher mit `doctor`).
 - **Erwartung statt fester IDs:** `-ExpectSent` (z. B. `3,15`) sind die offenen Entwürfe, die der erste Lauf als `sent_by_human` schließen soll, `-ExpectReplaced` (z. B. `4`) die, die er als ersetzt schließen soll. Das Skript listet **alle** im ersten Lauf geschlossenen Entwürfe (ID, Status, Grund aus dem Audit). Ein Abschluss, der nicht erwartet war, ist FAIL (3.2b), ebenso ein erwarteter, der fehlt (3.2c).
 - **Adressen:** `-CommaDraft` ist ein **bestehender** offener Antwort-Entwurf, dessen Empfängername ein Komma oder ein @ enthält. Das Skript prüft `draft edit <id> --dry-run` ohne Änderung (mit dem gespeicherten Wert von `--quote`) und `draft request <id> --dry-run`, beide ohne `invalid_address`. Es legt **keinen** neuen Entwurf an.
-- **Rückweg bei FAIL:** Endet Teil 3 mit einem FAIL, kommt das alte Programm automatisch zurück, bevor die Aufgaben wieder anlaufen (die im ersten Lauf geschlossenen Entwürfe bleiben geschlossen, aber der Dauerbetrieb schließt nicht mit der neuen Regel weiter). Sonst nur mit `-Rueckweg` (Abschnitt 5).
+- **Rückweg bei jedem FAIL** (seit Nachbesserung 1): Gibt es nach dem Tausch ein FAIL oder eine Ausnahme, legt das Skript **vor** dem Neustart der Aufgaben das alte Programm zurück (E.0): Das neue wird in `postkauz-rc4.exe` umbenannt (nie gelöscht; eine laufende Exe lässt sich umbenennen), das alte kommt zurück; das Ergebnis ist eine eigene Prüfung. Die Aufgaben laufen nie mit dem neuen Programm an, wenn die Abnahme nicht bestanden ist; misslingt die Rückkopie, bleiben sie aus (E.1 FAIL, dann von Hand nach Abschnitt 5). Im ersten Lauf geschlossene Entwürfe bleiben geschlossen (Abschnitt 4a).
+- **Prozesse:** Beendet werden nur `postkauz.exe`, deren Programm im Ordner von `-Exe` liegt; andere nennt das Skript mit PID und Pfad, beendet sie aber nicht (dann bricht 1.1 ab).
 - Ins Protokoll kommen nur IDs, Zustände, Gründe und Zähler, nie Betreff, Adressen oder Mailtext. Von `sync` stehen nur Exit-Code und die **Zahl** der stderr-Zeilen drin.
 
 ## 2. Vorbereitung
@@ -67,27 +68,36 @@ Ohne abweichende Pfade entfallen `-Exe`, `-DataDir` und `-Config` (Standard `C:\
 | Nr | Prüfung | Erwartet |
 |---|---|---|
 | 0.1 bis 0.4 | neues Programm, Prüfsumme, Versionen | rc4 passt zu `SHA256SUMS`, das laufende Programm ist rc3 |
-| 0.5 bis 0.8 | Sicherungsordner, Konten, Aufgaben, Erwartung | angegeben; jede Aufgabe aus `-Tasks` vorhanden; keine ID in beiden Listen |
+| 0.5 bis 0.8 | Sicherungsordner, Konten, Aufgaben, Erwartung | angegeben; jedes Konto aus `-Accounts` steht in `accounts list`; jede Aufgabe aus `-Tasks` vorhanden; keine ID in beiden Listen |
 | 1.1 | Aufgaben anhalten | außer dem stdio-MCP der Claude-App läuft kein `postkauz.exe` |
-| 1.2, 1.2b | `draft list` vorher | lesbares JSON; jeder erwartete Entwurf ist offen |
+| 1.2, 1.2b | `draft list` vorher | lesbares JSON, weniger als 500 offene Entwürfe (sonst Abbruch vor dem Tausch); jeder erwartete Entwurf ist offen |
 | 1.3 | `doctor` vorher | `database ok`, Schema 22 |
-| 1.4, 1.4b | Entwurf `-CommaDraft` | offene Antwort mit Komma oder @ im Namen; mit rc3 `invalid_address` (INFO) |
+| 1.4, 1.4b | Entwurf `-CommaDraft` | offene Antwort, `remote` `pushed` oder `pending`, nicht in `-ExpectSent`/`-ExpectReplaced`, ein Empfängername mit Komma oder @ oder gleich der Adresse (welcher Fall, merkt sich das Skript für 3.4c); sonst Abbruch vor dem Tausch. Mit rc3 `invalid_address` (INFO) |
 | 1.5 | Sicherung | Exit 0 **und** `backup written to …` |
 | 2.1, 2.2 | Tausch, `doctor` | rc4 läuft, `postkauz-rc3.exe` liegt daneben; `database ok`, Schema 22 |
 | 3.1 | `sync -a <Konto> --json` je Konto | Exit 0; die Zeile nennt `sent_by_*`, `replaced_in_thread`, `missing`, `taken_over` |
-| 3.2 | alle Abschlüsse im ersten Lauf | jeder mit Grund im Audit: `sent_by_human` mit `message_id`, `fallback` oder `thread`, `abandoned` mit `replaced` |
+| 3.2 | alle Abschlüsse im ersten Lauf | jeder mit Grund im Audit: `sent_by_human` mit `message_id`, `fallback` oder `thread`, `abandoned` mit `replaced`; jeder vorher offene Entwurf, der nicht mehr offen ist, einzeln mit `draft show` gelesen (unabhängig von der Grenze von `draft list`); einer, der weder offen noch geschlossen lesbar ist, zählt als unerwartet |
 | 3.2b, 3.2c | Vergleich mit der Erwartung | kein nicht erwarteter Abschluss; jeder erwartete wie erwartet |
 | 3.3 | **[Du]** | Stimmen die Abschlüsse? (`draft show <id>` zeigt den Betreff am Bildschirm; ein ersetzter Entwurf zeigt `closed: …, abandoned: replaced by an own reply in the thread (message <id>)`) |
-| 3.4 bis 3.4d | Adressen | `draft edit --dry-run` Exit 0, `draft request --dry-run` ohne `invalid_address`, Namen mit Komma oder @ in Anführungszeichen, kein neuer Entwurf |
+| 3.4 bis 3.4d | Adressen | `draft edit --dry-run` Exit 0, `draft request --dry-run` ohne `invalid_address`; 3.4c: ein Name gleich der Adresse erscheint als bloße Adresse, ein Name mit Komma oder @ in Anführungszeichen; kein neuer Entwurf |
 | 3.5 | `doctor` nachher | keine neue Warnung, Schema 22 (Nachweis: keine Migration) |
 | 3.6 | `audit verify` | `ok` |
-| 4.1 | Aufgaben wieder an | die vorher eingeschalteten laufen wieder |
+| E.0 | nur nach einem FAIL | altes Programm zurück (`postkauz.exe` meldet rc3, das neue liegt als `postkauz-rc4.exe` daneben) |
+| 4.1 bzw. E.1 | Aufgaben wieder an | die vorher eingeschalteten laufen wieder (4.1 ohne FAIL mit rc4, E.1 nach einem Abbruch oder FAIL mit rc3) |
 
 Danach **[Du]** die Claude-App neu starten (Rechtsklick auf das Claude-Symbol unten rechts → „Beenden“, dann wieder öffnen), damit ihr MCP das neue Programm nimmt.
 
 **Folge des Updates für offene Antwort-Entwürfe mit Zitat** (wie Entschiedene Fragen 70 (1), (2), (4)): rc4 baut das Zitat im HTML neu (Gmails Form, Teil 2); der Klartext bleibt gleich. Ein vorgelegter Entwurf (`pending_approval`) scheitert deshalb bei `approve` mit `approval_stale` (dann `draft request <id>` erneut), ein freigegebener (`ready`) fällt beim nächsten Ablegen auf `draft` zurück, und `draft show --eml` meldet `changed after the copy …`, bis der Entwurf neu abgelegt ist. `preview_hash` und die Übernahme-Erkennung bleiben stabil.
 
-**Was „ersetzt“ heißt:** Ein offener Antwort-Entwurf, dessen Kopie aus dem Entwürfe-Ordner verschwunden ist, und zu dem es eine eigene, **nach** der letzten Ablage gesendete Antwort im selben Verlauf an dieselben Empfänger gibt, deren Text aber anders ist, wird `abandoned` (nicht „gesendet“: sein Text ging nicht hinaus). Regeln: [versanderkennung.md](versanderkennung.md) Abschnitt 3b.
+**Bis zum Neustart der Claude-App** läuft ihr MCP (`-KeepStdioMcp`) mit dem alten Programm (rc3) weiter. Legt Claude in dieser Zeit über die App einen Antwort-Entwurf an, hat er noch das alte Zitat-HTML; rc4 baut ihn bei `approve` neu, und die Freigabe endet mit `approval_stale` (dann `draft request <id>` erneut). Deshalb die App direkt nach D12 neu starten.
+
+**Was „ersetzt“ heißt:** Ein offener Antwort-Entwurf, dessen Kopie schon in einem früheren Lauf als verschwunden festgestellt wurde (`remote: missing`), und zu dem es eine eigene, **nach** der letzten Ablage gesendete Antwort im selben Verlauf an dieselben Empfänger gibt, deren Text aber anders ist, wird `abandoned` (nicht „gesendet“: sein Text ging nicht hinaus). Liegt im Entwürfe-Ordner noch eine neuere Antwort auf dasselbe Original (in Gmail weiterbearbeitet), bleibt er offen. Regeln: [versanderkennung.md](versanderkennung.md) Abschnitt 3b. Ein Entwurf, dessen Kopie erst in diesem ersten Lauf als fehlend erkannt wird, kann frühestens im nächsten Lauf (im Dauerbetrieb wenige Minuten später) ersetzt werden; in D12 bleibt er dann offen, und die Erwartung für ihn gehört nicht in `-ExpectReplaced`.
+
+## 4a. Wenn der erste Lauf einen Entwurf unerwartet schließt
+
+Das Skript meldet das als FAIL (3.2b) und legt das alte Programm zurück; die Aufgaben laufen mit rc3 weiter. **Der Abschluss selbst bleibt:** Auch der Rückweg ändert ihn nicht, denn rc3 öffnet keine geschlossenen Entwürfe. Rückgängig macht ihn nur das Zurückspielen der Sicherung von Schritt 1.5 nach [betrieb.md](betrieb.md) 2.5; dabei geht alles verloren, was seitdem gespiegelt oder geändert wurde (der Spiegel holt Mails beim nächsten Sync wieder, lokale Änderungen wie neue Entwürfe, Tags oder Freigaben seit der Sicherung nicht).
+
+**Default:** so lassen. Der betroffene Entwurf ist nur ein Zustand in PostKauz (es wurde nichts gesendet und nichts im Postfach gelöscht); Claude nennt ID, Status und Grund im Bericht, und der Betreiber legt bei Bedarf einen neuen Entwurf an. Die Sicherung zurückspielen nur, wenn der Betreiber das ausdrücklich will.
 
 ## 5. Rückweg (nur bei Problemen)
 

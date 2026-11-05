@@ -28,10 +28,13 @@
               Adressen: draft edit <CommaDraft> --dry-run ohne Aenderung
               und draft request <CommaDraft> --dry-run ohne invalid_address
               (kein neuer Entwurf); doctor ohne neue Warnung, Schema 22;
-              audit verify ok. Bei einem FAIL in Teil 3 kommt das alte
-              Programm zurueck (der Abschluss der Entwuerfe bleibt, aber der
-              Dauerbetrieb schliesst nicht mit der neuen Regel weiter).
-      Teil 4  Aufgaben wieder einschalten und starten.
+              audit verify ok.
+      Teil 4  Aufgaben wieder einschalten und starten. Bei JEDEM FAIL und
+              bei jeder Ausnahme nach dem Tausch kommt vorher das alte
+              Programm zurueck (Nachbesserung 1); die Aufgaben laufen nie
+              mit dem neuen Programm an, wenn die Abnahme nicht bestanden
+              ist. Im ersten Lauf geschlossene Entwuerfe bleiben
+              geschlossen.
 
     Teil B (-TeilB -SelfMessage <id>, Mitmach wie D5): Antwort-Entwurf auf
       eine eigene Mail an sich selbst, die selbst ein ">"-Zitat enthaelt.
@@ -314,6 +317,15 @@ function Get-BlockingPk {
     return $all
 }
 
+# Liegt das Programm des Prozesses im Ordner von -Exe? Nur solche beendet
+# das Skript (Nachbesserung 1); andere nennt es nur.
+function Test-OwnPk {
+    param($P)
+    $path = [string] $P.ExecutablePath
+    if (-not $path) { return $false }
+    return ([string] (Split-Path -Parent $path)).TrimEnd('\') -ieq $script:ExeDir.TrimEnd('\')
+}
+
 function Test-AuditTask {
     param([string] $Name)
     return ($Name -match '(?i)audit export')
@@ -335,18 +347,24 @@ function Stop-Tasks {
     $deadline = (Get-Date).AddSeconds(20)
     while (@(Get-PkProcesses | Where-Object { & $isService $_ }).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
     $killed = 0
+    $foreign = @()
     foreach ($p in @(Get-PkProcesses | Where-Object { & $isService $_ })) {
+        if (-not (Test-OwnPk $p)) { $foreign += ('PID ' + $p.ProcessId + ': ' + [string] $p.ExecutablePath); continue }
         try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $killed++ } catch { }
     }
-    Add-Info $Nr ('Hilfsskripte beendet: ' + $helpers.Count + '; postkauz.exe (sync, --http, audit) nach 20 s beendet: ' + $killed)
+    $detail = ''
+    if ($foreign.Count -gt 0) { $detail = "nicht beendet (Programm nicht im Ordner von -Exe):`n" + ($foreign -join "`n") }
+    Add-Info $Nr ('Hilfsskripte beendet: ' + $helpers.Count + '; postkauz.exe (sync, --http, audit) aus dem Ordner von -Exe nach 20 s beendet: ' + $killed) $detail
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-BlockingPk).Count -gt 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
-    $n = (Get-BlockingPk).Count
+    $block = @(Get-BlockingPk)
+    $n = $block.Count
+    $others = @($block | ForEach-Object { 'PID ' + $_.ProcessId + ': ' + [string] $_.ExecutablePath })
     if ($KeepStdioMcp) {
         $stdio = @(Get-PkProcesses | Where-Object { Test-StdioMcp $_ }).Count
-        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, ausser dem stdio-MCP der Claude-App laeuft kein postkauz.exe' ($n -eq 0) ('uebrige postkauz.exe: ' + $n + ', stdio-MCP (darf laufen): ' + $stdio)
+        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, ausser dem stdio-MCP der Claude-App laeuft kein postkauz.exe' ($n -eq 0) ('uebrige postkauz.exe: ' + $n + ', stdio-MCP (darf laufen): ' + $stdio + "`n" + ($others -join "`n"))
     } else {
-        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, kein postkauz.exe laeuft (Claude-App vorher ganz beenden)' ($n -eq 0) ('laufende postkauz.exe: ' + $n)
+        Add-Check $Nr 'Aufgaben angehalten und abgeschaltet, kein postkauz.exe laeuft (Claude-App vorher ganz beenden)' ($n -eq 0) ('laufende postkauz.exe: ' + $n + "`n" + ($others -join "`n"))
     }
 }
 
@@ -388,15 +406,44 @@ function Install-Program {
     }
 }
 
+# Freier Name fuer das beiseitegelegte neue Programm: postkauz-rc4.exe,
+# sonst mit Zeitstempel (eine vorhandene Datei wird nie geloescht).
+function Get-NewCopyName {
+    $n = Join-Path $script:ExeDir 'postkauz-rc4.exe'
+    if (Test-Path $n) { $n = Join-Path $script:ExeDir ('postkauz-rc4-' + (Get-Date -Format 'yyyyMMddHHmmss') + '.exe') }
+    return $n
+}
+
+# Das alte Programm $Keep wieder an $script:ExeFull (Nachbesserung 1): das
+# neue wird umbenannt (eine laufende Exe laesst sich umbenennen, nicht
+# loeschen), das alte zurueckbenannt (-KeepStdioMcp) bzw. kopiert. Jeder
+# Schritt mit try/catch; das Ergebnis ist eine Pruefung $Nr (OK/FAIL).
 function Restore-Program {
-    param([string] $Keep)
-    if ($KeepStdioMcp) {
-        if (Test-Path $script:ExeFull) { Remove-Item -LiteralPath $script:ExeFull -Force }
-        Rename-Item -LiteralPath $Keep -NewName (Split-Path -Leaf $script:ExeFull)
-    } else {
-        Copy-Item -LiteralPath $Keep -Destination $script:ExeFull -Force
+    param([string] $Keep, [string] $Nr)
+    $err = ''
+    $aside = ''
+    try {
+        if (Test-Path $script:ExeFull) {
+            $aside = Get-NewCopyName
+            Rename-Item -LiteralPath $script:ExeFull -NewName (Split-Path -Leaf $aside) -ErrorAction Stop
+        }
+        if ($KeepStdioMcp) {
+            Rename-Item -LiteralPath $Keep -NewName (Split-Path -Leaf $script:ExeFull) -ErrorAction Stop
+        } else {
+            Copy-Item -LiteralPath $Keep -Destination $script:ExeFull -Force -ErrorAction Stop
+        }
+    } catch {
+        $err = $_.Exception.Message
     }
-    $script:Swapped = $false
+    $v = $null
+    if (Test-Path $script:ExeFull) { $v = Invoke-Pk $script:ExeFull @('version') -NoDirs }
+    $ok = (-not $err -and $null -ne $v -and $v.Out -match [regex]::Escape($OldVersion))
+    if ($ok) { $script:Swapped = $false }
+    $detail = 'neues Programm beiseite: ' + $aside
+    if ($null -ne $v) { $detail += "`n" + $v.Out.Trim() }
+    if ($err) { $detail += "`nFehler: " + $err }
+    Add-Check $Nr ('altes Programm zurueck: ' + $script:ExeFull + ' meldet ' + $OldVersion) $ok $detail
+    return $ok
 }
 
 # Entwuerfe in diesen Zustaenden (ID, Status, Art, remote), ohne Betreff.
@@ -428,23 +475,56 @@ function Get-DraftDetail {
     return Get-Json $r.Out
 }
 
-# Kennzahlen der Empfaenger eines Entwurfs ohne Inhalt: Hat ein Name ein
-# Komma oder ein @ (der Teil vor "<")? Steht er in Anfuehrungszeichen?
-function Get-NameFacts {
+# Empfaenger eines Entwurfs (to, cc) als Liste {Addr, Name}; nur im
+# Speicher, nie im Protokoll.
+function Get-Recipients {
     param($D)
-    $special = 0
-    $quoted = 0
+    $l = @()
     foreach ($a in @($D.to) + @($D.cc)) {
-        $s = [string] $a
+        $s = ([string] $a).Trim()
+        if (-not $s) { continue }
         $i = $s.LastIndexOf('<')
-        if ($i -le 0) { continue }
-        $name = $s.Substring(0, $i).Trim()
-        if ($name -match '[,@]') {
-            $special++
-            if ($name.StartsWith('"') -and $name.EndsWith('"')) { $quoted++ }
+        if ($i -ge 0 -and $s.EndsWith('>')) {
+            $l += New-Object PSObject -Property @{ Addr = $s.Substring($i + 1, $s.Length - $i - 2).Trim().ToLowerInvariant(); Name = $s.Substring(0, $i).Trim() }
+        } else {
+            $l += New-Object PSObject -Property @{ Addr = $s.ToLowerInvariant(); Name = '' }
         }
     }
-    return New-Object PSObject -Property @{ Special = $special; Quoted = $quoted }
+    return $l
+}
+
+# Welcher Fall liegt je Empfaenger vor (1.4, Nachbesserung 1)? "same": Name
+# gleich der Adresse (rc4 gibt nur die Adresse aus); "special": Name mit
+# Komma oder @ (rc4 setzt ihn in Anfuehrungszeichen). Ergebnis: Hashtable
+# Adresse -> Fall, nur im Speicher.
+function Get-NameCases {
+    param($D)
+    $cases = @{}
+    foreach ($r in (Get-Recipients $D)) {
+        $n = $r.Name.Trim('"').Trim()
+        if (-not $n) { continue }
+        if ($n.ToLowerInvariant() -eq $r.Addr) { $cases[$r.Addr] = 'same' } elseif ($n -match '[,@]') { $cases[$r.Addr] = 'special' }
+    }
+    return $cases
+}
+
+# 3.4c: Je in 1.4 gemerktem Empfaenger, ob rc4 ihn richtig ausgibt; nur
+# Zaehler.
+function Test-NameCases {
+    param($D, $Cases)
+    $okSame = 0; $okSpecial = 0; $bad = 0
+    $after = @{}
+    foreach ($r in (Get-Recipients $D)) { $after[$r.Addr] = $r }
+    foreach ($addr in $Cases.Keys) {
+        $r = $after[$addr]
+        if ($null -eq $r) { $bad++; continue }
+        if ($Cases[$addr] -eq 'same') {
+            if (-not $r.Name) { $okSame++ } else { $bad++ }
+        } else {
+            if ($r.Name.Length -ge 2 -and $r.Name.StartsWith('"') -and $r.Name.EndsWith('"')) { $okSpecial++ } else { $bad++ }
+        }
+    }
+    return New-Object PSObject -Property @{ Same = $okSame; Special = $okSpecial; Bad = $bad }
 }
 
 # Audit-Eintraege der letzten Stunden zu einer Operation (NDJSON).
@@ -533,7 +613,12 @@ function Invoke-Umstellung {
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     Add-Check '0.4' ('altes Programm meldet ' + $OldVersion) ($v.Exit -eq 0 -and $v.Out -match [regex]::Escape($OldVersion)) $v.Text
     Add-Check '0.5' 'Ordner der Sicherung angegeben' ([bool] $BackupTo) $BackupTo
-    Add-Check '0.6' 'mindestens ein Konto fuer den ersten Lauf angegeben' ($Accounts.Count -gt 0) ('Konten: ' + $Accounts.Count)
+    $al = Invoke-Pk $script:ExeFull @('accounts', 'list', '--json')
+    $aj = Get-Json $al.Out
+    $known = @()
+    if ($null -ne $aj -and $null -ne $aj.accounts) { $known = @($aj.accounts | ForEach-Object { [string] $_.name }) }
+    $unknown = @($Accounts | Where-Object { $known -notcontains $_ })
+    Add-Check '0.6' 'Konten fuer den ersten Lauf angegeben und alle in accounts list' ($Accounts.Count -gt 0 -and $al.Exit -eq 0 -and $unknown.Count -eq 0) ('angegeben: ' + $Accounts.Count + ', bekannt: ' + $known.Count + ', nicht gefunden: ' + $unknown.Count)
     $missingTasks = @($Tasks | Where-Object { $null -eq (Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue) })
     Add-Check '0.7' '-Tasks angegeben (Pflicht) und jede Aufgabe vorhanden' ($Tasks.Count -gt 0 -and $missingTasks.Count -eq 0) ('Aufgaben: ' + $Tasks.Count + ', nicht gefunden: ' + $missingTasks.Count + "`n" + ($Tasks -join "`n"))
     $both = @($ExpectSent | Where-Object { $ExpectReplaced -contains $_ })
@@ -544,25 +629,35 @@ function Invoke-Umstellung {
     Stop-Tasks '1.1'
     if ($script:NFail -gt 0) { Stop-D12 'es laeuft noch ein postkauz.exe (Claude-App oder Aufgabe); nichts getauscht' }
     $script:Before = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
-    Add-Check '1.2' ('draft list vorher: ' + $script:Before.List.Count + ' offene Entwuerfe') ($script:Before.Exit -eq 0 -and $script:Before.Parsed) ('JSON lesbar: ' + $script:Before.Parsed + "`n" + (Format-Drafts $script:Before.List))
+    Add-Check '1.2' ('draft list vorher: ' + $script:Before.List.Count + ' offene Entwuerfe (unter der Grenze von 500)') ($script:Before.Exit -eq 0 -and $script:Before.Parsed -and $script:Before.List.Count -lt 500) ('JSON lesbar: ' + $script:Before.Parsed + "`n" + (Format-Drafts $script:Before.List))
     $script:DocBefore = Get-Doctor $script:ExeFull
     Add-Check '1.3' 'doctor vorher: database ok, Schema 22' ($script:DocBefore.Database -eq 'ok' -and $script:DocBefore.Schema -eq 22) ('database ' + $script:DocBefore.Database + ', schema ' + $script:DocBefore.Schema + "`n" + (($script:DocBefore.Warnings) -join "`n"))
-    if ($script:NFail -gt 0) { Stop-D12 'Stand vorher nicht lesbar; nichts getauscht' }
+    if ($script:NFail -gt 0) { Stop-D12 'Stand vorher nicht lesbar oder zu viele offene Entwuerfe; nichts getauscht' }
     $openIds = @($script:Before.List | ForEach-Object { $_.Id })
     $notOpen = @(@($ExpectSent) + @($ExpectReplaced) | Where-Object { $openIds -notcontains $_ })
     Add-Check '1.2b' 'jeder erwartete Entwurf ist vorher offen' ($notOpen.Count -eq 0) ('nicht offen: ' + (Format-Ids $notOpen))
+    if ($script:NFail -gt 0) { Stop-D12 'Erwartung passt nicht zum Stand; nichts getauscht' }
     if ($CommaDraft) {
         $d = Get-DraftDetail $script:ExeFull $CommaDraft
-        $f = $null
-        if ($null -ne $d) { $f = Get-NameFacts $d }
-        $ok = ($null -ne $d -and $openIds -contains [int64] $CommaDraft -and @('reply', 'reply_all') -contains [string] $d.kind -and $f.Special -gt 0)
+        $script:NameCases = @{}
+        if ($null -ne $d) { $script:NameCases = Get-NameCases $d }
+        $nSame = @($script:NameCases.Values | Where-Object { $_ -eq 'same' }).Count
+        $nSpecial = @($script:NameCases.Values | Where-Object { $_ -eq 'special' }).Count
+        $cid = [int64] $CommaDraft
+        $expected = (@($ExpectSent) + @($ExpectReplaced)) -contains $cid
+        $remoteOk = ($null -ne $d -and @('pushed', 'pending') -contains [string] $d.remote)
+        $ok = ($null -ne $d -and $openIds -contains $cid -and @('reply', 'reply_all') -contains [string] $d.kind -and ($nSame + $nSpecial) -gt 0 -and $remoteOk -and -not $expected)
         $detail = 'gefunden: ' + ($null -ne $d)
-        if ($null -ne $d) { $detail += ', Art ' + [string] $d.kind + ', Status ' + [string] $d.status + ', Namen mit Komma oder @: ' + $f.Special + ', davon in Anfuehrungszeichen: ' + $f.Quoted }
-        Add-Check '1.4' ('Entwurf ' + $CommaDraft + ': offene Antwort, ein Empfaengername mit Komma oder @') $ok $detail
+        if ($null -ne $d) {
+            $detail += ', Art ' + [string] $d.kind + ', Status ' + [string] $d.status + ', remote ' + [string] $d.remote +
+                ', Name gleich Adresse: ' + $nSame + ', Name mit Komma oder @: ' + $nSpecial + ', in -ExpectSent/-ExpectReplaced: ' + $expected
+        }
+        Add-Check '1.4' ('Entwurf ' + $CommaDraft + ': offene Antwort, remote pushed oder pending, nicht in der Erwartung, ein Empfaengername mit Komma oder @ oder gleich der Adresse') $ok $detail
         $quote = 'true'
         if ($null -ne $d -and -not [bool] $d.quote) { $quote = 'false' }
         $e = Invoke-Pk $script:ExeFull @('draft', 'edit', $CommaDraft, ('--quote=' + $quote), '--dry-run')
         Add-Info '1.4b' ('mit ' + $OldVersion + ': draft edit ' + $CommaDraft + ' --dry-run ohne Aenderung (erwartet: denied invalid_address)') ('exit ' + $e.Exit + ', Grund ' + (Get-DenyReason $e))
+        if ($script:NFail -gt 0) { Stop-D12 '-CommaDraft ungeeignet; nichts getauscht' }
     } else {
         Add-Info '1.4' 'kein Entwurf mit Komma oder @ im Empfaengernamen angegeben (-CommaDraft); 3.4 entfaellt'
     }
@@ -584,10 +679,8 @@ function Invoke-Umstellung {
         $why = 'Fehler beim Tausch'
     }
     if ($why) {
-        if ($script:Swapped -and (Test-Path $OldCopy)) { Restore-Program $OldCopy }
-        $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
-        Add-Info '2.3' ('altes Programm zurueck, meldet: ' + $v.Out.Trim())
-        Stop-D12 ($why + '; altes Programm wieder in Betrieb, kein sync mit dem neuen')
+        # Die Rueckkopie macht finally (E.0), vor dem Neustart der Aufgaben.
+        Stop-D12 ($why + '; kein sync mit dem neuen Programm')
     }
     if ($KeepStdioMcp) {
         Add-Info '2.4' 'Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem alten Programm (postkauz-rc3.exe).'
@@ -610,12 +703,21 @@ function Invoke-Umstellung {
         }
         Add-Check '3.1' 'sync -a <Konto> (erster vollstaendiger Lauf)' ($s.Exit -eq 0) $line
     }
-    $after = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready', 'sent_by_human', 'abandoned')
+    # Noch offene aus draft list; jeder vorher offene, der dort fehlt, einzeln
+    # mit draft show (unabhaengig von der Grenze von draft list).
+    $after = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
     $cr = Get-CloseReasons $script:ExeFull
     $closed = @()
+    $vanished = @()
+    $openAfterIds = @($after.List | ForEach-Object { $_.Id })
     foreach ($o in $script:Before.List) {
-        $n = $after.List | Where-Object { $_.Id -eq $o.Id } | Select-Object -First 1
-        if ($null -ne $n -and @('sent_by_human', 'abandoned') -contains $n.Status) { $closed += $n }
+        if ($openAfterIds -contains $o.Id) { continue }
+        $dd = Get-DraftDetail $script:ExeFull ([string] $o.Id)
+        if ($null -ne $dd -and @('sent_by_human', 'abandoned') -contains [string] $dd.status) {
+            $closed += New-Object PSObject -Property @{ Id = $o.Id; Status = [string] $dd.status; Remote = [string] $dd.remote; Kind = [string] $dd.kind }
+        } else {
+            $vanished += $o.Id
+        }
     }
     $lines = @()
     $gotSent = @()
@@ -627,12 +729,12 @@ function Invoke-Umstellung {
         $lines += ('draft ' + $c.Id + ': ' + $c.Status + ', Grund ' + $r)
         if ($c.Status -eq 'sent_by_human' -and @('message_id', 'fallback', 'thread') -contains $r) { $gotSent += $c.Id } elseif ($c.Status -eq 'abandoned' -and $r -eq 'replaced') { $gotReplaced += $c.Id } else { $odd += $c.Id }
     }
-    Add-Check '3.2' ('alle im ersten Lauf geschlossenen Entwuerfe mit Grund aus dem Audit (' + $closed.Count + ')') ($after.Exit -eq 0 -and $after.Parsed -and $cr.Ok -and $odd.Count -eq 0) ((@($lines) -join "`n") + "`nohne passenden Grund: " + (Format-Ids $odd))
-    $unexpected = @(@($gotSent | Where-Object { $ExpectSent -notcontains $_ }) + @($gotReplaced | Where-Object { $ExpectReplaced -notcontains $_ }) + $odd)
+    Add-Check '3.2' ('alle im ersten Lauf geschlossenen Entwuerfe mit Grund aus dem Audit (' + $closed.Count + ')') ($after.Exit -eq 0 -and $after.Parsed -and $after.List.Count -lt 500 -and $cr.Ok -and $odd.Count -eq 0 -and $vanished.Count -eq 0) ((@($lines) -join "`n") + "`nohne passenden Grund: " + (Format-Ids $odd) + "`nvorher offen, jetzt weder offen noch geschlossen lesbar: " + (Format-Ids $vanished))
+    $unexpected = @(@($gotSent | Where-Object { $ExpectSent -notcontains $_ }) + @($gotReplaced | Where-Object { $ExpectReplaced -notcontains $_ }) + $odd + $vanished)
     $missingExp = @(@($ExpectSent | Where-Object { $gotSent -notcontains $_ }) + @($ExpectReplaced | Where-Object { $gotReplaced -notcontains $_ }))
     Add-Check '3.2b' 'kein nicht erwarteter Abschluss' ($unexpected.Count -eq 0) ('nicht erwartet: ' + (Format-Ids $unexpected))
     Add-Check '3.2c' 'jeder erwartete Abschluss mit dem erwarteten Ergebnis (-ExpectSent: sent_by_human, -ExpectReplaced: abandoned/replaced)' ($missingExp.Count -eq 0) ('sent_by_human: ' + (Format-Ids $gotSent) + "`nersetzt: " + (Format-Ids $gotReplaced) + "`nfehlt: " + (Format-Ids $missingExp))
-    $open = @($after.List | Where-Object { @('draft', 'pending_approval', 'ready') -contains $_.Status })
+    $open = @($after.List)
     Add-Info '3.3' 'Betreiber: Stimmen die Abschluesse (draft show <id> zeigt den Betreff nur am Bildschirm)? Noch offen:' (Format-Drafts $open)
     if ($CommaDraft) {
         $d = Get-DraftDetail $script:ExeFull $CommaDraft
@@ -644,9 +746,9 @@ function Invoke-Umstellung {
         $q = Invoke-Pk $script:ExeFull @('draft', 'request', $CommaDraft, '--dry-run')
         $qr = Get-DenyReason $q
         Add-Check '3.4b' ('draft request ' + $CommaDraft + ' --dry-run: kein invalid_address') ($qr -ne 'invalid_address' -and @(0, 3) -contains $q.Exit) ('exit ' + $q.Exit + ', Grund ' + $qr)
-        $f = $null
-        if ($null -ne $d) { $f = Get-NameFacts $d }
-        Add-Check '3.4c' 'draft show: Namen mit Komma oder @ stehen in Anfuehrungszeichen' ($null -ne $f -and $f.Special -gt 0 -and $f.Quoted -eq $f.Special) ('Namen mit Komma oder @: ' + $f.Special + ', in Anfuehrungszeichen: ' + $f.Quoted)
+        $tc = $null
+        if ($null -ne $d) { $tc = Test-NameCases $d $script:NameCases }
+        Add-Check '3.4c' 'draft show: Name gleich Adresse als blosse Adresse, Name mit Komma oder @ in Anfuehrungszeichen' ($null -ne $tc -and $tc.Bad -eq 0 -and ($tc.Same + $tc.Special) -eq $script:NameCases.Count) ('nur Adresse (Name gleich Adresse): ' + $tc.Same + ', in Anfuehrungszeichen: ' + $tc.Special + ', falsch: ' + $tc.Bad + ' (von ' + $script:NameCases.Count + ' aus 1.4)')
         $still = Get-Drafts $script:ExeFull @('draft', 'pending_approval', 'ready')
         Add-Check '3.4d' 'kein neuer Entwurf durch die Pruefung (Zahl der offenen gleich)' ($still.List.Count -eq $open.Count) ('vorher ' + $open.Count + ', nachher ' + $still.List.Count)
     }
@@ -659,16 +761,10 @@ function Invoke-Umstellung {
     $avj = Get-Json $av.Out
     Add-Check '3.6' 'audit verify: ok' ($av.Exit -eq 0 -and $null -ne $avj -and $avj.status -eq 'ok') ('exit ' + $av.Exit + ', status ' + [string] $avj.status)
     if ($script:NFail -gt $failsBefore) {
-        # Rueckweg bei FAIL: Der Dauerbetrieb laeuft nicht mit dem neuen
-        # Programm weiter (geschlossene Entwuerfe bleiben geschlossen).
-        if (Test-Path $OldCopy) { Restore-Program $OldCopy }
-        $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
-        Add-Info '3.7' ('FAIL in Teil 3: altes Programm zurueck, meldet: ' + $v.Out.Trim() + '. Die im ersten Lauf geschlossenen Entwuerfe bleiben geschlossen (Liste in 3.2).')
+        Add-Info '3.7' 'FAIL in Teil 3: Die im ersten Lauf geschlossenen Entwuerfe bleiben geschlossen (Liste in 3.2); das alte Programm kommt vor dem Neustart der Aufgaben zurueck (E.0).'
     }
-
-    Write-Log '--- Teil 4: Dauerbetrieb wieder an'
-    Start-Tasks '4.1'
-    $script:Restarted = $true
+    # Teil 4 (Aufgaben wieder an) macht finally, nach einer noetigen
+    # Rueckkopie (E.0).
 }
 
 # ---------------------------------------------------------------- Teil B
@@ -784,7 +880,7 @@ function Invoke-TeilB {
 
 function Invoke-Rueckweg {
     Write-Log '--- Rueckweg: altes Programm zurueck (keine Migration in A06)'
-    $newCopy = Join-Path (Split-Path -Parent $script:ExeFull) 'postkauz-rc4.exe'
+    $newCopy = Join-Path $script:ExeDir 'postkauz-rc4.exe'
     Add-Check 'R.0' 'aufgehobenes altes Programm vorhanden (postkauz-rc3.exe)' (Test-Path $OldCopy) $OldCopy
     if (-not (Test-Path $OldCopy)) { Stop-D12 'postkauz-rc3.exe fehlt; nichts geaendert' }
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
@@ -795,13 +891,18 @@ function Invoke-Rueckweg {
     if ($script:NFail -gt 0) { Stop-D12 'Rueckweg nicht moeglich; nichts geaendert' }
     Stop-Tasks 'R.1'
     if ($script:NFail -gt 0) { Stop-D12 'es laeuft noch ein postkauz.exe; nichts getauscht' }
+    # Neues Programm umbenennen (auch wenn es laeuft), altes daneben
+    # kopieren; postkauz-rc3.exe bleibt erhalten.
+    $err = ''
+    try {
+        Rename-Item -LiteralPath $script:ExeFull -NewName (Split-Path -Leaf $newCopy) -ErrorAction Stop
+        Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force -ErrorAction Stop
+    } catch {
+        $err = $_.Exception.Message
+    }
+    Add-Check 'R.1b' 'neues Programm als postkauz-rc4.exe beiseite, altes an seine Stelle kopiert' (-not $err -and (Test-Path $newCopy) -and (Test-Path $script:ExeFull)) ('Fehler: ' + $err)
     if ($KeepStdioMcp) {
-        Rename-Item -LiteralPath $script:ExeFull -NewName (Split-Path -Leaf $newCopy)
-        Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
-        Add-Info 'R.1b' 'Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem bisherigen Programm (jetzt postkauz-rc4.exe).'
-    } else {
-        Copy-Item -LiteralPath $script:ExeFull -Destination $newCopy
-        Copy-Item -LiteralPath $OldCopy -Destination $script:ExeFull -Force
+        Add-Info 'R.1c' 'Der stdio-MCP der Claude-App laeuft bis zum naechsten Neustart der App mit dem bisherigen Programm (jetzt postkauz-rc4.exe).'
     }
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     $d = Get-Doctor $script:ExeFull
@@ -822,6 +923,8 @@ function Invoke-Rueckweg {
 
 $script:ExeFull = [System.IO.Path]::GetFullPath($Exe)
 $dir = Split-Path -Parent $script:ExeFull
+$script:ExeDir = $dir
+$script:NameCases = @{}
 if (-not $LogFile) {
     if ($TeilB) { $LogFile = Join-Path $dir 'D12_teilB.txt' } else { $LogFile = Join-Path $dir 'D12_windows.txt' }
 }
@@ -845,8 +948,26 @@ try {
         Add-Check 'X' ('unerwarteter Fehler im Skript: ' + $msg) $false
     }
 } finally {
+    # Nachbesserung 1: Nach dem Tausch bei jedem FAIL und jeder Ausnahme
+    # zuerst das alte Programm zurueck; nie mit dem neuen neu starten, wenn
+    # die Abnahme nicht bestanden ist.
+    $restoreFailed = $false
+    if ($script:Swapped -and -not $Rueckweg -and -not $TeilB -and $script:NFail -gt 0) {
+        try {
+            if (-not (Restore-Program $OldCopy 'E.0')) { $restoreFailed = $true }
+        } catch {
+            Add-Check 'E.0' ('altes Programm zurueck: ' + $_.Exception.Message) $false
+            $restoreFailed = $true
+        }
+    }
     if ($script:WasEnabled.Count -gt 0 -and -not $script:Restarted) {
-        try { Start-Tasks 'E.1' } catch { Add-Check 'E.1' ('Aufgaben wieder einschalten: ' + $_.Exception.Message) $false }
+        if ($restoreFailed) {
+            Add-Check 'E.1' 'Aufgaben NICHT wieder eingeschaltet: das alte Programm liess sich nicht zuruecklegen (von Hand nach abnahme_D12.md Abschnitt 5)' $false
+        } else {
+            $nr = 'E.1'
+            if (-not $Rueckweg -and -not $TeilB -and $script:NFail -eq 0) { $nr = '4.1'; Write-Log '--- Teil 4: Dauerbetrieb wieder an' }
+            try { Start-Tasks $nr } catch { Add-Check $nr ('Aufgaben wieder einschalten: ' + $_.Exception.Message) $false }
+        }
     }
     if ($script:Swapped -and -not $Rueckweg -and -not $TeilB) {
         Write-Log ('Stand: ' + $script:ExeFull + ' ist das neue Programm; das alte liegt als postkauz-rc3.exe daneben.')
