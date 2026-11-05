@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: A06 Teil 3 (05.11.2026; verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: A06 (05.11.2026; Teil 3 verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3; Teil 4 ersetzte Entwürfe, Abschnitt 3b). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -10,13 +10,13 @@ Nach **jedem** Sync-Lauf, also bei `postkauz sync` und in jeder Runde von `postk
 
 Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfterSync`; die Versanderkennung kommt seit der Gegenprüfung S2.6–S2.8, W1, **vor** dem Ablauf: Hat der Mensch einen freigegebenen Entwurf vor Ablauf der Freigabe gesendet und sieht der Sync die Nachricht erst danach, ist der Entwurf gesendet, nicht abgelaufen):
 
-1. **Versanderkennung** (E5, Abschnitte 2, 3 und 3a): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`.
+1. **Versanderkennung** (E5, Abschnitte 2, 3 und 3a): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`; danach (seit A06, Abschnitt 3b) werden Entwürfe, die eine eigene Antwort im Verlauf ersetzt hat, `abandoned`.
 2. **Ablauf der Freigabe** (E7, Entscheid 38): Ein Entwurf in `ready` oder `pending_approval`, dessen Freigabe älter als `[draft] approval_ttl` ist (Standard 168 h, ab Vorlage bzw. ab `approve`), fällt auf `draft` zurück; die Freigabe wird `expired`; Audit `drafts.expire`, Grund `approval_expired`, Akteur `system`. Dasselbe geschah schon seit S2.1 beim Lesen (`draft show`, `draft list`, MCP); seit S2.6 auch beim Sync, ohne dass jemand liest.
 3. **Stand der Serverkopie** (E6): Ist die zuletzt abgelegte Kopie eines noch offenen Entwurfs aus dem Entwürfe-Ordner verschwunden, wird `remote_state` `missing`; hat ein Mailprogramm eine bearbeitete Fassung gespeichert, `taken_over` (Audit `drafts.remote_check`). Vorher stellte das nur `drafts.update` bzw. der nächste Push fest; jetzt zeigt `draft list` es nach dem nächsten Sync.
 
 Scheitert die Prüfung (etwa weil die Datenbank gerade gesperrt ist), zählt das als Fehler des Laufs (`errors`, Log ohne Mailinhalt); der Rest des Laufs (Nacharbeit, Extraktion, Suchindex) läuft weiter, und der nächste Lauf prüft erneut (Gegenprüfung S2.6–S2.8, K5). Nur Abbruch, Verbindungs- oder Anmeldefehler und ein interner Fehler (Panic) beenden den Lauf.
 
-Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`). Ohne Änderung erscheint nichts.
+Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`, seit A06 `replaced_in_thread`, `replaced_draft_ids`). Ohne Änderung erscheint nichts.
 
 ## 2. Erster Weg: die Message-ID
 
@@ -89,6 +89,26 @@ Der Weg über den Verlauf kostet also etwa 0,2 ms je offener, abgelegter Antwort
 - Webmail, die `In-Reply-To` beim Senden entfernt (D5, zweites Postfach beim anderen Anbieter), bleibt beim Rückfall (Abschnitt 3).
 - Ohne Original im Spiegel (`purge`, Entwurf ohne `in_reply_to_msg`) und ohne abgelegte Kopie gilt der Weg nicht; dann schließt der Mensch den Entwurf (Abschnitt 5).
 
+## 3b. Ersetzte Entwürfe
+
+Seit A06 Teil 4 (05.11.2026; Default, Einspruch bis zum Merge). Befund aus dem Dauerbetrieb: Der Betreiber schrieb einen Antwort-Entwurf (eigener Text 19 Wörter) in Gmail fast ganz neu und sendete ihn (Ähnlichkeit 0,29). Die Kopie war aus den Entwürfen weg, die gesendete Antwort hatte `In-Reply-To` = Original und dieselben Empfänger. Kein Weg traf ((g) verlangt 0,5), der Entwurf blieb `draft` mit `remote: missing`, und schließen konnte ihn nur der Mensch auf der Kommandozeile. Offene Entwürfe sammelten sich so an.
+
+**Regel** (Systemregel nach Message-ID, Rückfall und Verlauf, im selben Lauf; `drafts.Service.detectReplaced`): Ein offener Entwurf ist **ersetzt**, wenn eine gesendete Nachricht für ihn die Bedingungen (a) bis (f) des Wegs über den Verlauf erfüllt (Abschnitt 3a) und kein Weg ihn in diesem Lauf als gesendet schließt, **gleich ob (g) erfüllt ist**. Zusätzlich, weil falsches Schließen endgültig ist:
+
+- Als ersetzende Nachricht zählt auch eine, die schon einem **anderen** Entwurf als gesendet zugeordnet ist (in diesem oder einem früheren Lauf): Zwei Fassungen derselben Antwort, eine gesendet, die andere gelöscht, schließen beide (die eine `sent_by_human`, die andere ersetzt), auch wenn die Kopie der zweiten erst im nächsten Lauf verschwindet.
+- Nicht bei **KeepMark** (Gesendet bzw. „Alle Nachrichten" im Lauf nicht vollständig gespiegelt).
+- Die Antwort ist **nach** der letzten Ablage (Date der abgelegten Kopie) und nach `content_changed_at` datiert, nicht nur im Fenster ab −1 h.
+- (f) und der Inhalts-Fingerabdruck werden beim Schließen in derselben Transaktion erneut geprüft (wie beim Weg über den Verlauf): Liegt die Kopie laut Spiegel wieder im Entwürfe-Ordner oder hat sich der Inhalt geändert, wird nicht geschlossen.
+
+**Ergebnis:** Status `abandoned`, nicht `sent_by_human` (der Text des Entwurfs ging nicht hinaus); eine Freigabe wird `superseded` (wie beim Verwerfen); Akteur `system`; Audit `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id` und `reply_message_id` (lokale ID der Antwort), ohne Inhalt; `sent_message_id` bleibt leer. Der Sync nennt es in seiner Zeile (`… replaced by an own reply in the thread …, now abandoned (draft 4)`), mit `--json` in `draft_check.replaced_in_thread` und `replaced_draft_ids`; `draft show` nennt den Grund und die Antwort (`closed_reason: "replaced"`, `replaced_by_message_id`; ohne Migration aus dem Audit gelesen, nach einer Rotation des Audits nicht mehr). Ein Agent kann einen Entwurf weiterhin nie selbst schließen (E2); auch das ist eine Systemregel.
+
+**Bekannte Grenzen:**
+
+- Hat der Mensch den Entwurf umgeschrieben und gesendet, heißt er danach „verworfen (durch eigene Antwort ersetzt)", nicht „gesendet". Das ist gewollt: Gesendet wurde ein anderer Text.
+- Ein so verworfener Entwurf wird nach späteren Regeländerungen (`SentCheckRev`) nie neu geprüft; er ist abgeschlossen.
+- Die Regel baut auf (f) in der jetzigen Form (Offene Frage 2 der Roadmap: nur die zuletzt abgelegte Kopie und neuere Fassungen zählen).
+- Ohne Original im Spiegel (`purge`), ohne `In-Reply-To` in der gesendeten Antwort (Gmail mit eigenem Betreff) oder ohne abgelegte Kopie gilt die Regel nicht; dann schließt weiter der Mensch.
+
 ## 4. Was nie als gesendet zählt
 
 - Nachrichten mit dem Flag **`\Draft`** in irgendeinem Ordner.
@@ -100,16 +120,16 @@ Grund (Befund K8 der Gegenprüfung von S2.4/S2.5): **Gmail führt jede Entwurfsk
 
 ## 5. Kein Treffer ist kein Fehler
 
-Findet die Prüfung nichts (auch nicht über den Verlauf, Abschnitt 3a), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon`. Änderungen sind dann `draft_taken_over`. Der Mensch schließt ihn selbst:
+Findet die Prüfung nichts (auch nicht über den Verlauf, Abschnitt 3a, und keine ersetzende eigene Antwort, Abschnitt 3b), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon`. Änderungen sind dann `draft_taken_over`. Der Mensch schließt ihn selbst:
 
 - `postkauz draft mark-sent <id>` → `sent_by_human` (er hat gesendet),
 - `postkauz draft abandon <id>` → `abandoned` (er hat verworfen).
 
-Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2). Ein Agent kann einen Entwurf nie für gesendet erklären.
+Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2). Ein Agent kann einen Entwurf nie für gesendet erklären. Das System verwirft einen Entwurf nur nach der Regel in Abschnitt 3b (ersetzt durch eine eigene Antwort) und wenn der Schlüssel eines Agenten widerrufen ist (`docs/sicherheit.md`, Abschnitt 2).
 
 ## 6. Audit
 
-Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback` oder (seit A05) `thread`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
+Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback` oder (seit A05) `thread`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
 ## 7. Ablage geänderter Entwürfe (Entscheid 43)
 

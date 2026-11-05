@@ -27,7 +27,11 @@ const (
 	EvApprove Event = "approve"
 	// EvReject: Mensch lehnt ab (nur Mensch).
 	EvReject Event = "reject"
-	// EvAbandon: Mensch verwirft (nur Mensch).
+	// EvAbandon: verwerfen. Als Operation nur der Mensch (drafts.abandon,
+	// HumanOnly, E2); das System verwirft mit demselben Übergang, wenn der
+	// Schlüssel des Agenten widerrufen ist (CloseForKey) oder eine eigene
+	// Antwort im Verlauf den Entwurf ersetzt hat (A06 Teil 4, Replaced;
+	// Akteur system, Audit drafts.replaced_detected). Ein Agent verwirft nie.
 	EvAbandon Event = "abandon"
 	// EvMarkSent: Mensch erklärt den Entwurf für gesendet (nur Mensch).
 	EvMarkSent Event = "mark_sent"

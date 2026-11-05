@@ -274,8 +274,20 @@ func TestThreadConditions(t *testing.T) {
 			if rep.SentByThread+rep.SentByFallback+rep.SentByMessageID != 0 {
 				t.Fatalf("report = %+v", rep)
 			}
-			if got := e.status(d); got != string(StatusDraft) {
-				t.Fatalf("draft = %s", got)
+			// Seit A06 Teil 4: Sind (a) bis (f) erfüllt und nur (g) nicht,
+			// hat eine eigene Antwort den Entwurf ersetzt (abandoned, nie
+			// sent_by_human); sonst bleibt er offen.
+			want := string(StatusDraft)
+			if strings.HasPrefix(c.name, "(g)") {
+				want = string(StatusAbandoned)
+				if rep.ReplacedInThread != 1 {
+					t.Fatalf("report = %+v", rep)
+				}
+			} else if rep.ReplacedInThread != 0 {
+				t.Fatalf("report = %+v", rep)
+			}
+			if got := e.status(d); got != want {
+				t.Fatalf("draft = %s, want %s", got, want)
 			}
 		})
 	}
@@ -362,8 +374,10 @@ func TestThreadOneDraftPerMessage(t *testing.T) {
 	if got := e.draft(near.ID); got.Status != string(StatusSentByHuman) || got.SentMessageID != sent {
 		t.Fatalf("near = %s", got.Status)
 	}
-	if got := e.status(far); got != string(StatusDraft) {
-		t.Fatalf("far = %s", got)
+	// Seit A06 Teil 4: Die Antwort ersetzt die zweite Fassung (abandoned,
+	// ohne sent_message_id).
+	if got := e.draft(far.ID); got.Status != string(StatusAbandoned) || got.SentMessageID != 0 || rep.ReplacedInThread != 1 {
+		t.Fatalf("far = %s, sent %d, report %+v", got.Status, got.SentMessageID, rep)
 	}
 }
 

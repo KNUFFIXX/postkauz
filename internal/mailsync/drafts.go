@@ -224,6 +224,10 @@ func (e *Engine) checkDrafts(ctx context.Context, o drafts.CheckOptions) (*draft
 		e.log().Info("drafts sent by the human detected", "count", n, "by_message_id", rep.SentByMessageID,
 			"by_fallback", rep.SentByFallback, "by_thread", rep.SentByThread, "draft_ids", rep.SentDraftIDs)
 	}
+	if rep.ReplacedInThread > 0 {
+		e.log().Info("drafts replaced by an own reply in the thread; now abandoned", "count", rep.ReplacedInThread,
+			"draft_ids", rep.ReplacedDraftIDs)
+	}
 	if rep.Expired > 0 {
 		e.log().Info("approvals ran out; drafts back to status draft", "count", rep.Expired)
 	}

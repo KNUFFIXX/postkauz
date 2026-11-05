@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
 )
@@ -587,6 +588,11 @@ func renderDraftShow(w io.Writer, out any) error {
 		fmt.Fprintf(w, "in-reply-to: %s\nreferences:  %s\n", termLine(o.InReplyTo), termLine(o.References))
 	}
 	fmt.Fprintf(w, "created:     %s by %s, changed %s\n", o.CreatedAt, termLine(o.CreatedBy), o.UpdatedAt)
+	if o.ClosedReason == drafts.ReasonReplaced {
+		// A06 Teil 4: vom System geschlossen, der Text ging nicht hinaus.
+		fmt.Fprintf(w, "closed:      %s, abandoned: replaced by an own reply in the thread (message %d); this text was not sent\n",
+			o.ClosedAt, o.ReplacedByMessageID)
+	}
 	body := strings.TrimRight(termText(o.BodyText), "\r\n")
 	if q := o.Original; q != nil && q.Text != "" {
 		body = strings.TrimLeft(body+"\n\n"+strings.TrimRight(termText(q.Text), "\r\n"), "\r\n")

@@ -1292,6 +1292,12 @@ type DraftDetail struct {
 	UpdatedAt     string  `json:"updated_at"`
 	ClosedAt      string  `json:"closed_at,omitempty"`
 	SentMessageID int64   `json:"sent_message_id,omitempty"`
+	// ClosedReason: warum das System den Entwurf geschlossen hat, soweit
+	// ohne Migration bekannt; "replaced" (A06 Teil 4): eine eigene Antwort
+	// im Verlauf hat ihn ersetzt (abandoned), ReplacedByMessageID ist ihre
+	// lokale ID. Gelesen aus dem Audit (drafts.replaced_detected).
+	ClosedReason        string `json:"closed_reason,omitempty"`
+	ReplacedByMessageID int64  `json:"replaced_by_message_id,omitempty"`
 
 	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
 	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
@@ -1428,6 +1434,15 @@ func DraftsGet(d Deps) Operation {
 			}
 			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
+			if dr.Status == string(drafts.StatusAbandoned) {
+				reply, ok, err := o.svc.Store.DraftReplacedBy(ctx, dr.ID, dr.ClosedAt)
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					out.ClosedReason, out.ReplacedByMessageID = drafts.ReasonReplaced, reply
+				}
+			}
 			if dr.ApprovalID > 0 {
 				if a, err := o.svc.Store.Approval(ctx, dr.ApprovalID); err == nil {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)

@@ -19,7 +19,9 @@ import (
 //  1. erkennt gesendete Entwürfe (E5, sentmatch.go): sent_by_human,
 //     sent_message_id, Audit drafts.sent_detected mit Grund message_id,
 //     fallback oder thread (A05 Teil 2; Akteur system, nur IDs und
-//     Zustände),
+//     Zustände); danach durch eine eigene Antwort ersetzte Entwürfe (A06
+//     Teil 4, replaced.go): abandoned, Audit drafts.replaced_detected,
+//     Grund replaced,
 //  2. lässt abgelaufene Freigaben verfallen (E7, Entscheid 38: ready und
 //     pending_approval älter als approval_ttl → draft, Freigabe expired,
 //     Audit drafts.expire mit Grund approval_expired),
@@ -36,7 +38,8 @@ import (
 // (letzte Inhaltsänderung), das weder Ablauf noch Lesen verschieben.
 //
 // Kein Treffer ist kein Fehler: Der Entwurf bleibt, bis der Mensch ihn mit
-// draft mark-sent oder draft abandon schließt.
+// draft mark-sent oder draft abandon schließt (oder eine eigene Antwort
+// ihn ersetzt, A06 Teil 4).
 
 // CheckReport fasst die Prüfung nach dem Spiegeln zusammen (Zähler und
 // Draft-IDs, kein Inhalt).
@@ -54,6 +57,10 @@ type CheckReport struct {
 	TakenOver int `json:"taken_over,omitempty"`
 	// SentDraftIDs: die als gesendet erkannten Entwürfe.
 	SentDraftIDs []int64 `json:"sent_draft_ids,omitempty"`
+	// ReplacedInThread, ReplacedDraftIDs: Entwürfe, die eine eigene Antwort
+	// im Verlauf ersetzt hat; jetzt abandoned (A06 Teil 4, replaced.go).
+	ReplacedInThread int     `json:"replaced_in_thread,omitempty"`
+	ReplacedDraftIDs []int64 `json:"replaced_draft_ids,omitempty"`
 	// AdoptedClosed: Kopien abgebrochener Ablageversuche abgeschlossener
 	// Entwürfe, die die Prüfung übernommen hat (A7; push_note
 	// pushed_after_close). LostAttempts: solche Versuche ohne Kopie im
@@ -68,7 +75,8 @@ type CheckReport struct {
 
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
-	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+r.LostAttempts == 0
+	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.ReplacedInThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
+		r.LostAttempts == 0
 }
 
 // Add zählt o dazu (Dauerbetrieb: eine Prüfung je Runde).
@@ -82,6 +90,8 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.AdoptedClosed += o.AdoptedClosed
 	r.LostAttempts += o.LostAttempts
 	r.SentDraftIDs = append(r.SentDraftIDs, o.SentDraftIDs...)
+	r.ReplacedInThread += o.ReplacedInThread
+	r.ReplacedDraftIDs = append(r.ReplacedDraftIDs, o.ReplacedDraftIDs...)
 	r.Examined += o.Examined
 }
 
@@ -225,7 +235,26 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 			left = append(left, d)
 		}
 	}
-	return s.detectThread(ctx, accountID, left, claimed, copies, rep)
+	before = len(rep.SentDraftIDs)
+	if err := s.detectThread(ctx, accountID, left, claimed, copies, rep); err != nil {
+		return err
+	}
+	// A06 Teil 4: Was danach noch offen ist, kann eine eigene Antwort
+	// ersetzt haben. Nicht bei KeepMark: Gesendet bzw. „Alle Nachrichten“
+	// fehlte im Lauf, und falsches Schließen ist endgültig.
+	if keepMark {
+		return nil
+	}
+	for _, id := range rep.SentDraftIDs[before:] {
+		closed[id] = true
+	}
+	rest = left[:0:0]
+	for _, d := range left {
+		if !closed[d.ID] {
+			rest = append(rest, d)
+		}
+	}
+	return s.detectReplaced(ctx, accountID, rest, copies, rep)
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe

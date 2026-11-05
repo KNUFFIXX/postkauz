@@ -329,6 +329,14 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		parts = append(parts, fmt.Sprintf("%d sent in the mail client, now sent_by_human (%s; draft %s)", n, strings.Join(how, ", "),
 			strings.Join(ids, ", ")))
 	}
+	if c.ReplacedInThread > 0 {
+		ids := make([]string, 0, len(c.ReplacedDraftIDs))
+		for _, id := range c.ReplacedDraftIDs {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		parts = append(parts, fmt.Sprintf("%d replaced by an own reply in the thread (copy gone from the Drafts folder, "+
+			"same recipients, other text), now abandoned (draft %s)", c.ReplacedInThread, strings.Join(ids, ", ")))
+	}
 	if c.Expired > 0 {
 		parts = append(parts, fmt.Sprintf("%d approval(s) ran out, back to status draft", c.Expired))
 	}

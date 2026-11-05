@@ -25,12 +25,19 @@ import (
 // der einer von PostKauz abgelegten Entwurfskopie ist (DraftCopyHashes,
 // K3).
 
-// sentMessageCond ist die Bedingung oben für die Nachricht m.
-const sentMessageCond = `EXISTS (SELECT 1 FROM message_mailboxes sl JOIN mailboxes sb ON sb.id = sl.mailbox_id
+// sentOrAllCond ist die Bedingung oben ohne die letzte (Zuordnung zu einem
+// Entwurf): in Gesendet bzw. „Alle Nachrichten“, nirgends \Draft, in
+// keinem Entwürfe-Ordner. Für ersetzte Entwürfe (A06 Teil 4) zählt auch
+// eine Nachricht, die schon einem anderen Entwurf als gesendet zugeordnet
+// ist.
+const sentOrAllCond = `EXISTS (SELECT 1 FROM message_mailboxes sl JOIN mailboxes sb ON sb.id = sl.mailbox_id
 		WHERE sl.message_id = m.id AND sb.role IN ('sent','all'))
 	AND NOT EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
 		WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
-			OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
+			OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))`
+
+// sentMessageCond ist die Bedingung oben für die Nachricht m.
+const sentMessageCond = sentOrAllCond + `
 	AND NOT EXISTS (SELECT 1 FROM drafts cd WHERE cd.sent_message_id = m.id)`
 
 // SentByMessageID liefert die kleinste ID einer gesendeten Nachricht (siehe
@@ -174,6 +181,18 @@ const trimIDChars = `' <>' || char(9,10,13)`
 // gelesen werden also nur Nachrichten aus dem Verlauf des Originals. Hat
 // das Original keine Message-ID oder fehlt es, ist die Liste leer.
 func (s *SQLite) SentReplies(ctx context.Context, accountID, original int64) ([]SentMessage, error) {
+	return s.replies(ctx, accountID, original, sentMessageCond)
+}
+
+// OwnReplies liefert wie SentReplies die eigenen Antworten auf original,
+// aber auch solche, die schon einem Entwurf als gesendet zugeordnet sind
+// (A06 Teil 4: Eine gesendete Antwort ersetzt auch die übrigen Fassungen
+// desselben Entwurfs).
+func (s *SQLite) OwnReplies(ctx context.Context, accountID, original int64) ([]SentMessage, error) {
+	return s.replies(ctx, accountID, original, sentOrAllCond)
+}
+
+func (s *SQLite) replies(ctx context.Context, accountID, original int64, cond string) ([]SentMessage, error) {
 	// Zwei Schritte mit gebundenem Wert: Eine Verknüpfung mit der
 	// Message-ID des Originals in derselben Abfrage ließ SQLite alle
 	// Nachrichten des Kontos lesen (BenchmarkCheckAfterSync22k,
@@ -193,7 +212,7 @@ func (s *SQLite) SentReplies(ctx context.Context, accountID, original int64) ([]
 	rows, err := s.db.QueryContext(ctx, `SELECT `+sentCandidateCols+` FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
 		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
 		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
-		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, h, h)
+		AND `+cond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, h, h)
 	if err != nil {
 		return nil, err
 	}
@@ -264,4 +283,34 @@ func (s *SQLite) SetSentCheckRev(ctx context.Context, accountID int64, rev int) 
 	_, err := s.db.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, sentCheckRevKey(accountID), strconv.Itoa(rev))
 	return err
+}
+
+// DraftReplacedBy liefert die lokale ID der eigenen Antwort, durch die die
+// Versanderkennung den Entwurf draftID als ersetzt geschlossen hat (A06
+// Teil 4), aus dem Audit (drafts.replaced_detected), ohne Migration. Das
+// Audit-Ereignis trägt denselben Zeitpunkt wie closed_at; gesucht wird über
+// den Index audit_events_ts in ±1 s. ok false: keins (anders geschlossen
+// oder schon aus dem Audit rotiert).
+func (s *SQLite) DraftReplacedBy(ctx context.Context, draftID int64, closedAt time.Time) (replyID int64, ok bool, err error) {
+	if closedAt.IsZero() {
+		return 0, false, nil
+	}
+	var params string
+	err = s.db.QueryRowContext(ctx, `SELECT params_redacted FROM audit_events WHERE ts BETWEEN ? AND ?
+		AND operation = 'drafts.replaced_detected' AND result = 'ok'
+		AND EXISTS (SELECT 1 FROM json_each(audit_events.targets) WHERE value = ?) ORDER BY id DESC LIMIT 1`,
+		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&params)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	var p struct {
+		Reply int64 `json:"reply_message_id"`
+	}
+	if err := json.Unmarshal([]byte(params), &p); err != nil {
+		return 0, false, fmt.Errorf("store: audit params of a replaced draft: %w", err)
+	}
+	return p.Reply, true, nil
 }
