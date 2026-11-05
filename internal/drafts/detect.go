@@ -3,6 +3,7 @@ package drafts
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
@@ -343,7 +344,10 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 // den Stand erst danach (nicht bei KeepMark, nicht nach einem Fehler).
 //
 //	1  A05 Teil 1: symmetrische Kürzung des Zitats (Outlook-Verlauf)
-const SentCheckRev = 1
+//	2  A06 Teil 3: verwaiste Fortsetzungszeilen umbrochener Zitatzeilen
+//	   (sentText, sanitize.JoinWrappedQuotes); eine Antwort mit eigenem
+//	   Betreff, die Gmail ohne In-Reply-To sendet, findet nur der Rückfall
+const SentCheckRev = 2
 
 // changedAt ist die letzte Inhaltsänderung eines Entwurfs (Bestand ohne
 // content_changed_at: updated_at).
@@ -524,17 +528,22 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 	return nil
 }
 
-// sentText ist der zitatfreie Text einer gespiegelten Nachricht; bei
-// Nachrichten aus älteren Versionen ohne text_unquoted der bereinigte
-// Klartext bzw. der Text aus dem HTML ohne Zitat.
+// sentText ist der zitatfreie Text einer gesendeten Nachricht für den
+// Vergleich in Rückfall und Verlauf. Seit A06 Teil 3 aus dem Text vor der
+// Zitatentfernung, nicht mehr aus text_unquoted: dieselbe Wahl wie
+// mailsync.fillClean (Klartext, sonst Text aus dem HTML), dann
+// sanitize.JoinWrappedQuotes (verwaiste Fortsetzungszeilen umbrochener
+// Zitatzeilen an die Zeile mit „>“), dann StripQuotes. Spiegel, Suche und
+// Snippet behalten text_unquoted unverändert.
 func sentText(b store.Body) string {
-	switch {
-	case b.TextUnquoted != "":
-		return b.TextUnquoted
-	case b.TextPlain != "":
-		return sanitize.StripQuotes(b.TextPlain)
+	main := b.TextPlain
+	if strings.TrimSpace(main) == "" {
+		main = b.TextHTML
 	}
-	return sanitize.StripQuotes(b.TextHTML)
+	if strings.TrimSpace(main) == "" {
+		return b.TextUnquoted
+	}
+	return sanitize.StripQuotes(sanitize.JoinWrappedQuotes(main))
 }
 
 // markSent schließt einen Entwurf als gesendet (SentDetected). Ist er
