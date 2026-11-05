@@ -54,7 +54,7 @@ Umgebung: Cloud-Sitzung, Go 1.27.3 (einmal über `GOTOOLCHAIN=go1.27.3 go versio
 | Zwischenstände `0b4cae1`, `7c724ce`, `748edd7`, `544d725` | je grün (gofmt, `go vet ./...`, `go test -short` der berührten Pakete) |
 | `make check` an `fc46320` | grün (Code unverändert, Testcache) |
 | `make cross` an `fc46320` | grün (linux/amd64, windows/amd64, darwin/arm64) |
-| `make race` an `fc46320` | grün (Exit 0, 36:25 min; 41 Pakete ok, kein Data Race; `internal/cli` 34:48 min, `internal/importer` 20:20 min, `internal/ops` 16:42 min, `internal/mailsync` 16:31 min). `internal/cli` nähert sich der Zeitgrenze von 45 min (vorher 27 bis 30 min). |
+| `make race` an `fc46320` | grün (Exit 0, 36:25 min; 40 Pakete mit Tests ok, kein Data Race; `internal/cli` 34:48 min, `internal/importer` 20:20 min, `internal/ops` 16:42 min, `internal/mailsync` 16:31 min). `internal/cli` nähert sich der Zeitgrenze von 45 min (vorher 27 bis 30 min). |
 | `make integration` | nicht gelaufen (kein Docker) |
 | `make vuln` | nicht gelaufen (in der Cloud gesperrt) |
 
@@ -101,8 +101,52 @@ Windows-Programm: 22.638.080 Byte. Das Abnahmeskript gehört zum Stand des Zweig
 - **Teil 3:** `SentCheckRev` 2 → einmalige Neuprüfung aller offenen Entwürfe im ersten vollständigen Lauf.
 - **Teil 4:** greift ab dem ersten Lauf bei jedem Lauf (ohne Hochwassermarke), also auch für Entwürfe von vor dem Update.
 
+## 5b. Nachbesserung 1 (Gegenprüfung von `fc46320`)
+
+Gegenprüfung der Betreiber-Sitzung: opus-pruefer PASS mit Hinweisen, zwei `claude -p`-Läufe und Codex FAIL, fast nur wegen des Abnahmeskripts. `make race` an `fc46320` war zu Beginn schon fertig (Abschnitt 4: grün, 36:25 min). Zwei Commits:
+
+| Commit | Inhalt |
+|---|---|
+| `e51f5b6` | Code: ersetzte Entwürfe nur mit `remote_state` schon vorher `missing`, bekanntem und gespiegeltem Ablageordner und ohne weiterbearbeitete Antwort im Entwürfe-Ordner (`EditedReplyInDrafts`); beim Schließen erst `adoptOrphan`, dann `checkCopy`. Zitat höchstens 20 Blockquotes tief, leere letzte Zitatzeile nach `sanitize.HTML` geprüft. `drafts.get`-Schema mit `closed_reason`, `replaced_by_message_id`, `updated_by`, `push_hold`; Vertragstest: jedes Ausgabefeld steht im Schema. `json_valid`-Schutz in `DraftReplacedBy`. Betreff-Warnung gegen den gekürzten abgeleiteten Betreff. Test der bekannten Grenze der Fortsetzungsregel. CHANGELOG (rc3 ohne „noch kein Tag“), versanderkennung.md 3b und 8, Roadmap 77. |
+| `985ae3b` | Abnahmeskript D12: Rückweg bei jedem FAIL vor dem Neustart der Aufgaben (E.0), Umbenennen statt Löschen mit Prüfung, 3.4c nach Fall (Name gleich Adresse bzw. Sonderzeichen), 1.4 mit `remote` und Erwartung, Grenze 500 und verschwundene Entwürfe, nur Prozesse aus dem Ordner von `-Exe` beenden, 0.6 gegen `accounts list`; Anleitung mit Entscheidungsweg bei unerwartetem Abschluss und dem Hinweis auf den stdio-MCP der Claude-App. **Build-Commit von 0.3.0-rc4 (neu).** |
+
+Gegenproben: Die Tests der Sicherungen (a), (c) und „Ordner entfernt“ werden ohne die jeweilige Prüfung rot; die Prüfung „Ordner gespiegelt“ und „übernommene Kopie → nicht schließen“ sichert `checkCopy` zusätzlich ab (die Tests bleiben dann grün). Die neuen Zitatfälle (600 Ebenen, NUL) sind mit dem Stand vor der Nachbesserung rot. Der Fall „Original fehlt“ der Betreff-Warnung ist über die Operationen nicht erreichbar (compose verlangt das Original) und direkt an der Prüffunktion getestet.
+
+### 5b.1 Benchmark nach Nachbesserung 1
+
+Drei Läufe, abwechselnd, Zeit je Prüfung:
+
+| Teil | rc3 (`ed76b6a`) | Nachbesserung 1 (`985ae3b`) |
+|---|---|---|
+| `steady` | 5,1–5,9 ms | 5,3–8,4 ms |
+| `one_new` | 10,1–12,9 ms | 12,0–12,5 ms |
+| `steady_replies` | 20,1–24,3 ms | 20,3–27,5 ms |
+
+Weil ein Entwurf erst ersetzt wird, wenn seine Kopie schon in einem früheren Lauf als fehlend vermerkt ist, schlägt die Regel für die 30 abgelegten Antworten des Benchmarks (`remote: pushed`) gar nicht mehr nach; die Zusatzlast von Teil 4 aus Abschnitt 3.1 (etwa 7–10 ms) entfällt. Die Streuung des ersten Laufs ist Umgebung.
+
+### 5b.2 Prüfläufe Nachbesserung 1
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` vor jedem der beiden Commits | grün (7:14 min bzw. mit Testcache) |
+| `make cross` an `985ae3b` | grün |
+| `make race` an `985ae3b` | grün (Exit 0, 34:25 min; 40 Pakete mit Tests ok, kein Data Race; `internal/cli` 33:58 min, `internal/importer` 19:43 min, `internal/ops` 16:15 min, `internal/mailsync` 16:01 min; parallel lief der Nachbau) |
+| `make integration` | nicht gelaufen (kein Docker) |
+
+### 5b.3 Build 0.3.0-rc4 (neu, ersetzt den Build an `fc46320`)
+
+Zwei frische Klone ohne Tags von GitHub, je `git checkout 985ae3b`, `git status --short` leer, `make release VERSION=0.3.0-rc4`. `dist/SHA256SUMS` beider Klone gleich (ohne `VERSION`); `go version -m` beider Windows-Programme gleich: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261105153847-985ae3bcf212`, `vcs.revision=985ae3bcf212ce36ed2a99dd9b049936ba98b7bc`, `vcs.modified=false`; `postkauz version`: `postkauz 0.3.0-rc4 (go1.27.3 linux/amd64)`.
+
+```
+ba75203c6c478afd9a6b015e931b05f2b3961a3d84593a6ae469e596413a28f1  postkauz-windows-amd64.exe
+8d23eb6b8d63649757a3328961e66ce5390d77f9cb48559b0d4d750aa0d0e1c8  postkauz-linux-amd64
+f1a4bdfee1cb9d53aeca2ce0f3641499314cb6a9e99d6f29e6541dab2f8375d2  postkauz-darwin-arm64
+```
+
+Windows-Programm: 22.643.712 Byte. Der frühere rc4-Build an `fc46320` (Windows `f4f0ef69…7085`) ist ersetzt; nicht verwenden. Das Abnahmeskript gehört zum Stand `985ae3b`.
+
 ## 6. Offen
 
 - Abnahme D12 (Teil A und Teil B).
 - Integrationstest-Fall für Teil 3: nicht geschrieben, Docker gibt es in dieser Sitzung nicht (`make integration` lief nicht); ungeprüften Integrationscode wollte ich nicht ablegen.
-- `abnahme_D12.ps1` ist nur von Hand geprüft (PowerShell gibt es im Container nicht); die Anleitung beginnt deshalb mit einem Parser-Check auf dem Büro-PC.
+- `abnahme_D12.ps1` ist nur von Hand geprüft (PowerShell gibt es im Container nicht; Klammerbilanz und Zeichensatz maschinell geprüft); die Anleitung beginnt deshalb mit einem Parser-Check auf dem Büro-PC.
