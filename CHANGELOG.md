@@ -4,7 +4,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Auftrag A06 „Alltag 2: Adressen, Zitat, Erkennung“ (05.11.2026, Zweig `claude/youthful-wright-fimlkq`, Basis `main` `ed76b6a` = Stand 0.3.0-rc3), Build **0.3.0-rc4** (noch kein Tag; Prüfsummen: `docs/protokolle/A06_stand.md`). Befunde aus dem Dauerbetrieb 03.–05.11.2026 (23 Entwürfe im geteilten Postfach, 20 erkannt, 3 gesendet und nicht erkannt). Kein Schema-Upgrade (Schema 22), keine Migration: Das alte Programm läuft mit den Daten weiter. Abnahme: `docs/abnahme_D12.md`.
+Auftrag A06 „Alltag 2: Adressen, Zitat, Erkennung“ (05.11.2026, Zweig `claude/youthful-wright-fimlkq`, Basis `main` `ed76b6a` = Stand 0.3.0-rc3), Build **0.3.0-rc4** an `b41f9eb` nach Nachbesserung 2 (noch kein Tag; Windows `bd7abd97…a16e`, Prüfsummen und Prüfläufe: `docs/protokolle/A06_stand.md` Abschnitt 5c; die Builds an `fc46320` und `985ae3b` sind ersetzt). Befunde aus dem Dauerbetrieb 03.–05.11.2026 (23 Entwürfe im geteilten Postfach, 20 erkannt, 3 gesendet und nicht erkannt). Kein Schema-Upgrade (Schema 22), keine Migration: Das alte Programm läuft mit den Daten weiter. Abnahme: `docs/abnahme_D12.md`.
 
 ### Fixed
 

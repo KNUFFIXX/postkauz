@@ -143,7 +143,52 @@ ba75203c6c478afd9a6b015e931b05f2b3961a3d84593a6ae469e596413a28f1  postkauz-windo
 f1a4bdfee1cb9d53aeca2ce0f3641499314cb6a9e99d6f29e6541dab2f8375d2  postkauz-darwin-arm64
 ```
 
-Windows-Programm: 22.643.712 Byte. Der frühere rc4-Build an `fc46320` (Windows `f4f0ef69…7085`) ist ersetzt; nicht verwenden. Das Abnahmeskript gehört zum Stand `985ae3b`.
+Windows-Programm: 22.643.712 Byte. Der frühere rc4-Build an `fc46320` (Windows `f4f0ef69…7085`) ist ersetzt; nicht verwenden. **Auch dieser Build ist durch Abschnitt 5c ersetzt.**
+
+## 5c. Nachbesserung 2 (zweite Gegenprüfung von `985ae3b`)
+
+Gegenprüfung der Betreiber-Sitzung: opus-pruefer PASS mit Hinweisen (alle 16 Punkte der Nachbesserung 1 OK), Codex und zwei `claude -p` FAIL, Lücken vor allem im Abnahmeskript. Für `985ae3b` lief zu Beginn nichts mehr (race und Neubau standen schon in `0e13a7f`); beides ist durch diesen Abschnitt ersetzt. Zwei Commits:
+
+| Commit | Inhalt |
+|---|---|
+| `b41f9eb` | Code: ersetzte Entwürfe mit dem Stand „missing“ von **vor** dem Push zu Beginn des Laufs (`CheckOptions.MissingBefore`), Sicherung (c) ab der letzten Ablage und im Verlauf des Originals, unerreichbarer Zweig „Ordner nicht gespiegelt“ entfernt; `JoinWrappedQuotes` linear; Name gleich Adresse schon beim Bau leer, lokaler Teil mit Leerzeichen wieder gequotet; schärfere Tests; bekannte Grenze der Fortsetzungsregel richtiggestellt. **Build-Commit von 0.3.0-rc4 (endgültig in dieser Runde).** |
+| `818b35c` | Abnahmeskript D12 und Anleitung (nur `docs/abnahme_D12.*`): Kennzeichen „Teil 3 vollständig“, Rückweg bei jedem FAIL, jeder Ausnahme und unvollständigem Teil 3, 4.1 nur bei vollständig ohne FAIL und Rückweg, wenn 4.1 scheitert; `-Rueckweg` stellt bei Fehler den Zustand her und lässt die Aufgaben aus; nie löschen; `-Accounts` genau; Hilfsskripte nur dieses Dauerbetriebs; Vorprüfungen 1.2c und 1.4; 3.1 `errors` 0; 3.4/3.4b ganze Ausgabe; 3.4d nur vorher offene; Start-Tasks je Aufgabe; `-ExpectSha256` und `vcs.revision`; Start im Hintergrund, harter Abbruch. |
+
+Gegenproben: Der Test „PushCheck setzt missing im selben Lauf“ wird mit der Prüfung auf `remote_state` statt auf den Stand vor dem Lauf rot; der Test „Gmail-Fassung zwischen Ablage und lokaler Änderung“ mit der alten Grenze; der Test „Übernahme zuerst“ ohne `adoptOrphan`; „erstes drafts.update ändert nichts“ ohne die Normalisierung beim Bau. Jeder Fall in `TestA06ReplacedRechecksInTransaction` schließt, sobald seine eine Verletzung aufgehoben ist.
+
+### 5c.1 Messungen
+
+- `EditedReplyInDrafts` (Sicherung c), neuer Teil `edited_reply_lookup` von `BenchmarkCheckAfterSync22k`, Zeit je Abfrage bei 22.000 Nachrichten: mit der Abfrage aus Nachbesserung 1 (über alle Nachrichten des Kontos) 18,8–19,8 ms, über `thread_refs` → `messages_thread` 0,17–0,37 ms.
+- `BenchmarkCheckAfterSync22k`, drei Läufe abwechselnd, Zeit je Prüfung (die Umgebung streut stark):
+
+| Teil | rc3 (`ed76b6a`) | Nachbesserung 2 (`b41f9eb`) |
+|---|---|---|
+| `steady` | 5,8–7,4 ms | 6,0–6,6 ms |
+| `one_new` | 9,3–10,8 ms | 11,4–12,7 ms |
+| `steady_replies` | 18,3–28,2 ms | 21,8–31,9 ms |
+
+- `JoinWrappedQuotes` mit einer Kette von 10 MiB unter einer „>“-Zeile: etwa 0,3 s (Test mit Zeitgrenze 5 s; vorher quadratisch).
+
+### 5c.2 Prüfläufe Nachbesserung 2
+
+| Lauf | Ergebnis |
+|---|---|
+| `make check` vor beiden Commits | grün (7:23 min bzw. mit Testcache) |
+| `make cross` an `818b35c` (Code wie `b41f9eb`) | grün |
+| `make race` an `818b35c` (Code wie `b41f9eb`) | grün (Exit 0, 32:38 min; 40 Pakete mit Tests ok, kein Data Race; `internal/cli` 32:13 min, `internal/importer` 18:31 min, `internal/mailsync` 15:13 min, `internal/ops` 15:13 min; parallel lief der Nachbau) |
+| `make integration` | nicht gelaufen (kein Docker) |
+
+### 5c.3 Build 0.3.0-rc4 (endgültig in dieser Runde, ersetzt die Builds an `fc46320` und `985ae3b`)
+
+Zwei frische Klone ohne Tags von GitHub, je `git checkout b41f9eb` (letzter Code-Commit), `git status --short` leer, keine Tags, `make release VERSION=0.3.0-rc4`. `dist/SHA256SUMS` beider Klone gleich (ohne `VERSION`); `go version -m` beider Windows-Programme gleich: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261105163812-b41f9ebc4e76`, `vcs.revision=b41f9ebc4e7606bec2feaae4a3d7bf175f78ece4`, `vcs.modified=false` (dieselbe Revision steht als Klartext in der Programmdatei; `abnahme_D12.ps1` liest sie in 0.2b); `postkauz version`: `postkauz 0.3.0-rc4 (go1.27.3 linux/amd64)`.
+
+```
+bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e  postkauz-windows-amd64.exe
+8d01f7a3d6cd3833b00ffea77e358ab022fdd81afc506d071189a88706b58f28  postkauz-linux-amd64
+3e832b2c10693b0c2233149631853ab1918144e8b5fe1ba3667108a5710a1e6e  postkauz-darwin-arm64
+```
+
+Windows-Programm: 22.646.784 Byte. **Build-Commit `b41f9eb`; danach kamen nur der Skript-Commit `818b35c` (nur `docs/abnahme_D12.ps1` und `docs/abnahme_D12.md`, nicht Teil des Programmpakets) und dieser Nachtrag (nur Doku) dazu.** Für D12: `-ExpectSha256 bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e`, Skript vom Stand des Zweigs.
 
 ## 6. Offen
 

@@ -1,6 +1,6 @@
 # Abnahme D12: Umstellung auf 0.3.0-rc4 (A06 „Alltag 2: Adressen, Zitat, Erkennung“)
 
-Stand: 05.11.2026 (Auftrag [A06](../auftraege/A06_alltag2.md), Teil 6). Skript: [abnahme_D12.ps1](abnahme_D12.ps1). Programm: Build **0.3.0-rc4** (Prüfsummen in [protokolle/A06_stand.md](protokolle/A06_stand.md)).
+Stand: 05.11.2026 (Auftrag [A06](../auftraege/A06_alltag2.md), Teil 6). Skript: [abnahme_D12.ps1](abnahme_D12.ps1). Programm: Build **0.3.0-rc4** an `b41f9eb` (Nachbesserung 2), `postkauz-windows-amd64.exe` SHA256 `bd7abd976db73c0cd893e7e5e5aa07b571295a867e17e8a51f8f85357282a16e` (für `-ExpectSha256`; Prüfsummen und Prüfläufe in [protokolle/A06_stand.md](protokolle/A06_stand.md) Abschnitt 5c). Die Builds an `fc46320` und `985ae3b` sind ersetzt.
 
 **Worum es geht:** Der Dauerbetrieb auf dem Büro-PC läuft seit 03.11.2026 mit 0.3.0-rc3. D12 stellt ihn auf 0.3.0-rc4 um und prüft dabei A06 **am echten Bestand**:
 
