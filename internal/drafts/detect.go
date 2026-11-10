@@ -2,6 +2,7 @@ package drafts
 
 import (
 	"context"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -212,8 +213,9 @@ func (s *Service) settleClosedAttempts(ctx context.Context, accountID int64, rep
 // detectSent erkennt gesendete Entwürfe: zuerst über die Message-ID, für
 // die übrigen über den Rückfall-Abgleich, danach über den Verlauf (A05
 // Teil 2, detectThread). Eine gesendete Nachricht schließt höchstens einen
-// Entwurf; passen im Rückfall bzw. im Verlauf mehrere, gewinnt die höchste
-// Ähnlichkeit, dann die älteste Nachricht, dann der älteste Entwurf.
+// Entwurf; passen im Rückfall bzw. im Verlauf mehrere, gilt die Rangfolge
+// aus pairBefore (A07 Teil 2: höchste Ähnlichkeit, dann taken_over, dann
+// die jüngere Fassung, dann die älteste Nachricht).
 //
 // Der Weg über die Message-ID fragt je offenem Entwurf den Index
 // messages_message_id (billig, jedes Mal vollständig). Der Rückfall prüft
@@ -559,13 +561,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 	}
 	sort.SliceStable(pairs, func(i, j int) bool {
 		a, b := pairs[i], pairs[j]
-		if a.score != b.score {
-			return a.score > b.score
-		}
-		if a.c != b.c {
-			return a.c < b.c // Kandidaten sind nach Datum sortiert
-		}
-		return a.e.d.ID < b.e.d.ID
+		return pairBefore(a.score, b.score, a.e.d, b.e.d, cands[a.c], cands[b.c], a.c, b.c)
 	})
 	used := map[int64]bool{}
 	for _, p := range pairs {
@@ -586,6 +582,44 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 	}
 	return nil
 }
+
+// pairBefore ist die Rangfolge der Paare (Entwurf, gesendete Nachricht) in
+// Rückfall, Verlauf und Betreff (A07 Teil 2): zuerst die höhere
+// Ähnlichkeit (auf drei Nachkommastellen gerundet), bei Gleichstand der
+// Entwurf mit remote_state taken_over (der Mensch hat ihn im Mailprogramm
+// angefasst), dann der mit dem jüngeren content_changed_at (die neuere
+// Fassung), dann die ältere Nachricht (Datum, dann Reihenfolge ci/cj bzw.
+// lokale ID), dann die kleinere Entwurfs-ID. Vorher gewann bei Gleichstand
+// der älteste Entwurf; zwei Fassungen derselben Antwort bekamen so die
+// gesendete Nachricht der älteren, obwohl der Mensch die jüngere gesendet
+// hatte (Befund 09.11.2026). Bekannte Grenze: Bei zwei gleichen Entwürfen
+// und zwei Nachrichten bekommt der jüngere Entwurf die ältere Nachricht;
+// für den Zustand gleichgültig.
+func pairBefore(sa, sb float64, da, db store.Draft, ca, cb store.SentMessage, ci, cj int) bool {
+	if ra, rb := roundScore(sa), roundScore(sb); ra != rb {
+		return ra > rb
+	}
+	if ta, tb := da.RemoteState == RemoteTakenOver, db.RemoteState == RemoteTakenOver; ta != tb {
+		return ta
+	}
+	if a, b := changedAt(da), changedAt(db); !a.Equal(b) {
+		return a.After(b)
+	}
+	if !ca.Date.Equal(cb.Date) {
+		return ca.Date.Before(cb.Date)
+	}
+	if ci != cj {
+		return ci < cj
+	}
+	if ca.ID != cb.ID {
+		return ca.ID < cb.ID
+	}
+	return da.ID < db.ID
+}
+
+// roundScore rundet eine Ähnlichkeit auf drei Nachkommastellen (Rangfolge,
+// pairBefore): Rundungsrauschen in der letzten Stelle entscheidet nicht.
+func roundScore(s float64) int64 { return int64(math.Round(s * 1000)) }
 
 // sentText ist der zitatfreie Text einer gesendeten Nachricht für den
 // Vergleich in Rückfall und Verlauf. Seit A06 Teil 3 aus dem Text vor der
@@ -619,7 +653,14 @@ func (s *Service) markSent(ctx context.Context, id, messageID int64, reason, exp
 }
 
 // refreshRemote frischt remote_state der offenen Entwürfe mit abgelegter
-// Kopie auf (pushed → missing oder taken_over), anhand des Spiegels.
+// Kopie auf (pushed → missing oder taken_over), anhand des Spiegels. Seit
+// A07 Teil 2 auch taken_over → missing: Liegt laut Spiegel weder die
+// zuletzt abgelegte Kopie noch eine Fassung mit der Message-ID des Entwurfs
+// im Entwürfe-Ordner (checkCopy, dieselbe Prüfung wie Bedingung f), hat der
+// Mensch die übernommene Fassung gesendet oder gelöscht; dann greifen im
+// nächsten Lauf „ersetzt“ (3b) und „Kopie weg“ (3d). Nur dieser Wechsel
+// wird geschrieben; bleibt checkCopy bei taken_over oder liefert es "",
+// ändert sich nichts und es entsteht kein Audit-Eintrag.
 func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *CheckReport) error {
 	open, err := s.Store.ListDrafts(ctx, store.DraftFilter{AccountID: accountID, Status: openStatuses})
 	if err != nil {
@@ -627,7 +668,7 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 	}
 	now := s.now()
 	for _, o := range open {
-		if o.RemoteState != RemotePushed {
+		if o.RemoteState != RemotePushed && o.RemoteState != RemoteTakenOver {
 			continue
 		}
 		var state string
@@ -636,11 +677,16 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 			if err != nil {
 				return err
 			}
-			if Status(d.Status).Closed() || d.RemoteState != RemotePushed {
+			if Status(d.Status).Closed() || d.RemoteState != o.RemoteState {
 				return nil
 			}
-			if state, err = checkCopy(x, d); err != nil || state == "" {
+			if state, err = checkCopy(x, d); err != nil || state == "" || state == d.RemoteState {
+				state = ""
 				return err
+			}
+			if d.RemoteState == RemoteTakenOver && state != RemoteMissing {
+				state = ""
+				return nil
 			}
 			return s.markRemote(x, &d, state, now)
 		})

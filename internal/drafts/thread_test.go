@@ -81,9 +81,12 @@ func (e *thEnv) dropCopy(d store.Draft) {
 // sent beschreibt die gesendete Nachricht; Nullwerte = passend.
 type thSent struct {
 	role, inReplyTo, from, text, messageID string
-	to                                     []store.Addr
-	date                                   time.Time
-	draftFlag                              bool
+	// subject: "" = „Re: Abrechnung (geändert)“ (anderer Betreff als der
+	// Entwurf, der Rückfall trifft dann nicht).
+	subject   string
+	to        []store.Addr
+	date      time.Time
+	draftFlag bool
 }
 
 func (e *thEnv) send(s thSent) int64 {
@@ -106,6 +109,9 @@ func (e *thEnv) send(s thSent) int64 {
 	if s.to == nil {
 		s.to = thAnna
 	}
+	if s.subject == "" {
+		s.subject = "Re: Abrechnung (geändert)"
+	}
 	if s.date.IsZero() {
 		s.date = e.now.Add(10 * time.Minute)
 	}
@@ -113,7 +119,7 @@ func (e *thEnv) send(s thSent) int64 {
 	e.m.uid[box]++
 	irt := strings.Trim(s.inReplyTo, "<> ")
 	nm := store.NewMessage{Link: store.LinkFlags{UID: e.m.uid[box], Seen: true, Draft: s.draftFlag}, MessageID: s.messageID,
-		Subject: "Re: Abrechnung (geändert)", From: s.from, To: addrs(s.to), Cc: addrs(nil), DateHeader: s.date, InternalDate: s.date,
+		Subject: s.subject, From: s.from, To: addrs(s.to), Cc: addrs(nil), DateHeader: s.date, InternalDate: s.date,
 		Size: int64(200 + len(s.text) + int(e.m.uid[box])), TextPlain: s.text, TextUnquoted: s.text, ContentHash: s.messageID + s.text,
 		InReplyTo: irt, References: []string{irt}, CleanVersion: 1, Links: json.RawMessage("[]")}
 	if _, err := e.st.ApplyBatch(context.Background(), store.MirrorBatch{AccountID: e.acc, MailboxID: box, New: []store.NewMessage{nm},

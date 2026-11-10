@@ -142,16 +142,7 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 	}
 	sort.SliceStable(pairs, func(i, j int) bool {
 		a, b := pairs[i], pairs[j]
-		if a.score != b.score {
-			return a.score > b.score
-		}
-		if !a.c.Date.Equal(b.c.Date) {
-			return a.c.Date.Before(b.c.Date)
-		}
-		if a.c.ID != b.c.ID {
-			return a.c.ID < b.c.ID
-		}
-		return a.d.ID < b.d.ID
+		return pairBefore(a.score, b.score, a.d, b.d, a.c, b.c, 0, 0) // A07 Teil 2
 	})
 	used := map[int64]bool{}
 	for _, p := range pairs {
