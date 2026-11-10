@@ -252,20 +252,28 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		}
 	}
 	supersede := a.Params.Source == store.ActionSourceDraftSupersede
+	if supersede {
+		// A07 Teil 5 (Nachtrag zu E3): eigene, unveränderte Entwurfskopien
+		// eines ersetzten Entwurfs brauchen mail:draft statt mail:trash und
+		// keinen Antrag, aber nur, solange jedes Ziel im Entwürfe-Ordner
+		// (Rolle drafts oder Ablageordner) liegt. Sonst scheitert die Aktion
+		// mit not_in_drafts, ohne Kommando an den Server (Nachtrag 1, B3:
+		// kein Rückfall auf mail:trash).
+		in, err := r.allInDrafts(ctx, a, boxes)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if !in || a.Kind != store.ActionTrash {
+			for _, t := range open {
+				results = append(results, store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetFailed})
+			}
+			return results, results, ReasonNotInDrafts, nil
+		}
+	}
 	if r.Origin != nil {
 		scope := scopeOf(a.Kind)
-		if supersede && a.Kind == store.ActionTrash {
-			// A07 Teil 5 (Nachtrag zu E3): eigene, unveränderte
-			// Entwurfskopien eines ersetzten Entwurfs brauchen mail:draft
-			// statt mail:trash und keinen Antrag, aber nur, solange jedes
-			// Ziel im Entwürfe-Ordner (Rolle drafts oder Ablageordner) liegt.
-			in, err := r.allInDrafts(ctx, a, boxes)
-			if err != nil {
-				return nil, nil, "", err
-			}
-			if in {
-				scope = policy.ScopeMailDraft
-			}
+		if supersede {
+			scope = policy.ScopeMailDraft
 		}
 		reason, err := r.Origin(ctx, Origin{KeyID: a.RequestedBy, Scope: scope, Approved: a.ApprovalID > 0, Facts: factsOf(a, boxes)})
 		if err != nil {
@@ -415,6 +423,9 @@ const (
 	// den Pfad, den er beim Anlegen des Ziels hatte (Quellpfad je Ziel,
 	// Nachprüfung zu fd70f19).
 	ReasonSourceChanged = "source_changed"
+	// ReasonNotInDrafts: Eine Aktion der Herkunft draft_supersede hat ein
+	// Ziel außerhalb der Entwürfe-Ordner (Nachtrag 1 zu A07, B3).
+	ReasonNotInDrafts = "not_in_drafts"
 	// ReasonNoLocalCopy: Eine nie selbst geladene Serverkopie ließ sich
 	// nicht prüfen, weil die lokale Rohmail fehlt oder unlesbar ist (V17).
 	ReasonNoLocalCopy = "no_local_copy"

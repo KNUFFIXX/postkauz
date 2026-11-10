@@ -45,6 +45,9 @@ const (
 	ReasonCopyMissing       = "copy_missing"
 	ReasonNoTrashMailbox    = "no_trash_mailbox"
 	ReasonSameDraft         = "same_draft"
+	// ReasonPushInProgress: Beim alten Entwurf läuft noch eine Ablage
+	// (Nachtrag 1 zu A07, B4).
+	ReasonPushInProgress = "push_in_progress"
 )
 
 // OpSupersede ist die Operation (Register und Audit des Abschlusses).
@@ -77,6 +80,9 @@ type SupersedeResult struct {
 	ActionID int64
 	// Trash: der Papierkorb (Pfad), in den die Kopien gehen.
 	Trash string
+	// Skipped: frühere Kopien außerhalb der Entwürfe-Ordner (bleiben
+	// liegen; Nachtrag 1 zu A07, B3).
+	Skipped int
 }
 
 // Supersede prüft alle Bedingungen in einer Transaktion, legt die Aktion an
@@ -136,6 +142,12 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		// Die Kopie des alten: unverändert unter Ordner, UID und UIDVALIDITY
 		// mit dem Inhalts-Hash der Ablage (wie cleanup_copies, A14); nie
 		// über die Message-ID.
+		// Nachtrag 1 zu A07, B4: Läuft noch eine Ablage (offener Versuch
+		// oder eine neue Kopie wartet), ist unklar, welche Kopie im Ordner
+		// liegt; dann nicht.
+		if old.PushAttempt != nil || old.RemoteState == RemotePending {
+			return denied(ReasonPushInProgress, "a copy of draft %d is being put into the Drafts folder; try again after the next sync", old.ID)
+		}
 		switch {
 		case old.RemoteState == RemoteTakenOver:
 			return denied(ReasonCopyChanged, "the copy of draft %d was changed in the mail client; only the human removes it", old.ID)
@@ -156,8 +168,19 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		targets := []store.ActionTarget{{MessageID: c.MessageID, MailboxID: c.MailboxID, UID: c.UID, UIDValidity: c.UIDValidity,
 			Mailbox: c.Mailbox, Role: c.Role}}
 		ids := []int64{c.MessageID}
+		// Nachtrag 1 zu A07, B3: Die Ausnahme von E3 gilt nur innerhalb der
+		// Entwürfe-Ordner; eine frühere Kopie anderswo (etwa nach einem
+		// Verschieben ins Archiv) wird übersprungen und gezählt.
+		inDrafts, err := x.DraftMailboxIDs(old.AccountID)
+		if err != nil {
+			return err
+		}
 		for _, p := range old.RemotePrevious {
 			if p.UIDValidity == 0 || p.UID <= 0 || p.ContentHash == "" {
+				continue
+			}
+			if !inDrafts[p.MailboxID] {
+				res.Skipped++
 				continue
 			}
 			pc, ph, ok, err := x.CopyAt(p.MailboxID, uint32(p.UID))
@@ -201,7 +224,7 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 			res.ActionID = actionID
 		}
 		res.Old = old
-		params := map[string]any{"draft_id": old.ID, "by_draft_id": nw.ID, "copies": len(targets), "action_id": actionID,
+		params := map[string]any{"draft_id": old.ID, "by_draft_id": nw.ID, "copies": len(targets), "skipped": res.Skipped, "action_id": actionID,
 			"from": from, "to": t.To}
 		targetsAudit := []string{"draft:" + strconv.FormatInt(old.ID, 10), "draft:" + strconv.FormatInt(nw.ID, 10),
 			"action:" + strconv.FormatInt(actionID, 10)}

@@ -149,6 +149,12 @@ func replacedAfter(d store.Draft) time.Time {
 // Fassung, die Gmail nach der Ablage gespeichert hat, zählt auch dann, wenn
 // der Entwurf danach lokal geändert wurde.
 func lastPushAt(d store.Draft) time.Time {
+	return LastPushAt(d)
+}
+
+// LastPushAt ist lastPushAt für andere Pakete (drafts.get nennt damit
+// copy_missing_since eines offenen Entwurfs, Nachtrag 1 zu A07).
+func LastPushAt(d store.Draft) time.Time {
 	if t, err := time.Parse(time.RFC1123Z, d.PushedDate); err == nil {
 		return t.Truncate(time.Second)
 	}

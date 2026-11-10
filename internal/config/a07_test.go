@@ -32,8 +32,13 @@ func TestA07CopyGoneAfter(t *testing.T) {
 		{"3d", "[draft]\ncopy_gone_after = \"3d\"\n", 72 * time.Hour, ""},
 		{"number", "[draft]\ncopy_gone_after = 24\n", 0, "must be a string"},
 		{"number zero", "[draft]\ncopy_gone_after = 0\n", 0, "must be a string"},
-		{"negative", "[draft]\ncopy_gone_after = \"-1h\"\n", 0, "invalid duration"},
+		{"negative", "[draft]\ncopy_gone_after = \"-1h\"\n", 0, "negative"},
 		{"garbage", "[draft]\ncopy_gone_after = \"soon\"\n", 0, "invalid duration"},
+		// Nachtrag 1, B7: Untergrenze 1h.
+		{"1m too short", "[draft]\ncopy_gone_after = \"1m\"\n", 0, "too short"},
+		{"59m too short", "[draft]\ncopy_gone_after = \"59m\"\n", 0, "too short"},
+		{"-5h negative", "[draft]\ncopy_gone_after = \"-5h\"\n", 0, "negative"},
+		{"1h ok", "[draft]\ncopy_gone_after = \"1h\"\n", time.Hour, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if err := os.WriteFile(f, []byte(c.body), 0o600); err != nil {

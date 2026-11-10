@@ -3,8 +3,10 @@ package ops
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/actions"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
@@ -389,5 +391,143 @@ func TestA07SupersedeStaysAbandoned(t *testing.T) {
 	}
 	if d, _ := e.st.Draft(ctx, 1); d.Status != string(drafts.StatusAbandoned) {
 		t.Fatalf("old draft = %s", d.Status)
+	}
+}
+
+// Nachtrag 1, B3: Eine frühere Kopie außerhalb der Entwürfe-Ordner (hier im
+// Archiv) wird nie Ziel, auch nicht mit einem operator-Schlüssel (der
+// mail:trash hätte); die Hauptkopie geht in den Papierkorb.
+func TestA07N1SupersedeSkipsCopiesOutsideDrafts(t *testing.T) {
+	e, x := supEnv(t, operatorKey)
+	ctx := context.Background()
+	if _, err := e.st.CreateAPIKey(ctx, store.APIKey{Name: "op", KeyHash: HashKey("k-op"), Role: "operator",
+		Scopes: v3Scopes(policy.Roles["operator"])}); err != nil {
+		t.Fatal(err)
+	}
+	acct, _ := e.st.AccountByName(ctx, "demo")
+	archive, _ := e.st.QueryIntForTest(`SELECT id FROM mailboxes WHERE path = 'Archiv'`)
+	if _, err := e.st.ApplyBatch(ctx, store.MirrorBatch{AccountID: acct.ID, MailboxID: int64(archive),
+		New: []store.NewMessage{{Link: store.LinkFlags{UID: 3}, MessageID: "pk.alt@example.org", Subject: "Entwurf",
+			From: "demo@example.org", Size: 13, ContentHash: "hash-archiv"}}}); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(t, `UPDATE message_mailboxes SET content_loaded = 1`)
+	e.exec(t, `UPDATE drafts SET remote_previous = json_array(json_object('mailbox_id', ?, 'uid', 3, 'uidvalidity', 4,
+		'content_hash', 'hash-archiv')) WHERE id = 1`, archive)
+	res, err := execJSON(t, x, operatorKey, "drafts.supersede", `{"draft_id":1,"by_draft_id":2}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := res.Output.(SupersedeOutput)
+	if out.Copies != 1 || out.Skipped != 1 {
+		t.Fatalf("output = %+v", out)
+	}
+	remote := &supRemote{}
+	e.runActions(t, policy.DefaultRules(), remote)
+	if len(remote.moves) != 1 || remote.moves[0] != "Entwuerfe->Papierkorb" {
+		t.Fatalf("moves = %v", remote.moves)
+	}
+}
+
+// Nachtrag 1, B3: Hat eine Aktion der Herkunft draft_supersede doch ein
+// Ziel außerhalb der Entwürfe-Ordner, scheitert sie mit not_in_drafts und
+// fällt nicht auf mail:trash zurück; nichts geht an den Server.
+func TestA07N1RunnerRefusesSupersedeOutsideDrafts(t *testing.T) {
+	e, _ := supEnv(t, operatorKey)
+	ctx := context.Background()
+	if _, err := e.st.CreateAPIKey(ctx, store.APIKey{Name: "op", KeyHash: HashKey("k-op"), Role: "operator",
+		Scopes: v3Scopes(policy.Roles["operator"])}); err != nil {
+		t.Fatal(err)
+	}
+	acct, _ := e.st.AccountByName(ctx, "demo")
+	boxes, _ := e.st.Mailboxes(ctx, acct.ID)
+	ids := map[string]int64{}
+	for _, b := range boxes {
+		ids[b.Path] = b.ID
+	}
+	a, err := e.st.CreateAction(ctx, store.NewAction{AccountID: acct.ID, Kind: store.ActionTrash, State: store.ActionQueued, IDsHash: "h",
+		RequestedBy: operatorKey.ID, Now: time.Now(),
+		Params:  store.ActionParams{TargetMailboxID: ids["Papierkorb"], TargetMailbox: "Papierkorb", TargetRole: "trash", Source: store.ActionSourceDraftSupersede},
+		Targets: []store.ActionTarget{{MessageID: 1, MailboxID: ids["INBOX"], UID: 5, UIDValidity: 3}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &supRemote{}
+	e.runActions(t, policy.DefaultRules(), remote)
+	got, _ := e.st.Action(ctx, a.ID)
+	if got.State != store.ActionFailed || got.Error != actions.ReasonNotInDrafts || len(remote.moves) != 0 {
+		t.Fatalf("action = %s/%s, moves %v", got.State, got.Error, remote.moves)
+	}
+}
+
+// Nachtrag 1: other_account (Nachfolger in einem anderen Konto) und B4
+// push_in_progress (offener Ablageversuch bzw. wartende Kopie).
+func TestA07N1SupersedeDeniedMore(t *testing.T) {
+	for _, c := range []struct {
+		name, want, q string
+	}{
+		{"other account", drafts.ReasonOtherAccount, `UPDATE drafts SET account_id = (SELECT id FROM accounts WHERE name = 'leer') WHERE id = 2`},
+		{"push attempt open", drafts.ReasonPushInProgress, `UPDATE drafts SET push_attempt = json_object('mailbox_id', remote_mailbox_id, 'content_hash', 'x',
+			'message_hash', 'm', 'date', '', 'fingerprint', 'f') WHERE id = 1`},
+		{"new copy queued", drafts.ReasonPushInProgress, `UPDATE drafts SET remote_state = 'pending' WHERE id = 1`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, x := supEnv(t, triageKey)
+			e.exec(t, c.q)
+			_, err := execJSON(t, x, triageKey, "drafts.supersede", `{"draft_id":1,"by_draft_id":2}`, false)
+			if !errors.Is(err, ErrDenied) || deniedReason(err) != c.want {
+				t.Fatalf("err = %v (reason %q), want %s", err, deniedReason(err), c.want)
+			}
+		})
+	}
+}
+
+// Nachtrag 1, B6 und B8: Der Nachfolger zeigt nie „superseded by draft <er
+// selbst>“, auch wenn er im selben Augenblick geschlossen wird; der alte
+// nennt die Aktion statt „went to the trash“.
+func TestA07N1SupersedeClosedReasonOnlyForOld(t *testing.T) {
+	e, x := supEnv(t, triageKey)
+	ctx := context.Background()
+	res, err := execJSON(t, x, triageKey, "drafts.supersede", `{"draft_id":1,"by_draft_id":2}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionID := res.Output.(SupersedeOutput).ActionID
+	if !strings.Contains(res.Output.(SupersedeOutput).NextStep, "queued for the trash") {
+		t.Fatalf("next step = %q", res.Output.(SupersedeOutput).NextStep)
+	}
+	e.exec(t, `UPDATE drafts SET status = 'abandoned', closed_at = (SELECT closed_at FROM drafts WHERE id = 1) WHERE id = 2`)
+	for id, want := range map[int64]string{1: drafts.ReasonSupersededByDraft, 2: ""} {
+		g, err := execJSON(t, x, assistantKey, "drafts.get", `{"draft_id":`+strconv.FormatInt(id, 10)+`}`, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := g.Output.(DraftDetail)
+		if d.ClosedReason != want {
+			t.Fatalf("draft %d: closed_reason %q, want %q", id, d.ClosedReason, want)
+		}
+		if id == 1 && (d.SupersedeActionID != actionID || !strings.Contains(d.ClosedNote, "queued for the trash") ||
+			strings.Contains(d.ClosedNote, "went to the trash")) {
+			t.Fatalf("draft 1: action %d (want %d), note %q", d.SupersedeActionID, actionID, d.ClosedNote)
+		}
+	}
+	_ = ctx
+}
+
+// Nachtrag 1: drafts.get nennt bei einem offenen Entwurf mit remote missing,
+// seit wann die Kopie fehlt (Grundlage der Erwartung in D13).
+func TestA07N1DraftGetMissingSince(t *testing.T) {
+	e, x := supEnv(t, triageKey)
+	// Nach der letzten Inhaltsänderung (ohne pushed_date die Grenze).
+	at := time.Now().Add(time.Minute).Truncate(time.Second).UnixMilli()
+	e.exec(t, `UPDATE drafts SET remote_state = 'missing', pushed_date = '' WHERE id = 1`)
+	e.exec(t, `INSERT INTO audit_events(ts, actor_type, api_key_id, operation, params_redacted, targets, result, reason)
+		VALUES (?, 'system', 'system', 'drafts.remote_check', '{}', '["draft:1"]', 'ok', 'missing')`, at)
+	g, err := execJSON(t, x, assistantKey, "drafts.get", `{"draft_id":1}`, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g.Output.(DraftDetail).CopyMissingSince; got != time.UnixMilli(at).UTC().Format(time.RFC3339) {
+		t.Fatalf("copy_missing_since = %q", got)
 	}
 }

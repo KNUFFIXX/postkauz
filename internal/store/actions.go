@@ -1033,11 +1033,21 @@ func (x *DraftTx) TrashMailbox(accountID int64) (m Mailbox, ok bool, err error) 
 	return m, err == nil, err
 }
 
+// DraftMailboxIDs wie SQLite.DraftMailboxIDs, in der Transaktion (Nachtrag
+// 1 zu A07, B3: drafts.supersede nimmt nur Kopien in diesen Ordnern).
+func (x *DraftTx) DraftMailboxIDs(accountID int64) (map[int64]bool, error) {
+	return draftMailboxIDs(x.ctx, x.tx, accountID)
+}
+
 // DraftMailboxIDs liefert die Ordner des Kontos, in die PostKauz Entwürfe
 // abgelegt hat (drafts.remote_mailbox_id), und die Ordner mit Rolle drafts
 // (A07 Teil 5: Ausnahme der Herkunft draft_supersede im Runner).
 func (s *SQLite) DraftMailboxIDs(ctx context.Context, accountID int64) (map[int64]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT remote_mailbox_id FROM drafts WHERE account_id = ? AND remote_mailbox_id IS NOT NULL
+	return draftMailboxIDs(ctx, s.db, accountID)
+}
+
+func draftMailboxIDs(ctx context.Context, q execQuerier, accountID int64) (map[int64]bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT remote_mailbox_id FROM drafts WHERE account_id = ? AND remote_mailbox_id IS NOT NULL
 		UNION SELECT id FROM mailboxes WHERE account_id = ? AND role = 'drafts'`, accountID, accountID)
 	if err != nil {
 		return nil, err

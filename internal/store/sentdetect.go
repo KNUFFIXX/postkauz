@@ -437,13 +437,17 @@ func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time
 // audit_events_ts (Bereich since bis heute). ok false: keiner (etwa nach
 // einer Rotation des Audits); dann gilt die Regel nicht.
 func (s *SQLite) DraftMissingSince(ctx context.Context, draftID int64, since time.Time) (at time.Time, ok bool, err error) {
+	// Nachtrag 1, B2: Der jüngste Eintrag mit Grund missing oder present
+	// zählt; ist es present (die Kopie kam nachweisbar zurück), fehlt sie
+	// seitdem nicht, und missing-Einträge davor zählen nicht mehr.
 	var ts int64
-	err = s.db.QueryRowContext(ctx, `SELECT ts FROM audit_events WHERE ts >= ?
-		AND operation = 'drafts.remote_check' AND reason = 'missing' AND result = 'ok'
+	var reason string
+	err = s.db.QueryRowContext(ctx, `SELECT ts, reason FROM audit_events WHERE ts >= ?
+		AND operation = 'drafts.remote_check' AND reason IN ('missing', 'present') AND result = 'ok'
 		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
 		WHERE value = ?) ORDER BY ts DESC, id DESC LIMIT 1`,
-		since.UnixMilli(), "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ts)
-	if errors.Is(err, sql.ErrNoRows) {
+		since.UnixMilli(), "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ts, &reason)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && reason != "missing") {
 		return time.Time{}, false, nil
 	}
 	if err != nil {
@@ -464,7 +468,9 @@ type DraftCloseEvent struct {
 // Zeitpunkt closedAt geschlossen hat, soweit er einen eigenen Grund trägt
 // (A06 Teil 4 replaced, A07 Teil 4 copy_gone, A07 Teil 5
 // superseded_by_draft); ohne Migration, gesucht wie DraftReplacedBy in ±1 s
-// über den Index audit_events_ts. ok false: anders geschlossen oder schon
+// über den Index audit_events_ts. Bei drafts.supersede muss draftID der
+// alte Entwurf (params.draft_id) sein, nie der Nachfolger, der im selben
+// Eintrag als Ziel steht (Nachtrag 1 zu A07, B6). ok false: anders geschlossen oder schon
 // aus dem Audit rotiert.
 func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time.Time) (ev DraftCloseEvent, ok bool, err error) {
 	if closedAt.IsZero() {
@@ -475,8 +481,10 @@ func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time
 		AND operation IN ('drafts.replaced_detected', 'drafts.copy_gone_detected', 'drafts.supersede') AND result = 'ok'
 		AND reason IN ('replaced', 'copy_gone', 'superseded_by_draft')
 		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
-		WHERE value = ?) ORDER BY id DESC LIMIT 1`,
-		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ev.Operation, &ev.Reason, &params)
+		WHERE value = ?)
+		AND (operation != 'drafts.supersede' OR (json_valid(params_redacted) AND json_extract(params_redacted, '$.draft_id') = ?))
+		ORDER BY id DESC LIMIT 1`,
+		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10), draftID).Scan(&ev.Operation, &ev.Reason, &params)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DraftCloseEvent{}, false, nil
 	}
@@ -485,4 +493,35 @@ func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time
 	}
 	ev.Params = json.RawMessage(params)
 	return ev, true, nil
+}
+
+// NewMailSubjectsInDrafts liefert die Betreffs der Nachrichten des Kontos,
+// die im Entwürfe-Ordner liegen (wie EditedReplyInDrafts: \Draft, Rolle
+// drafts oder Ablageordner eines Entwurfs), nach after datiert sind, kein
+// In-Reply-To tragen und keine Kopie von PostKauz sind (Message-ID keines
+// Entwurfs des Kontos). Nachtrag 1 zu A07, B1: Auffangregel „Kopie weg“ bei
+// neuen Mails, die der Mensch im Mailprogramm weiterbearbeitet. Gelesen
+// über den Index messages_account_date; die Menge ist klein (Entwürfe).
+func (x *DraftTx) NewMailSubjectsInDrafts(accountID int64, after time.Time) ([]string, error) {
+	rows, err := x.tx.QueryContext(x.ctx, `SELECT m.subject FROM messages m WHERE m.account_id = ?
+		AND COALESCE(m.date_header, m.internal_date, 0) > ?
+		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ''
+		AND EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
+			WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
+				OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
+		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header)`,
+		accountID, after.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }

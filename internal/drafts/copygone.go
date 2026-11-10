@@ -100,7 +100,8 @@ func (s *Service) markCopyGone(ctx context.Context, id int64, since time.Time, e
 // oben): abandoned, closed_at gesetzt, Freigabe superseded wie bei
 // EvAbandon. In derselben Transaktion noch einmal geprüft: Fingerabdruck
 // (expect), remote_state missing, Ablageordner bekannt, keine übernommene
-// Kopie eines abgebrochenen Ablageversuchs, Kopie laut Spiegel weg; sonst
+// Kopie eines abgebrochenen Ablageversuchs, Kopie laut Spiegel weg, keine
+// weiterbearbeitete Fassung im Entwürfe-Ordner (editedInDrafts); sonst
 // draft_changed, nichts wird geschrieben.
 func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expect string) (Result, error) {
 	if expect == "" {
@@ -131,6 +132,15 @@ func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expec
 		} else if st != RemoteMissing {
 			return changed(d.ID)
 		}
+		// Nachtrag 1, B1: dieselbe Sicherung wie „ersetzt“ (Sicherung c).
+		// Bearbeitet der Mensch den Entwurf im Mailprogramm unter neuer
+		// Message-ID weiter, liegt dort eine nach der Ablage datierte
+		// Fassung; dann bleibt der Entwurf offen.
+		if edited, err := editedInDrafts(x, d); err != nil {
+			return err
+		} else if edited {
+			return changed(d.ID)
+		}
 		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
 			return err
 		}
@@ -144,4 +154,35 @@ func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expec
 		return err
 	})
 	return res, err
+}
+
+// editedInDrafts meldet, ob im Entwürfe-Ordner eine nach der letzten
+// Ablage datierte Fassung liegt, die der Mensch im Mailprogramm unter neuer
+// Message-ID weiterbearbeitet (Nachtrag 1 zu A07, B1): bei Antworten und
+// Weiterleitungen mit Original eine Nachricht mit In-Reply-To = Original
+// (Store.EditedReplyInDrafts, wie „ersetzt“), bei neuen Mails eine ohne
+// In-Reply-To mit gleichem normalisiertem Betreff. Kopien von PostKauz
+// zählen nie.
+func editedInDrafts(x *store.DraftTx, d store.Draft) (bool, error) {
+	after := lastPushAt(d)
+	if threadKinds[d.Kind] && d.InReplyToMsg > 0 {
+		return x.EditedReplyInDrafts(d.AccountID, d.InReplyToMsg, after)
+	}
+	if d.Kind != string(KindNew) {
+		return false, nil
+	}
+	subj := NormalizeSubject(d.Subject)
+	if subj == "" {
+		return false, nil
+	}
+	subjects, err := x.NewMailSubjectsInDrafts(d.AccountID, after)
+	if err != nil {
+		return false, err
+	}
+	for _, s := range subjects {
+		if NormalizeSubject(s) == subj {
+			return true, nil
+		}
+	}
+	return false, nil
 }

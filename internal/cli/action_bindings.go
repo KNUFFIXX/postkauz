@@ -232,21 +232,18 @@ func draftIDInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, sec
 }
 
 // supersedeInput liest draft supersede <alt> --by <neu> (A07 Teil 5).
-func supersedeInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error) {
-	raw, _, err := draftIDInput(cmd, args, a)
-	if err != nil {
-		return nil, "", err
+// Die IDs gehen als int64 in die Eingabe (Nachtrag 1 zu A07, B9: ohne
+// Umweg über map[string]any, der Zahlen als float64 liest).
+func supersedeInput(cmd *cobra.Command, args []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil || id < 1 {
+		return nil, "", usageError{errors.New("the draft id is a number (see: draft list)")}
 	}
 	by, _ := cmd.Flags().GetInt64("by")
 	if by < 1 {
 		return nil, "", usageError{errors.New("name the newer draft with --by <draft-id> (see: draft list)")}
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, "", err
-	}
-	m["by_draft_id"] = by
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(map[string]int64{"draft_id": id, "by_draft_id": by})
 	return b, "", err
 }
 
@@ -431,8 +428,8 @@ func renderSupersede(w io.Writer, out any) error {
 	if o.DryRun {
 		prefix = "dry run: "
 	}
-	fmt.Fprintf(w, "%sdraft %d superseded by draft %d: %s, %d own copy/copies to the trash (%s)\n", prefix, o.DraftID, o.ByDraftID,
-		o.Status, o.Copies, termLine(o.Trash))
+	fmt.Fprintf(w, "%sdraft %d superseded by draft %d: %s, %d own copy/copies queued for the trash (%s), %d earlier copy/copies "+
+		"outside the Drafts folders left alone\n", prefix, o.DraftID, o.ByDraftID, o.Status, o.Copies, termLine(o.Trash), o.Skipped)
 	fmt.Fprintln(w, termLine(o.NextStep))
 	return nil
 }

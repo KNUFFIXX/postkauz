@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/secrets"
@@ -599,8 +600,8 @@ func renderDraftShow(w io.Writer, out any) error {
 			"no sent message was detected, it may or may not have been sent\n", o.ClosedAt, o.CopyMissingSince)
 	case drafts.ReasonSupersededByDraft:
 		// A07 Teil 5: durch einen eigenen, neueren Entwurf ersetzt.
-		fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; its unchanged copy went to the trash\n",
-			o.ClosedAt, o.SupersededByDraftID)
+		fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; its unchanged copy is queued for the trash "+
+			"(check with: %s action show %d)\n", o.ClosedAt, o.SupersededByDraftID, brand.Name, o.SupersedeActionID)
 	}
 	body := strings.TrimRight(termText(o.BodyText), "\r\n")
 	if q := o.Original; q != nil && q.Text != "" {

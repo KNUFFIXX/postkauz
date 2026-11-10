@@ -2,11 +2,14 @@ package drafts
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
@@ -703,6 +706,12 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 	}
 	now := s.now()
 	for _, o := range open {
+		if o.RemoteState == RemoteMissing {
+			if err := s.refreshMissing(ctx, o.ID, now); err != nil {
+				return err
+			}
+			continue
+		}
 		if o.RemoteState != RemotePushed && o.RemoteState != RemoteTakenOver {
 			continue
 		}
@@ -736,4 +745,60 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 		}
 	}
 	return nil
+}
+
+// ReasonPresent ist der Grund von drafts.remote_check, wenn die Kopie eines
+// missing-Entwurfs nachweisbar wieder im Entwürfe-Ordner liegt (Nachtrag 1
+// zu A07, B2); Store.DraftMissingSince zählt missing-Einträge davor nicht.
+const ReasonPresent = "present"
+
+// refreshMissing setzt einen missing-Entwurf wieder auf pushed, wenn seine
+// zuletzt abgelegte Kopie nachweisbar wieder am Ablageplatz liegt (gleiche
+// Message-ID und gleicher Inhalts-Hash, Ordner gespiegelt; „nicht prüfbar“
+// genügt nicht), mit Audit drafts.remote_check, Grund present. Sonst
+// ändert sich nichts.
+func (s *Service) refreshMissing(ctx context.Context, id int64, now time.Time) error {
+	return s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(id)
+		if err != nil {
+			return err
+		}
+		if Status(d.Status).Closed() || d.RemoteState != RemoteMissing {
+			return nil
+		}
+		back, err := copyPresent(x, d)
+		if err != nil || !back {
+			return err
+		}
+		d.RemoteState = RemotePushed
+		if err := x.UpdateDraft(d); err != nil {
+			return err
+		}
+		b, _ := json.Marshal(map[string]any{"draft_id": d.ID, "remote": RemotePushed, "mailbox_id": d.RemoteMailboxID, "uid": d.RemoteUID})
+		_, err = x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpRemoteCheck,
+			ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK, Reason: ReasonPresent,
+			PolicyVersion: s.PolicyVersion})
+		return err
+	})
+}
+
+// copyPresent meldet, ob die zuletzt abgelegte Kopie laut Spiegel belegt
+// am Ablageplatz liegt: Ordner gespiegelt, unter der UID (bei gleicher
+// UIDVALIDITY) bzw. nach einem UIDVALIDITY-Wechsel irgendwo im Ordner eine
+// Nachricht mit der Message-ID und dem Inhalts-Hash des Entwurfs.
+func copyPresent(x *store.DraftTx, d store.Draft) (bool, error) {
+	if d.PushedContentHash == "" || d.RemoteMailboxID == 0 {
+		return false, nil
+	}
+	mc, err := x.MirrorCopy(d.RemoteMailboxID, d.RemoteUID, d.MessageIDHeader, d.PushedContentHash)
+	if err != nil || !mc.MailboxFound || !mc.Synced {
+		return false, err
+	}
+	if d.RemoteUIDValidity != 0 && mc.UIDValidity != d.RemoteUIDValidity {
+		if mc, err = x.MirrorCopy(d.RemoteMailboxID, 0, d.MessageIDHeader, d.PushedContentHash); err != nil {
+			return false, err
+		}
+		return mc.SameIDAndHash, nil
+	}
+	return d.RemoteUID > 0 && mc.AtUID && mc.AtUIDMessageID == d.MessageIDHeader && mc.AtUIDContentHash == d.PushedContentHash, nil
 }

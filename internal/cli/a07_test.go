@@ -57,3 +57,25 @@ func TestA07RenderCopyGone(t *testing.T) {
 		t.Fatalf("draft show:\n%s", b.String())
 	}
 }
+
+// Nachtrag 1, B8: draft show sagt nach supersede, dass die Kopie für den
+// Papierkorb vorgemerkt ist, mit der Aktion; nicht „went to the trash“.
+func TestA07N1RenderSuperseded(t *testing.T) {
+	var b bytes.Buffer
+	if err := renderDraftShow(&b, ops.DraftDetail{DraftID: 3, Kind: "reply", Account: "demo", Status: "abandoned", Remote: "pushed",
+		ClosedAt: "2026-11-10T10:00:00Z", ClosedReason: drafts.ReasonSupersededByDraft, SupersededByDraftID: 5, SupersedeActionID: 12}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "superseded by draft 5; its unchanged copy is queued for the trash (check with: postkauz action show 12)") ||
+		strings.Contains(b.String(), "went to the trash") {
+		t.Fatalf("draft show:\n%s", b.String())
+	}
+	b.Reset()
+	if err := renderSupersede(&b, ops.SupersedeOutput{DraftID: 3, ByDraftID: 5, Status: "abandoned", Copies: 1, Skipped: 1, Trash: "Papierkorb",
+		ActionID: 12, NextStep: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "1 own copy/copies queued for the trash (Papierkorb), 1 earlier copy/copies outside the Drafts folders left alone") {
+		t.Fatalf("supersede:\n%s", b.String())
+	}
+}

@@ -19,7 +19,10 @@ type SupersedeOutput struct {
 	ByDraftID int64  `json:"by_draft_id"`
 	Status    string `json:"status"`
 	// Copies: eigene, unveränderte Kopien, die in den Papierkorb gehen.
-	Copies   int    `json:"copies"`
+	Copies int `json:"copies"`
+	// Skipped: frühere Kopien außerhalb der Entwürfe-Ordner, die liegen
+	// bleiben (Nachtrag 1 zu A07, B3).
+	Skipped  int    `json:"skipped"`
 	Trash    string `json:"trash"`
 	ActionID int64  `json:"action_id,omitempty"`
 	NextStep string `json:"next_step"`
@@ -57,10 +60,11 @@ func DraftsSupersede(d Deps) Operation {
     "dry_run": {"type": "boolean"}, "draft_id": {"type": "integer"}, "by_draft_id": {"type": "integer"},
     "status": {"type": "string", "enum": ["abandoned"], "description": "status of the old draft afterwards"},
     "copies": {"type": "integer", "description": "own unchanged copies that go to the trash"},
+    "skipped": {"type": "integer", "description": "earlier own copies outside the Drafts folders; they stay where they are"},
     "trash": {"type": "string", "description": "the mailbox with role trash"},
     "action_id": {"type": "integer"}, "next_step": {"type": "string"}
   },
-  "required": ["dry_run", "draft_id", "by_draft_id", "status", "copies", "trash", "next_step"]
+  "required": ["dry_run", "draft_id", "by_draft_id", "status", "copies", "skipped", "trash", "next_step"]
 }`),
 		Redact: redactSupersede,
 		PolicyInput: func(ctx context.Context, input json.RawMessage) (policy.Facts, error) {
@@ -97,13 +101,13 @@ func DraftsSupersede(d Deps) Operation {
 				return nil, draftErr(err)
 			}
 			out := SupersedeOutput{DryRun: call.DryRun, DraftID: in.DraftID, ByDraftID: in.ByDraftID, Status: string(drafts.StatusAbandoned),
-				Copies: res.Copies, Trash: res.Trash, ActionID: res.ActionID}
+				Copies: res.Copies, Skipped: res.Skipped, Trash: res.Trash, ActionID: res.ActionID}
 			if call.DryRun {
 				out.NextStep = "dry run: nothing changed; call again with dry_run=false"
 			} else {
-				out.NextStep = fmt.Sprintf("draft %d is abandoned; its copy goes to the trash (%s): a running %s sync --watch moves it "+
-					"within 10 s, otherwise the next %s sync; check with: %s action show %d", in.DraftID, res.Trash, brand.Name, brand.Name,
-					brand.Name, res.ActionID)
+				out.NextStep = fmt.Sprintf("draft %d is abandoned; its copy is queued for the trash (%s, action %d): a running %s sync --watch "+
+					"moves it within 10 s, otherwise the next %s sync; check with: %s action show %d", in.DraftID, res.Trash, res.ActionID,
+					brand.Name, brand.Name, brand.Name, res.ActionID)
 			}
 			return out, nil
 		},

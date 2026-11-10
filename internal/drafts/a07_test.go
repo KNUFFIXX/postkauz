@@ -644,3 +644,109 @@ func TestA07CopyGoneWithoutAuditEntry(t *testing.T) {
 		t.Fatalf("report = %+v", rep)
 	}
 }
+
+// Nachtrag 1, B1: Die Auffangregel lässt einen Entwurf offen, den der
+// Mensch im Mailprogramm unter neuer Message-ID weiterbearbeitet (eine nach
+// der Ablage datierte Fassung im Entwürfe-Ordner): bei einer Antwort mit
+// In-Reply-To = Original, bei einer neuen Mail mit gleichem Betreff.
+func TestA07N1CopyGoneKeepsEditedVersion(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		mk   func(e *thEnv) store.Draft
+		edit func(e *thEnv)
+	}{
+		{"reply", func(e *thEnv) store.Draft { return e.draftOf(KindReply, thOwn, true) }, func(e *thEnv) {
+			e.send(thSent{role: "drafts", draftFlag: true, text: thOwn + " Nachtrag."})
+		}},
+		{"new email", func(e *thEnv) store.Draft { return e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true) }, func(e *thEnv) {
+			e.send(thSent{role: "drafts", draftFlag: true, inReplyTo: " ", subject: sjSubject, to: sjTo, text: sjOwn + sjAdded})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThEnv(t)
+			d := c.mk(e)
+			e.dropCopy(d)
+			if rep := e.check(); rep.Missing != 1 {
+				t.Fatalf("missing run = %+v", rep)
+			}
+			c.edit(e)
+			e.now = e.now.Add(25 * time.Hour)
+			if rep := e.check(); rep.CopyGone != 0 || e.status(d) != string(StatusDraft) {
+				t.Fatalf("edited version in Drafts: %+v, %s", rep, e.status(d))
+			}
+		})
+	}
+	// Ohne weiterbearbeitete Fassung (eine mit anderem Betreff zählt nicht)
+	// wie bisher copy_gone.
+	e := newThEnv(t)
+	d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	e.dropCopy(d)
+	e.check()
+	e.send(thSent{role: "drafts", draftFlag: true, inReplyTo: " ", subject: "Ganz anderes Thema", to: sjTo, text: "x"})
+	e.now = e.now.Add(25 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 1 {
+		t.Fatalf("without edited version: %+v", rep)
+	}
+}
+
+// Nachtrag 1, B2: Kehrt die Kopie nachweisbar zurück, wird der Entwurf
+// wieder pushed (Audit present), und die Zeit „fehlt seit“ beginnt beim
+// nächsten Verschwinden neu.
+func TestA07N1CopyBackResetsMissingSince(t *testing.T) {
+	e := newThEnv(t)
+	d := e.goneDraft()
+	e.now = e.now.Add(23 * time.Hour)
+	e.exec(`INSERT INTO message_mailboxes(message_id, mailbox_id, uid, flag_draft) VALUES (?, ?, ?, 1)`, e.copyID(d), e.m.boxes["drafts"], d.RemoteUID)
+	if rep := e.check(); rep.CopyGone != 0 {
+		t.Fatalf("copy back: %+v", rep)
+	}
+	if got := e.draft(d.ID); got.RemoteState != RemotePushed {
+		t.Fatalf("remote after the copy came back = %s", got.RemoteState)
+	}
+	if r, _ := e.lastAudit(OpRemoteCheck); r.Reason != ReasonPresent || r.ActorType != "system" {
+		t.Fatalf("audit = %+v", r)
+	}
+	e.now = e.now.Add(2 * time.Hour)
+	e.dropCopy(d)
+	if rep := e.check(); rep.Missing != 1 || rep.CopyGone != 0 {
+		t.Fatalf("gone again: %+v", rep)
+	}
+	e.now = e.now.Add(2 * time.Hour) // 27 h nach dem ersten, 2 h nach dem zweiten Verschwinden
+	if rep := e.check(); rep.CopyGone != 0 || e.status(d) != string(StatusDraft) {
+		t.Fatalf("2 h after the second disappearance: %+v", rep)
+	}
+	e.now = e.now.Add(23 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 1 {
+		t.Fatalf("25 h after the second disappearance: %+v", rep)
+	}
+	// Nicht prüfbar ist nicht „zurück“: Ordner nicht gespiegelt.
+	e2 := newThEnv(t)
+	d2 := e2.goneDraft()
+	e2.exec(`INSERT INTO message_mailboxes(message_id, mailbox_id, uid, flag_draft) VALUES (?, ?, ?, 1)`, e2.copyID(d2), e2.m.boxes["drafts"], d2.RemoteUID)
+	e2.exec(`UPDATE mailboxes SET sync_phase = 'new' WHERE id = ?`, e2.m.boxes["drafts"])
+	e2.check()
+	if got := e2.draft(d2.ID); got.RemoteState != RemoteMissing {
+		t.Fatalf("not mirrored counts as present: %s", got.RemoteState)
+	}
+}
+
+// Nachtrag 1, B5: Auch Verlauf und Betreff übernehmen beim Schließen zuerst
+// die Kopie eines abgebrochenen Ablageversuchs; liegt sie (in einem anderen
+// Ordner) vor, bleibt der Entwurf offen.
+func TestA07N1ThreadAdoptsOrphanFirst(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	e.dropCopy(d)
+	// Ein abgebrochener Versuch hat die Kopie im Posteingang abgelegt.
+	orphan := e.m.put("inbox", sentMsg{messageID: d.MessageIDHeader, subject: d.Subject, draftFlag: true, date: e.now, text: "versuch " + thOwn})
+	var hash string
+	if err := e.st.DBForTest().QueryRow(`SELECT content_hash FROM messages WHERE id = ?`, orphan).Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	e.exec(`UPDATE drafts SET push_attempt = json_object('mailbox_id', ?, 'content_hash', ?, 'message_hash', 'mh', 'date', '', 'fingerprint', ?)
+		WHERE id = ?`, e.m.boxes["inbox"], hash, Fingerprint(e.draft(d.ID)), d.ID)
+	e.send(thSent{text: thOwn})
+	if rep := e.check(); rep.SentByThread != 0 || e.status(d) != string(StatusDraft) {
+		t.Fatalf("closed although an orphaned copy exists: %+v, %s", rep, e.status(d))
+	}
+}

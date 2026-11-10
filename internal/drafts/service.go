@@ -763,6 +763,15 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		// legte sonst eine neue Kopie ab, und der Entwurf würde trotzdem
 		// geschlossen).
 		if reason == DetectThread || reason == DetectSubject { // A07 Teil 3: Betreff wie Verlauf
+			// Nachtrag 1 zu A07, B5: erst die Kopie eines abgebrochenen
+			// Ablageversuchs übernehmen, dann prüfen (wie Replaced und
+			// CopyGone). Wurde etwas übernommen, liegt eine Kopie da: nicht
+			// schließen (die Transaktion wird samt Übernahme zurückgerollt).
+			if adopted, err := s.adoptOrphan(x, &d, now); err != nil {
+				return err
+			} else if adopted {
+				return changed(d.ID)
+			}
 			if st, err := checkCopy(x, d); err != nil {
 				return err
 			} else if st != RemoteMissing {

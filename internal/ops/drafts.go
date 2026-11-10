@@ -1358,9 +1358,11 @@ type DraftDetail struct {
 	// ein Satz zum Grund (bei copy_gone: der Versand wurde nicht erkannt).
 	CopyMissingSince string `json:"copy_missing_since,omitempty"`
 	ClosedNote       string `json:"closed_note,omitempty"`
-	// SupersededByDraftID: der Nachfolger (closed_reason
+	// SupersededByDraftID, SupersedeActionID: der Nachfolger und die
+	// Aktion, die die Kopie in den Papierkorb legt (closed_reason
 	// superseded_by_draft, A07 Teil 5, drafts.supersede).
 	SupersededByDraftID int64 `json:"superseded_by_draft_id,omitempty"`
+	SupersedeActionID   int64 `json:"supersede_action_id,omitempty"`
 
 	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
 	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
@@ -1432,8 +1434,9 @@ func DraftsGet(d Deps) Operation {
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
     "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its copy went to the trash)"},
     "superseded_by_draft_id": {"type": "integer", "description": "the newer draft (closed_reason superseded_by_draft)"},
+    "supersede_action_id": {"type": "integer", "description": "the mailbox action that moves the unchanged copy to the trash (closed_reason superseded_by_draft; action show <id>)"},
     "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
-    "copy_missing_since": {"type": "string", "format": "date-time", "description": "when the sync noticed the copy was gone (closed_reason copy_gone)"},
+    "copy_missing_since": {"type": "string", "format": "date-time", "description": "when the sync noticed the copy was gone: for closed_reason copy_gone, and for an open draft with remote missing (the fallback rule [draft] copy_gone_after counts from here)"},
     "closed_note": {"type": "string", "description": "one sentence on closed_reason"}
   },
   "required": ["source", "draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
@@ -1516,6 +1519,17 @@ func DraftsGet(d Deps) Operation {
 					return nil, err
 				}
 			}
+			if !drafts.Status(dr.Status).Closed() && dr.RemoteState == drafts.RemoteMissing {
+				// Nachtrag 1 zu A07: seit wann die Kopie fehlt (Auffangregel
+				// „Kopie weg“; Abnahme D13 prüft damit die Erwartung).
+				since, ok, err := o.svc.Store.DraftMissingSince(ctx, dr.ID, drafts.LastPushAt(dr))
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					out.CopyMissingSince = rfc3339(since)
+				}
+			}
 			if dr.ApprovalID > 0 {
 				if a, err := o.svc.Store.Approval(ctx, dr.ApprovalID); err == nil {
 					out.ApprovalStatus, out.ApprovalExpiresAt = a.Decision, rfc3339(a.ExpiresAt)
@@ -1573,7 +1587,8 @@ const (
 	closedNoteReplaced = "an own reply in the thread replaced this draft; this text was not sent"
 	closedNoteCopyGone = "the copy was gone from the Drafts folder for longer than [draft] copy_gone_after; " +
 		"no sent message was detected, so it is not known whether it was sent"
-	closedNoteSuperseded = "a newer draft replaced this draft (drafts.supersede); its unchanged copy went to the trash"
+	closedNoteSuperseded = "a newer draft replaced this draft (drafts.supersede); its unchanged copy is queued for the trash " +
+		"(see supersede_action_id; a running sync --watch moves it within 10 s)"
 )
 
 // closedReason liest aus dem Audit, warum das System einen verworfenen
@@ -1588,6 +1603,7 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 		Reply        int64  `json:"reply_message_id"`
 		MissingSince string `json:"missing_since"`
 		By           int64  `json:"by_draft_id"`
+		Action       int64  `json:"action_id"`
 	}
 	if err := json.Unmarshal(ev.Params, &p); err != nil {
 		return fmt.Errorf("ops: audit params of a closed draft: %w", err)
@@ -1598,7 +1614,8 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 	case drafts.ReasonCopyGone:
 		out.ClosedReason, out.CopyMissingSince, out.ClosedNote = drafts.ReasonCopyGone, p.MissingSince, closedNoteCopyGone
 	case drafts.ReasonSupersededByDraft:
-		out.ClosedReason, out.SupersededByDraftID, out.ClosedNote = drafts.ReasonSupersededByDraft, p.By, closedNoteSuperseded
+		out.ClosedReason, out.SupersededByDraftID, out.SupersedeActionID, out.ClosedNote = drafts.ReasonSupersededByDraft, p.By,
+			p.Action, closedNoteSuperseded
 	}
 	return nil
 }

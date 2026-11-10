@@ -215,8 +215,12 @@ type Draft struct {
 	CopyGoneAfter CopyGoneAfter `toml:"copy_gone_after"`
 }
 
-// DefaultCopyGoneAfter ist der Standard von [draft] copy_gone_after.
-const DefaultCopyGoneAfter = 24 * time.Hour
+// DefaultCopyGoneAfter ist der Standard von [draft] copy_gone_after,
+// MinCopyGoneAfter die kleinste erlaubte Dauer (Nachtrag 1 zu A07, B7).
+const (
+	DefaultCopyGoneAfter = 24 * time.Hour
+	MinCopyGoneAfter     = time.Hour
+)
 
 // CopyGoneAfter ist der Wert von [draft] copy_gone_after (A07 Teil 4).
 type CopyGoneAfter struct {
@@ -241,6 +245,9 @@ func (c *CopyGoneAfter) UnmarshalTOML(v any) error {
 		c.Off, c.Value = true, 0
 		return nil
 	}
+	if strings.HasPrefix(strings.TrimSpace(x), "-") {
+		return fmt.Errorf(`draft.copy_gone_after %q is negative: use "off", "0" or a duration of at least %s`, x, MinCopyGoneAfter)
+	}
 	d, err := ParseDuration(x)
 	if err != nil {
 		return fmt.Errorf("draft.copy_gone_after: %w", err)
@@ -248,6 +255,11 @@ func (c *CopyGoneAfter) UnmarshalTOML(v any) error {
 	if d == 0 {
 		c.Off, c.Value = true, 0
 		return nil
+	}
+	if d < MinCopyGoneAfter {
+		// Nachtrag 1 zu A07, B7: kürzer schlösse Entwürfe, deren Kopie nur
+		// zwischen zwei Läufen kurz fehlt.
+		return fmt.Errorf(`draft.copy_gone_after %q is too short: at least %s (or "off")`, x, MinCopyGoneAfter)
 	}
 	c.Off, c.Value = false, d
 	return nil
