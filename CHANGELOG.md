@@ -6,6 +6,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
+#### Nachtrag 2 (10.11.2026; nur das Abnahmeskript, kein neuer Build, Build bleibt an `1fdd000`)
+
+- **Fixed:** Abnahmeskript D13: Erwartungslisten als `[int64[]]` (vorher blieben sie Text, jeder Abgleich mit dem Stand lief ins Leere), Marke im Audit nach der Vorher-Liste, `-ExpectStaysOpen`, Auffangregel direkt vor dem Tausch noch einmal, Zeitpunkt „Kopie fehlt“ je Entwurf ab `pushed_date` mit Seiten über `--after-id`, `sync --watch` nur genau mit `-Exe` und Konten nur aus `-a`/`--account`/`--all`, Rückweg verlangt `-Accounts`, Aufgaben nur als Nummer im Protokoll, MCP-Fehler mit Status und Grund, Eingabe an den MCP-Server ohne BOM, sauberes Ende nach einer Zeitgrenze.
+
 #### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu an `1fdd000`, Windows `d001341b…d0619`, ersetzt den Build an `69117c5`)
 
 - **Fixed:** Abnahmeskript D13: `audit --limit 1000` statt 5000 (sonst immer FAIL), `Stop-D13` definiert, kein zweiter Lauf nach einem FAIL im ersten, Erwartung der Auffangregel vor dem Tausch geprüft, `sync --watch` je Konto in 4.1, Rückweg vermerkt die Aufgaben erst direkt vor R.1, Hilfsprozesse an Pfadgrenzen, Abschlüsse fremder Entwürfe sind nicht erwartet, Protokoll ohne Aufgaben- und Kontonamen.

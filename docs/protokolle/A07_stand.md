@@ -106,3 +106,36 @@ Gebaut wie in Abschnitt 5 (zwei frische Klone ohne Tags, sauberer Arbeitsbaum, g
 | `postkauz-darwin-arm64` | `c737b05786832c1ae097a5769720f91a915119bd105598f3cd2694a36edf2e09` |
 
 Für D13: `-ExpectSha256 d001341b2fa85a6928d127bc98e34d874ce13edca17def89b43ddbe99de0d619`.
+
+## 8. Nachtrag 2 nach der Gegenprüfung des Nachtrags 1 (10.11.2026)
+
+Ergebnis der Prüfung: Code und Build in Ordnung, nur das Abnahmeskript braucht eine Runde. **Keine Code-Änderung, kein neuer Build:** Es gilt der Build 0.3.0-rc5 an `1fdd000` aus Abschnitt 7.4 (Windows `d001341b…d0619`).
+
+### 8.1 Commits
+
+| Commit | Inhalt |
+|---|---|
+| `9f98523` | `abnahme_D13.ps1` und `abnahme_D13.md`: N1 bis N10 |
+| (dieser) | Doku: dieses Protokoll, Roadmap („Als Nächstes“ 0f und neuer Sammelpunkt 0g), CHANGELOG |
+
+### 8.2 Was im Skript geändert ist
+
+- **N1 (Blocker):** `-ExpectSent`, `-ExpectReplaced` und `-ExpectCopyGone` sind `[string[]]`-Parameter; die Zuweisung `[int64]` an sie blieb Text, und die Abfragen mit `[int64]`-Schlüsseln (1.2c, 1.2d/1.2e, `Get-Closed`) liefen ins Leere. Jetzt eigene Listen `$script:ExpSent`, `ExpReplaced`, `ExpGone`, `ExpOpen` vom Typ `[int64[]]` (`ConvertTo-IdList`), überall verwendet (0.8, 1.2b bis 1.2f, 1.6d bis 1.6f, 3.2b/3.4b, 3.4c); IDs aus `draft list` als `[int64]`, Hashtables nur mit `[int64]`-Schlüsseln. Was keine Zahl ist, ist FAIL in 0.8.
+- **N2:** Marke im Audit nach der Vorher-Liste (1.2a): höchste ID aus `audit --raw --since 15m` (die eigene Abfrage steht schon darin); die Gründe der Abschlüsse liest das Skript danach mit `--after-id <Marke>`, seitenweise. Ohne lesbare Marke WARN und der Zeitpunkt der Vorher-Liste als Grenze. Teil B setzt die Marke vor dem ersten Probe-Entwurf (B.1b).
+- **N3:** neuer Parameter `-ExpectStaysOpen`: 1.2d nimmt ihn hin, 1.2b verlangt ihn offen, 3.4c prüft, dass er nach beiden Läufen offen ist; 0.8 prüft alle vier Listen auf doppelte IDs. Fall in `abnahme_D13.md` Abschnitt 2, Schritt 4.
+- **N4:** 1.2d bis 1.2f als Funktion `Test-GoneExpectation`; nach der Sicherung direkt vor dem Tausch noch einmal mit der aktuellen Uhrzeit (1.6d bis 1.6f), Abbruch „nichts getauscht“.
+- **N5:** `Get-MissingSince` je Entwurf ab seinem `pushed_date` (fest geparst nach RFC 1123 mit Zahlen-Zone, sonst `TryParse`), `audit --operation drafts.remote_check --since <Ablage − 1 s>`, seitenweise mit `--after-id` bis eine Seite kürzer als 1000 ist (höchstens 50 Seiten); gezählt wird wie in rc5 der jüngste Eintrag `missing`/`present` mit Ergebnis `ok`. Liefert `draft show` nichts, fehlt `pushed_date`, endet das Audit nicht oder ist der jüngste Eintrag nicht `missing`: FAIL 1.2d mit der ID und Abbruch vor dem Tausch (kein `MinValue.AddSeconds(-1)` mehr).
+- **N6:** `Get-OwnWatch` zählt nur Prozesse mit `ExecutablePath` gleich `-Exe` (ohne Groß-/Kleinschreibung); die Befehlszeile wird in Wörter zerlegt, Konten nur aus `-a <k>`, `-a=<k>`, `-a<k>`, `--account <k>`, `--account=<k>` und `--all`. Die Prüfung je Konto in 4.1/E.1/R.5 läuft, sobald eine Aufgabe außer „audit export“ gestartet wurde, unabhängig von den Namen. Teil B (B.1) verlangt ein `sync --watch` für `-SelfAccount`.
+- **N7:** R.0d verlangt auch `-Accounts`. Bricht der Rückweg ab (etwa in R.1) und schaltet der Abschluss die Aufgaben ein, prüft E.1 die Version, die wirklich unter `-Exe` liegt (INFO E.1 nennt sie).
+- **N8:** Aufgaben stehen in 1.1, 4.1, E.1, R.5 und in den Fehlerzeilen von `Stop-Tasks`/`Start-Tasks` nur als „Aufgabe <n>“ (Reihenfolge in `-Tasks`); Fehlermeldungen von `Disable-/Enable-/Start-ScheduledTask` laufen durch `Hide-TaskNames`.
+- **N9:** Teil B mit `-AgentKeyFile`: abgelehnte MCP-Aufrufe nennen Code, Status und Grund des `ToolError` (nie die Meldung); geschrieben wird über einen eigenen `StreamWriter` auf `StandardInput.BaseStream` mit UTF-8 ohne BOM und LF (`StandardInput` selbst wird nie benutzt oder geschlossen); nach einer Zeitgrenze von 60 s liest das Skript nicht noch einmal, sondern beendet Teil B mit FAIL und Grund (`Test-McpAlive`).
+- **N10:** `abnahme_D13.md`: Teil-B-Aufrufe mit `-Exe`, `-DataDir`, `-Config` wie Teil A.
+
+### 8.3 Prüfläufe
+
+`make check` grün (Doku-Änderung, Guard: `.ps1` mit BOM und nur ASCII; PII-Check). Das Skript ist im Container weiter nicht mit PowerShell gelaufen; geprüft sind ASCII, BOM, ausgeglichene Klammern und dass rc4 (`b41f9eb`) `audit --after-id`, `--raw` und `--since 36500d` kennt. Ein Parser-Lauf mit einem heruntergeladenen PowerShell 7 hat die Freigabeprüfung der Sitzung abgelehnt; der Parser-Check und ein Probelauf eines Abbruchpfads mit Windows PowerShell 5.1 folgen auf dem Büro-PC (Betreiber).
+
+### 8.4 Nicht umgesetzt (Sammelpunkt 0g in der Roadmap)
+
+Laut Auftrag nur vorgemerkt, nicht gebaut (kein neuer Build): Schema-Text von `closed_reason` in `internal/ops/drafts.go` („its copy went to the trash“ → „vorgemerkt“ wie B8); `copyPresent` erkennt eine zurückgekehrte Kopie nur unter der alten UID; Index-Kommentar in `internal/store/sentdetect.go` (`NewMailSubjectsInDrafts`) prüfen und messen; fehlende Tests (B5 auf dem Weg über den Betreff, B1 Gegenfall „Fassung vor der letzten Ablage“, B9 große IDs).
+
