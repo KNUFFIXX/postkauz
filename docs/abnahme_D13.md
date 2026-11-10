@@ -1,6 +1,6 @@
 # Abnahme D13: Umstellung auf 0.3.0-rc5 (A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“)
 
-Stand: 10.11.2026 (Auftrag [A07](../auftraege/A07_alltag3.md), Teil 7). Skript: [abnahme_D13.ps1](abnahme_D13.ps1) (Muster D12, mit den Verbesserungen aus Sammelpunkt 0e). Programm: Build **0.3.0-rc5**, `postkauz-windows-amd64.exe` SHA256 und Build-Commit in [protokolle/A07_stand.md](protokolle/A07_stand.md) Abschnitt 3 (für `-ExpectSha256`).
+Stand: 10.11.2026 (Auftrag [A07](../auftraege/A07_alltag3.md), Teil 7). Skript: [abnahme_D13.ps1](abnahme_D13.ps1) (Muster D12, mit den Verbesserungen aus Sammelpunkt 0e). Programm: Build **0.3.0-rc5** an `69117c5`, `postkauz-windows-amd64.exe` SHA256 `97ab3d84573ca1a5efc7e3b41000601da5929e5bdb6ca41441b2769048231a78` (für `-ExpectSha256`; Prüfsummen und Prüfläufe in [protokolle/A07_stand.md](protokolle/A07_stand.md) Abschnitt 5).
 
 **Worum es geht:** Der Dauerbetrieb auf dem Büro-PC läuft seit 05.11.2026 mit 0.3.0-rc4. D13 stellt ihn auf 0.3.0-rc5 um und prüft A07 **am echten Bestand**:
 
@@ -51,7 +51,7 @@ Stand: 10.11.2026 (Auftrag [A07](../auftraege/A07_alltag3.md), Teil 7). Skript: 
 **Im Hintergrund starten** (wie D12), danach das Protokoll mitlesen, bis die Schlusszeile `D13: …` dasteht:
 
 ```powershell
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d13\abnahme_D13.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d13\postkauz-windows-amd64.exe','-ExpectSha256','<SHA256 aus A07_stand.md>','-BackupTo','<Sicherungsordner>','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-ExpectSent','<ids>','-ExpectReplaced','<ids>','-ExpectCopyGone','<ids>','-KeepStdioMcp'
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d13\abnahme_D13.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d13\postkauz-windows-amd64.exe','-ExpectSha256','97ab3d84573ca1a5efc7e3b41000601da5929e5bdb6ca41441b2769048231a78','-BackupTo','<Sicherungsordner>','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-ExpectSent','<ids>','-ExpectReplaced','<ids>','-ExpectCopyGone','<ids>','-KeepStdioMcp'
 ```
 
 ```powershell

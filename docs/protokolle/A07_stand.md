@@ -14,7 +14,7 @@ Auftrag: [auftraege/A07_alltag3.md](../../auftraege/A07_alltag3.md). Zweig `clau
 | `c1c2434` | 4 | Auffangregel „Kopie weg“ (`copy_gone`, `[draft] copy_gone_after`, Standard 24 h) |
 | `ac145b9` | 5 | `drafts.supersede` (R2, `mail:draft`, MCP `mail_supersede_draft`, CLI `draft supersede`), Runner-Ausnahme für die Herkunft `draft_supersede`, Nachtrag zu E2/E3 |
 | `6574047` | 6 | Sammelpunkt 0e: Kommentar `replaced.go`, Sync-Test `MissingBefore`, Doku 3b, `push_failed` mit Grund, G202 |
-| (dieser) | 7 | Abschluss: D13 (Skript und Anleitung), Roadmap, CHANGELOG, Versanderkennung Stand und Abschnitt 5, README |
+| `69117c5` | 7 | Abschluss: D13 (Skript und Anleitung), Roadmap, CHANGELOG, Versanderkennung Stand und Abschnitt 5, README |
 
 `make check` lief vollständig auf den Ständen `c1c2434` (Teil 4) und `ac145b9` (Teil 5) und auf dem Abschluss; für die Commits davor liefen gezielt die betroffenen Pakete (`internal/drafts`, `internal/ops`, `internal/cli`, `internal/store`) mit `go vet`, `gofmt`, Guard und PII-Gate (die Teile 1 bis 3 entstanden zusammen und wurden danach in Commits getrennt).
 
@@ -45,11 +45,23 @@ Auftrag: [auftraege/A07_alltag3.md](../../auftraege/A07_alltag3.md). Zweig `clau
 
 ## 4. Prüfläufe
 
-PRUEFLAEUFE
+- `make check` auf dem Abschluss `69117c5`: grün (gofmt, `go vet`, alle Tests, Guards, PII-Gate; 40 Pakete mit Tests, 1.104 Testfunktionen, davon 33 neu in A07; 11:48 min im Container). Vorher auch auf `c1c2434` und `ac145b9` grün.
+- `make cross` (linux/amd64, windows/amd64, darwin/arm64): grün.
+- `make race` auf dem letzten Code-Commit `6574047`: läuft (Ergebnis folgt in diesem Abschnitt).
+- `make integration`: nicht gelaufen, im Container läuft kein Docker-Daemon.
+- golangci-lint (G202): die Abfragen in `store/sentdetect.go` sind jetzt Konstanten; ein Lauf von `make lint` steht in der CI des PR.
 
 ## 5. Build 0.3.0-rc5
 
-BUILD
+Gebaut nach [betrieb.md](../betrieb.md) Abschnitt 7 in zwei frischen Klonen **ohne Tags** (`git clone --no-tags --branch claude/compassionate-mayer-ntc1b5`), je auf dem Build-Commit **`69117c5`** (Abschluss-Doku; letzter Code-Commit `6574047`), sauberer Arbeitsbaum, go1.27.3, `make release VERSION=0.3.0-rc5`. Beide `dist/SHA256SUMS` sind ohne die Zeile `VERSION` gleich (Nachbau bytegleich); `go version -m` in beiden: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261110094609-69117c5ef830`, `vcs.revision=69117c5ef830aa20b7e9f1c54acee2588b3bf976`.
+
+| Datei | SHA256 |
+|---|---|
+| `postkauz-windows-amd64.exe` (22.746.624 Bytes) | `97ab3d84573ca1a5efc7e3b41000601da5929e5bdb6ca41441b2769048231a78` |
+| `postkauz-linux-amd64` | `cf3d0cd8035a20dd6bbe785ad180f7fe5ad23b7315ef4e0b79a4a9504cdacbd9` |
+| `postkauz-darwin-arm64` | `d488e410151a08b3a2feb8077f89943224212ed1681256aa3b3afe3fbbf1a9bd` |
+
+Für D13: `-ExpectSha256 97ab3d84573ca1a5efc7e3b41000601da5929e5bdb6ca41441b2769048231a78`.
 
 ## 6. Offen
 

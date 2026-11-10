@@ -6,7 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
-Auftrag A07 (10.11.2026, Zweig `claude/compassionate-mayer-ntc1b5`, Basis `main` `d5d9af0` = Stand 0.3.0-rc4). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter (ohne `[draft] copy_gone_after` in der Konfiguration). Build **0.3.0-rc5** (Prüfsummen und Prüfläufe: `docs/protokolle/A07_stand.md`). Haltepunkt: Gegenprüfung, dann Abnahme D13 (`docs/abnahme_D13.md`).
+Auftrag A07 (10.11.2026, Zweig `claude/compassionate-mayer-ntc1b5`, Basis `main` `d5d9af0` = Stand 0.3.0-rc4). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter (ohne `[draft] copy_gone_after` in der Konfiguration). Build **0.3.0-rc5** an `69117c5` (Windows `97ab3d84…a231a78`; Prüfsummen und Prüfläufe: `docs/protokolle/A07_stand.md`). Haltepunkt: Gegenprüfung, dann Abnahme D13 (`docs/abnahme_D13.md`).
 
 #### Fixed
 
