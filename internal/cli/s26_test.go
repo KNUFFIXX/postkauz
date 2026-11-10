@@ -21,7 +21,7 @@ func TestRenderDraftCheck(t *testing.T) {
 	renderDraftCheck(&b, &drafts.CheckReport{SentByMessageID: 1, SentByFallback: 1, SentDraftIDs: []int64{3, 5}, Expired: 2, Missing: 1})
 	want := "drafts: 2 sent in the mail client, now sent_by_human (1 by Message-ID, 1 by recipients, subject and text; draft 3, 5); " +
 		"2 approval(s) ran out, back to status draft; 1 copy/copies gone from the Drafts folder without a matching sent message " +
-		"(close with draft mark-sent or draft abandon)\n"
+		"(closed as copy_gone after [draft] copy_gone_after unless detected; or close with draft mark-sent or draft abandon)\n"
 	if b.String() != want {
 		t.Fatalf("got  %q\nwant %q", b.String(), want)
 	}

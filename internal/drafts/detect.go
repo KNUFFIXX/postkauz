@@ -22,7 +22,8 @@ import (
 //     fallback oder thread (A05 Teil 2; Akteur system, nur IDs und
 //     Zustände); danach durch eine eigene Antwort ersetzte Entwürfe (A06
 //     Teil 4, replaced.go): abandoned, Audit drafts.replaced_detected,
-//     Grund replaced,
+//     Grund replaced; zuletzt die Auffangregel „Kopie weg“ (A07 Teil 4,
+//     copygone.go): abandoned, Audit drafts.copy_gone_detected,
 //  2. lässt abgelaufene Freigaben verfallen (E7, Entscheid 38: ready und
 //     pending_approval älter als approval_ttl → draft, Freigabe expired,
 //     Audit drafts.expire mit Grund approval_expired),
@@ -64,6 +65,11 @@ type CheckReport struct {
 	// im Verlauf ersetzt hat; jetzt abandoned (A06 Teil 4, replaced.go).
 	ReplacedInThread int     `json:"replaced_in_thread,omitempty"`
 	ReplacedDraftIDs []int64 `json:"replaced_draft_ids,omitempty"`
+	// CopyGone, CopyGoneDraftIDs: Entwürfe, deren Kopie länger als
+	// [draft] copy_gone_after fehlt und die kein Weg geschlossen hat;
+	// jetzt abandoned (A07 Teil 4, copygone.go).
+	CopyGone         int     `json:"copy_gone,omitempty"`
+	CopyGoneDraftIDs []int64 `json:"copy_gone_draft_ids,omitempty"`
 	// AdoptedClosed: Kopien abgebrochener Ablageversuche abgeschlossener
 	// Entwürfe, die die Prüfung übernommen hat (A7; push_note
 	// pushed_after_close). LostAttempts: solche Versuche ohne Kopie im
@@ -78,7 +84,7 @@ type CheckReport struct {
 
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
-	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.SentBySubject+r.ReplacedInThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
+	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.SentBySubject+r.ReplacedInThread+r.CopyGone+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
 		r.LostAttempts == 0
 }
 
@@ -96,6 +102,8 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.SentDraftIDs = append(r.SentDraftIDs, o.SentDraftIDs...)
 	r.ReplacedInThread += o.ReplacedInThread
 	r.ReplacedDraftIDs = append(r.ReplacedDraftIDs, o.ReplacedDraftIDs...)
+	r.CopyGone += o.CopyGone
+	r.CopyGoneDraftIDs = append(r.CopyGoneDraftIDs, o.CopyGoneDraftIDs...)
 	r.Examined += o.Examined
 }
 
@@ -293,13 +301,15 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 	for _, id := range rep.SentDraftIDs[before:] {
 		closed[id] = true
 	}
-	rest = left[:0:0]
-	for _, d := range left {
-		if !closed[d.ID] {
-			rest = append(rest, d)
-		}
+	rest = drop(left, closed)
+	if err := s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep); err != nil {
+		return err
 	}
-	return s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep)
+	// A07 Teil 4: Auffangregel „Kopie weg“ als letzter Weg.
+	for _, id := range rep.ReplacedDraftIDs {
+		closed[id] = true
+	}
+	return s.detectCopyGone(ctx, drop(rest, closed), rep)
 }
 
 // drop liefert die Entwürfe aus list, die nicht in closed stehen (neue

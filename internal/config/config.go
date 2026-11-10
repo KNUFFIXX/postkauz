@@ -205,6 +205,72 @@ type Draft struct {
 	// QuoteLine: Einleitungszeile des Zitats mit {date}, {date_numeric}
 	// (21.10.2026 09:15) und {from}; leer = "On {date}, {from} wrote:".
 	QuoteLine string `toml:"quote_line"`
+	// CopyGoneAfter: Auffangregel „Kopie weg“ (A07 Teil 4): Ein offener
+	// Entwurf, dessen Kopie seit mehr als dieser Dauer aus dem
+	// Entwürfe-Ordner fehlt und den kein Weg der Versanderkennung
+	// geschlossen hat, wird abandoned (Grund copy_gone). Nur als
+	// Zeichenkette: "off" oder "0" schaltet ab, sonst eine Dauer ("24h",
+	// "2d"); fehlt der Schlüssel, gilt 24h. Nach dem Laden steht hier der
+	// wirksame Wert (Off oder Value > 0).
+	CopyGoneAfter CopyGoneAfter `toml:"copy_gone_after"`
+}
+
+// DefaultCopyGoneAfter ist der Standard von [draft] copy_gone_after.
+const DefaultCopyGoneAfter = 24 * time.Hour
+
+// CopyGoneAfter ist der Wert von [draft] copy_gone_after (A07 Teil 4).
+type CopyGoneAfter struct {
+	// Value: wirksame Dauer (> 0), wenn nicht Off.
+	Value time.Duration
+	// Off: abgeschaltet ("off" oder "0").
+	Off bool
+	set bool
+}
+
+// UnmarshalTOML liest nur Zeichenketten: "off", "0" oder eine Dauer wie
+// "24h" bzw. "2d". Eine Zahl ist ein Fehler mit Hinweis (sonst wäre
+// unklar, ob Stunden oder Sekunden gemeint sind).
+func (c *CopyGoneAfter) UnmarshalTOML(v any) error {
+	x, ok := v.(string)
+	if !ok {
+		return fmt.Errorf(`draft.copy_gone_after must be a string: "off", "0" or a duration such as "24h"`)
+	}
+	c.set = true
+	switch strings.ToLower(strings.TrimSpace(x)) {
+	case "off", "0":
+		c.Off, c.Value = true, 0
+		return nil
+	}
+	d, err := ParseDuration(x)
+	if err != nil {
+		return fmt.Errorf("draft.copy_gone_after: %w", err)
+	}
+	if d == 0 {
+		c.Off, c.Value = true, 0
+		return nil
+	}
+	c.Off, c.Value = false, d
+	return nil
+}
+
+// Effective liefert die Dauer für drafts.Service.CopyGoneAfter: < 0 =
+// abgeschaltet, sonst die Dauer (ohne Laden: der Standard).
+func (c CopyGoneAfter) Effective() time.Duration {
+	switch {
+	case c.Off:
+		return -1
+	case c.Value > 0:
+		return c.Value
+	}
+	return DefaultCopyGoneAfter
+}
+
+// String nennt den Wert wie in der Datei ("off" oder die Dauer).
+func (c CopyGoneAfter) String() string {
+	if c.Off {
+		return "off"
+	}
+	return c.Effective().String()
 }
 
 // Standards für [draft] und [paths].
@@ -561,6 +627,9 @@ func checkDraft(d *Draft) error {
 	}
 	if strings.ContainsAny(d.QuoteLine, "\r\n") {
 		return fmt.Errorf("config: draft.quote_line must be one line")
+	}
+	if !d.CopyGoneAfter.set && !d.CopyGoneAfter.Off && d.CopyGoneAfter.Value == 0 {
+		d.CopyGoneAfter.Value = DefaultCopyGoneAfter // Schlüssel fehlt: 24h
 	}
 	rest := strings.NewReplacer("{date}", "", "{date_numeric}", "", "{from}", "").Replace(d.QuoteLine)
 	if strings.ContainsAny(rest, "{}") {

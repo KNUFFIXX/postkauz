@@ -180,7 +180,8 @@ func remoteNote(d store.Draft) string {
 				"a sent reply to the original (In-Reply-To) with at least one recipient is found; " +
 				"otherwise close it with draft mark-sent or draft abandon"
 		}
-		return "the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon"
+		return "the copy in the Drafts folder is gone; if no sent message is detected, the sync closes the draft as abandoned " +
+			"(copy_gone) once [draft] copy_gone_after (default 24h) has passed; or close it now with draft mark-sent or draft abandon"
 	}
 	return ""
 }
@@ -1352,6 +1353,11 @@ type DraftDetail struct {
 	// lokale ID. Gelesen aus dem Audit (drafts.replaced_detected).
 	ClosedReason        string `json:"closed_reason,omitempty"`
 	ReplacedByMessageID int64  `json:"replaced_by_message_id,omitempty"`
+	// CopyMissingSince: seit wann die Kopie fehlte (closed_reason
+	// copy_gone, A07 Teil 4; bemerkt vom Sync, aus dem Audit). ClosedNote:
+	// ein Satz zum Grund (bei copy_gone: der Versand wurde nicht erkannt).
+	CopyMissingSince string `json:"copy_missing_since,omitempty"`
+	ClosedNote       string `json:"closed_note,omitempty"`
 
 	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
 	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
@@ -1421,8 +1427,10 @@ func DraftsGet(d Deps) Operation {
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
-    "closed_reason": {"type": "string", "enum": ["replaced"], "description": "why the system closed the draft: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent)"},
-    "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"}
+    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone"], "description": "why the system closed the draft: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent)"},
+    "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
+    "copy_missing_since": {"type": "string", "format": "date-time", "description": "when the sync noticed the copy was gone (closed_reason copy_gone)"},
+    "closed_note": {"type": "string", "description": "one sentence on closed_reason"}
   },
   "required": ["source", "draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
     "quote", "signature", "attachments", "warnings", "remote", "preview_hash", "created_by", "created_at", "updated_at"]
@@ -1492,12 +1500,8 @@ func DraftsGet(d Deps) Operation {
 			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
 			if dr.Status == string(drafts.StatusAbandoned) {
-				reply, ok, err := o.svc.Store.DraftReplacedBy(ctx, dr.ID, dr.ClosedAt)
-				if err != nil {
+				if err := o.closedReason(ctx, dr, &out); err != nil {
 					return nil, err
-				}
-				if ok {
-					out.ClosedReason, out.ReplacedByMessageID = drafts.ReasonReplaced, reply
 				}
 			}
 			if dr.ApprovalID > 0 {
@@ -1521,6 +1525,37 @@ func DraftsGet(d Deps) Operation {
 			return out, nil
 		},
 	}
+}
+
+// Sätze zu closed_reason (draft show, drafts.get).
+const (
+	closedNoteReplaced = "an own reply in the thread replaced this draft; this text was not sent"
+	closedNoteCopyGone = "the copy was gone from the Drafts folder for longer than [draft] copy_gone_after; " +
+		"no sent message was detected, so it is not known whether it was sent"
+)
+
+// closedReason liest aus dem Audit, warum das System einen verworfenen
+// Entwurf geschlossen hat (ohne Migration; A06 Teil 4 replaced, A07 Teil 4
+// copy_gone). Nach einer Rotation des Audits bleibt das Feld leer.
+func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftDetail) error {
+	ev, ok, err := o.svc.Store.DraftClosedBy(ctx, dr.ID, dr.ClosedAt)
+	if err != nil || !ok {
+		return err
+	}
+	var p struct {
+		Reply        int64  `json:"reply_message_id"`
+		MissingSince string `json:"missing_since"`
+	}
+	if err := json.Unmarshal(ev.Params, &p); err != nil {
+		return fmt.Errorf("ops: audit params of a closed draft: %w", err)
+	}
+	switch ev.Reason {
+	case drafts.ReasonReplaced:
+		out.ClosedReason, out.ReplacedByMessageID, out.ClosedNote = drafts.ReasonReplaced, p.Reply, closedNoteReplaced
+	case drafts.ReasonCopyGone:
+		out.ClosedReason, out.CopyMissingSince, out.ClosedNote = drafts.ReasonCopyGone, p.MissingSince, closedNoteCopyGone
+	}
+	return nil
 }
 
 // budgetSource wendet das Zeichenbudget auf den Quelltext des Entwurfs an

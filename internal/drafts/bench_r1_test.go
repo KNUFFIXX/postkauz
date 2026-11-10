@@ -238,4 +238,39 @@ func BenchmarkCheckAfterSync22kSubject(b *testing.B) {
 			}
 		}
 	})
+	// A07 Teil 4: Auffangregel „Kopie weg“. Dieselben 30 Entwürfe als
+	// missing mit bekanntem Ablageordner, dazu 100.000 Audit-Einträge über
+	// 100 Tage (je Entwurf ein remote_check missing vor 2 h, also noch
+	// nicht fällig). Gemessen: ein Lauf (Betreff und Auffangregel) und die
+	// Abfrage DraftMissingSince allein (Fenster 30 Tage: etwa 30.000
+	// Einträge über den Index audit_events_ts).
+	if err := st.ExecForTest(`UPDATE drafts SET remote_state = 'missing', remote_mailbox_id = ?`, box); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.ExecForTest(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000)
+		INSERT INTO audit_events(ts, actor_type, api_key_id, operation, params_redacted, targets, result, reason)
+		SELECT ? + i * 86400, 'system', 'system', 'drafts.push', '{}', '["draft:' || (i % 500 + 1000) || '"]', 'ok', 'appended' FROM n`,
+		base.Add(-100*24*time.Hour).UnixMilli()); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.ExecForTest(`INSERT INTO audit_events(ts, actor_type, api_key_id, operation, params_redacted, targets, result, reason)
+		SELECT ?, 'system', 'system', 'drafts.remote_check', '{}', json_array('draft:' || id), 'ok', 'missing' FROM drafts`,
+		base.Add(-2*time.Hour).UnixMilli()); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("steady_copy_gone", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			rep, err := svc.CheckAfterSync(ctx, acc, CheckOptions{})
+			if err != nil || rep.CopyGone != 0 {
+				b.Fatalf("%+v %v", rep, err)
+			}
+		}
+	})
+	b.Run("missing_since_lookup", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			if _, ok, err := st.DraftMissingSince(ctx, int64(n%30+1), base.Add(-30*24*time.Hour)); err != nil || !ok {
+				b.Fatal(ok, err)
+			}
+		}
+	})
 }

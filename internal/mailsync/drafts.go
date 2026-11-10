@@ -232,6 +232,10 @@ func (e *Engine) checkDrafts(ctx context.Context, o drafts.CheckOptions) (*draft
 		e.log().Info("drafts replaced by an own reply in the thread; now abandoned", "count", rep.ReplacedInThread,
 			"draft_ids", rep.ReplacedDraftIDs)
 	}
+	if rep.CopyGone > 0 {
+		e.log().Info("drafts with the copy gone for longer than copy_gone_after; now abandoned", "count", rep.CopyGone,
+			"draft_ids", rep.CopyGoneDraftIDs)
+	}
 	if rep.Expired > 0 {
 		e.log().Info("approvals ran out; drafts back to status draft", "count", rep.Expired)
 	}

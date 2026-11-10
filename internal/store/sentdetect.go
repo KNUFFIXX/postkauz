@@ -415,3 +415,61 @@ func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time
 		accountID, h, h, after.UnixMilli()).Scan(&found)
 	return found, err
 }
+
+// DraftMissingSince liefert den Zeitpunkt, zu dem der Sync zuletzt bemerkt
+// hat, dass die Kopie des Entwurfs draftID aus dem Entwürfe-Ordner fehlt
+// (A07 Teil 4, Auffangregel „Kopie weg“): ts des jüngsten Audit-Eintrags
+// drafts.remote_check mit Grund missing und Ziel draft:<id>, nicht vor
+// since (der letzten Ablage). Ohne Migration aus dem Audit, über den Index
+// audit_events_ts (Bereich since bis heute). ok false: keiner (etwa nach
+// einer Rotation des Audits); dann gilt die Regel nicht.
+func (s *SQLite) DraftMissingSince(ctx context.Context, draftID int64, since time.Time) (at time.Time, ok bool, err error) {
+	var ts int64
+	err = s.db.QueryRowContext(ctx, `SELECT ts FROM audit_events WHERE ts >= ?
+		AND operation = 'drafts.remote_check' AND reason = 'missing' AND result = 'ok'
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
+		WHERE value = ?) ORDER BY ts DESC, id DESC LIMIT 1`,
+		since.UnixMilli(), "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return time.UnixMilli(ts).UTC(), true, nil
+}
+
+// DraftCloseEvent ist der Audit-Eintrag, mit dem das System bzw. ein Agent
+// einen Entwurf geschlossen hat (Grund und Parameter, ohne Inhalt).
+type DraftCloseEvent struct {
+	Operation string
+	Reason    string
+	Params    json.RawMessage
+}
+
+// DraftClosedBy liefert den Audit-Eintrag, der den Entwurf draftID zum
+// Zeitpunkt closedAt geschlossen hat, soweit er einen eigenen Grund trägt
+// (A06 Teil 4 replaced, A07 Teil 4 copy_gone, A07 Teil 5
+// superseded_by_draft); ohne Migration, gesucht wie DraftReplacedBy in ±1 s
+// über den Index audit_events_ts. ok false: anders geschlossen oder schon
+// aus dem Audit rotiert.
+func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time.Time) (ev DraftCloseEvent, ok bool, err error) {
+	if closedAt.IsZero() {
+		return ev, false, nil
+	}
+	var params string
+	err = s.db.QueryRowContext(ctx, `SELECT operation, COALESCE(reason, ''), params_redacted FROM audit_events WHERE ts BETWEEN ? AND ?
+		AND operation IN ('drafts.replaced_detected', 'drafts.copy_gone_detected', 'drafts.supersede') AND result = 'ok'
+		AND reason IN ('replaced', 'copy_gone', 'superseded_by_draft')
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
+		WHERE value = ?) ORDER BY id DESC LIMIT 1`,
+		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ev.Operation, &ev.Reason, &params)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DraftCloseEvent{}, false, nil
+	}
+	if err != nil {
+		return DraftCloseEvent{}, false, err
+	}
+	ev.Params = json.RawMessage(params)
+	return ev, true, nil
+}

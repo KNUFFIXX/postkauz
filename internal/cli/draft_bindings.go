@@ -588,10 +588,15 @@ func renderDraftShow(w io.Writer, out any) error {
 		fmt.Fprintf(w, "in-reply-to: %s\nreferences:  %s\n", termLine(o.InReplyTo), termLine(o.References))
 	}
 	fmt.Fprintf(w, "created:     %s by %s, changed %s\n", o.CreatedAt, termLine(o.CreatedBy), o.UpdatedAt)
-	if o.ClosedReason == drafts.ReasonReplaced {
+	switch o.ClosedReason {
+	case drafts.ReasonReplaced:
 		// A06 Teil 4: vom System geschlossen, der Text ging nicht hinaus.
 		fmt.Fprintf(w, "closed:      %s, abandoned: replaced by an own reply in the thread (message %d); this text was not sent\n",
 			o.ClosedAt, o.ReplacedByMessageID)
+	case drafts.ReasonCopyGone:
+		// A07 Teil 4: Auffangregel; der Versand wurde nicht erkannt.
+		fmt.Fprintf(w, "closed:      %s, abandoned: copy gone from the Drafts folder since %s (copy_gone); "+
+			"no sent message was detected, it may or may not have been sent\n", o.ClosedAt, o.CopyMissingSince)
 	}
 	body := strings.TrimRight(termText(o.BodyText), "\r\n")
 	if q := o.Original; q != nil && q.Text != "" {

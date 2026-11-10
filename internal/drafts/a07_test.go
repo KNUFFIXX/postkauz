@@ -474,3 +474,173 @@ func TestA07SubjectKeepMark(t *testing.T) {
 		t.Fatalf("report = %+v, %v", rep, err)
 	}
 }
+
+// Teil 4: Auffangregel „Kopie weg“.
+
+// goneDraft legt eine abgelegte Antwort an, entfernt ihre Kopie und lässt
+// einen Lauf das Fehlen bemerken (remote missing, Audit remote_check).
+func (e *thEnv) goneDraft() store.Draft {
+	e.t.Helper()
+	d := e.draftOf(KindReply, thOwn, true)
+	e.dropCopy(d)
+	if rep := e.check(); rep.Missing != 1 {
+		e.t.Fatalf("run that finds the copy gone = %+v", rep)
+	}
+	return e.draft(d.ID)
+}
+
+func TestA07CopyGoneAfter25h(t *testing.T) {
+	e := newThEnv(t)
+	d := e.goneDraft()
+	noticed := e.now
+	e.now = e.now.Add(23 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 0 || e.status(d) != string(StatusDraft) {
+		t.Fatalf("after 23 h = %+v, %s", rep, e.status(d))
+	}
+	e.now = noticed.Add(25 * time.Hour)
+	rep := e.check()
+	if rep.CopyGone != 1 || len(rep.CopyGoneDraftIDs) != 1 || rep.CopyGoneDraftIDs[0] != d.ID || len(rep.SentDraftIDs) != 0 || rep.Empty() {
+		t.Fatalf("after 25 h = %+v", rep)
+	}
+	got := e.draft(d.ID)
+	if got.Status != string(StatusAbandoned) || got.SentMessageID != 0 || got.ClosedAt.IsZero() {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+	r, ok := e.lastAudit(OpCopyGoneDetected)
+	if !ok || r.Reason != ReasonCopyGone || r.ActorType != "system" || r.KeyID != "system" {
+		t.Fatalf("audit = %+v", r)
+	}
+	p := string(r.ParamsRedacted)
+	if !strings.Contains(p, `"missing_since":"`+noticed.Format(time.RFC3339)+`"`) || !strings.Contains(p, `"draft_id":`) {
+		t.Fatalf("audit params = %s", p)
+	}
+	ev, ok, err := e.st.DraftClosedBy(context.Background(), d.ID, got.ClosedAt)
+	if err != nil || !ok || ev.Reason != ReasonCopyGone || ev.Operation != OpCopyGoneDetected {
+		t.Fatalf("DraftClosedBy = %+v, %v, %v", ev, ok, err)
+	}
+	if rep := e.check(); !rep.Empty() {
+		t.Fatalf("run after = %+v", rep)
+	}
+}
+
+// Teil 4: Eine Freigabe wird superseded.
+func TestA07CopyGoneSupersedesApproval(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	if _, err := e.svc.RequestReady(context.Background(), d.ID, "key:agent", HookPass, Checked{MessageHash: "mh"}); err != nil {
+		t.Fatal(err)
+	}
+	d = e.pushAt(e.draft(d.ID), e.now)
+	e.dropCopy(d)
+	e.check()
+	e.now = e.now.Add(25 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+	a, err := e.st.Approval(context.Background(), e.draft(d.ID).ApprovalID)
+	if err != nil || a.Decision != DecisionSuperseded {
+		t.Fatalf("approval = %+v, %v", a, err)
+	}
+}
+
+// Teil 4: Fälle, in denen die Regel nicht greift.
+func TestA07CopyGoneStaysOpen(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		prep func(e *thEnv, d store.Draft) CheckOptions
+	}{
+		{"copy back in the Drafts folder", func(e *thEnv, d store.Draft) CheckOptions {
+			e.exec(`INSERT INTO message_mailboxes(message_id, mailbox_id, uid, flag_draft) VALUES (?, ?, ?, 1)`, e.copyID(d), e.m.boxes["drafts"], d.RemoteUID)
+			return CheckOptions{}
+		}},
+		{"keep mark", func(e *thEnv, d store.Draft) CheckOptions { return CheckOptions{KeepMark: true} }},
+		{"skip sent", func(e *thEnv, d store.Draft) CheckOptions { return CheckOptions{SkipSent: true} }},
+		{"switched off", func(e *thEnv, d store.Draft) CheckOptions {
+			e.svc.CopyGoneAfter = -1
+			return CheckOptions{}
+		}},
+		{"mailbox gone", func(e *thEnv, d store.Draft) CheckOptions {
+			e.exec(`UPDATE drafts SET remote_mailbox_id = NULL WHERE id = ?`, d.ID)
+			return CheckOptions{}
+		}},
+		{"mailbox not mirrored", func(e *thEnv, d store.Draft) CheckOptions {
+			e.exec(`UPDATE mailboxes SET sync_phase = 'new' WHERE id = ?`, e.m.boxes["drafts"])
+			return CheckOptions{}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThEnv(t)
+			d := e.goneDraft()
+			e.now = e.now.Add(25 * time.Hour)
+			o := c.prep(e, d)
+			rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, o)
+			if err != nil || rep.CopyGone != 0 {
+				t.Fatalf("report = %+v, %v", rep, err)
+			}
+			if got := e.status(d); got != string(StatusDraft) {
+				t.Fatalf("draft = %s", got)
+			}
+		})
+	}
+}
+
+// Teil 4: Zeitpunkt = jüngster remote_check mit Grund missing, nicht ein
+// älterer mit anderem Grund (taken_over).
+func TestA07CopyGoneUsesLatestMissing(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	e.takeOver(d)
+	if rep := e.check(); rep.TakenOver != 1 {
+		t.Fatalf("takeover = %+v", rep)
+	}
+	takenAt := e.now
+	e.now = e.now.Add(2 * time.Hour)
+	e.dropAll(d)
+	if rep := e.check(); rep.Missing != 1 {
+		t.Fatalf("missing run = %+v", rep)
+	}
+	missingAt := e.now
+	e.now = takenAt.Add(25 * time.Hour) // 23 h nach missing
+	if rep := e.check(); rep.CopyGone != 0 {
+		t.Fatalf("measured from taken_over: %+v", rep)
+	}
+	e.now = missingAt.Add(25 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 1 {
+		t.Fatalf("after 25 h missing = %+v", rep)
+	}
+	r, _ := e.lastAudit(OpCopyGoneDetected)
+	if !strings.Contains(string(r.ParamsRedacted), missingAt.Format(time.RFC3339)) {
+		t.Fatalf("audit params = %s", r.ParamsRedacted)
+	}
+}
+
+// Teil 4: Trifft im selben Lauf ein anderer Weg, gewinnt er.
+func TestA07CopyGoneOtherWayWins(t *testing.T) {
+	e := newThEnv(t)
+	d := e.goneDraft()
+	e.now = e.now.Add(25 * time.Hour)
+	e.send(thSent{text: thOwn, date: e.now.Add(-time.Hour)})
+	rep := e.check()
+	if rep.SentByThread != 1 || rep.CopyGone != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	if got := e.status(d); got != string(StatusSentByHuman) {
+		t.Fatalf("draft = %s", got)
+	}
+}
+
+// Teil 4: Ohne Audit-Eintrag (etwa nach einer Rotation) gilt die Regel
+// nicht: remote missing ohne drafts.remote_check.
+func TestA07CopyGoneWithoutAuditEntry(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftOf(KindReply, thOwn, true)
+	e.dropCopy(d)
+	e.exec(`UPDATE drafts SET remote_state = 'missing' WHERE id = ?`, d.ID)
+	if n := e.auditCount(OpRemoteCheck); n != 0 {
+		t.Fatalf("remote_check entries = %d", n)
+	}
+	e.now = e.now.Add(48 * time.Hour)
+	if rep := e.check(); rep.CopyGone != 0 || e.status(d) != string(StatusDraft) {
+		t.Fatalf("report = %+v", rep)
+	}
+}

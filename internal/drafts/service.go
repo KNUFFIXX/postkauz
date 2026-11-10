@@ -36,6 +36,10 @@ type Service struct {
 	ApprovalTTL time.Duration
 	// PolicyVersion steht in den Audit-Einträgen der Systemereignisse (E8).
 	PolicyVersion int64
+	// CopyGoneAfter: Frist der Auffangregel „Kopie weg“ ([draft]
+	// copy_gone_after, A07 Teil 4; copygone.go): 0 = Standard 24 h,
+	// negativ = abgeschaltet.
+	CopyGoneAfter time.Duration
 
 	// who: Wer handelt; gesetzt über As. Dann schreibt jeder Übergang
 	// einen Audit-Eintrag mit diesem Akteur in derselben Transaktion (S2.3).

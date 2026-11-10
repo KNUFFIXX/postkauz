@@ -10,13 +10,13 @@ Nach **jedem** Sync-Lauf, also bei `postkauz sync` und in jeder Runde von `postk
 
 Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfterSync`; die Versanderkennung kommt seit der Gegenprüfung S2.6–S2.8, W1, **vor** dem Ablauf: Hat der Mensch einen freigegebenen Entwurf vor Ablauf der Freigabe gesendet und sieht der Sync die Nachricht erst danach, ist der Entwurf gesendet, nicht abgelaufen):
 
-1. **Versanderkennung** (E5, Abschnitte 2, 3 und 3a): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`; danach (seit A06, Abschnitt 3b) werden Entwürfe, die eine eigene Antwort im Verlauf ersetzt hat, `abandoned`.
+1. **Versanderkennung** (E5, Abschnitte 2, 3, 3a und seit A07 3c): offene Entwürfe (`draft`, `pending_approval`, `ready`) werden `sent_by_human`; danach (seit A06, Abschnitt 3b) werden Entwürfe, die eine eigene Antwort im Verlauf ersetzt hat, `abandoned`, und zuletzt (seit A07, Abschnitt 3d) Entwürfe, deren Kopie länger als `[draft] copy_gone_after` fehlt (`copy_gone`).
 2. **Ablauf der Freigabe** (E7, Entscheid 38): Ein Entwurf in `ready` oder `pending_approval`, dessen Freigabe älter als `[draft] approval_ttl` ist (Standard 168 h, ab Vorlage bzw. ab `approve`), fällt auf `draft` zurück; die Freigabe wird `expired`; Audit `drafts.expire`, Grund `approval_expired`, Akteur `system`. Dasselbe geschah schon seit S2.1 beim Lesen (`draft show`, `draft list`, MCP); seit S2.6 auch beim Sync, ohne dass jemand liest.
-3. **Stand der Serverkopie** (E6): Ist die zuletzt abgelegte Kopie eines noch offenen Entwurfs aus dem Entwürfe-Ordner verschwunden, wird `remote_state` `missing`; hat ein Mailprogramm eine bearbeitete Fassung gespeichert, `taken_over` (Audit `drafts.remote_check`). Vorher stellte das nur `drafts.update` bzw. der nächste Push fest; jetzt zeigt `draft list` es nach dem nächsten Sync. **Seit A07 Teil 2** wird auch ein Entwurf mit `taken_over` aufgefrischt: Liegt laut Spiegel weder die zuletzt abgelegte Kopie noch eine Fassung mit seiner Message-ID im Entwürfe-Ordner (dieselbe Prüfung wie Bedingung (f), Abschnitt 3a), wird er `missing` (Audit `drafts.remote_check`, Grund `missing`, Akteur `system`). Nur dieser Wechsel wird geschrieben; liegt die übernommene Fassung noch da, ändert sich nichts und es entsteht kein Audit-Eintrag. Vorher blieb ein übernommener Entwurf für immer `taken_over`, und „ersetzt“ (3b) griff nie.
+3. **Stand der Serverkopie** (E6): Ist die zuletzt abgelegte Kopie eines noch offenen Entwurfs aus dem Entwürfe-Ordner verschwunden, wird `remote_state` `missing`; hat ein Mailprogramm eine bearbeitete Fassung gespeichert, `taken_over` (Audit `drafts.remote_check`). Vorher stellte das nur `drafts.update` bzw. der nächste Push fest; jetzt zeigt `draft list` es nach dem nächsten Sync. **Seit A07 Teil 2** wird auch ein Entwurf mit `taken_over` aufgefrischt: Liegt laut Spiegel weder die zuletzt abgelegte Kopie noch eine Fassung mit seiner Message-ID im Entwürfe-Ordner (dieselbe Prüfung wie Bedingung (f), Abschnitt 3a), wird er `missing` (Audit `drafts.remote_check`, Grund `missing`, Akteur `system`). Nur dieser Wechsel wird geschrieben; liegt die übernommene Fassung noch da, ändert sich nichts und es entsteht kein Audit-Eintrag. Vorher blieb ein übernommener Entwurf für immer `taken_over`, und „ersetzt“ (3b) und „Kopie weg“ (3d) griffen nie.
 
 Scheitert die Prüfung (etwa weil die Datenbank gerade gesperrt ist), zählt das als Fehler des Laufs (`errors`, Log ohne Mailinhalt); der Rest des Laufs (Nacharbeit, Extraktion, Suchindex) läuft weiter, und der nächste Lauf prüft erneut (Gegenprüfung S2.6–S2.8, K5). Nur Abbruch, Verbindungs- oder Anmeldefehler und ein interner Fehler (Panic) beenden den Lauf.
 
-Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, seit A07 `sent_by_subject`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`, seit A06 `replaced_in_thread`, `replaced_draft_ids`). Ohne Änderung erscheint nichts.
+Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, seit A07 `sent_by_subject`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`, seit A06 `replaced_in_thread`, `replaced_draft_ids`, seit A07 `copy_gone`, `copy_gone_draft_ids`). Ohne Änderung erscheint nichts.
 
 ## 2. Erster Weg: die Message-ID
 
@@ -148,6 +148,30 @@ Treffer → `sent_by_human`, Grund **`subject`**, Audit `drafts.sent_detected` (
 
 `steady` bleibt unter der Grenze von 20 ms aus dem Auftrag. Der Weg kostet nur, solange offene neue Entwürfe ohne Kopie da sind (die Auffangregel „Kopie weg“ schließt sie nach 24 Stunden, Abschnitt 3d), und wächst mit der Zahl der Nachrichten im Fenster. Eine erste Fassung, die alle Nachrichten im Fenster mit der vollen Bedingung „gesendet“ las und jeden Betreff normalisierte, brauchte 414–561 ms; seitdem liest der Vorfilter nur ID und Betreff ohne `In-Reply-To` (`Store.NewMailSubjects`), prüft ohne unsichtbare Zeichen zuerst, ob das längste Wort des Entwurfsbetreffs vorkommt, normalisiert erst dann und prüft „gesendet“ nur für die Treffer (`Store.SentMessagesByID`).
 
+## 3d. Auffangregel „Kopie weg“
+
+Seit A07 Teil 4 (10.11.2026; Default, Einspruch bis zum Merge). Ziel: Kein offener Entwurf bleibt dauerhaft liegen, nur weil keine Regel trifft; der Mensch schließt im Alltag nichts auf der Kommandozeile.
+
+**Regel** (Systemregel, letzter Weg der Versanderkennung; `drafts.Service.detectCopyGone`). Reihenfolge in einem Lauf: Message-ID → Rückfall → Verlauf → Betreff (auch bei KeepMark) → bei KeepMark Ende → ersetzt (3b) → Kopie weg; danach wie bisher Ablauf der Freigaben und Stand der Serverkopie. Ein offener Entwurf, den kein Weg geschlossen hat, wird `abandoned`, wenn alle Bedingungen gelten:
+
+- `remote_state` ist `missing` (nie `taken_over`; ein übernommener Entwurf wird erst `missing`, wenn auch die übernommene Fassung weg ist, Abschnitt 1, Punkt 3);
+- die Kopie fehlt seit **mehr als `[draft] copy_gone_after`** (Standard 24 Stunden). Der Zeitpunkt ist der **jüngste** Audit-Eintrag `drafts.remote_check` mit Grund `missing` und Ziel `draft:<id>`, nicht vor der letzten Ablage (`Store.DraftMissingSince`, über den Index `audit_events_ts`, ohne Migration). Das ist der Zeitpunkt, an dem der Sync das Verschwinden bemerkt hat, also die vorsichtige Seite. Fehlt der Eintrag (etwa nach einer Rotation des Audits), gilt die Regel nicht;
+- der Ablageordner ist bekannt (`remote_mailbox_id` ≠ 0) und im Spiegel (wie bei 3b; sonst meldet `checkCopy` für jeden Entwurf `missing`, etwa nach dem Umbenennen des Ordners);
+- nicht bei KeepMark und nicht, wenn der Entwürfe-Ordner im Lauf nicht fehlerfrei gespiegelt wurde (SkipSent; dann entfällt die Erkennung ohnehin);
+- beim Schließen in derselben Transaktion: erst die Kopie eines abgebrochenen Ablageversuchs übernehmen (`adoptOrphan`; wurde etwas übernommen, wird nicht geschlossen), dann (f) und der Fingerabdruck des Inhalts noch einmal.
+
+**Ergebnis:** Status `abandoned`, Grund **`copy_gone`**, Akteur `system`, Audit `drafts.copy_gone_detected` mit `draft_id` und `missing_since` (ohne Inhalt), eine Freigabe wird `superseded`, `sent_message_id` bleibt leer. Die Regel **behauptet nicht, dass gesendet wurde**: `draft show` nennt `closed_reason: "copy_gone"`, `copy_missing_since` und den Satz „no sent message was detected, so it is not known whether it was sent“. Der Sync nennt es in seiner Zeile (`… now abandoned (copy_gone; draft 5)`), mit `--json` in `draft_check.copy_gone` und `copy_gone_draft_ids`.
+
+**Kosten** (`BenchmarkCheckAfterSync22kSubject`, Teile `steady_copy_gone` und `missing_since_lookup`, 30 Entwürfe mit `missing`, dazu 100.000 Audit-Einträge über 100 Tage): eine Abfrage `DraftMissingSince` je fehlender Kopie und Lauf, 0,04–0,10 ms (Fenster 30 Tage, Index `audit_events_ts`); ein ganzer Lauf mit den 30 Entwürfen 14–16 ms.
+
+**Einstellung** `[draft] copy_gone_after` in der Konfiguration ([cli.md](cli.md) Abschnitt 5): nur als Zeichenkette, `"off"` oder `"0"` schaltet ab, sonst eine Dauer (`"24h"`, `"2d"`); fehlt der Schlüssel, gilt `24h`; eine Zahl ist ein Fehler mit Hinweis. **Achtung beim Rücktausch:** 0.3.0-rc4 und älter kennen den Schlüssel nicht und starten mit ihm nicht (unbekannte Schlüssel sind ein Fehler); im Dauerbetrieb also nicht setzen bzw. vor einem Rücktausch entfernen.
+
+**Bekannte Grenzen:**
+
+- Bei **geplantem Senden** in Gmail verschwindet die Kopie aus den Entwürfen; wird erst nach mehr als 24 Stunden gesendet, heißt der Entwurf `copy_gone` statt gesendet (ein späterer Versand ändert daran nichts, der Entwurf ist abgeschlossen).
+- Ein Mailprogramm, das beim Senden keine Kopie in Gesendet ablegt (Abschnitt 8), führt ebenfalls zu `copy_gone`.
+- Wird die Kopie wieder in den Entwürfe-Ordner gelegt, bleibt `remote_state` `missing`, aber die Prüfung in der Transaktion findet die Kopie, und der Entwurf bleibt offen.
+
 ## 4. Was nie als gesendet zählt
 
 - Nachrichten mit dem Flag **`\Draft`** in irgendeinem Ordner.
@@ -168,7 +192,7 @@ Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human
 
 ## 6. Audit
 
-Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback`, (seit A05) `thread` oder (seit A07) `subject`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
+Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback`, (seit A05) `thread` oder (seit A07) `subject`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Auffangregel (seit A07, Abschnitt 3d): Akteur `system`, Operation `drafts.copy_gone_detected`, Grund `copy_gone`, Parameter `draft_id`, `missing_since`, `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
 ## 7. Ablage geänderter Entwürfe (Entscheid 43)
 

@@ -340,12 +340,20 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		parts = append(parts, fmt.Sprintf("%d replaced by an own reply in the thread (copy gone from the Drafts folder, "+
 			"same recipients, other text), now abandoned (draft %s)", c.ReplacedInThread, strings.Join(ids, ", ")))
 	}
+	if c.CopyGone > 0 {
+		ids := make([]string, 0, len(c.CopyGoneDraftIDs))
+		for _, id := range c.CopyGoneDraftIDs {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		parts = append(parts, fmt.Sprintf("%d with the copy gone from the Drafts folder for longer than [draft] copy_gone_after "+
+			"and no sent message detected, now abandoned (copy_gone; draft %s)", c.CopyGone, strings.Join(ids, ", ")))
+	}
 	if c.Expired > 0 {
 		parts = append(parts, fmt.Sprintf("%d approval(s) ran out, back to status draft", c.Expired))
 	}
 	if c.Missing > 0 {
 		parts = append(parts, fmt.Sprintf("%d copy/copies gone from the Drafts folder without a matching sent message "+
-			"(close with draft mark-sent or draft abandon)", c.Missing))
+			"(closed as copy_gone after [draft] copy_gone_after unless detected; or close with draft mark-sent or draft abandon)", c.Missing))
 	}
 	if c.AdoptedClosed > 0 {
 		parts = append(parts, fmt.Sprintf("%d copy/copies of an interrupted upload found for closed drafts; they stay in the Drafts folder "+
