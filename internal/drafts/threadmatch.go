@@ -26,7 +26,10 @@ import (
 //	    Entwürfe-Ordner, keine Kopie, die PostKauz abgelegt hat (dieselben
 //	    Ausschlüsse wie bei Message-ID und Rückfall),
 //	(c) ihr In-Reply-To ist H (Store.SentReplies),
-//	(d) gleiche Empfängermenge (To und Cc) wie beim Rückfall,
+//	(d) gleiche Empfängermenge (To und Cc) wie beim Rückfall; seit A07
+//	    Teil 1 auch erfüllt, wenn der Entwurf in To und Cc keinen
+//	    Empfänger hat und die gesendete Nachricht mindestens einen
+//	    (threadRecipientsMatch),
 //	(e) Zeitfenster wie beim Rückfall,
 //	(f) die Kopie des Entwurfs fehlt im Entwürfe-Ordner, festgestellt am
 //	    Spiegel wie checkCopy, unabhängig vom gespeicherten remote_state;
@@ -66,8 +69,8 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 	var pairs []pair
 	for _, d := range open {
 		rk := RecipientKey(d.To, d.Cc)
-		if !threadKinds[d.Kind] || d.InReplyToMsg <= 0 || rk == "" || d.PushedContentHash == "" {
-			continue // (a), (d) ohne Empfänger, (f) nie abgelegt
+		if !threadKinds[d.Kind] || d.InReplyToMsg <= 0 || d.PushedContentHash == "" {
+			continue // (a), (f) nie abgelegt
 		}
 		list, err := s.Store.SentReplies(ctx, accountID, d.InReplyToMsg) // (b), (c)
 		if err != nil {
@@ -78,7 +81,7 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 			if claimed[c.ID] || (c.ContentHash != "" && isCopy[c.ContentHash]) {
 				continue
 			}
-			if RecipientKey(c.To, c.Cc) != rk || !InFallbackWindow(changedAt(d), c.Date) { // (d), (e)
+			if !threadRecipientsMatch(rk, c) || !InFallbackWindow(changedAt(d), c.Date) { // (d), (e)
 				continue
 			}
 			if !c.InSent {
@@ -166,6 +169,20 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 		}
 	}
 	return nil
+}
+
+// threadRecipientsMatch ist Bedingung (d) des Wegs über den Verlauf und der
+// Regel „ersetzt“: gleiche Empfängermenge aus To und Cc (Bcc zählt nicht).
+// Seit A07 Teil 1 gilt sie auch als erfüllt, wenn der Entwurf in To und Cc
+// keinen Empfänger hat (draftKey leer; der Mensch trägt ihn im Mailprogramm
+// ein, A04 Teil 2) und die gesendete Nachricht mindestens einen Empfänger in
+// To oder Cc hat. Der Rückfall und der Weg über den Betreff bleiben streng.
+func threadRecipientsMatch(draftKey string, c store.SentMessage) bool {
+	sent := RecipientKey(c.To, c.Cc)
+	if draftKey == "" {
+		return sent != ""
+	}
+	return sent == draftKey
 }
 
 // copyGone meldet, ob die zuletzt abgelegte Kopie des Entwurfs laut

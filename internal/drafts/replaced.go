@@ -73,8 +73,8 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 	var own mailaddr.Set
 	for _, d := range open {
 		rk := RecipientKey(d.To, d.Cc)
-		if !threadKinds[d.Kind] || d.InReplyToMsg <= 0 || rk == "" || d.PushedContentHash == "" {
-			continue // (a), (d) ohne Empfänger, (f) nie abgelegt
+		if !threadKinds[d.Kind] || d.InReplyToMsg <= 0 || d.PushedContentHash == "" {
+			continue // (a), (f) nie abgelegt
 		}
 		if !missingBefore[d.ID] || d.RemoteState != RemoteMissing || d.RemoteMailboxID == 0 {
 			continue // schon vor Beginn des Laufs missing (Nachbesserung 2); Ablageordner bekannt
@@ -89,7 +89,7 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 			if c.ContentHash != "" && isCopy[c.ContentHash] {
 				continue
 			}
-			if RecipientKey(c.To, c.Cc) != rk || !InFallbackWindow(changedAt(d), c.Date) || !c.Date.After(after) { // (d), (e), danach
+			if !threadRecipientsMatch(rk, c) || !InFallbackWindow(changedAt(d), c.Date) || !c.Date.After(after) { // (d), (e), danach
 				continue
 			}
 			if !c.InSent {

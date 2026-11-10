@@ -173,6 +173,13 @@ func remoteNote(d store.Draft) string {
 	case drafts.RemoteTakenOver:
 		return "taken over in the mail client; change it there"
 	case drafts.RemoteMissing:
+		if drafts.RecipientKey(d.To, d.Cc) == "" && d.InReplyToMsg > 0 && !drafts.Status(d.Status).Closed() {
+			// A07 Teil 1: ohne Empfänger in To und Cc schließt nur noch der
+			// Weg über den Verlauf (bzw. „ersetzt“) automatisch.
+			return "the copy in the Drafts folder is gone; this draft has no To or Cc, so it is closed automatically only when " +
+				"a sent reply to the original (In-Reply-To) with at least one recipient is found; " +
+				"otherwise close it with draft mark-sent or draft abandon"
+		}
 		return "the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon"
 	}
 	return ""
