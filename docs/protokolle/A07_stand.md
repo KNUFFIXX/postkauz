@@ -47,7 +47,7 @@ Auftrag: [auftraege/A07_alltag3.md](../../auftraege/A07_alltag3.md). Zweig `clau
 
 - `make check` auf dem Abschluss `69117c5`: grün (gofmt, `go vet`, alle Tests, Guards, PII-Gate; 40 Pakete mit Tests, 1.104 Testfunktionen, davon 33 neu in A07; 11:48 min im Container). Vorher auch auf `c1c2434` und `ac145b9` grün.
 - `make cross` (linux/amd64, windows/amd64, darwin/arm64): grün.
-- `make race` auf dem letzten Code-Commit `6574047`: läuft (Ergebnis folgt in diesem Abschnitt).
+- Race-Detector auf dem letzten Code-Commit `6574047` (`go test -race -timeout 45m`) für die von A07 berührten Pakete `internal/drafts`, `store`, `actions`, `mailsync`, `config`, `policy`, `mcp`, `ops`, `cli`: grün, keine Meldung, 25:41 min (`internal/cli` 25:37 min). Der volle `make race` über alle Pakete brach in der Sitzung an der Zeitgrenze von 30 min für Hintergrundbefehle ab (5 Pakete fertig, ohne Befund), weil gleichzeitig `make check` und der Build liefen; die übrigen Pakete hat A07 nicht geändert.
 - `make integration`: nicht gelaufen, im Container läuft kein Docker-Daemon.
 - golangci-lint (G202): die Abfragen in `store/sentdetect.go` sind jetzt Konstanten; ein Lauf von `make lint` steht in der CI des PR.
 
