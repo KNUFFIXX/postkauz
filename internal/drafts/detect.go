@@ -42,9 +42,10 @@ import (
 // abgelaufen. Das Zeitfenster des Rückfalls hängt an content_changed_at
 // (letzte Inhaltsänderung), das weder Ablauf noch Lesen verschieben.
 //
-// Kein Treffer ist kein Fehler: Der Entwurf bleibt, bis der Mensch ihn mit
-// draft mark-sent oder draft abandon schließt (oder eine eigene Antwort
-// ihn ersetzt, A06 Teil 4).
+// Kein Treffer ist kein Fehler: Der Entwurf bleibt offen, bis eine eigene
+// Antwort ihn ersetzt (A06 Teil 4), die Auffangregel „Kopie weg“ ihn nach
+// [draft] copy_gone_after schließt (A07 Teil 4, copygone.go) oder der
+// Mensch ihn mit draft mark-sent oder draft abandon schließt.
 
 // CheckReport fasst die Prüfung nach dem Spiegeln zusammen (Zähler und
 // Draft-IDs, kein Inhalt).

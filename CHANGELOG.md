@@ -6,6 +6,14 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
+#### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu, ersetzt den Build an `69117c5`)
+
+- **Fixed:** Abnahmeskript D13: `audit --limit 1000` statt 5000 (sonst immer FAIL), `Stop-D13` definiert, kein zweiter Lauf nach einem FAIL im ersten, Erwartung der Auffangregel vor dem Tausch geprüft, `sync --watch` je Konto in 4.1, Rückweg vermerkt die Aufgaben erst direkt vor R.1, Hilfsprozesse an Pfadgrenzen, Abschlüsse fremder Entwürfe sind nicht erwartet, Protokoll ohne Aufgaben- und Kontonamen.
+- **Fixed:** Auffangregel „Kopie weg“ lässt im Mailprogramm weiterbearbeitete Fassungen offen; eine nachweisbar zurückgekehrte Kopie setzt den Entwurf wieder auf `pushed` (`drafts.remote_check`, Grund `present`), die Frist zählt danach neu; `[draft] copy_gone_after` mindestens `1h`.
+- **Fixed:** `drafts.supersede` nur innerhalb der Entwürfe-Ordner (frühere Kopien anderswo `skipped`, Runner `not_in_drafts` ohne Rückfall auf `mail:trash`), `push_in_progress` bei laufender Ablage; `draft show` nennt den Nachfolger nie als „durch sich selbst ersetzt“ und die Aktion statt „went to the trash“.
+- **Fixed:** Verlauf und Betreff übernehmen vor der Prüfung (f) die Kopie eines abgebrochenen Ablageversuchs (wie „ersetzt“ und „Kopie weg“).
+- **Added:** `drafts.get` nennt bei einem offenen Entwurf mit `remote: missing` `copy_missing_since`; Teil B von D13 mit `-AgentKeyFile` über den MCP-Server.
+
 Auftrag A07 (10.11.2026, Zweig `claude/compassionate-mayer-ntc1b5`, Basis `main` `d5d9af0` = Stand 0.3.0-rc4). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter (ohne `[draft] copy_gone_after` in der Konfiguration). Build **0.3.0-rc5** an `69117c5` (Windows `97ab3d84…a231a78`; Prüfsummen und Prüfläufe: `docs/protokolle/A07_stand.md`). Haltepunkt: Gegenprüfung, dann Abnahme D13 (`docs/abnahme_D13.md`).
 
 #### Fixed

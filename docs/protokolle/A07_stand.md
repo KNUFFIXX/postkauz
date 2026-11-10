@@ -68,3 +68,33 @@ Für D13: `-ExpectSha256 97ab3d84573ca1a5efc7e3b41000601da5929e5bdb6ca41441b2769
 - Abnahme D13 (Teil A und Teil B) auf dem Büro-PC nach Entscheid des Betreibers; vorher Gegenprüfung.
 - `abnahme_D13.ps1` ist nur maschinell geprüft (Klammerbilanz, ASCII mit BOM; PowerShell gibt es im Container nicht); die Anleitung beginnt mit einem Parser-Check.
 - `make integration`: im Container läuft kein Docker-Daemon; kein Integrationslauf in dieser Sitzung.
+
+## 7. Nachtrag 1 nach der Gegenprüfung (10.11.2026)
+
+Gegenprüfung in der Betreiber-Sitzung DRACO-PK17 (zwei frische Claude-Läufe, Codex, jeder Fund am Quelltext nachgeprüft), Urteil FAIL. Der Betreiber hat rc5 nach Gegenprüfung und D13 für den Dauerbetrieb freigegeben (Karte A07-1).
+
+### 7.1 Commits
+
+| Commit | Gruppe | Inhalt |
+|---|---|---|
+| `d96b902` | B (Code) | B1 Sicherung der Auffangregel gegen weiterbearbeitete Fassungen; B2 `present` und Frist danach neu; B3 `supersede` nur in Entwürfe-Ordnern, Runner `not_in_drafts`; B4 `push_in_progress`; B5 `adoptOrphan` vor (f) bei Verlauf und Betreff; B6 `DraftClosedBy` mit `params.draft_id`; B7 `copy_gone_after` ≥ 1h; B8 Texte mit Aktion; B9 IDs als int64; dazu `copy_missing_since` für offene missing-Entwürfe |
+| `1f001ed` | A (Skript) | A1 bis A8 in `abnahme_D13.ps1` und `abnahme_D13.md` |
+| (dieser) | C (Doku) | versanderkennung.md 1, 3d, 5, 8; entscheidungen.md (Nachtrag zu E3 präzisiert); sicherheit.md; roadmap; CHANGELOG; dieses Protokoll |
+
+### 7.2 Tests
+
+Neu: `TestA07N1CopyGoneKeepsEditedVersion` (Antwort und neue Mail, ohne Fassung wie bisher `copy_gone`), `TestA07N1CopyBackResetsMissingSince` (23 h, Kopie zurück, 2 h später wieder weg → offen; nicht gespiegelt zählt nicht als zurück), `TestA07N1ThreadAdoptsOrphanFirst` (scheitert ohne die Änderung, geprüft), `TestA07N1SupersedeSkipsCopiesOutsideDrafts` (operator-Schlüssel, frühere Kopie im Archiv: kein MOVE dorthin, Hauptkopie in den Papierkorb), `TestA07N1RunnerRefusesSupersedeOutsideDrafts`, `TestA07N1SupersedeDeniedMore` (`other_account`, `push_in_progress` zweifach), `TestA07N1SupersedeClosedReasonOnlyForOld` (B6, B8), `TestA07N1DraftGetMissingSince`, `TestA07N1RenderSuperseded`, Konfiguration `1m`, `59m`, `-5h`, `1h`.
+
+Prüfläufe: `make check` auf `d96b902` grün; Race-Detector (`go test -race -count=1 -timeout 45m`) für die berührten Pakete `internal/drafts`, `store`, `actions`, `config`, `mailsync`, `ops`, `cli` auf `d96b902`: grün, keine Meldung, 26:16 min (`internal/cli` 21:17 min). `make check` und `make cross` auf dem Build-Commit: Abschnitt 7.4. `make integration`: weiterhin kein Docker-Daemon im Container.
+
+Messung `BenchmarkCheckAfterSync22k` erneut (Cloud-Container, 4 Kerne, je drei Läufe, CPU frei): `steady` 3,8–4,0 ms, `one_new` 6,1–6,5 ms, `steady_replies` 11,7–11,9 ms; `steady_subject` 27–30 ms, `steady_copy_gone` 14–15 ms (jetzt mit der Prüfung „Kopie zurück“ je missing-Entwurf), `missing_since_lookup` 0,07 ms. `steady` bleibt deutlich unter 20 ms.
+
+### 7.3 Bewusst nicht übernommen (bekannte Grenzen)
+
+- Die Rangfolge im Rückfall bevorzugt nicht den Entwurf, dessen Kopie fehlt (nur `taken_over` und die jüngere Fassung, Teil 2); bei Gleichstand zweier Fassungen mit vorhandener Kopie kann die Zuordnung so auf die falsche fallen, der Zustand bleibt richtig.
+- `steady_subject` (30 neue Entwürfe ohne Kopie über 22.000 Nachrichten) bleibt bei etwa 40 ms; die Grenze von 20 ms aus dem Auftrag gilt für `steady`, `steady_subject` ist ein gewollt übertriebener Sonderfall, den die Auffangregel nach 24 h auflöst.
+- A8 nutzt den MCP-Server statt der CLI, weil `--key` an der CLI nur den Namen eines Schlüssels nimmt, nie den Schlüssel selbst; der Weg entspricht genau dem eines Agenten.
+
+### 7.4 Build 0.3.0-rc5 (neu)
+
+BUILD_N1
