@@ -51,7 +51,9 @@
       (Kopie im Papierkorb); bittet um das unveraenderte Senden des
       zweiten in Gmail im Browser und prueft dessen Abschluss
       sent_by_human. Die Aufgaben laufen dabei weiter. Nie im geteilten
-      Postfach ohne Anweisung des Betreibers.
+      Postfach ohne Anweisung des Betreibers. Mit -AgentKeyFile laufen
+      Anlegen und supersede ueber den MCP-Server mit dem Schluessel eines
+      Agenten (Nachtrag 1, A8).
 
     Modus "Rueckweg" (-Rueckweg): A07 hat keine Migration (Schema 22). Das
       alte Programm (postkauz-rc4.exe) kommt zurueck und laeuft weiter;
@@ -127,6 +129,14 @@
     Teil B: eigene Adresse dieses Kontos (Empfaenger der Probe; steht nie
     im Protokoll).
 
+.PARAMETER AgentKeyFile
+    Teil B, optional: Datei mit dem API-Schluessel eines Agenten (pk_key_...,
+    etwa der Schluessel der Claude-App). Ist sie angegeben, legt Teil B beide
+    Probe-Entwuerfe und den Aufruf supersede ueber den MCP-Server
+    (postkauz mcp, stdio) mit diesem Schluessel an: der Weg eines Agenten,
+    mit Eigentuemerpruefung und der Ausnahme im Runner. Der Schluessel und
+    der Dateiname stehen nie im Protokoll.
+
 .PARAMETER WaitMinutes
     Teil B: so lange wartet das Skript auf das Senden (Standard 20).
 
@@ -156,6 +166,7 @@ param(
     [switch] $TeilB,
     [string] $SelfAccount = '',
     [string] $SelfAddress = '',
+    [string] $AgentKeyFile = '',
     [int] $WaitMinutes = 20,
     [string] $LogFile = ''
 )
@@ -181,6 +192,7 @@ $script:LogBroken = $false
 $script:Fails = New-Object System.Collections.Generic.List[string]
 $script:WasEnabled = @{}
 $script:Started = Get-Date
+$script:Mcp = $null
 # Teil 3 vollstaendig durchgelaufen: nur dann ist ein Ergebnis ohne FAIL
 # eine bestandene Abnahme.
 $script:Complete = $false
@@ -381,11 +393,30 @@ function Test-OwnHelper {
     param($P, [string[]] $TaskArgs)
     $c = ([string] $P.CommandLine).ToLowerInvariant()
     foreach ($k in @($DataDir, $Config, $script:ExeFull, $script:ExeDir)) {
-        if ($k -and $c.Contains(([string] $k).ToLowerInvariant())) { return $true }
+        if ($k -and (Test-PathIn $c ([string] $k).ToLowerInvariant())) { return $true }
     }
     foreach ($a in $TaskArgs) {
         $m = [regex]::Match($a, '(?i)[^\s"]*run-?sync-?watch\.ps1')
-        if ($m.Success -and $c.Contains($m.Value.ToLowerInvariant())) { return $true }
+        if ($m.Success -and (Test-PathIn $c $m.Value.ToLowerInvariant())) { return $true }
+    }
+    return $false
+}
+
+# Steht der Pfad $K in der Befehlszeile $C als ganzer Pfad (Nachtrag 1, A7)?
+# Davor Anfang, Leerzeichen, Anfuehrungszeichen oder "="; danach Ende,
+# Leerzeichen, Anfuehrungszeichen oder "\" (ein Unterordner). So gehoert
+# C:\PostKauz-Test nicht zu C:\PostKauz.
+function Test-PathIn {
+    param([string] $C, [string] $K)
+    $K = $K.TrimEnd('\')
+    if (-not $K) { return $false }
+    $i = $C.IndexOf($K)
+    while ($i -ge 0) {
+        $before = ($i -eq 0) -or (' "''='.Contains([string] $C[$i - 1]))
+        $j = $i + $K.Length
+        $after = ($j -ge $C.Length) -or (' "''\'.Contains([string] $C[$j]))
+        if ($before -and $after) { return $true }
+        $i = $C.IndexOf($K, $i + 1)
     }
     return $false
 }
@@ -505,11 +536,19 @@ function Start-Tasks {
     }
     $syncTasks = @($todo | Where-Object { -not (Test-AuditTask $_.Name) -and $_.Name -match '(?i)sync' }).Count
     if ($syncTasks -gt 0) {
+        # Nachtrag 1, A5: je Konto aus -Accounts ein sync --watch aus dem
+        # Ordner von -Exe mit diesem Konto in der Befehlszeile (oder --all).
         $watch = @(Get-OwnWatch)
+        $without = 0
+        foreach ($acc in $Accounts) {
+            $re = '(?i)(^|[\s"=])' + [regex]::Escape($acc) + '($|[\s"])'
+            $has = @($watch | Where-Object { ([string] $_.CommandLine) -match '(?i)\s--all(\s|$)' -or ([string] $_.CommandLine) -match $re }).Count
+            if ($has -eq 0) { $without++ }
+        }
         $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
-        $ok = ($watch.Count -gt 0 -and $v.Exit -eq 0 -and $v.Out -match [regex]::Escape($Version))
+        $ok = ($Accounts.Count -gt 0 -and $without -eq 0 -and $v.Exit -eq 0 -and $v.Out -match [regex]::Escape($Version))
         if (-not $ok) { $all = $false }
-        Add-Check $Nr ('sync --watch laeuft aus dem Ordner von -Exe, ' + $script:ExeFull + ' meldet ' + $Version) $ok ('sync --watch: ' + $watch.Count + ' (Aufgaben mit sync: ' + $syncTasks + ")`n" + $v.Out.Trim())
+        Add-Check $Nr ('je Konto laeuft ein sync --watch aus dem Ordner von -Exe, ' + $script:ExeFull + ' meldet ' + $Version) $ok ('sync --watch: ' + $watch.Count + ', Konten: ' + $Accounts.Count + ', davon ohne sync --watch: ' + $without + ' (Aufgaben mit sync: ' + $syncTasks + ")`n" + $v.Out.Trim())
     }
     return $all
 }
@@ -635,7 +674,16 @@ function Get-DraftDetail {
 function Get-AuditOp {
     param([string] $Prog, [string] $Op)
     $min = [int] [math]::Ceiling(((Get-Date) - $script:Started).TotalMinutes) + 10
-    $r = Invoke-Pk $Prog @('audit', '--operation', $Op, '--since', ([string] $min + 'm'), '--limit', '5000', '--json')
+    return Get-AuditSince $Prog $Op ([string] $min + 'm')
+}
+
+# audit --operation <op> --since <dauer> --limit 1000 --json (NDJSON).
+# Nachtrag 1, A1: audit.list erlaubt hoechstens 1000; liefert die Abfrage
+# 1000 Eintraege, koennten weitere fehlen: dann gilt sie als nicht lesbar
+# (Exit 99).
+function Get-AuditSince {
+    param([string] $Prog, [string] $Op, [string] $Since)
+    $r = Invoke-Pk $Prog @('audit', '--operation', $Op, '--since', $Since, '--limit', '1000', '--json')
     $events = New-Object System.Collections.Generic.List[object]
     foreach ($line in ($r.Out -split "`r?`n")) {
         $t = $line.Trim()
@@ -643,7 +691,9 @@ function Get-AuditOp {
         $o = Get-Json $t
         if ($null -ne $o -and $null -ne $o.operation) { $events.Add($o) }
     }
-    return New-Object PSObject -Property @{ Exit = $r.Exit; Events = $events }
+    $code = $r.Exit
+    if ($code -eq 0 -and $events.Count -ge 1000) { $code = 99 }
+    return New-Object PSObject -Property @{ Exit = $code; Events = $events }
 }
 
 # Grund je Entwurf aus den Systemereignissen der Versanderkennung
@@ -766,7 +816,12 @@ function Get-Closed {
             $vanished += $o.Id
         }
     }
+    # Nachtrag 1, A7: Abschluesse aus dem Audit, deren Entwurf nicht in der
+    # Vorher-Liste stand, sind nie erwartet.
+    $beforeIds = @($script:Before.List | ForEach-Object { $_.Id })
+    $foreign = @($cr.Reasons.Keys | Where-Object { $beforeIds -notcontains $_ } | ForEach-Object { [int64] $_ })
     $sent = @(); $replaced = @(); $gone = @(); $odd = @(); $lines = @()
+    foreach ($f in $foreign) { $lines += ('draft ' + $f + ': vorher nicht offen, Grund ' + $cr.Reasons[$f]) }
     foreach ($c in $closed) {
         $r = $c.Reason
         $shown = $r
@@ -778,7 +833,7 @@ function Get-Closed {
         else { $odd += $c.Id }
     }
     return New-Object PSObject -Property @{ After = $after; AuditOk = $cr.Ok; Closed = $closed; Vanished = $vanished; Sent = $sent;
-        Replaced = $replaced; Gone = $gone; Odd = $odd; Lines = $lines }
+        Replaced = $replaced; Gone = $gone; Odd = $odd; Foreign = $foreign; Lines = $lines }
 }
 
 # Nach jedem Lauf: Liste und "kein nicht erwarteter Abschluss".
@@ -787,9 +842,46 @@ function Test-Closed {
     $g = Get-Closed $script:ExeFull
     Add-Check $Nr ('nach dem ' + $Label + ': alle seit dem Tausch geschlossenen Entwuerfe mit Grund aus dem Audit (' + $g.Closed.Count + ')') ($g.After.Exit -eq 0 -and $g.After.Parsed -and $g.After.List.Count -lt 500 -and $g.AuditOk -and $g.Odd.Count -eq 0 -and $g.Vanished.Count -eq 0) ((@($g.Lines) -join "`n") + "`nohne passenden Grund: " + (Format-Ids $g.Odd) + "`nvorher offen, jetzt weder offen noch geschlossen lesbar: " + (Format-Ids $g.Vanished))
     $unexpected = @(@($g.Sent | Where-Object { $ExpectSent -notcontains $_ }) + @($g.Replaced | Where-Object { $ExpectReplaced -notcontains $_ }) +
-        @($g.Gone | Where-Object { $ExpectCopyGone -notcontains $_ }) + $g.Odd + $g.Vanished)
+        @($g.Gone | Where-Object { $ExpectCopyGone -notcontains $_ }) + $g.Odd + $g.Vanished + $g.Foreign)
     Add-Check ($Nr + 'b') ('nach dem ' + $Label + ': kein nicht erwarteter Abschluss') ($unexpected.Count -eq 0) ('nicht erwartet: ' + (Format-Ids $unexpected))
     return $g
+}
+
+# Abbruch mit Grund; der catch am Ende erkennt das Praefix (Nachtrag 1,
+# A2: fehlte in rc5 vor dem Nachtrag).
+function Stop-D13 {
+    param([string] $Why)
+    throw ('D13-ABBRUCH: ' + $Why)
+}
+
+# Nachtrag 1, A4: seit wann die Kopie jedes offenen missing-Entwurfs fehlt,
+# aus dem Audit (juengster drafts.remote_check missing bzw. present nach der
+# letzten Ablage; mit dem alten Programm, das copy_missing_since noch nicht
+# kennt). Ergebnis: Hashtable ID -> DateTimeOffset bzw. $null; $null als
+# Ganzes, wenn das Audit nicht lesbar ist.
+function Get-MissingSince {
+    param([string] $Prog, $Drafts)
+    $au = Get-AuditSince $Prog 'drafts.remote_check' '90d'
+    if ($au.Exit -ne 0) { return $null }
+    $out = @{}
+    foreach ($d in $Drafts) {
+        $floor = [DateTimeOffset]::MinValue
+        $dd = Get-DraftDetail $Prog ([string] $d.Id)
+        if ($null -ne $dd -and $dd.pushed_date) {
+            try { $floor = [DateTimeOffset]::Parse([string] $dd.pushed_date, [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
+        }
+        $best = $null
+        $bestReason = ''
+        foreach ($ev in $au.Events) {
+            if (@('missing', 'present') -notcontains [string] $ev.reason) { continue }
+            if (@($ev.targets | ForEach-Object { [string] $_ }) -notcontains ('draft:' + $d.Id)) { continue }
+            $ts = [DateTimeOffset]::Parse([string] $ev.ts, [System.Globalization.CultureInfo]::InvariantCulture)
+            if ($ts -lt $floor.AddSeconds(-1)) { continue }
+            if ($null -eq $best -or $ts -gt $best) { $best = $ts; $bestReason = [string] $ev.reason }
+        }
+        if ($bestReason -eq 'missing') { $out[[int64] $d.Id] = $best } else { $out[[int64] $d.Id] = $null }
+    }
+    return $out
 }
 
 # ---------------------------------------------------------------- Teil A
@@ -826,7 +918,7 @@ function Invoke-Umstellung {
     $notGiven = @($known | Where-Object { $Accounts -notcontains $_ })
     Add-Check '0.6' '-Accounts entspricht genau den konfigurierten Konten (accounts list)' ($Accounts.Count -gt 0 -and $al.Exit -eq 0 -and $unknown.Count -eq 0 -and $notGiven.Count -eq 0) ('angegeben: ' + $Accounts.Count + ', konfiguriert: ' + $known.Count + ', nicht konfiguriert: ' + $unknown.Count + ', konfiguriert, aber nicht angegeben: ' + $notGiven.Count)
     $missingTasks = @($Tasks | Where-Object { $null -eq (Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue) })
-    Add-Check '0.7' '-Tasks angegeben (Pflicht) und jede Aufgabe vorhanden' ($Tasks.Count -gt 0 -and $missingTasks.Count -eq 0) ('Aufgaben: ' + $Tasks.Count + ', nicht gefunden: ' + $missingTasks.Count + "`n" + ($Tasks -join "`n"))
+    Add-Check '0.7' '-Tasks angegeben (Pflicht) und jede Aufgabe vorhanden' ($Tasks.Count -gt 0 -and $missingTasks.Count -eq 0) ('Aufgaben: ' + $Tasks.Count + ', nicht gefunden: ' + $missingTasks.Count)
     $all = @(@($ExpectSent) + @($ExpectReplaced) + @($ExpectCopyGone))
     $dupes = @($all | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
     Add-Check '0.8' 'Erwartung: -ExpectSent, -ExpectReplaced und -ExpectCopyGone ohne gemeinsame ID' ($dupes.Count -eq 0) ('erwartet sent_by_human: ' + (Format-Ids $ExpectSent) + "`nerwartet ersetzt: " + (Format-Ids $ExpectReplaced) + "`nerwartet copy_gone: " + (Format-Ids $ExpectCopyGone) + "`ndoppelt: " + (Format-Ids $dupes))
@@ -858,6 +950,34 @@ function Invoke-Umstellung {
     $badGone = @($ExpectCopyGone | Where-Object { $remoteOf[$_] -ne 'missing' })
     Add-Check '1.2c' 'jeder Entwurf aus -ExpectReplaced hat vorher remote missing oder taken_over, jeder aus -ExpectCopyGone missing' ($badReplaced.Count + $badGone.Count -eq 0) ('ersetzt, aber weder missing noch taken_over: ' + (Format-Ids $badReplaced) + "`ncopy_gone, aber nicht missing: " + (Format-Ids $badGone))
     if ($script:NFail -gt 0) { Stop-D13 'Erwartung passt nicht zum Stand; nichts getauscht' }
+    # Nachtrag 1, A4: Erwartung der Auffangregel vor dem Tausch pruefen.
+    # Grenze 24 h (copy_gone_after ist nicht gesetzt, 0.9). Wer bei Ende von
+    # Lauf 2 (jetzt + 3 h Sicherheitsabstand) laenger fehlt, muss in einer
+    # Erwartungsliste stehen; wer in -ExpectCopyGone steht, muss die Grenze
+    # schon jetzt (also sicher vor Lauf 1) ueberschritten haben.
+    $limit = [TimeSpan]::FromHours(24)
+    $nowD = [DateTimeOffset]::Now
+    $missingDrafts = @($script:Before.List | Where-Object { $_.Remote -eq 'missing' })
+    $ms = Get-MissingSince $script:ExeFull $missingDrafts
+    if ($null -eq $ms) {
+        Add-Check '1.2d' 'Auffangregel: Audit drafts.remote_check lesbar (hoechstens 1000 Eintraege in 90 Tagen)' $false ''
+    } else {
+        $unexpectedGone = @(); $notYet = @(); $infoOther = @()
+        foreach ($d in $missingDrafts) {
+            $since = $ms[[int64] $d.Id]
+            $willExceed = ($null -ne $since -and ($nowD.AddHours(3) - $since) -gt $limit)
+            if ($willExceed -and ($ExpectCopyGone + $ExpectSent + $ExpectReplaced) -notcontains $d.Id) { $unexpectedGone += $d.Id }
+            if ($willExceed -and ($ExpectSent + $ExpectReplaced) -contains $d.Id) { $infoOther += $d.Id }
+        }
+        foreach ($id in $ExpectCopyGone) {
+            $since = $ms[[int64] $id]
+            if ($null -eq $since -or ($nowD - $since) -le $limit) { $notYet += $id }
+        }
+        Add-Check '1.2d' 'Auffangregel: jeder Entwurf, dessen Kopie bis zum Ende von Lauf 2 laenger als 24 h fehlt, steht in einer Erwartungsliste' ($unexpectedGone.Count -eq 0) ('missing vorher: ' + $missingDrafts.Count + "`nnicht erwartet: " + (Format-Ids $unexpectedGone))
+        Add-Check '1.2e' 'Auffangregel: jeder Entwurf aus -ExpectCopyGone fehlt schon jetzt laenger als 24 h' ($notYet.Count -eq 0) ('noch nicht sicher ueber der Grenze: ' + (Format-Ids $notYet))
+        if ($infoOther.Count -gt 0) { Add-Info '1.2f' 'erwartet gesendet bzw. ersetzt, aber auch ueber der Grenze von 24 h (ein anderer Weg muss im selben Lauf greifen)' (Format-Ids $infoOther) }
+    }
+    if ($script:NFail -gt 0) { Stop-D13 'Erwartung der Auffangregel passt nicht; nichts getauscht' }
     $b = Invoke-Pk $script:ExeFull @('backup', 'create', '--to', $BackupTo) -TimeoutSec 7200
     Add-Check '1.5' 'Sicherung geschrieben (betrieb.md 2.2): Exit 0 und "backup written to"' ($b.Exit -eq 0 -and $b.Out -match 'backup written to') $b.Text
     if ($script:NFail -gt 0) { Stop-D13 'ohne Sicherung kein Tausch' }
@@ -884,6 +1004,9 @@ function Invoke-Umstellung {
     $failsBefore = $script:NFail
     Invoke-SyncRun '3.1' 'erster Lauf' $ExpectVersion
     [void] (Test-Closed '3.2' 'ersten Lauf')
+    # Nachtrag 1, A3: Nach einem FAIL im ersten Lauf kein zweiter, damit er
+    # nicht weitere Entwuerfe endgueltig schliesst.
+    if ($script:NFail -gt $failsBefore) { Stop-D13 'FAIL nach dem ersten Lauf; kein zweiter Lauf mit dem neuen Programm' }
     Invoke-SyncRun '3.3' 'zweiter Lauf' $ExpectVersion
     $g = Test-Closed '3.4' 'zweiten Lauf'
     $missingExp = @(@($ExpectSent | Where-Object { $g.Sent -notcontains $_ }) + @($ExpectReplaced | Where-Object { $g.Replaced -notcontains $_ }) +
@@ -919,8 +1042,93 @@ function Wait-Pushed {
     return $d
 }
 
+# ---- MCP (stdio) fuer -AgentKeyFile (Nachtrag 1, A8)
+
+# Startet postkauz mcp mit dem Schluessel aus $KeyFile (Umgebung
+# POSTKAUZ_KEY_FILE) und meldet die Sitzung an. Der Schluessel steht nie im
+# Protokoll; Fehler nennen nur Codes.
+function Start-Mcp {
+    param([string] $KeyFile)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $script:ExeFull
+    $psi.Arguments = ConvertTo-ArgString @('--data-dir', $DataDir, '--config', $Config, 'mcp')
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = $script:Utf8
+    $psi.StandardErrorEncoding = $script:Utf8
+    foreach ($k in @('POSTKAUZ_KEY', 'POSTKAUZ_KEY_FILE', 'POSTKAUZ_DATA_DIR', 'POSTKAUZ_CONFIG', 'POSTKAUZ_POLICY', 'POSTKAUZ_PROFILE')) {
+        if ($psi.EnvironmentVariables.ContainsKey($k)) { $psi.EnvironmentVariables.Remove($k) }
+    }
+    $psi.EnvironmentVariables['POSTKAUZ_KEY_FILE'] = [System.IO.Path]::GetFullPath($KeyFile)
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $script:McpErr = $p.StandardError.ReadToEndAsync()
+    $script:Mcp = $p
+    $script:McpId = 0
+    $init = Send-Mcp 'initialize' @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'abnahme-d13'; version = '1' } }
+    if ($null -eq $init -or $null -ne $init.error) { return $false }
+    $line = (@{ jsonrpc = '2.0'; method = 'notifications/initialized' } | ConvertTo-Json -Compress -Depth 10)
+    $p.StandardInput.WriteLine($line)
+    $p.StandardInput.Flush()
+    return $true
+}
+
+# Eine JSON-RPC-Anfrage; liefert die Antwort mit derselben id oder $null
+# (Zeitgrenze 60 s).
+function Send-Mcp {
+    param([string] $Method, $Params)
+    $script:McpId++
+    $id = $script:McpId
+    $line = (@{ jsonrpc = '2.0'; id = $id; method = $Method; params = $Params } | ConvertTo-Json -Compress -Depth 10)
+    $script:Mcp.StandardInput.WriteLine($line)
+    $script:Mcp.StandardInput.Flush()
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        $t = $script:Mcp.StandardOutput.ReadLineAsync()
+        if (-not $t.Wait(60000)) { return $null }
+        if ($null -eq $t.Result) { return $null }
+        $o = Get-Json ([string] $t.Result)
+        if ($null -ne $o -and $null -ne $o.id -and [int] $o.id -eq $id) { return $o }
+    }
+    return $null
+}
+
+# Ein Tool aufrufen; liefert das Ergebnis (structuredContent) oder ein
+# Objekt mit Feld code bei einem Fehler.
+function Invoke-McpTool {
+    param([string] $Tool, $Arguments)
+    $r = Send-Mcp 'tools/call' @{ name = $Tool; arguments = $Arguments }
+    if ($null -eq $r) { return New-Object PSObject -Property @{ code = 'no_answer' } }
+    if ($null -ne $r.error) { return New-Object PSObject -Property @{ code = ('rpc_' + [string] $r.error.code) } }
+    if ([bool] $r.result.isError) {
+        $txt = ''
+        foreach ($c in $r.result.content) { $txt += [string] $c.text }
+        $e = Get-Json $txt
+        $code = 'error'
+        if ($null -ne $e -and $e.code) { $code = [string] $e.code }
+        return New-Object PSObject -Property @{ code = $code }
+    }
+    return $r.result.structuredContent
+}
+
+function Stop-Mcp {
+    if ($null -eq $script:Mcp) { return }
+    try { $script:Mcp.StandardInput.Close() } catch { }
+    if (-not $script:Mcp.WaitForExit(15000)) { try { $script:Mcp.Kill() } catch { } }
+    $script:Mcp = $null
+}
+
 function New-ProbeDraft {
     param([string] $Subject, [string] $Text, [string] $Nr)
+    if ($AgentKeyFile) {
+        $r = Invoke-McpTool 'mail_create_draft' @{ account = $SelfAccount; kind = 'new'; to = @($SelfAddress); subject = $Subject; body_markdown = $Text; dry_run = $false }
+        $id = ''
+        if ($null -ne $r -and $null -ne $r.draft_id) { $id = [string] $r.draft_id }
+        Add-Check $Nr 'Probe-Entwurf ueber MCP mit dem Agentenschluessel angelegt (neue Mail an sich selbst)' ([bool] $id) ('draft ' + $id + ', Fehler ' + [string] $r.code)
+        return $id
+    }
     $body = Join-Path ([System.IO.Path]::GetTempPath()) ('d13-teilb-' + [guid]::NewGuid().ToString('N') + '.md')
     [System.IO.File]::WriteAllText($body, $Text, $script:Utf8)
     try {
@@ -939,7 +1147,12 @@ function Invoke-TeilB {
     Write-Log '--- Teil B: drafts.supersede an zwei eigenen Probe-Entwuerfen (Mitmach)'
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     Add-Check 'B.0' ('Programm meldet ' + $ExpectVersion) ($v.Exit -eq 0 -and $v.Out -match [regex]::Escape($ExpectVersion)) $v.Text
-    Add-Check 'B.0b' 'Konto und eigene Adresse angegeben (-SelfAccount, -SelfAddress)' ([bool] $SelfAccount -and [bool] $SelfAddress) ('Konto ' + $SelfAccount)
+    Add-Check 'B.0b' 'Konto und eigene Adresse angegeben (-SelfAccount, -SelfAddress)' ([bool] $SelfAccount -and [bool] $SelfAddress) ''
+    if ($AgentKeyFile) {
+        Add-Check 'B.0c' 'Agentenschluessel: Datei vorhanden, MCP-Sitzung angemeldet (Schluessel nie im Protokoll)' ((Test-Path -LiteralPath $AgentKeyFile) -and (Start-Mcp $AgentKeyFile)) ''
+    } else {
+        Add-Info 'B.0c' 'ohne -AgentKeyFile: Probe als Mensch an der CLI (ohne Eigentuemerpruefung und ohne die Ausnahme im Runner)'
+    }
     Add-Check 'B.1' 'sync --watch laeuft (legt die Entwuerfe ab, fuehrt die Aktion aus, spiegelt die gesendete Nachricht)' ((Get-OwnWatch).Count -gt 0) ('sync --watch: ' + (Get-OwnWatch).Count)
     if ($script:NFail -gt 0) { Stop-D13 'Voraussetzungen fehlen' }
     $subject = 'PostKauz Abnahme D13 Teil B ' + (Get-Date -Format 'yyyy-MM-dd HH:mm')
@@ -953,14 +1166,31 @@ function Invoke-TeilB {
     $d2 = Wait-Pushed $second 5
     Add-Check 'B.5' ('zweite Fassung (Entwurf ' + $second + ') im Entwuerfe-Ordner abgelegt') ($null -ne $d2 -and [string] $d2.remote -eq 'pushed') ('remote ' + [string] $d2.remote)
     if ($script:NFail -gt 0) { Stop-D13 'Entwuerfe nicht abgelegt' }
-    $dry = Invoke-Pk $script:ExeFull @('draft', 'supersede', $first, '--by', $second, '--dry-run', '--json')
-    $dj = Get-Json $dry.Out
-    Add-Check 'B.6' 'draft supersede --dry-run: nichts geaendert, 1 Kopie wuerde in den Papierkorb gehen' ($dry.Exit -eq 0 -and $null -ne $dj -and [bool] $dj.dry_run -and [int] $dj.copies -ge 1 -and [string] (Get-DraftDetail $script:ExeFull $first).status -eq 'draft') ('exit ' + $dry.Exit + ', Grund ' + (Get-DenyReason $dry))
-    $s = Invoke-Pk $script:ExeFull @('draft', 'supersede', $first, '--by', $second, '--json')
-    $sj = Get-Json $s.Out
+    if ($AgentKeyFile) {
+        $dj = Invoke-McpTool 'mail_supersede_draft' @{ draft_id = [int64] $first; by_draft_id = [int64] $second; dry_run = $true }
+        $dryOk = ($null -ne $dj -and [bool] $dj.dry_run -and [int] $dj.copies -ge 1)
+        $dryWhy = 'Fehler ' + [string] $dj.code
+    } else {
+        $dry = Invoke-Pk $script:ExeFull @('draft', 'supersede', $first, '--by', $second, '--dry-run', '--json')
+        $dj = Get-Json $dry.Out
+        $dryOk = ($dry.Exit -eq 0 -and $null -ne $dj -and [bool] $dj.dry_run -and [int] $dj.copies -ge 1)
+        $dryWhy = 'exit ' + $dry.Exit + ', Grund ' + (Get-DenyReason $dry)
+    }
+    Add-Check 'B.6' 'supersede im Trockenlauf: nichts geaendert, 1 Kopie wuerde in den Papierkorb gehen' ($dryOk -and [string] (Get-DraftDetail $script:ExeFull $first).status -eq 'draft') $dryWhy
+    if ($AgentKeyFile) {
+        $sj = Invoke-McpTool 'mail_supersede_draft' @{ draft_id = [int64] $first; by_draft_id = [int64] $second; dry_run = $false }
+        $sOk = ($null -ne $sj -and -not $sj.code)
+        $sWhy = 'Fehler ' + [string] $sj.code
+        Stop-Mcp
+    } else {
+        $s = Invoke-Pk $script:ExeFull @('draft', 'supersede', $first, '--by', $second, '--json')
+        $sj = Get-Json $s.Out
+        $sOk = ($s.Exit -eq 0)
+        $sWhy = 'exit ' + $s.Exit + ', Grund ' + (Get-DenyReason $s)
+    }
     $action = ''
     if ($null -ne $sj -and $null -ne $sj.action_id) { $action = [string] $sj.action_id }
-    Add-Check 'B.7' ('draft supersede ' + $first + ' --by ' + $second + ': Exit 0, alter Entwurf abandoned, Aktion angelegt') ($s.Exit -eq 0 -and $null -ne $sj -and [string] $sj.status -eq 'abandoned' -and $action) ('exit ' + $s.Exit + ', Aktion ' + $action + ', Kopien ' + [string] $sj.copies + ', Grund ' + (Get-DenyReason $s))
+    Add-Check 'B.7' ('supersede ' + $first + ' durch ' + $second + ': alter Entwurf abandoned, Aktion angelegt') ($sOk -and $null -ne $sj -and [string] $sj.status -eq 'abandoned' -and $action) ($sWhy + ', Aktion ' + $action + ', Kopien ' + [string] $sj.copies + ', uebersprungen ' + [string] $sj.skipped)
     if (-not $action) { Stop-D13 'keine Aktion' }
     $deadline = (Get-Date).AddMinutes(3)
     $aj = $null
@@ -998,12 +1228,10 @@ function Invoke-TeilB {
 function Invoke-Rueckweg {
     Write-Log '--- Rueckweg: altes Programm zurueck (keine Migration in A07)'
     # Sammelpunkt 0e: Der Rueckweg schaltet am Ende alle Aufgaben aus -Tasks
-    # wieder ein, auch wenn sie beim Start aus waren (etwa nach einem harten
-    # Abbruch); vermerkt VOR R.1, damit auch ein Abbruch in R.1 sie im
-    # finally wieder einschaltet.
-    foreach ($tn in $Tasks) { $script:WasEnabled[$tn] = $true }
+    # wieder ein, auch wenn sie beim Start aus waren (vermerkt direkt vor
+    # R.1, Nachtrag 1, A6).
     Add-Check 'R.0' 'aufgehobenes altes Programm vorhanden (postkauz-rc4.exe)' (Test-Path $OldCopy) $OldCopy
-    if (-not (Test-Path $OldCopy)) { $script:WasEnabled = @{}; Stop-D13 'postkauz-rc4.exe fehlt; nichts geaendert' }
+    if (-not (Test-Path $OldCopy)) { Stop-D13 'postkauz-rc4.exe fehlt; nichts geaendert' }
     $newCopy = Get-NewCopyName
     # Sammelpunkt 0e: postkauz.exe kann fehlen (harter Abbruch zwischen
     # Umbenennen und Kopieren); dann nur das alte an seine Stelle.
@@ -1021,6 +1249,11 @@ function Invoke-Rueckweg {
     if (Test-Path $Config) { $cfgText = [System.IO.File]::ReadAllText($Config) }
     Add-Check 'R.0e' 'Konfiguration ohne [draft] copy_gone_after (rc4 startet sonst nicht)' (-not ($cfgText -match '(?m)^\s*copy_gone_after\s*=')) 'sonst den Schluessel vorher von Hand entfernen'
     if ($script:NFail -gt 0) { Stop-D13 'Rueckweg nicht moeglich; nichts geaendert' }
+    # Nachtrag 1, A6: erst hier (nach R.0 bis R.0e) vermerken, dass am Ende
+    # alle Aufgaben wieder an sein sollen; ein Abbruch in R.0x ("nichts
+    # geaendert") schaltet keine Aufgabe ein. Vor R.1 vermerkt, damit auch
+    # ein Abbruch in R.1 sie im Abschluss wieder einschaltet.
+    foreach ($tn in $Tasks) { $script:WasEnabled[$tn] = $true }
     Stop-Tasks 'R.1'
     if ($script:NFail -gt 0) { Stop-D13 'es laeuft noch ein postkauz.exe; nichts getauscht' }
     $err = ''
@@ -1101,6 +1334,7 @@ try {
         Add-Check 'X' ('unerwarteter Fehler im Skript: ' + $msg) $false
     }
 } finally {
+    try { Stop-Mcp } catch { }
     $umst = (-not $Rueckweg -and -not $TeilB)
     if ($umst -and -not $script:Complete) {
         Add-Check 'E.2' 'Teil 3 lief nicht vollstaendig: Abnahme nicht bestanden' $false
