@@ -156,3 +156,86 @@ func BenchmarkCheckAfterSync22k(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkCheckAfterSync22kSubject misst den Weg über den Betreff (A07
+// Teil 3): wie BenchmarkCheckAfterSync22k, dazu 30 offene neue Entwürfe,
+// die abgelegt sind und deren Kopie fehlt (über 15 Tage verteilt, ihre
+// Fenster decken alle 22.000 Nachrichten ab). Kein Kandidat passt
+// (anderer Betreff); gemessen wird der Lauf ohne neue Nachricht.
+//
+//	go test -run '^$' -bench BenchmarkCheckAfterSync22k ./internal/drafts/
+func BenchmarkCheckAfterSync22kSubject(b *testing.B) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		b.Fatal(err)
+	}
+	acc, err := st.CreateAccount(ctx, store.Account{Name: "demo", Email: "demo@example.org", Host: "127.0.0.1", Port: 143, TLS: "none",
+		Username: "demo@example.org", AuthType: "password", CredentialRef: "account/0a1b2c3d/demo"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, _, err := st.SyncMailboxes(ctx, acc, []store.MailboxSpec{{Path: "All", Name: "All", Role: "all"}}); err != nil {
+		b.Fatal(err)
+	}
+	boxes, _ := st.Mailboxes(ctx, acc)
+	box := boxes[0].ID
+	base := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	now := base
+	svc := &Service{Store: st, Now: func() time.Time { return now }}
+	const total = 22000
+	for from := 0; from < total; from += 1000 {
+		var batch []store.NewMessage
+		for i := from; i < from+1000; i++ {
+			to, _ := json.Marshal([]store.Addr{{Name: "Mieter", Address: fmt.Sprintf("m%d@example.com", i)}})
+			irt := ""
+			if i%2 == 1 {
+				irt = fmt.Sprintf("s%d@example.org", i-1)
+			}
+			// Gerade Nachrichten sind neue Mails ohne Präfix (Kandidaten
+			// nach der Abfrage), ungerade Antworten.
+			subj := fmt.Sprintf("Nebenkostenabrechnung 2025 Wohnung %d", i)
+			if irt != "" {
+				subj = "AW: " + subj
+			}
+			batch = append(batch, store.NewMessage{Link: store.LinkFlags{UID: uint32(i + 1), Seen: true}, MessageID: fmt.Sprintf("s%d@example.org", i),
+				InReplyTo: irt, Subject: subj, From: "demo@example.org", To: to,
+				Cc: json.RawMessage(`[{"address":"cc@example.org"}]`), DateHeader: base.Add(-time.Duration(i) * time.Minute),
+				InternalDate: base, Size: int64(100 + i), TextPlain: "Text", TextUnquoted: "Text", ContentHash: fmt.Sprintf("h%d", i),
+				CleanVersion: 1, Links: json.RawMessage("[]")})
+		}
+		if _, err := st.ApplyBatch(ctx, store.MirrorBatch{AccountID: acc, MailboxID: box, New: batch,
+			State: &store.MailboxState{UIDValidity: 1, UIDNext: uint32(from + 1001), Phase: store.PhaseReady}}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for j := 0; j < 30; j++ {
+		now = base.Add(-time.Duration(j) * 12 * time.Hour)
+		if _, err := svc.Create(ctx, NewDraft{AccountID: acc, Kind: KindNew, Content: Content{To: []store.Addr{{Address: "x@example.com"}},
+			Subject:      fmt.Sprintf("Frage %d", j),
+			BodyMarkdown: "Hallo, vielen Dank für die Nachricht, wir melden uns morgen mit allen Unterlagen."}}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	now = base
+	// Abgelegt, Ablageordner unbekannt: checkCopy meldet missing (Kopie
+	// fehlt), der Weg über den Betreff fragt also bei jedem Lauf nach.
+	if err := st.ExecForTest(`UPDATE drafts SET pushed_content_hash = 'bench-copy'`); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := svc.CheckAfterSync(ctx, acc, CheckOptions{}); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("steady_subject", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			rep, err := svc.CheckAfterSync(ctx, acc, CheckOptions{})
+			if err != nil || len(rep.SentDraftIDs) != 0 {
+				b.Fatalf("%+v %v", rep, err)
+			}
+		}
+	})
+}

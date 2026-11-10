@@ -107,6 +107,9 @@ type SentMessage struct {
 	InSent bool
 	// ContentHash wie messages.content_hash ("" = unbekannt).
 	ContentHash string
+	// InReplyTo wie messages.in_reply_to ohne Spitzklammern und Leerraum
+	// ("" = keins; A07 Teil 3, Weg über den Betreff).
+	InReplyTo string
 }
 
 // sentCandidateCols sind die Spalten eines Kandidaten (scanSentMessages).
@@ -114,7 +117,8 @@ const sentCandidateCols = `m.id, m.subject, m.from_addr, m.to_addrs, m.cc_addrs,
 	COALESCE(m.date_header, m.internal_date, 0),
 	EXISTS (SELECT 1 FROM message_mailboxes il JOIN mailboxes ib ON ib.id = il.mailbox_id
 		WHERE il.message_id = m.id AND ib.role = 'sent'),
-	COALESCE(m.content_hash, '')`
+	COALESCE(m.content_hash, ''),
+	trim(COALESCE(m.in_reply_to, ''), ` + trimIDChars + `)`
 
 // SentCandidates liefert die gesendeten Nachrichten (siehe oben) des
 // Kontos mit Datum (Date-Kopfzeile, sonst INTERNALDATE) zwischen from und
@@ -131,6 +135,65 @@ func (s *SQLite) SentCandidates(ctx context.Context, accountID int64, from, to t
 			UNION ALL
 			SELECT id FROM messages WHERE account_id = ? AND date_header IS NULL AND internal_date BETWEEN ? AND ?)
 		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, f, t, accountID, f, t)
+	if err != nil {
+		return nil, err
+	}
+	return scanSentMessages(rows)
+}
+
+// SubjectRow ist eine Nachricht mit Betreff für den Vorfilter des Wegs
+// über den Betreff (A07 Teil 3): nur ID und roher Betreff.
+type SubjectRow struct {
+	ID      int64
+	Subject string
+}
+
+// NewMailSubjects liefert ID und Betreff der Nachrichten des Kontos ohne
+// In-Reply-To mit Datum (Date-Kopfzeile, sonst INTERNALDATE) zwischen from
+// und to einschließlich (A07 Teil 3, Weg über den Betreff). Bewusst ohne
+// die Bedingung „gesendet“ (sentMessageCond) und ohne Adresslisten: Der
+// Aufrufer filtert erst nach dem Betreff und prüft den Rest nur für die
+// wenigen Treffer mit SentMessagesByID (sonst kostete jeder Lauf mit einer
+// fehlenden Kopie die Prüfung aller Nachrichten im Fenster).
+func (s *SQLite) NewMailSubjects(ctx context.Context, accountID int64, from, to time.Time) ([]SubjectRow, error) {
+	f, t := from.UnixMilli(), to.UnixMilli()
+	// Zwei Teilabfragen über den Index messages_account_date (wie
+	// SentCandidates), ohne Umweg über eine ID-Liste.
+	rows, err := s.db.QueryContext(ctx, `SELECT id, subject FROM messages WHERE account_id = ? AND date_header BETWEEN ? AND ?
+			AND trim(COALESCE(in_reply_to, ''), `+trimIDChars+`) = ''
+		UNION ALL
+		SELECT id, subject FROM messages WHERE account_id = ? AND date_header IS NULL AND internal_date BETWEEN ? AND ?
+			AND trim(COALESCE(in_reply_to, ''), `+trimIDChars+`) = ''`, accountID, f, t, accountID, f, t)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SubjectRow
+	for rows.Next() {
+		var r SubjectRow
+		if err := rows.Scan(&r.ID, &r.Subject); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SentMessagesByID liefert von den Nachrichten ids die gesendeten (siehe
+// oben: Gesendet bzw. „Alle Nachrichten“, nirgends \Draft, in keinem
+// Entwürfe-Ordner, noch keinem Entwurf zugeordnet) des Kontos, älteste
+// zuerst (A07 Teil 3).
+func (s *SQLite) SentMessagesByID(ctx context.Context, accountID int64, ids []int64) ([]SentMessage, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+sentCandidateCols+`
+		FROM messages m WHERE m.id IN (SELECT value FROM json_each(?)) AND m.account_id = ?
+		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, string(b), accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +220,7 @@ func scanSentMessages(rows *sql.Rows) ([]SentMessage, error) {
 		var m SentMessage
 		var to, cc string
 		var date int64
-		if err := rows.Scan(&m.ID, &m.Subject, &m.From, &to, &cc, &date, &m.InSent, &m.ContentHash); err != nil {
+		if err := rows.Scan(&m.ID, &m.Subject, &m.From, &to, &cc, &date, &m.InSent, &m.ContentHash, &m.InReplyTo); err != nil {
 			return nil, err
 		}
 		// Unlesbare Adresslisten zählen als leer (der Abgleich passt dann nicht).

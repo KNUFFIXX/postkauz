@@ -50,6 +50,8 @@ type CheckReport struct {
 	SentByMessageID int `json:"sent_by_message_id,omitempty"`
 	SentByFallback  int `json:"sent_by_fallback,omitempty"`
 	SentByThread    int `json:"sent_by_thread,omitempty"`
+	// SentBySubject: neue Mails über den Betreff (A07 Teil 3).
+	SentBySubject int `json:"sent_by_subject,omitempty"`
 	// Expired: Entwürfe, deren Freigabe abgelaufen ist (zurück auf draft).
 	Expired int `json:"approval_expired,omitempty"`
 	// Missing, TakenOver: Entwürfe, deren Kopie im Entwürfe-Ordner jetzt
@@ -76,7 +78,7 @@ type CheckReport struct {
 
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
-	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.ReplacedInThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
+	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.SentBySubject+r.ReplacedInThread+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
 		r.LostAttempts == 0
 }
 
@@ -85,6 +87,7 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.SentByMessageID += o.SentByMessageID
 	r.SentByFallback += o.SentByFallback
 	r.SentByThread += o.SentByThread
+	r.SentBySubject += o.SentBySubject
 	r.Expired += o.Expired
 	r.Missing += o.Missing
 	r.TakenOver += o.TakenOver
@@ -271,6 +274,16 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 	if err := s.detectThread(ctx, accountID, left, claimed, copies, rep); err != nil {
 		return err
 	}
+	// A07 Teil 3: neue Mails über den Betreff (läuft auch bei KeepMark,
+	// wie Rückfall und Verlauf).
+	for _, id := range rep.SentDraftIDs[before:] {
+		closed[id] = true
+	}
+	left = drop(left, closed)
+	before = len(rep.SentDraftIDs)
+	if err := s.detectSubject(ctx, accountID, left, claimed, copies, rep); err != nil {
+		return err
+	}
 	// A06 Teil 4: Was danach noch offen ist, kann eine eigene Antwort
 	// ersetzt haben. Nicht bei KeepMark: Gesendet bzw. „Alle Nachrichten“
 	// fehlte im Lauf, und falsches Schließen ist endgültig.
@@ -287,6 +300,18 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		}
 	}
 	return s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep)
+}
+
+// drop liefert die Entwürfe aus list, die nicht in closed stehen (neue
+// Liste).
+func drop(list []store.Draft, closed map[int64]bool) []store.Draft {
+	out := list[:0:0]
+	for _, d := range list {
+		if !closed[d.ID] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // detectFallback ist der Rückfall-Abgleich (E5) für die offenen Entwürfe

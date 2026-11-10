@@ -2,6 +2,7 @@ package drafts
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -295,5 +296,181 @@ func TestA07TakenOverRefresh(t *testing.T) {
 	}
 	if rep := e.check(); !rep.Empty() || e.auditCount(OpRemoteCheck) != n+1 {
 		t.Fatalf("run after = %+v", rep)
+	}
+}
+
+// Teil 3: neue Mail mit Nachsatz (Befund 09.11.2026: 29 Wörter Entwurf, 38
+// gesendet, Jaccard 0,763). Synthetischer Nachbau mit 29 und 38 Wörtern.
+const (
+	sjOwn = "Hallo Herr Beispiel, die Heizung im zweiten Stock wird am Donnerstag zwischen acht und zwölf Uhr gewartet. " +
+		"Bitte sorgen Sie dafür, dass der Techniker in Ihre Wohnung kommt. Danke"
+	sjAdded   = " Falls der Termin nicht passt, melden Sie sich bitte bis Mittwoch im Büro."
+	sjSubject = "Wartung Heizung"
+)
+
+var sjTo = []store.Addr{{Name: "Beispiel", Address: "mieter@example.net"}}
+
+// sjSend legt eine gesendete neue Mail ab (ohne In-Reply-To).
+func (e *thEnv) sjSend(subject, text string, to []store.Addr, role, from string) int64 {
+	e.t.Helper()
+	return e.send(thSent{subject: subject, text: text, to: to, role: role, from: from, inReplyTo: " "})
+}
+
+func TestA07SubjectPostscript(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	fd := NewFallbackDraft(d, sjOwn, "")
+	if n := len(fd.Words); n != 29 {
+		t.Fatalf("draft words = %d", n)
+	}
+	sw := NewSentWords(sjOwn + sjAdded)
+	if n := len(sw.Full); n != 38 {
+		t.Fatalf("sent words = %d", n)
+	}
+	if sc := fd.ScoreSent(sw); sc < 0.75 || sc > 0.78 || sc >= FallbackMinJaccard {
+		t.Fatalf("score %.3f, want about 0.763", sc)
+	}
+	e.dropCopy(d)
+	sent := e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+	rep := e.check()
+	if rep.SentBySubject != 1 || rep.SentByFallback != 0 || len(rep.SentDraftIDs) != 1 || rep.SentDraftIDs[0] != d.ID || rep.Empty() {
+		t.Fatalf("report = %+v", rep)
+	}
+	got := e.draft(d.ID)
+	if got.Status != string(StatusSentByHuman) || got.SentMessageID != sent {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+	r, ok := e.lastAudit(OpSentDetected)
+	if !ok || r.Reason != DetectSubject || r.ActorType != "system" {
+		t.Fatalf("audit = %+v", r)
+	}
+	if p := string(r.ParamsRedacted); strings.Contains(p, "Heizung") || strings.Contains(p, "mieter") {
+		t.Fatalf("audit params with content: %s", p)
+	}
+	if rep := e.check(); !rep.Empty() {
+		t.Fatalf("second run = %+v", rep)
+	}
+}
+
+// Teil 3: Fälle, in denen der Weg über den Betreff nicht trifft.
+func TestA07SubjectStaysOpen(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		run  func(e *thEnv) store.Draft
+	}{
+		{"other subject", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.dropCopy(d)
+			e.sjSend("Wartung Heizung Haus B", sjOwn+sjAdded, sjTo, "", "")
+			return d
+		}},
+		{"reply with In-Reply-To and the same subject", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.dropCopy(d)
+			e.send(thSent{subject: sjSubject, text: sjOwn + sjAdded, to: sjTo})
+			return d
+		}},
+		{"other recipients", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.dropCopy(d)
+			e.sjSend(sjSubject, sjOwn+sjAdded, thAnna, "", "")
+			return d
+		}},
+		{"copy still in the Drafts folder", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+			return d
+		}},
+		{"own text with 7 words", func(e *thEnv) store.Draft {
+			short := "Die Heizung wird am Donnerstag gewartet heute"
+			d := e.draftTo(KindNew, short, sjTo, sjSubject, true)
+			if n := len(NewFallbackDraft(d, short, "").Words); n != 7 {
+				e.t.Fatalf("words = %d", n)
+			}
+			e.dropCopy(d)
+			e.sjSend(sjSubject, short+" Bitte zugänglich machen.", sjTo, "", "")
+			return d
+		}},
+		{"draft without To and Cc", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, nil, sjSubject, true)
+			e.dropCopy(d)
+			e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+			return d
+		}},
+		{"sent Re: X without In-Reply-To", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.dropCopy(d)
+			e.sjSend("Re: "+sjSubject, sjOwn+sjAdded, sjTo, "", "")
+			return d
+		}},
+		{"only in All Mail with a foreign sender", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+			e.dropCopy(d)
+			e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "all", "fremd@example.net")
+			return d
+		}},
+		{"never put", func(e *thEnv) store.Draft {
+			d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, false)
+			e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+			return d
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThEnv(t)
+			d := c.run(e)
+			for i := 0; i < 2; i++ {
+				if rep := e.check(); rep.SentBySubject != 0 || len(rep.SentDraftIDs) != 0 {
+					t.Fatalf("run %d = %+v", i, rep)
+				}
+			}
+			if got := e.status(d); got != string(StatusDraft) {
+				t.Fatalf("draft = %s", got)
+			}
+		})
+	}
+}
+
+// Teil 3: nur in „Alle Nachrichten“, aber mit eigenem Absender → trifft.
+func TestA07SubjectAllMailOwnSender(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	e.dropCopy(d)
+	e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "all", "Demo <demo@example.org>")
+	if rep := e.check(); rep.SentBySubject != 1 {
+		t.Fatalf("report = %+v", rep)
+	}
+}
+
+// Teil 3: zwei offene neue Entwürfe mit gleichem Betreff, eine gesendete
+// Mail: Rangfolge wie Teil 2 (gleiche Ähnlichkeit → die jüngere Fassung).
+func TestA07SubjectRanking(t *testing.T) {
+	e := newThEnv(t)
+	older := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	e.later()
+	younger := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	e.dropCopy(older)
+	e.dropCopy(younger)
+	sent := e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+	rep := e.check()
+	if rep.SentBySubject != 1 || rep.SentDraftIDs[0] != younger.ID {
+		t.Fatalf("report = %+v", rep)
+	}
+	if got := e.draft(younger.ID); got.SentMessageID != sent {
+		t.Fatalf("younger sent %d", got.SentMessageID)
+	}
+	if got := e.status(older); got != string(StatusDraft) {
+		t.Fatalf("older = %s", got)
+	}
+}
+
+// Teil 3: läuft auch bei KeepMark.
+func TestA07SubjectKeepMark(t *testing.T) {
+	e := newThEnv(t)
+	d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
+	e.dropCopy(d)
+	e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "", "")
+	rep, err := e.svc.CheckAfterSync(context.Background(), e.acc, CheckOptions{KeepMark: true})
+	if err != nil || rep.SentBySubject != 1 {
+		t.Fatalf("report = %+v, %v", rep, err)
 	}
 }

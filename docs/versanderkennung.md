@@ -16,7 +16,7 @@ Die Prüfung macht drei Dinge, in dieser Reihenfolge (`drafts.Service.CheckAfter
 
 Scheitert die Prüfung (etwa weil die Datenbank gerade gesperrt ist), zählt das als Fehler des Laufs (`errors`, Log ohne Mailinhalt); der Rest des Laufs (Nacharbeit, Extraktion, Suchindex) läuft weiter, und der nächste Lauf prüft erneut (Gegenprüfung S2.6–S2.8, K5). Nur Abbruch, Verbindungs- oder Anmeldefehler und ein interner Fehler (Panic) beenden den Lauf.
 
-Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`, seit A06 `replaced_in_thread`, `replaced_draft_ids`). Ohne Änderung erscheint nichts.
+Der Sync nennt das Ergebnis in einer Zeile vor den Schlusszeilen, z. B. `drafts: 1 sent in the mail client, now sent_by_human (1 by Message-ID; draft 3)`, mit `--json` im Feld `draft_check` (`sent_by_message_id`, `sent_by_fallback`, seit A05 `sent_by_thread`, seit A07 `sent_by_subject`, `approval_expired`, `missing`, `taken_over`, `sent_draft_ids`, seit A06 `replaced_in_thread`, `replaced_draft_ids`). Ohne Änderung erscheint nichts.
 
 ## 2. Erster Weg: die Message-ID
 
@@ -51,7 +51,7 @@ Ein paar Folgen, die man kennen sollte:
 - **Outlook-Verlauf im Zitat (seit A05 Teil 1):** Alles ab dem Outlook-Kopfblock fehlt im zitatfreien Text der gesendeten Nachricht (StripQuotes), also auch ein Nachsatz, den der Mensch ganz unten **unter den Verlauf** schreibt. Er zählt dann nicht: Der Entwurf gilt als unverändert gesendet. Ein Nachsatz zwischen zitiertem Text und Verlauf verhindert den Schnitt (siehe oben).
 - **Kleine Korrekturen beim Senden** (ein, zwei Wörter) fallen meist noch über 0,9: Bei zehn Wörtern ist ein zusätzliches Wort 10/11 ≈ 0,91, zwei zusätzliche 10/12 ≈ 0,83. Je kürzer der Text, desto eher kippt der Rückfall. Wer viel umschreibt, schließt den Entwurf selbst (Abschnitt 5).
 - **Leerer Text:** Ein Entwurf ohne eigenen Text (oder nur mit Signatur) und ein Entwurf ohne Empfänger in To/Cc werden im Rückfall nie geschlossen (ohne Empfänger blieben nur Betreff und Text; das reicht nicht). Zwei leere Texte gelten nicht als gleich. Eine **Antwort ohne Empfänger** (`derive_recipients: false`, der Mensch trägt den Empfänger im Mailprogramm ein) schließen seit A07 Teil 1 der Weg über den Verlauf und die Regel „ersetzt“ (Abschnitte 3a, 3b, Bedingung (d)).
-- **Eine gesendete Nachricht schließt höchstens einen Entwurf.** Passen mehrere Entwürfe zu derselben Nachricht (gleiche Empfänger, Betreff und Text), gilt diese **Rangfolge** (seit A07 Teil 2; gleich in Rückfall und Verlauf): zuerst die höhere Ähnlichkeit (auf drei Nachkommastellen gerundet); bei Gleichstand der Entwurf mit `remote: taken_over` (der Mensch hat ihn im Mailprogramm angefasst), dann der mit dem **jüngeren** `content_changed_at` (die neuere Fassung), dann die älteste Nachricht, dann die kleinere Entwurfs-ID. Vorher gewann bei Gleichstand der älteste Entwurf; Befund 09.11.2026: Zu einer Mail lagen zwei Fassungen derselben Antwort (die zweite, weil Gmail die erste übernommen hatte), gesendet wurde die jüngere, zugeordnet aber der älteren, und die jüngere blieb für immer offen. **Bekannte Grenze** (hingenommen): Bei zwei gleichen Entwürfen und zwei gesendeten Nachrichten bekommt der jüngere Entwurf die ältere Nachricht; für den Zustand ist das gleichgültig. Eine Nachricht, die schon einem Entwurf zugeordnet ist (`sent_message_id`), zählt nie wieder.
+- **Eine gesendete Nachricht schließt höchstens einen Entwurf.** Passen mehrere Entwürfe zu derselben Nachricht (gleiche Empfänger, Betreff und Text), gilt diese **Rangfolge** (seit A07 Teil 2; gleich in Rückfall, Verlauf und Betreff): zuerst die höhere Ähnlichkeit (auf drei Nachkommastellen gerundet); bei Gleichstand der Entwurf mit `remote: taken_over` (der Mensch hat ihn im Mailprogramm angefasst), dann der mit dem **jüngeren** `content_changed_at` (die neuere Fassung), dann die älteste Nachricht, dann die kleinere Entwurfs-ID. Vorher gewann bei Gleichstand der älteste Entwurf; Befund 09.11.2026: Zu einer Mail lagen zwei Fassungen derselben Antwort (die zweite, weil Gmail die erste übernommen hatte), gesendet wurde die jüngere, zugeordnet aber der älteren, und die jüngere blieb für immer offen. **Bekannte Grenze** (hingenommen): Bei zwei gleichen Entwürfen und zwei gesendeten Nachrichten bekommt der jüngere Entwurf die ältere Nachricht; für den Zustand ist das gleichgültig. Eine Nachricht, die schon einem Entwurf zugeordnet ist (`sent_message_id`), zählt nie wieder.
 - **Änderung während der Prüfung:** Der Rückfall vergleicht den Stand, den er zu Beginn gelesen hat. Ändert ein Agent oder der Mensch den Inhalt, bevor der Entwurf geschlossen ist, wird er nicht geschlossen (der Vergleich gilt nicht mehr); die nächste Prüfung vergleicht den neuen Stand (Gegenprüfung S2.6–S2.8, K4).
 - **„Alle Nachrichten" (Rolle `all`):** Dort liegen auch empfangene Mails. Im Rückfall zählt eine Nachricht, die **nur** dort liegt, deshalb nur, wenn ihr Absender eine eigene Adresse ist: Kontoadresse, Anmeldename, Identitäten samt Reply-To und Aliasse (`account set --aliases`, Entscheid 26). Seit der Nachbesserung T3 (Punkt 15, Befund D7a B1) gelten bei `gmail.com`/`googlemail.com` Schreibweisen mit Punkten im lokalen Teil, mit Zusatz ab `+` und mit `googlemail.com` als dieselbe eigene Adresse (`internal/mailaddr`); andere Anbieter unverändert. Für Gesendet (Rolle `sent`) gilt diese Bedingung nicht. Für die Message-ID gilt sie nie (die ID ist eindeutig).
 
@@ -113,6 +113,41 @@ Seit A06 Teil 4 (05.11.2026; Default, Einspruch bis zum Merge). Befund aus dem D
 - Die Regel baut auf (f) in der jetzigen Form (Offene Frage 2 der Roadmap: nur die zuletzt abgelegte Kopie und neuere Fassungen zählen).
 - Ohne Original im Spiegel (`purge`), ohne `In-Reply-To` in der gesendeten Antwort (Gmail mit eigenem Betreff) oder ohne abgelegte Kopie gilt die Regel nicht; dann schließt weiter der Mensch.
 
+## 3c. Vierter Weg: der Betreff (neue Mails)
+
+Seit A07 Teil 3 (10.11.2026; Default, Einspruch bis zum Merge). Befund aus dem Dauerbetrieb (09.11.2026): Eine **neue Mail** (`kind new`, ein Empfänger, kein Original) wurde in Gmail um einen Satz ergänzt und gesendet; Empfänger und Betreff gleich, Kopie weg. Ähnlichkeit der Wortmengen 0,763 (29 Wörter im Entwurf, 38 gesendet), unter den 0,9 des Rückfalls. Der Weg über den Verlauf (Schwelle 0,5) gilt nur für Antworten und Weiterleitungen mit Original, „ersetzt“ (3b) ebenso; für neue Mails gab es nur Message-ID und Rückfall.
+
+Der Weg über den Betreff gilt **nur für Entwürfe `kind new`**, läuft nach dem Verlauf und vor „ersetzt“ (auch bei KeepMark, wie Rückfall und Verlauf) und hat dieselben Bedingungen wie der Weg über den Verlauf (Abschnitt 3a), nur (a) und (c) sind ersetzt:
+
+| | Bedingung |
+|---|---|
+| (a') | Der Entwurf ist eine neue Mail (`kind new`); sein Betreff ist nach `NormalizeSubject` (wie im Rückfall) gleich dem der gesendeten Nachricht und nicht leer. |
+| (b) | wie im Verlauf: Gesendet bzw. „Alle Nachrichten“ (dort nur mit eigenem Absender), nirgends `\Draft`, in keinem Entwürfe-Ordner, keine Kopie von PostKauz. |
+| (c') | Die gesendete Nachricht trägt **kein** `In-Reply-To`, und ihr roher Betreff beginnt **nicht** mit Re:/AW:/Antw:/Fwd:/WG:/FW: (eine neue Mail, keine Antwort; Webmail mancher Anbieter entfernt `In-Reply-To` aus Antworten). |
+| (d) | Gleiche Empfängermenge aus To und Cc, **streng**: Ein Entwurf ohne To/Cc wird über diesen Weg nie geschlossen (anders als im Verlauf seit A07 Teil 1). |
+| (e) | Zeitfenster wie beim Rückfall. |
+| (f) | Die Kopie fehlt im Entwürfe-Ordner (wie im Verlauf), vor der Abfrage geprüft und beim Schließen in derselben Transaktion noch einmal, mit dem Fingerabdruck des Inhalts. |
+| (g) | Ähnlichkeit ≥ 0,5 und eigener Text mit mindestens 8 verschiedenen Wörtern (wie im Verlauf). |
+
+Treffer → `sent_by_human`, Grund **`subject`**, Audit `drafts.sent_detected` (Akteur `system`). Eine gesendete Nachricht schließt höchstens einen Entwurf; Rangfolge wie in Abschnitt 3 (A07 Teil 2). Der Sync nennt es in seiner Zeile (`… 1 by subject (new email, same recipients and subject, similar text) …`), mit `--json` in `draft_check.sent_by_subject`.
+
+**Bei jedem Lauf, ohne Hochwassermarke** (wie der Verlauf; `SentCheckRev` bleibt 2): je offenem neuen, abgelegten Entwurf mit fehlender Kopie. (f) wird zuerst geprüft, die Zeitfenster der übrigen Entwürfe werden zusammengelegt, die Kandidaten aus Gesendet bzw. „Alle Nachrichten“ ohne `In-Reply-To` gelesen (`Store.NewMailSubjects` und `Store.SentMessagesByID`, Spalte `messages.in_reply_to` aus 0001, keine Migration), ihr Text erst nach den Kopfbedingungen. Solange die Kopie da ist, kostet der Weg nur die Prüfung (f) je offenem neuen Entwurf. Messung: Abschnitt 3c.1.
+
+**Bekannte Grenze:** Verwirft der Mensch eine neue Mail und schreibt sie mit gleichem Betreff an dieselben Empfänger neu (mindestens die Hälfte gleicher Wörter, binnen 14 Tagen), gilt der Entwurf als gesendet. Das ändert nur den Zustand in PostKauz, nie einen Versand.
+
+### 3c.1 Messung
+
+`BenchmarkCheckAfterSync22k` (wie in Abschnitt 3a) und neu `BenchmarkCheckAfterSync22kSubject`: dieselben 22.000 Nachrichten in „Alle Nachrichten“ (jede zweite eine neue Mail ohne Präfix, jede zweite eine Antwort), dazu **30 offene neue Entwürfe, abgelegt, deren Kopie fehlt**, über 15 Tage verteilt (ihre Zeitfenster decken alle 22.000 Nachrichten ab, eine Nachricht je Minute: ein bewusst übertriebener Fall); kein Kandidat passt. Cloud-Container mit 4 Kernen, je drei Läufe, Zeit je Prüfung:
+
+| Teil | vor A07 Teil 3 | mit A07 Teil 3 |
+|---|---|---|
+| `steady` (keine neue Nachricht) | 5,4–5,7 ms | 4,5–5,1 ms |
+| `one_new` (eine neue Nachricht) | 8,7–9,3 ms | 8,0–8,8 ms |
+| `steady_replies` (dazu 30 offene Antworten) | 17,3–17,9 ms | 15,8–17,5 ms |
+| `steady_subject` (30 neue Entwürfe ohne Kopie) | 4,9–5,2 ms (Weg gab es nicht) | 37,6–40,6 ms |
+
+`steady` bleibt unter der Grenze von 20 ms aus dem Auftrag. Der Weg kostet nur, solange offene neue Entwürfe ohne Kopie da sind (die Auffangregel „Kopie weg“ schließt sie nach 24 Stunden, Abschnitt 3d), und wächst mit der Zahl der Nachrichten im Fenster. Eine erste Fassung, die alle Nachrichten im Fenster mit der vollen Bedingung „gesendet“ las und jeden Betreff normalisierte, brauchte 414–561 ms; seitdem liest der Vorfilter nur ID und Betreff ohne `In-Reply-To` (`Store.NewMailSubjects`), prüft ohne unsichtbare Zeichen zuerst, ob das längste Wort des Entwurfsbetreffs vorkommt, normalisiert erst dann und prüft „gesendet“ nur für die Treffer (`Store.SentMessagesByID`).
+
 ## 4. Was nie als gesendet zählt
 
 - Nachrichten mit dem Flag **`\Draft`** in irgendeinem Ordner.
@@ -133,7 +168,7 @@ Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human
 
 ## 6. Audit
 
-Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback` oder (seit A05) `thread`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
+Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback`, (seit A05) `thread` oder (seit A07) `subject`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
 ## 7. Ablage geänderter Entwürfe (Entscheid 43)
 

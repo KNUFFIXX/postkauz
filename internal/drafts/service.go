@@ -731,7 +731,7 @@ func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
 // der Vergleich nicht mehr: draft_changed, nichts wird geschrieben, die
 // nächste Prüfung vergleicht den neuen Stand (Gegenprüfung S2.6–S2.8, K4).
 func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason, expect string) (Result, error) {
-	if reason != DetectMessageID && reason != DetectFallback && reason != DetectThread {
+	if reason != DetectMessageID && reason != DetectFallback && reason != DetectThread && reason != DetectSubject {
 		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
 	}
 	return s.close(ctx, id, EvSentDetected, sentMessageID, reason, expect)
@@ -758,7 +758,7 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		// derselben Transaktion noch einmal geprüft; ein Push dazwischen
 		// legte sonst eine neue Kopie ab, und der Entwurf würde trotzdem
 		// geschlossen).
-		if reason == DetectThread {
+		if reason == DetectThread || reason == DetectSubject { // A07 Teil 3: Betreff wie Verlauf
 			if st, err := checkCopy(x, d); err != nil {
 				return err
 			} else if st != RemoteMissing {
@@ -797,8 +797,8 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 }
 
 // OpSentDetected ist die Operation im Audit, wenn der Sync den Versand
-// eines Entwurfs erkannt hat (E5; Grund message_id, fallback oder seit
-// A05 thread).
+// eines Entwurfs erkannt hat (E5; Grund message_id, fallback, seit A05
+// thread, seit A07 subject).
 const OpSentDetected = "drafts.sent_detected"
 
 // systemEvent baut den Audit-Eintrag eines Systemereignisses: Akteur

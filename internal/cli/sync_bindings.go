@@ -311,7 +311,7 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		return
 	}
 	var parts []string
-	if n := c.SentByMessageID + c.SentByFallback + c.SentByThread; n > 0 {
+	if n := c.SentByMessageID + c.SentByFallback + c.SentByThread + c.SentBySubject; n > 0 {
 		how := []string{}
 		if c.SentByMessageID > 0 {
 			how = append(how, fmt.Sprintf("%d by Message-ID", c.SentByMessageID))
@@ -321,6 +321,9 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		}
 		if c.SentByThread > 0 {
 			how = append(how, fmt.Sprintf("%d by thread (reply to the same message, same recipients, similar text)", c.SentByThread))
+		}
+		if c.SentBySubject > 0 {
+			how = append(how, fmt.Sprintf("%d by subject (new email, same recipients and subject, similar text)", c.SentBySubject))
 		}
 		ids := make([]string, 0, len(c.SentDraftIDs))
 		for _, id := range c.SentDraftIDs {
