@@ -4,7 +4,27 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-Noch nichts.
+### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
+
+Auftrag A07 (10.11.2026, Zweig `claude/compassionate-mayer-ntc1b5`, Basis `main` `d5d9af0` = Stand 0.3.0-rc4). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter (ohne `[draft] copy_gone_after` in der Konfiguration). Build **0.3.0-rc5** (Prüfsummen und Prüfläufe: `docs/protokolle/A07_stand.md`). Haltepunkt: Gegenprüfung, dann Abnahme D13 (`docs/abnahme_D13.md`).
+
+#### Fixed
+
+- **Antwort-Entwurf ohne Empfänger** (Teil 1): Ein mit `derive_recipients: false` ohne Empfänger angelegter Antwort-Entwurf, den der Mensch in Gmail adressiert und gesendet hat, blieb für immer offen. Der Weg über den Verlauf und die Regel „ersetzt“ nehmen (d) jetzt als erfüllt, wenn der Entwurf kein To/Cc hat und die Antwort mindestens einen Empfänger; `draft show` nennt den Fall.
+- **Zwei Fassungen derselben Antwort** (Teil 2): Bei gleicher Ähnlichkeit gewann der älteste Entwurf, die gesendete jüngere Fassung blieb offen und wurde als `taken_over` nie mehr aufgefrischt. Jetzt gewinnt die übernommene bzw. jüngere Fassung, und `taken_over` wird `missing`, sobald keine Fassung mehr im Entwürfe-Ordner liegt (danach greifen „ersetzt“ und „Kopie weg“).
+- **Neue Mail mit Nachsatz** (Teil 3): Für neue Mails gab es nur Message-ID und Rückfall (0,9); eine um einen Satz ergänzte Mail (0,763) blieb offen.
+- **Sammelpunkt 0e** (Teil 6): Kommentar in `replaced.go` richtiggestellt (eine Übernahme wird mit `draft_changed` zurückgerollt); `push_failed` nennt den Grund des gescheiterten Neubaus (z. B. `invalid_address`); Abfragen in `store/sentdetect.go` aus Konstanten (golangci-lint G202).
+
+#### Added
+
+- **Vierter Weg der Versanderkennung über den Betreff** (Teil 3, Grund `subject`): nur `kind new`, gleicher normalisierter Betreff, gesendete Nachricht ohne `In-Reply-To` und ohne Antwortpräfix, Empfänger streng, Kopie weg, Ähnlichkeit ≥ 0,5 bei mindestens 8 eigenen Wörtern; `draft_check.sent_by_subject`.
+- **Auffangregel „Kopie weg“** (Teil 4): offener Entwurf, dessen Kopie länger als `[draft] copy_gone_after` (Standard `24h`, `"off"` schaltet ab) fehlt und den kein Weg erkannt hat → `abandoned`, Grund `copy_gone`, Audit `drafts.copy_gone_detected`; `draft show`/`mail_get_draft` mit `closed_reason: "copy_gone"`, `copy_missing_since`, `closed_note`; `draft_check.copy_gone`, `copy_gone_draft_ids`.
+- **`drafts.supersede`** (Teil 5; MCP `mail_supersede_draft`, CLI `draft supersede <alt> --by <neu>`, R2, `mail:draft`): Ein Agent verwirft einen eigenen Entwurf, den eine neuere eigene Fassung ersetzt, und legt dessen unveränderte Kopie ohne Antrag in den Papierkorb (Nachtrag zu E2/E3); `closed_reason: "superseded_by_draft"`, `superseded_by_draft_id`.
+- Benchmark `BenchmarkCheckAfterSync22kSubject`; Sync-Test für die Reihenfolge von `MissingBefore`.
+
+#### Docs
+
+- `docs/versanderkennung.md` (Stand, Abschnitte 1, 3, 3a, 3b, neu 3c und 3d, 5, 6), `docs/entscheidungen.md` (ADR-009, Nachtrag A07 Teil 5), `docs/sicherheit.md` (Scopes, Rollen, Tabelle Abschnitt 5), `docs/mcp.md`, `docs/cli.md` (2j, 2b, Abschnitt 5 `copy_gone_after`), README, `docs/roadmap.md` (Stand, 0e erledigt, 0f, Entschiedene Fragen 78, 79), neues Abnahmeskript `docs/abnahme_D13.ps1` mit Anleitung `docs/abnahme_D13.md` (zwei Läufe nach dem Tausch, `-ExpectCopyGone`, WARN bei vorübergehendem Serverfehler, Punkte aus Sammelpunkt 0e), `docs/protokolle/A07_stand.md`.
 
 ## [0.3.0-rc4] – 2026-11-05 (Release-Kandidat; im Dauerbetrieb seit 05.11.2026, Tag `v0.3.0-rc4` an `b41f9eb`, GitHub-Release vom 10.11.2026)
 

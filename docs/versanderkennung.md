@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: A06 (05.11.2026; D12 bestanden, Messtabelle Abschnitt 9 ergänzt; Teil 3 verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3; Teil 4 ersetzte Entwürfe, Abschnitt 3b). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: A07 (10.11.2026; Teil 1 Antwort ohne Empfänger in 3a/3b, Teil 2 Rangfolge in 3/3a und `taken_over` → `missing` in 1, Teil 3 vierter Weg über den Betreff, Abschnitt 3c, Teil 4 Auffangregel „Kopie weg“, Abschnitt 3d, Teil 5 `drafts.supersede` in 5, Sammelpunkt 0e in 3b; kein Schema-Upgrade). Davor A06 (05.11.2026; D12 bestanden, Messtabelle Abschnitt 9 ergänzt; Teil 3 verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3; Teil 4 ersetzte Entwürfe, Abschnitt 3b). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -182,14 +182,25 @@ Seit A07 Teil 4 (10.11.2026; Default, Einspruch bis zum Merge). Ziel: Kein offen
 
 Grund (Befund K8 der Gegenprüfung von S2.4/S2.5): **Gmail führt jede Entwurfskopie zusätzlich in `[Gmail]/All Mail`**, mit der Message-ID des Entwurfs. Ohne diesen Ausschluss gälte jeder abgelegte Entwurf sofort als gesendet. Sendet der Mensch, entfernt Gmail die Kopie aus den Entwürfen; die gesendete Nachricht trägt kein `\Draft` und zählt dann.
 
-## 5. Kein Treffer ist kein Fehler
+## 5. Kein Treffer ist kein Fehler; wer schließt
 
-Findet die Prüfung nichts (auch nicht über den Verlauf, Abschnitt 3a, und keine ersetzende eigene Antwort, Abschnitt 3b), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; close the draft with draft mark-sent or draft abandon`. Änderungen sind dann `draft_taken_over`. Der Mensch schließt ihn selbst:
+Stand A07 (10.11.2026). Findet die Prüfung nichts (keine der vier Wege, Abschnitte 2 bis 3c, und keine ersetzende eigene Antwort, Abschnitt 3b), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; if no sent message is detected, the sync closes the draft as abandoned (copy_gone) once [draft] copy_gone_after (default 24h) has passed; or close it now with draft mark-sent or draft abandon` (bei einer Antwort ohne To/Cc der Hinweis aus Abschnitt 3a, Bedingung (d)). Änderungen sind dann `draft_taken_over`.
+
+**Im Alltag schließt das System** (seit A07 muss der Mensch dafür nichts auf der Kommandozeile tun):
+
+- gesendet erkannt (`sent_by_human`): Message-ID, Rückfall, Verlauf, Betreff (Abschnitte 2 bis 3c);
+- durch eine eigene Antwort ersetzt (`abandoned`, `replaced`; Abschnitt 3b);
+- Kopie länger als `[draft] copy_gone_after` weg und nichts erkannt (`abandoned`, `copy_gone`; Abschnitt 3d);
+- Schlüssel eines Agenten widerrufen (`abandoned`; [sicherheit.md](sicherheit.md), Abschnitt 2).
+
+**Der Agent** darf seit A07 Teil 5 genau eines: einen **eigenen** Entwurf verwerfen, den eine neuere eigene Fassung ersetzt (`drafts.supersede`, MCP `mail_supersede_draft`, CLI `draft supersede <alt> --by <neu>`): Der alte wird `abandoned` (Grund `superseded_by_draft`), seine unveränderte Kopie geht ohne Antrag in den Papierkorb ([entscheidungen.md](entscheidungen.md), ADR-009, Nachtrag A07 Teil 5). **Grenze:** Sendet der Mensch die alte Kopie, bevor die Aktion ausgeführt ist (ein laufender `sync --watch` braucht höchstens etwa 10 s), bleibt der Entwurf `abandoned`; die Versanderkennung prüft nur offene Entwürfe, und die Aktion findet die Kopie nicht mehr (`not_found`). Für gesendet erklären kann ein Agent einen Entwurf weiterhin nie (E2).
+
+**Der Mensch** kann jederzeit selbst schließen, etwa wenn er nicht 24 Stunden warten will oder der Entwurf nach einem geplanten Senden als gesendet zählen soll:
 
 - `postkauz draft mark-sent <id>` → `sent_by_human` (er hat gesendet),
 - `postkauz draft abandon <id>` → `abandoned` (er hat verworfen).
 
-Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2). Ein Agent kann einen Entwurf nie für gesendet erklären. **Seit A07 Teil 5** darf ein Agent einen **eigenen** Entwurf verwerfen, den eine neuere eigene Fassung ersetzt (`drafts.supersede`, MCP `mail_supersede_draft`): Der alte wird `abandoned` (Grund `superseded_by_draft`), seine unveränderte Kopie geht ohne Antrag in den Papierkorb ([entscheidungen.md](entscheidungen.md), ADR-009, Nachtrag A07 Teil 5). **Grenze:** Sendet der Mensch die alte Kopie, bevor die Aktion ausgeführt ist (ein laufender `sync --watch` braucht höchstens etwa 10 s), bleibt der Entwurf `abandoned`; die Versanderkennung prüft nur offene Entwürfe, und die Aktion findet die Kopie nicht mehr (`not_found`). Das System verwirft einen Entwurf nur nach der Regel in Abschnitt 3b (ersetzt durch eine eigene Antwort) und wenn der Schlüssel eines Agenten widerrufen ist (`docs/sicherheit.md`, Abschnitt 2).
+Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2).
 
 ## 6. Audit
 
