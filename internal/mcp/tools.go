@@ -179,6 +179,16 @@ var tools = []toolBinding{
 			"mail content) says why. Only a human can approve or reject; you cannot (human_only=true): tell the user the command in " +
 			"next_step (" + brand.Name + " approve <approval_id>, or reject). After approval (status ready) the human " +
 			"sends the draft from the mail client. Follow the decision with mail_get_approval. dry_run=true only checks. " + neverSends},
+	// A07 Teil 5: eigene, unveränderte Kopie eines ersetzten Entwurfs in
+	// den Papierkorb (Nachtrag zu E2 und E3).
+	{tool: "mail_supersede_draft", op: "drafts.supersede", title: "Replace an own draft by a newer one", dryRun: true, destructive: true,
+		desc: "When you wrote a newer draft (by_draft_id) that replaces an older one of yours (draft_id; same kind and the same " +
+			"original, or for new emails the same subject), close the older one (status abandoned) and move its unchanged copy " +
+			"in the Drafts folder to the trash (never deleted for good; a running sync --watch moves it within about 10 s). " +
+			"Both drafts must have been created and last changed with your key; the newer one must be open and newer. Refused " +
+			"when the older draft is ready (approved by the human), when its copy was changed in the mail client (copy_changed) " +
+			"or is gone (copy_missing: it may have been sent; the sync closes it then). Do not delete draft copies with other " +
+			"tools. dry_run=true only checks. " + neverSends},
 	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
 		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +
 			"the reason of the human), superseded (the draft changed) or expired, with who decided and when. " + neverSends},

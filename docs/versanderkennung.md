@@ -188,7 +188,7 @@ Findet die Prüfung nichts (auch nicht über den Verlauf, Abschnitt 3a, und kein
 - `postkauz draft mark-sent <id>` → `sent_by_human` (er hat gesendet),
 - `postkauz draft abandon <id>` → `abandoned` (er hat verworfen).
 
-Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2). Ein Agent kann einen Entwurf nie für gesendet erklären. Das System verwirft einen Entwurf nur nach der Regel in Abschnitt 3b (ersetzt durch eine eigene Antwort) und wenn der Schlüssel eines Agenten widerrufen ist (`docs/sicherheit.md`, Abschnitt 2).
+Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human_only`, E2). Ein Agent kann einen Entwurf nie für gesendet erklären. **Seit A07 Teil 5** darf ein Agent einen **eigenen** Entwurf verwerfen, den eine neuere eigene Fassung ersetzt (`drafts.supersede`, MCP `mail_supersede_draft`): Der alte wird `abandoned` (Grund `superseded_by_draft`), seine unveränderte Kopie geht ohne Antrag in den Papierkorb ([entscheidungen.md](entscheidungen.md), ADR-009, Nachtrag A07 Teil 5). **Grenze:** Sendet der Mensch die alte Kopie, bevor die Aktion ausgeführt ist (ein laufender `sync --watch` braucht höchstens etwa 10 s), bleibt der Entwurf `abandoned`; die Versanderkennung prüft nur offene Entwürfe, und die Aktion findet die Kopie nicht mehr (`not_found`). Das System verwirft einen Entwurf nur nach der Regel in Abschnitt 3b (ersetzt durch eine eigene Antwort) und wenn der Schlüssel eines Agenten widerrufen ist (`docs/sicherheit.md`, Abschnitt 2).
 
 ## 6. Audit
 

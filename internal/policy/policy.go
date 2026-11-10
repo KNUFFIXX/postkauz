@@ -133,7 +133,12 @@ var Roles = map[string][]Scope{
 	// triage: der Scope-Satz der unbeaufsichtigten Nacht-Triage (Lastenheft
 	// Vorgang 5, T2 Punkt 5): lesen, suchen, Entwürfe, lokale Tags; kein
 	// Markieren am Server (V20), kein Verschieben, kein Papierkorb, kein
-	// Sync, kein Audit-Lesen (TestTriageRoleCanDoNothingElse).
+	// Sync, kein Audit-Lesen (TestTriageRoleCanDoNothingElse). Ausnahme seit
+	// A07 Teil 5 (Nachtrag zu E2 und E3): Mit mail:draft darf triage
+	// drafts.supersede, also die eigene, unveränderte Kopie eines durch eine
+	// neuere eigene Fassung ersetzten Entwurfs ohne Antrag in den Papierkorb
+	// legen; sonst nichts in den Papierkorb ([delete] agent_may = none
+	// verbietet auch das).
 	"triage": {ScopeMailRead, ScopeMailSearch, ScopeMailDraft, ScopeMailTag},
 	"operator": {ScopeMailRead, ScopeMailSearch, ScopeAuditRead, ScopeMailDraft, ScopeMailTag, ScopeMailMark, ScopeMailSync,
 		ScopeMailMove, ScopeMailTrash, ScopeMailExport},

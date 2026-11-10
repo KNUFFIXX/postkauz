@@ -1358,6 +1358,9 @@ type DraftDetail struct {
 	// ein Satz zum Grund (bei copy_gone: der Versand wurde nicht erkannt).
 	CopyMissingSince string `json:"copy_missing_since,omitempty"`
 	ClosedNote       string `json:"closed_note,omitempty"`
+	// SupersededByDraftID: der Nachfolger (closed_reason
+	// superseded_by_draft, A07 Teil 5, drafts.supersede).
+	SupersededByDraftID int64 `json:"superseded_by_draft_id,omitempty"`
 
 	// Mit eml (S2.7): die Nachricht als RFC-5322-Text, gebaut wie beim Push
 	// (rebuildAt) mit dem Date der abgelegten Kopie (pushed_date; nie
@@ -1427,7 +1430,8 @@ func DraftsGet(d Deps) Operation {
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
-    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone"], "description": "why the system closed the draft: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent)"},
+    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its copy went to the trash)"},
+    "superseded_by_draft_id": {"type": "integer", "description": "the newer draft (closed_reason superseded_by_draft)"},
     "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
     "copy_missing_since": {"type": "string", "format": "date-time", "description": "when the sync noticed the copy was gone (closed_reason copy_gone)"},
     "closed_note": {"type": "string", "description": "one sentence on closed_reason"}
@@ -1532,11 +1536,12 @@ const (
 	closedNoteReplaced = "an own reply in the thread replaced this draft; this text was not sent"
 	closedNoteCopyGone = "the copy was gone from the Drafts folder for longer than [draft] copy_gone_after; " +
 		"no sent message was detected, so it is not known whether it was sent"
+	closedNoteSuperseded = "a newer draft replaced this draft (drafts.supersede); its unchanged copy went to the trash"
 )
 
 // closedReason liest aus dem Audit, warum das System einen verworfenen
 // Entwurf geschlossen hat (ohne Migration; A06 Teil 4 replaced, A07 Teil 4
-// copy_gone). Nach einer Rotation des Audits bleibt das Feld leer.
+// copy_gone, A07 Teil 5 superseded_by_draft). Nach einer Rotation des Audits bleibt das Feld leer.
 func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftDetail) error {
 	ev, ok, err := o.svc.Store.DraftClosedBy(ctx, dr.ID, dr.ClosedAt)
 	if err != nil || !ok {
@@ -1545,6 +1550,7 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 	var p struct {
 		Reply        int64  `json:"reply_message_id"`
 		MissingSince string `json:"missing_since"`
+		By           int64  `json:"by_draft_id"`
 	}
 	if err := json.Unmarshal(ev.Params, &p); err != nil {
 		return fmt.Errorf("ops: audit params of a closed draft: %w", err)
@@ -1554,6 +1560,8 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 		out.ClosedReason, out.ReplacedByMessageID, out.ClosedNote = drafts.ReasonReplaced, p.Reply, closedNoteReplaced
 	case drafts.ReasonCopyGone:
 		out.ClosedReason, out.CopyMissingSince, out.ClosedNote = drafts.ReasonCopyGone, p.MissingSince, closedNoteCopyGone
+	case drafts.ReasonSupersededByDraft:
+		out.ClosedReason, out.SupersededByDraftID, out.ClosedNote = drafts.ReasonSupersededByDraft, p.By, closedNoteSuperseded
 	}
 	return nil
 }

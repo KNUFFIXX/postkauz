@@ -265,8 +265,12 @@ func TestTriageRoleCanDoNothingElse(t *testing.T) {
 		}
 	}
 	sort.Strings(allowed)
+	// A07 Teil 5 (Nachtrag zu E2/E3, ausdrücklich): triage hat mail:draft und
+	// darf damit drafts.supersede (eigene, unveränderte Entwurfskopie eines
+	// ersetzten Entwurfs in den Papierkorb, ohne Antrag); mail:trash hat
+	// triage weiterhin nicht.
 	want := []string{"accounts.list", "approvals.get", "attachments.list", "attachments.text", "actions.get", "actions.list",
-		"drafts.create", "drafts.get", "drafts.list", "drafts.request_ready", "drafts.style", "drafts.update",
+		"drafts.create", "drafts.get", "drafts.list", "drafts.request_ready", "drafts.style", "drafts.supersede", "drafts.update",
 		"mailboxes.list", "mailboxes.overview", "messages.get", "messages.search", "messages.tag",
 		"policy.get", "tags.list", "threads.get"}
 	sort.Strings(want)

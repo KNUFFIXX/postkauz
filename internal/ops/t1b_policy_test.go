@@ -11,6 +11,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/policy"
+	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
 // policyInputCases: je Operation mit PolicyInput (A9) mindestens ein Fall,
@@ -23,6 +24,12 @@ var policyInputCases = map[string][]struct {
 	key   policy.Key
 	want  string
 }{
+	// A07 Teil 5: [delete] agent_may = none verbietet drafts.supersede
+	// schon beim Aufruf (Regeln in policyInputRules, Umgebung prepSupersede).
+	"drafts.supersede": {
+		{`{"draft_id":1,"by_draft_id":2}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, "policy_forbids"},
+		{`{"draft_id":1,"by_draft_id":2}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, ""},
+	},
 	"messages.tag": {
 		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"]}`, opKey, "confirm_count_required"},
 		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"],"confirm_count":50}`, opKey, "confirm_count_mismatch"},
@@ -48,6 +55,14 @@ var policyInputCases = map[string][]struct {
 		{`{"account":"demo","ids":[1]}`, opKey, ""},
 	},
 }
+
+// policyInputRules: Regeln je Operation und Fall (Index) statt
+// policy.DefaultRules; policyInputPrep: Vorbereitung der Umgebung wie
+// contractInputs.prep.
+var (
+	policyInputRules = map[string]map[int]*policy.Rules{"drafts.supersede": {0: {DeleteAgentMay: "none"}}}
+	policyInputPrep  = map[string]func(t *testing.T, st *store.SQLite, keyID string){"drafts.supersede": prepSupersede}
+)
 
 var (
 	opKey    = policy.Key{ID: "key:op", Name: "op", Scopes: policy.Roles["operator"]}
@@ -97,11 +112,17 @@ func TestContractPolicyInputCases(t *testing.T) {
 			continue
 		}
 		t.Run(op.Name, func(t *testing.T) {
-			for _, c := range cases {
+			for i, c := range cases {
 				e := newContractEnv(t)
 				ran := map[string]int{}
 				au := &audit.Memory{}
 				rules := policy.DefaultRules()
+				if r := policyInputRules[op.Name][i]; r != nil {
+					rules = *r
+				}
+				if prep := policyInputPrep[op.Name]; prep != nil {
+					prep(t, e.st, c.key.ID)
+				}
 				x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: au, Rules: &rules}
 				no := false
 				_, err := x.Execute(context.Background(), Request{Key: c.key, Actor: audit.ActorAgent, Operation: op.Name,

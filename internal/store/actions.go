@@ -91,9 +91,16 @@ type ActionParams struct {
 	// AddKeywords und RemoveKeywords: keywords (Tags als IMAP-Keywords).
 	AddKeywords    []string `json:"add_keywords,omitempty"`
 	RemoveKeywords []string `json:"remove_keywords,omitempty"`
-	// Source: Herkunft außerhalb der Operationen (cleanup_copies).
+	// Source: Herkunft außerhalb der Operationen (draft_cleanup,
+	// seit A07 Teil 5 draft_supersede).
 	Source string `json:"source,omitempty"`
 }
+
+// ActionSourceDraftSupersede ist die Herkunft der Aktion, die
+// drafts.supersede anlegt (A07 Teil 5): Der Runner verlangt dafür den
+// Scope mail:draft statt mail:trash, solange jedes Ziel im Entwürfe-Ordner
+// liegt, und verschiebt nichts, wenn ein Ziel nicht mehr passt.
+const ActionSourceDraftSupersede = "draft_supersede"
 
 // Action ist eine Zeile der Tabelle actions mit ihren Zielen.
 type Action struct {
@@ -167,27 +174,9 @@ func (s *SQLite) CreateAction(ctx context.Context, n NewAction) (a Action, err e
 			_ = tx.Rollback()
 		}
 	}()
-	count := n.MessageCount
-	if count <= 0 {
-		count = len(n.Targets)
-	}
-	now := n.Now.UnixMilli()
-	var id int64
-	if err = tx.QueryRowContext(ctx, `INSERT INTO actions(account_id, kind, params, state, target_count, ids_hash, confirm_count,
-		requested_by, audit_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-		n.AccountID, n.Kind, string(params), n.State, count, n.IDsHash, nullIntPtr(n.ConfirmCount), n.RequestedBy,
-		nullID(n.AuditID), now, now).Scan(&id); err != nil {
-		return a, fmt.Errorf("store: insert action: %w", err)
-	}
-	for _, t := range n.Targets {
-		// Quellpfad je Ziel (Nachprüfung zu fd70f19): der Pfad aus dem Plan
-		// (t.Mailbox, so wie der Aufrufer die Kopie sah), sonst der heutige
-		// Pfad unter mailbox_id.
-		if _, err = tx.ExecContext(ctx, `INSERT INTO action_targets(action_id, message_id, mailbox_id, uid, uidvalidity, source_path)
-			VALUES (?,?,?,?,?, COALESCE(NULLIF(?, ''), (SELECT path FROM mailboxes WHERE id = ?)))`,
-			id, t.MessageID, t.MailboxID, int64(t.UID), int64(t.UIDValidity), t.Mailbox, t.MailboxID); err != nil {
-			return a, fmt.Errorf("store: insert action target: %w", err)
-		}
+	id, err := insertAction(ctx, tx, n, string(params))
+	if err != nil {
+		return a, err
 	}
 	if n.Approval != nil {
 		if n.State != ActionRequested {
@@ -205,7 +194,7 @@ func (s *SQLite) CreateAction(ctx context.Context, n NewAction) (a Action, err e
 		}
 	}
 	if n.State == ActionQueued {
-		if err = queueAction(ctx, tx, id, n.Kind, n.Params, n.AccountID, n.RequestedBy, n.AuditID, now); err != nil {
+		if err = queueAction(ctx, tx, id, n.Kind, n.Params, n.AccountID, n.RequestedBy, n.AuditID, n.Now.UnixMilli()); err != nil {
 			return a, err
 		}
 	}
@@ -213,6 +202,55 @@ func (s *SQLite) CreateAction(ctx context.Context, n NewAction) (a Action, err e
 		return a, err
 	}
 	return s.Action(ctx, id)
+}
+
+// insertAction schreibt die Aktion und ihre Ziele (ohne Antrag, ohne Job).
+func insertAction(ctx context.Context, tx *sql.Tx, n NewAction, params string) (int64, error) {
+	count := n.MessageCount
+	if count <= 0 {
+		count = len(n.Targets)
+	}
+	now := n.Now.UnixMilli()
+	var id int64
+	if err := tx.QueryRowContext(ctx, `INSERT INTO actions(account_id, kind, params, state, target_count, ids_hash, confirm_count,
+		requested_by, audit_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+		n.AccountID, n.Kind, params, n.State, count, n.IDsHash, nullIntPtr(n.ConfirmCount), n.RequestedBy,
+		nullID(n.AuditID), now, now).Scan(&id); err != nil {
+		return 0, fmt.Errorf("store: insert action: %w", err)
+	}
+	for _, t := range n.Targets {
+		// Quellpfad je Ziel (Nachprüfung zu fd70f19): der Pfad aus dem Plan
+		// (t.Mailbox, so wie der Aufrufer die Kopie sah), sonst der heutige
+		// Pfad unter mailbox_id.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO action_targets(action_id, message_id, mailbox_id, uid, uidvalidity, source_path)
+			VALUES (?,?,?,?,?, COALESCE(NULLIF(?, ''), (SELECT path FROM mailboxes WHERE id = ?)))`,
+			id, t.MessageID, t.MailboxID, int64(t.UID), int64(t.UIDValidity), t.Mailbox, t.MailboxID); err != nil {
+			return 0, fmt.Errorf("store: insert action target: %w", err)
+		}
+	}
+	return id, nil
+}
+
+// CreateQueuedAction legt in der Transaktion eine sofort ausführbare
+// Aktion an (ohne Antrag) und reiht den Job ein (A07 Teil 5:
+// drafts.supersede schließt den alten Entwurf in derselben Transaktion).
+func (x *DraftTx) CreateQueuedAction(n NewAction) (int64, error) {
+	if len(n.Targets) == 0 {
+		return 0, errors.New("store: create action: no targets")
+	}
+	if n.Now.IsZero() {
+		n.Now = time.Now()
+	}
+	n.State = ActionQueued
+	params, err := json.Marshal(n.Params)
+	if err != nil {
+		return 0, err
+	}
+	id, err := insertAction(x.ctx, x.tx, n, string(params))
+	if err != nil {
+		return 0, err
+	}
+	return id, queueAction(x.ctx, x.tx, id, n.Kind, n.Params, n.AccountID, n.RequestedBy, n.AuditID, n.Now.UnixMilli())
 }
 
 // queueAction macht eine Aktion ausführbar: mark ändert den Spiegel sofort
@@ -953,9 +991,24 @@ func (s *SQLite) MarkContentLoaded(ctx context.Context, messageID, mailboxID int
 // CopyAt liefert die Serverkopie unter (Ordner, UID) und den Inhalts-Hash
 // ihrer Nachricht (Aufräumen alter Entwurfskopien, drafts.cleanup_copies).
 func (s *SQLite) CopyAt(ctx context.Context, mailboxID int64, uid uint32) (c ServerCopy, contentHash string, ok bool, err error) {
+	return copyAt(ctx, s.db, mailboxID, uid)
+}
+
+// CopyAt wie SQLite.CopyAt, in der Transaktion (A07 Teil 5,
+// drafts.supersede).
+func (x *DraftTx) CopyAt(mailboxID int64, uid uint32) (c ServerCopy, contentHash string, ok bool, err error) {
+	return copyAt(x.ctx, x.tx, mailboxID, uid)
+}
+
+// rowQuerier ist der Teil von *sql.DB und *sql.Tx für eine Zeile.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func copyAt(ctx context.Context, q rowQuerier, mailboxID int64, uid uint32) (c ServerCopy, contentHash string, ok bool, err error) {
 	var u, uv int64
 	var h sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, COALESCE(b.uidvalidity, 0), mm.content_loaded, m.content_hash
+	err = q.QueryRowContext(ctx, `SELECT mm.message_id, b.id, b.path, b.role, mm.uid, COALESCE(b.uidvalidity, 0), mm.content_loaded, m.content_hash
 		FROM message_mailboxes mm JOIN mailboxes b ON b.id = mm.mailbox_id JOIN messages m ON m.id = mm.message_id
 		WHERE mm.mailbox_id = ? AND mm.uid = ?`, mailboxID, int64(uid)).Scan(&c.MessageID, &c.MailboxID, &c.Mailbox, &c.Role, &u, &uv,
 		&c.ContentLoaded, &h)
@@ -967,4 +1020,36 @@ func (s *SQLite) CopyAt(ctx context.Context, mailboxID int64, uid uint32) (c Ser
 	}
 	c.UID, c.UIDValidity = uint32(u), uint32(uv)
 	return c, h.String, true, nil
+}
+
+// TrashMailbox liefert in der Transaktion den Ordner mit Rolle trash des
+// Kontos (A07 Teil 5); ok false: keiner im Spiegel.
+func (x *DraftTx) TrashMailbox(accountID int64) (m Mailbox, ok bool, err error) {
+	err = x.tx.QueryRowContext(x.ctx, `SELECT id, path, role FROM mailboxes WHERE account_id = ? AND role = 'trash' ORDER BY id LIMIT 1`,
+		accountID).Scan(&m.ID, &m.Path, &m.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return m, false, nil
+	}
+	return m, err == nil, err
+}
+
+// DraftMailboxIDs liefert die Ordner des Kontos, in die PostKauz Entwürfe
+// abgelegt hat (drafts.remote_mailbox_id), und die Ordner mit Rolle drafts
+// (A07 Teil 5: Ausnahme der Herkunft draft_supersede im Runner).
+func (s *SQLite) DraftMailboxIDs(ctx context.Context, accountID int64) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT remote_mailbox_id FROM drafts WHERE account_id = ? AND remote_mailbox_id IS NOT NULL
+		UNION SELECT id FROM mailboxes WHERE account_id = ? AND role = 'drafts'`, accountID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

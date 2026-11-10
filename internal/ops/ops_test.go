@@ -221,9 +221,13 @@ func TestExecutorFailsClosedWhenAuditFails(t *testing.T) {
 
 // contractInputs: je Operation eine gültige Eingabe, mit der der Handler bei
 // Erlaubnis bis zu seiner Wirkung kommt (Umgebung: newContractEnv).
+//
+// prep (selten) bereitet die frische Umgebung für den aufrufenden Schlüssel
+// vor (A07 Teil 5: drafts.supersede verlangt Entwürfe dieses Schlüssels).
 var contractInputs = map[string]struct {
 	input  string
 	secret secrets.Secret
+	prep   func(t *testing.T, st *store.SQLite, keyID string)
 }{
 	"accounts.list":      {input: `{}`},
 	"accounts.add":       {input: `{"name":"neu","host":"127.0.0.1","port":11143,"tls":"none","username":"u@example.invalid","insecure_test_server":true}`, secret: canary},
@@ -279,6 +283,7 @@ var contractInputs = map[string]struct {
 	"actions.get":           {input: `{"action_id":1}`},
 	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
 	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
+	"drafts.supersede":      {input: `{"draft_id":1,"by_draft_id":2}`, prep: prepSupersede},
 	// Sicherung (S3.4): der Runner ist ein Fake (contractBackup), der Pfad
 	// wird nie angefasst.
 	"backup.create": {input: `{"to":"/nonexistent/backup-target"}`},
@@ -737,6 +742,9 @@ func TestContractEveryOperationRoleAndDryRun(t *testing.T) {
 					if human {
 						key = policy.Key{ID: "cli", Scopes: policy.Roles["admin"], DryRunDefault: mode.keyDefault, Human: true}
 					}
+					if row.prep != nil {
+						row.prep(t, e.st, key.ID)
+					}
 
 					// Erwartung, unabhängig von policy.Check formuliert
 					// (docs/sicherheit.md, Abschnitt 2).
@@ -894,6 +902,9 @@ func TestContractEveryOperationFailsClosed(t *testing.T) {
 			ran := map[string]int{}
 			x := &Executor{Registry: spyRegistry(t, e.deps, ran), Audit: failingAudit{}}
 			row := contractInputs[op.Name]
+			if row.prep != nil {
+				row.prep(t, e.st, "adm")
+			}
 			before := e.fingerprint(t)
 			_, err := x.Execute(context.Background(), Request{Key: policy.Key{ID: "adm", Scopes: policy.Roles["admin"]},
 				Operation: op.Name, Input: json.RawMessage(row.input), Secret: row.secret})
@@ -938,5 +949,27 @@ func TestExecutorAuditsHandlerErrorAfterCancel(t *testing.T) {
 	evs := au.Events()
 	if len(evs) != 2 || evs[1].Result != audit.ResultError || evs[1].Reason != "handler_error" {
 		t.Fatalf("error event missing after cancel: %+v", evs)
+	}
+}
+
+// prepSupersede macht Entwurf 1 (draft) und Entwurf 2 (pending_approval,
+// jünger) zu Entwürfen des Schlüssels keyID und legt die Kopie von Entwurf 1
+// unverändert in den Entwürfe-Ordner (UID 9 aus seedActions, Hash
+// hash-alt), ohne frühere Kopien (A07 Teil 5).
+func prepSupersede(t *testing.T, st *store.SQLite, keyID string) {
+	t.Helper()
+	box, err := st.QueryIntForTest(`SELECT id FROM mailboxes WHERE path = 'Entwuerfe'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		fmt.Sprintf(`UPDATE drafts SET created_by = '%s', updated_by = '%s' WHERE id IN (1, 2)`, keyID, keyID),
+		`UPDATE drafts SET created_at = created_at - 60000 WHERE id = 1`,
+		fmt.Sprintf(`UPDATE drafts SET remote_previous = '[]', remote_state = 'pushed', remote_mailbox_id = %d, remote_uid = 9,
+			remote_uidvalidity = 6, pushed_content_hash = 'hash-alt' WHERE id = 1`, box),
+	} {
+		if err := st.ExecForTest(q); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

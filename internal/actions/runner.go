@@ -60,6 +60,9 @@ type RunStore interface {
 	Mailboxes(ctx context.Context, accountID int64) ([]store.Mailbox, error)
 	MessageHeaderBlob(ctx context.Context, messageID int64) (string, error)
 	MarkContentLoaded(ctx context.Context, messageID, mailboxID int64) error
+	// DraftMailboxIDs: Ordner mit Rolle drafts und Ablageordner von
+	// Entwürfen (A07 Teil 5, Herkunft draft_supersede).
+	DraftMailboxIDs(ctx context.Context, accountID int64) (map[int64]bool, error)
 }
 
 // Blobs liest Rohmails.
@@ -127,7 +130,23 @@ func (r *Runner) Pending(ctx context.Context, accountID int64) (bool, error) {
 	return len(q) > 0, err
 }
 
-// scopeOf ist der Scope, den der Schlüssel für eine Art von Aktion braucht.
+// allInDrafts meldet, ob jedes Ziel der Aktion in einem Ordner mit Rolle
+// drafts oder im Ablageordner eines Entwurfs liegt (A07 Teil 5).
+func (r *Runner) allInDrafts(ctx context.Context, a store.Action, boxes map[int64]store.Mailbox) (bool, error) {
+	ids, err := r.Store.DraftMailboxIDs(ctx, a.AccountID)
+	if err != nil {
+		return false, err
+	}
+	for _, t := range a.Targets {
+		if b, ok := boxes[t.MailboxID]; !ok || (b.Role != string(provider.RoleDrafts) && !ids[t.MailboxID]) {
+			return false, nil
+		}
+	}
+	return len(a.Targets) > 0, nil
+}
+
+// scopeOf ist der Scope, den der Schlüssel für eine Art von Aktion braucht
+// (Ausnahme der Herkunft draft_supersede: runOne, allInDrafts).
 func scopeOf(kind string) policy.Scope {
 	switch kind {
 	case store.ActionMove:
@@ -232,8 +251,23 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 			open = append(open, t)
 		}
 	}
+	supersede := a.Params.Source == store.ActionSourceDraftSupersede
 	if r.Origin != nil {
-		reason, err := r.Origin(ctx, Origin{KeyID: a.RequestedBy, Scope: scopeOf(a.Kind), Approved: a.ApprovalID > 0, Facts: factsOf(a, boxes)})
+		scope := scopeOf(a.Kind)
+		if supersede && a.Kind == store.ActionTrash {
+			// A07 Teil 5 (Nachtrag zu E3): eigene, unveränderte
+			// Entwurfskopien eines ersetzten Entwurfs brauchen mail:draft
+			// statt mail:trash und keinen Antrag, aber nur, solange jedes
+			// Ziel im Entwürfe-Ordner (Rolle drafts oder Ablageordner) liegt.
+			in, err := r.allInDrafts(ctx, a, boxes)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			if in {
+				scope = policy.ScopeMailDraft
+			}
+		}
+		reason, err := r.Origin(ctx, Origin{KeyID: a.RequestedBy, Scope: scope, Approved: a.ApprovalID > 0, Facts: factsOf(a, boxes)})
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -314,6 +348,19 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 		for _, t := range passed {
 			add(t)
 		}
+	}
+	if supersede && len(unsaved) > 0 {
+		// A07 Teil 5: Passt ein Ziel nicht mehr (stale, Kopf anders), wird
+		// nichts verschoben; die übrigen gelten ebenfalls als stale.
+		for _, mbID := range order {
+			for _, t := range groups[mbID] {
+				res := store.TargetResult{MessageID: t.MessageID, MailboxID: t.MailboxID, Result: store.TargetStale}
+				results = append(results, res)
+				unsaved = append(unsaved, res)
+			}
+		}
+		r.log().Warn("a copy of a superseded draft no longer matches; nothing moved (stale)", "action_id", a.ID)
+		return results, unsaved, code, nil
 	}
 	var saved []store.TargetResult
 	for _, mbID := range order {

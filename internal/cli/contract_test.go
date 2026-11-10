@@ -228,6 +228,10 @@ var cliSamples = []cliSample{
 	{"actions.get", []string{"action", "show", "3"}, false},
 	{"actions.list", []string{"action", "list", "-a", "demo", "--state", "requested,rejected", "--limit", "5"}, false},
 	{"drafts.cleanup_copies", []string{"draft", "cleanup", "1"}, false},
+	// A07 Teil 5: Entwurf 1 ist hier schon geschlossen, die Ausführung
+	// endet mit Exit 3 (sampleCode); geprüft werden Eingabe und Bindung, die
+	// Bedingungen an die Entwürfe prüft internal/ops (TestA07Supersede*).
+	{"drafts.supersede", []string{"draft", "supersede", "1", "--by", "2"}, false},
 	// S3.4: Sicherung in einen Ordner; Tar-Strom nur als Trockenlauf (die
 	// Ausgabe geht dann auf stderr, stdout gehört dem Strom).
 	{"backup.create", []string{"backup", "create", "--to", "{backupdir}"}, false},
@@ -248,7 +252,8 @@ var cliSamples = []cliSample{
 // Papierkorb: Exit 4, needs_approval; die Ausgabe nennt den Antrag).
 var sampleCode = map[string]int{
 	"trash {answer} --from INBOX -a demo --confirm-count 1": ExitNeedsApproval,
-	"trash {html} -a demo": ExitNeedsApproval,
+	"trash {html} -a demo":     ExitNeedsApproval,
+	"draft supersede 1 --by 2": ExitDenied,
 }
 
 // seedS16: Konto demo mit den drei Nachrichten aus s16Server, gesynct;

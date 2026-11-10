@@ -45,6 +45,11 @@ func init() {
 			input: actionListInput, human: renderActionList, covers: []string{"account", "state", "limit"}},
 		binding{op: "drafts.cleanup_copies", path: []string{"draft", "cleanup"}, use: "<draft-id>", args: cobra.ExactArgs(1),
 			input: draftIDInput, human: renderCleanup, covers: []string{"draft_id"}},
+		binding{op: "drafts.supersede", path: []string{"draft", "supersede"}, use: "<old-draft-id> --by <new-draft-id>", args: cobra.ExactArgs(1),
+			flags: func(cmd *cobra.Command) {
+				cmd.Flags().Int64("by", 0, "the newer draft that replaces it (required)")
+			},
+			input: supersedeInput, human: renderSupersede, covers: []string{"draft_id", "by_draft_id"}},
 	)
 }
 
@@ -226,6 +231,25 @@ func draftIDInput(_ *cobra.Command, args []string, _ *app) (json.RawMessage, sec
 	return b, "", err
 }
 
+// supersedeInput liest draft supersede <alt> --by <neu> (A07 Teil 5).
+func supersedeInput(cmd *cobra.Command, args []string, a *app) (json.RawMessage, secrets.Secret, error) {
+	raw, _, err := draftIDInput(cmd, args, a)
+	if err != nil {
+		return nil, "", err
+	}
+	by, _ := cmd.Flags().GetInt64("by")
+	if by < 1 {
+		return nil, "", usageError{errors.New("name the newer draft with --by <draft-id> (see: draft list)")}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, "", err
+	}
+	m["by_draft_id"] = by
+	b, err := json.Marshal(m)
+	return b, "", err
+}
+
 func actionListFlags(cmd *cobra.Command) {
 	cmd.Flags().StringSlice("state", nil, "only these states: requested, queued, running, done, partial, failed, rejected, expired")
 	cmd.Flags().Int("limit", 0, "at most this many (default 50)")
@@ -394,6 +418,21 @@ func renderCleanup(w io.Writer, out any) error {
 		prefix = "dry run: "
 	}
 	fmt.Fprintf(w, "%sdraft %d: %d earlier copies to the trash, %d not touched\n", prefix, o.DraftID, o.Copies, o.Skipped)
+	fmt.Fprintln(w, termLine(o.NextStep))
+	return nil
+}
+
+func renderSupersede(w io.Writer, out any) error {
+	o, ok := out.(ops.SupersedeOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	prefix := ""
+	if o.DryRun {
+		prefix = "dry run: "
+	}
+	fmt.Fprintf(w, "%sdraft %d superseded by draft %d: %s, %d own copy/copies to the trash (%s)\n", prefix, o.DraftID, o.ByDraftID,
+		o.Status, o.Copies, termLine(o.Trash))
 	fmt.Fprintln(w, termLine(o.NextStep))
 	return nil
 }

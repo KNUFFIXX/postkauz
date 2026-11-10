@@ -597,6 +597,10 @@ func renderDraftShow(w io.Writer, out any) error {
 		// A07 Teil 4: Auffangregel; der Versand wurde nicht erkannt.
 		fmt.Fprintf(w, "closed:      %s, abandoned: copy gone from the Drafts folder since %s (copy_gone); "+
 			"no sent message was detected, it may or may not have been sent\n", o.ClosedAt, o.CopyMissingSince)
+	case drafts.ReasonSupersededByDraft:
+		// A07 Teil 5: durch einen eigenen, neueren Entwurf ersetzt.
+		fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; its unchanged copy went to the trash\n",
+			o.ClosedAt, o.SupersededByDraftID)
 	}
 	body := strings.TrimRight(termText(o.BodyText), "\r\n")
 	if q := o.Original; q != nil && q.Text != "" {
