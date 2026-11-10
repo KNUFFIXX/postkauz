@@ -2,6 +2,7 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -53,5 +54,27 @@ func TestA07DraftGetNamesCopyGone(t *testing.T) {
 		if _, ok := props[k]; !ok {
 			t.Fatalf("output field %q is not in the OutputSchema of drafts.get", k)
 		}
+	}
+}
+
+// A07 Teil 6 (f), Sammelpunkt 0e: push_failed nennt den Grund des
+// gescheiterten Neubaus (invalid_address), nicht mehr pauschal „original
+// message or attachment missing“.
+func TestA07PushFailedNamesReason(t *testing.T) {
+	e := newDraftEnv(t, true)
+	id := e.must(t, assistant, "drafts.create", map[string]any{"kind": "new", "account": "demo", "to": []string{"a@example.org"}, "subject": "x",
+		"body_markdown": "Text"}).(DraftsWriteOutput).DraftID
+	if err := e.st.ExecForTest(`UPDATE drafts SET push_note = 'push_failed', to_addrs = '[{"address":"kein adressformat"}]' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": id}).(DraftDetail)
+	if got.PushNote != "push_failed" || !strings.Contains(got.PushNoteText, "invalid_address") || strings.Contains(got.PushNoteText, "attachment missing") {
+		t.Fatalf("push note = %q", got.PushNoteText)
+	}
+	if strings.Contains(got.PushNoteText, "adressformat") {
+		t.Fatalf("push note with the address: %q", got.PushNoteText)
+	}
+	if !strings.Contains(pushFailedText(errors.New("blob missing")), "missing locally") {
+		t.Fatal("generic text lost")
 	}
 }

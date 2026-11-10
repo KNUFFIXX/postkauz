@@ -1502,6 +1502,14 @@ func DraftsGet(d Deps) Operation {
 				out.RemotePreviousUIDs = append(out.RemotePreviousUIDs, c.UID)
 			}
 			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
+			if dr.PushNote == drafts.PushNotePushFailed && !drafts.Status(dr.Status).Closed() {
+				// A07 Teil 6 (f): push_failed nennt den Grund, ohne Migration
+				// beim Lesen neu gebaut (vorher hieß es immer „original
+				// message or attachment missing“, auch bei invalid_address).
+				if _, err := o.rebuild(ctx, acc, dr); err != nil {
+					out.PushNoteText = pushFailedText(err)
+				}
+			}
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
 			if dr.Status == string(drafts.StatusAbandoned) {
 				if err := o.closedReason(ctx, dr, &out); err != nil {
@@ -1529,6 +1537,35 @@ func DraftsGet(d Deps) Operation {
 			return out, nil
 		},
 	}
+}
+
+// pushFailedText erklärt push_failed mit dem Grund, aus dem der Neubau
+// scheitert (Code und Feld, nie Inhalt).
+func pushFailedText(err error) string {
+	why := "the original message or an attachment is missing locally"
+	var ce *compose.Error
+	var de *drafts.DeniedError
+	var oe *DeniedError
+	reason := ""
+	switch {
+	case errors.As(err, &ce):
+		reason = string(ce.Reason)
+		if ce.Field != "" {
+			reason += " in " + ce.Field
+		}
+	case errors.As(err, &de):
+		reason = de.Reason
+	case errors.As(err, &oe):
+		reason = oe.Reason // draftErr: compose.Error als Ablehnung
+	}
+	var ie *InputError
+	if reason == "" && errors.As(err, &ie) {
+		reason = "invalid_input"
+	}
+	if reason != "" {
+		return "not pushed: the message could not be built (" + reason + "); correct it with draft edit, the next sync tries again"
+	}
+	return "not pushed: the message could not be built (" + why + "); the next sync (a running sync --watch: within the hour) tries again"
 }
 
 // Sätze zu closed_reason (draft show, drafts.get).

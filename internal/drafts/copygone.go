@@ -28,8 +28,9 @@ import (
 // taken_over; ein übernommener Entwurf wird erst über refreshRemote
 // missing), Ablageordner bekannt (remote_mailbox_id ≠ 0) und im Spiegel
 // (checkCopy meldet für einen nicht gespiegelten Ordner nie missing); beim
-// Schließen in derselben Transaktion zuerst adoptOrphan, dann checkCopy
-// und der Fingerabdruck. Die Regel behauptet nicht, dass gesendet wurde:
+// Schließen in derselben Transaktion zuerst adoptOrphan (wurde etwas
+// übernommen, endet die Transaktion mit draft_changed und wird samt der
+// Übernahme zurückgerollt), dann checkCopy und der Fingerabdruck. Die Regel behauptet nicht, dass gesendet wurde:
 // draft show nennt closed_reason copy_gone und sagt, dass der Versand nicht
 // erkannt wurde.
 

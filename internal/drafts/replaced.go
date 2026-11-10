@@ -44,9 +44,12 @@ import (
 //     lastPushAt) datierte Nachricht mit In-Reply-To = Original, die keine
 //     Kopie von PostKauz ist (in Gmail unter neuer Message-ID
 //     weiterbearbeitet);
-//   - beim Schließen zuerst adoptOrphan, dann checkCopy (wie Update): Die
-//     Kopie eines abgebrochenen Ablageversuchs, auch in einem anderen
-//     Ordner, wird übernommen, und der Entwurf bleibt offen.
+//   - beim Schließen zuerst adoptOrphan, dann checkCopy (wie Update):
+//     Findet adoptOrphan die Kopie eines abgebrochenen Ablageversuchs (auch
+//     in einem anderen Ordner), endet die Transaktion mit draft_changed und
+//     wird zurückgerollt, auch die Übernahme selbst; der Entwurf bleibt
+//     offen, und die Übernahme holen der nächste Push bzw. die nächste
+//     Prüfung nach (richtiggestellt in A07 Teil 6, Sammelpunkt 0e).
 //
 // Ergebnis: abandoned (nicht sent_by_human: der Text des Entwurfs ging
 // nicht hinaus), eine Freigabe wird superseded (wie EvAbandon), Akteur
@@ -196,7 +199,10 @@ func (s *Service) Replaced(ctx context.Context, id, replyID int64, expect string
 		// übernommene Kopie zur zuletzt abgelegten (auch in einem anderen
 		// Ordner als remote_mailbox_id); die Prüfung danach findet sie, ohne
 		// Übernahme hielte checkCopy den Entwurf für missing. Wurde etwas
-		// übernommen, wird ausdrücklich nicht geschlossen (wie draft_changed).
+		// übernommen, wird ausdrücklich nicht geschlossen: changed() lässt die
+		// Transaktion scheitern, und sie wird samt der Übernahme
+		// zurückgerollt (die Übernahme bleibt nicht stehen; nachgeholt wird
+		// sie beim nächsten Push bzw. in settleClosedAttempts).
 		// Ein nicht gespiegelter Ablageordner braucht keine eigene Prüfung:
 		// checkCopy liefert dann nie missing (copyState), und ein entfernter
 		// Ordner setzt remote_mailbox_id auf 0 (oben ausgeschlossen).

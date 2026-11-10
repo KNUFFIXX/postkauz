@@ -110,6 +110,7 @@ Seit A06 Teil 4 (05.11.2026; Default, Einspruch bis zum Merge). Befund aus dem D
 
 - Hat der Mensch den Entwurf umgeschrieben und gesendet, heißt er danach „verworfen (durch eigene Antwort ersetzt)", nicht „gesendet". Das ist gewollt: Gesendet wurde ein anderer Text.
 - Ein so verworfener Entwurf wird nach späteren Regeländerungen (`SentCheckRev`) nie neu geprüft; er ist abgeschlossen.
+- **Eine Antwort ersetzt mehrere Entwürfe** (bewusst, A07 Teil 6, Sammelpunkt 0e): Liegen im selben Verlauf zwei (oder mehr) offene Entwürfe an dieselben Empfänger, deren Kopien beide verschwunden sind, und sendet der Mensch **eine** eigene Antwort, werden beide `abandoned` (Grund `replaced`). Anders als beim Weg über den Verlauf schließt hier eine Nachricht nicht nur einen Entwurf: Beide Fassungen sind durch dieselbe Antwort erledigt, und keine ging so hinaus.
 - Die Regel baut auf (f) in der jetzigen Form (Offene Frage 2 der Roadmap: nur die zuletzt abgelegte Kopie und neuere Fassungen zählen).
 - Ohne Original im Spiegel (`purge`), ohne `In-Reply-To` in der gesendeten Antwort (Gmail mit eigenem Betreff) oder ohne abgelegte Kopie gilt die Regel nicht; dann schließt weiter der Mensch.
 

@@ -244,7 +244,7 @@ const trimIDChars = `' <>' || char(9,10,13)`
 // gelesen werden also nur Nachrichten aus dem Verlauf des Originals. Hat
 // das Original keine Message-ID oder fehlt es, ist die Liste leer.
 func (s *SQLite) SentReplies(ctx context.Context, accountID, original int64) ([]SentMessage, error) {
-	return s.replies(ctx, accountID, original, sentMessageCond)
+	return s.replies(ctx, accountID, original, sentRepliesQuery)
 }
 
 // OwnReplies liefert wie SentReplies die eigenen Antworten auf original,
@@ -252,10 +252,29 @@ func (s *SQLite) SentReplies(ctx context.Context, accountID, original int64) ([]
 // (A06 Teil 4: Eine gesendete Antwort ersetzt auch die übrigen Fassungen
 // desselben Entwurfs).
 func (s *SQLite) OwnReplies(ctx context.Context, accountID, original int64) ([]SentMessage, error) {
-	return s.replies(ctx, accountID, original, sentOrAllCond)
+	return s.replies(ctx, accountID, original, ownRepliesQuery)
 }
 
-func (s *SQLite) replies(ctx context.Context, accountID, original int64, cond string) ([]SentMessage, error) {
+// repliesQuery ist die Abfrage von replies ohne die Bedingung „gesendet“;
+// sentRepliesQuery und ownRepliesQuery hängen die beiden Konstanten an.
+// Seit A07 Teil 6 (Sammelpunkt 0e, golangci-lint G202) als Konstanten
+// gebaut statt im Aufruf verkettet: Die Abfrage enthält nie einen Wert,
+// nur feste Teile und Platzhalter.
+//
+// CROSS JOIN legt die Reihenfolge fest: erst der Thread über thread_refs,
+// dann seine Nachrichten über messages_thread (sonst nahm SQLite den Index
+// über das Konto und las alle seine Nachrichten).
+const repliesQuery = `SELECT ` + sentCandidateCols + ` FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
+		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
+		AND trim(COALESCE(m.in_reply_to, ''), ` + trimIDChars + `) = ?
+		AND `
+
+const (
+	sentRepliesQuery = repliesQuery + sentMessageCond + ` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`
+	ownRepliesQuery  = repliesQuery + sentOrAllCond + ` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`
+)
+
+func (s *SQLite) replies(ctx context.Context, accountID, original int64, query string) ([]SentMessage, error) {
 	// Zwei Schritte mit gebundenem Wert: Eine Verknüpfung mit der
 	// Message-ID des Originals in derselben Abfrage ließ SQLite alle
 	// Nachrichten des Kontos lesen (BenchmarkCheckAfterSync22k,
@@ -269,13 +288,7 @@ func (s *SQLite) replies(ctx context.Context, accountID, original int64, cond st
 	if err != nil {
 		return nil, err
 	}
-	// CROSS JOIN legt die Reihenfolge fest: erst der Thread über
-	// thread_refs, dann seine Nachrichten über messages_thread (sonst nahm
-	// SQLite den Index über das Konto und las alle seine Nachrichten).
-	rows, err := s.db.QueryContext(ctx, `SELECT `+sentCandidateCols+` FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
-		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
-		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
-		AND `+cond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, accountID, h, h)
+	rows, err := s.db.QueryContext(ctx, query, accountID, h, h)
 	if err != nil {
 		return nil, err
 	}
