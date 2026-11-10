@@ -6,7 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 Noch nichts.
 
-## [0.3.0-rc4] – 2026-11-05 (Release-Kandidat; Dauerbetrieb seit 05.11.2026, noch kein Tag)
+## [0.3.0-rc4] – 2026-11-05 (Release-Kandidat; im Dauerbetrieb seit 05.11.2026, Tag `v0.3.0-rc4` an `b41f9eb`, GitHub-Release vom 10.11.2026)
 
 Abnahme D12 auf dem Büro-PC bestanden (05.11.2026, Teil A 35 OK / 0 FAIL, Teil B 8 OK / 0 FAIL; `docs/protokolle/D12_windows.txt`, `docs/protokolle/D12_teilB.txt`); Dauerbetrieb seit 05.11.2026 18:42 auf rc4. Gmail im Browser sendet eine Antwort mit Zitat in der neuen Form mit „>“ vor jeder Zitatzeile (19 von 19).
 

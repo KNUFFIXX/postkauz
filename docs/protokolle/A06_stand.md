@@ -198,6 +198,7 @@ Abnahme D12 auf dem Büro-PC bestanden, Programm 0.3.0-rc4 an `b41f9eb` (Windows
 - **Teil B** (18:45, Mitmach): **8 OK, 0 FAIL**, Protokoll [D12_teilB.txt](D12_teilB.txt). Antwort-Entwurf 28 auf eine eigene Mail mit „>“-Zitat in Gmail im Browser unverändert gesendet, erkannt als `sent_by_human` (Rückfall); in der gesendeten Nachricht stehen ab der Einleitungszeile **19 von 19** Zitatzeilen mit „>“. Damit ist Teil 2 (Zitat in Gmails Form) am echten Gmail bestätigt (Messtabelle in [versanderkennung.md](../versanderkennung.md) Abschnitt 9).
 - **Einordnung der doctor-Zeile in 1.3** („3 calls started more than 10 minutes ago without an end entry“): Es sind die drei `sync --watch` (je Konto einer), die 1.1 hart beendet hat (Stop-Process nach 20 s); ihr Start-Eintrag liegt Stunden zurück, ein Abschluss fehlt. Der nächste `sync` des Kontos schließt solche Einträge als `process_ended` (dokumentiert in [betrieb.md](../betrieb.md), Abschnitt zum Stoppen der Aufgaben); in 3.5 steht die Warnung deshalb nicht mehr. Kein Fehler.
 - Freigabe: Der Betreiber hat rc4 über das Board freigegeben (Karte PK14-1: rc4 nach Prüfung einsetzen, danach nach `main`).
+- Tag und Release: Am 10.11.2026 hat der Betreiber den Tag `v0.3.0-rc4` (annotiert, an `b41f9eb`) gesetzt und das GitHub-Release „PostKauz 0.3.0-rc4“ (Vorabversion, zwölf Dateien, bytegleich zu `SHA256SUMS` des abgenommenen Builds) veröffentlicht.
 
 ## 6. Offen
 
