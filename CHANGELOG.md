@@ -6,6 +6,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
+#### Abnahme D13 bestanden (10.11.2026; noch kein Tag)
+
+- Teil A **41 OK, 0 FAIL, 0 WARN** mit dem Build an `1fdd000`; Teil B inhaltlich bestanden (B.6/B.7 scheiterten im Skript mit `copy_missing`, danach von Hand über den MCP-Server). Dauerbetrieb seit 10.11.2026 21:19 auf 0.3.0-rc5. A07 abgeschlossen; Merge nach `main`, Tag und Release stehen aus (Entscheid des Betreibers).
+
 #### Nachtrag 2 (10.11.2026; nur das Abnahmeskript, kein neuer Build, Build bleibt an `1fdd000`)
 
 - **Fixed:** Abnahmeskript D13: Erwartungslisten als `[int64[]]` (vorher blieben sie Text, jeder Abgleich mit dem Stand lief ins Leere), Marke im Audit nach der Vorher-Liste, `-ExpectStaysOpen`, Auffangregel direkt vor dem Tausch noch einmal, Zeitpunkt „Kopie fehlt“ je Entwurf ab `pushed_date` mit Seiten über `--after-id`, `sync --watch` nur genau mit `-Exe` und Konten nur aus `-a`/`--account`/`--all`, Rückweg verlangt `-Accounts`, Aufgaben nur als Nummer im Protokoll, MCP-Fehler mit Status und Grund, Eingabe an den MCP-Server ohne BOM, sauberes Ende nach einer Zeitgrenze.

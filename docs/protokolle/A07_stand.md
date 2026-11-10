@@ -139,3 +139,43 @@ Ergebnis der Prüfung: Code und Build in Ordnung, nur das Abnahmeskript braucht 
 
 Laut Auftrag nur vorgemerkt, nicht gebaut (kein neuer Build): Schema-Text von `closed_reason` in `internal/ops/drafts.go` („its copy went to the trash“ → „vorgemerkt“ wie B8); `copyPresent` erkennt eine zurückgekehrte Kopie nur unter der alten UID; Index-Kommentar in `internal/store/sentdetect.go` (`NewMailSubjectsInDrafts`) prüfen und messen; fehlende Tests (B5 auf dem Weg über den Betreff, B1 Gegenfall „Fassung vor der letzten Ablage“, B9 große IDs).
 
+## 9. D13 (10.11.2026, Nachtrag 3)
+
+Abnahme D13 auf dem Büro-PC gelaufen (Betreiber-Sitzung DRACO-PK17). **A07 ist damit abgeschlossen**; keine Code- und keine Skriptänderung mehr in A07. Merge von PR #11 nach `main` entscheidet der Betreiber gesondert; kein Tag, kein Release.
+
+### 9.1 Prüfrunde 3 (nur Skript, Stand `c1482e9`)
+
+- Eine Nachprüfung: PASS mit Hinweisen. Codex: „Teil A kann regulär bestehen“; die übrigen Funde betreffen nur Randpfade (Sammelpunkt 0g in der Roadmap).
+- Parser-Check unter Windows PowerShell 5.1.26100: 0 Fehler.
+- Probelauf ohne `-NewExe`: `FAIL 0.1`, „Abbruch: neues Programm fehlt“, Stand rc4, kein FAIL `X`.
+
+### 9.2 Teil A: **D13: 41 OK, 0 FAIL, 0 WARN**
+
+- 10.11.2026 21:17–21:19, Build 0.3.0-rc5 an `1fdd000` (Windows `d001341b…d0619`; vom Betreiber bytegleich nachgebaut, alle drei Ziele).
+- Erwartung: `-ExpectSent 38,44,47 -ExpectReplaced 45`.
+- Lauf 1: Entwurf 38 `sent_by_human`, Grund `thread` (Antwort ohne To/Cc, Teil 1); 44 und 47 `sent_by_human`, Grund `subject` (neue Mails, vom Menschen ergänzt bzw. umgeschrieben; die Ähnlichkeit von 47 vorab mit dem Code des Repos nachgerechnet: 0,567); 45 `taken_over` → `missing`.
+- Lauf 2: 45 `abandoned`, Grund `replaced` (Teil 2 b: erst im zweiten Lauf).
+- Entwurf 48 bleibt offen (Offene Frage 4 in der Roadmap).
+- 1.2d/1.6d: 4 Entwürfe `missing`, keiner unerwartet; INFO 1.2f/1.6f: 38, 44.
+- Sicherung inkrementell in einen früheren Sicherungsordner (62 Blobs, 74 MB neu, 47,3 GB gesamt).
+- `doctor` vorher und nachher Schema 22; einzige Warnung schon vorher („3 calls started more than 10 minutes ago without an end entry“), keine neue. `audit verify` ok.
+- Alle fünf Aufgaben wieder an, je Konto ein `sync --watch` mit rc5.
+- **Dauerbetrieb seit 10.11.2026 21:19 auf 0.3.0-rc5**, das alte Programm als `postkauz-rc4.exe` daneben. Claude-App um 21:24 neu gestartet; ihr stdio-MCP läuft mit rc5 und kennt `mail_supersede_draft`.
+
+### 9.3 Teil B: inhaltlich bestanden (B.6 bis B.13 von Hand)
+
+- `-AgentKeyFile` mit dem Schlüssel der Claude-App (Rolle `operator`, Scopes ohne `mail:trash`), eigenes Konto.
+- B.0 bis B.5 OK: Probe-Entwürfe 50 und 51 über MCP angelegt und abgelegt.
+- **B.6/B.7 FAIL `copy_missing` (Fehler des Skripts):** Das Skript wartet nur auf `remote: pushed`; `drafts.supersede` verlangt aber die Kopie im lokalen Spiegel, und der Spiegel hatte sie noch nicht (Rennen). Fail closed, nichts geändert; von Codex in Runde 3 vorhergesagt.
+- Danach von Hand über den MCP-Server der Claude-App mit demselben Schlüssel vollendet: `mail_supersede_draft` 50 → 51 im Trockenlauf ok (`copies` 1, `skipped` 0); echt: Aktion 1 (`trash`) nach 6 s `done`, `requested_by` der Agentenschlüssel, ohne Antrag (die Ausnahme `mail:draft` im Runner wirkt). 50 `abandoned`, `closed_reason` `superseded_by_draft`, Nachfolger 51.
+- 51 vom Betreiber-Agenten in Gmail unverändert gesendet (21:29), erkannt als `sent_by_human`, Grund `fallback`; 50 bleibt `abandoned`.
+
+### 9.4 Beobachtung
+
+`draft show` des geschlossenen Entwurfs 50 meldet nach der Aktion weiter `remote: pushed` und „in the Drafts folder (uid …)“, obwohl die Kopie im Papierkorb liegt: veralteter Hinweis bei geschlossenen Entwürfen (Sammelpunkt 0g).
+
+### 9.5 Folgen
+
+- Offene Frage 4 in der Roadmap (Fall 48: Empfänger in Gmail ergänzt).
+- Sammelpunkt 0g um die Restfunde aus Runde 3 und D13 ergänzt.
+
