@@ -6,7 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
-#### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu, ersetzt den Build an `69117c5`)
+#### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu an `1fdd000`, Windows `d001341b…d0619`, ersetzt den Build an `69117c5`)
 
 - **Fixed:** Abnahmeskript D13: `audit --limit 1000` statt 5000 (sonst immer FAIL), `Stop-D13` definiert, kein zweiter Lauf nach einem FAIL im ersten, Erwartung der Auffangregel vor dem Tausch geprüft, `sync --watch` je Konto in 4.1, Rückweg vermerkt die Aufgaben erst direkt vor R.1, Hilfsprozesse an Pfadgrenzen, Abschlüsse fremder Entwürfe sind nicht erwartet, Protokoll ohne Aufgaben- und Kontonamen.
 - **Fixed:** Auffangregel „Kopie weg“ lässt im Mailprogramm weiterbearbeitete Fassungen offen; eine nachweisbar zurückgekehrte Kopie setzt den Entwurf wieder auf `pushed` (`drafts.remote_check`, Grund `present`), die Frist zählt danach neu; `[draft] copy_gone_after` mindestens `1h`.

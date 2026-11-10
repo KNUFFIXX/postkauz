@@ -51,7 +51,7 @@ Auftrag: [auftraege/A07_alltag3.md](../../auftraege/A07_alltag3.md). Zweig `clau
 - `make integration`: nicht gelaufen, im Container läuft kein Docker-Daemon.
 - golangci-lint (G202): die Abfragen in `store/sentdetect.go` sind jetzt Konstanten; ein Lauf von `make lint` steht in der CI des PR.
 
-## 5. Build 0.3.0-rc5
+## 5. Build 0.3.0-rc5 (ersetzt durch den Build in Abschnitt 7.4)
 
 Gebaut nach [betrieb.md](../betrieb.md) Abschnitt 7 in zwei frischen Klonen **ohne Tags** (`git clone --no-tags --branch claude/compassionate-mayer-ntc1b5`), je auf dem Build-Commit **`69117c5`** (Abschluss-Doku; letzter Code-Commit `6574047`), sauberer Arbeitsbaum, go1.27.3, `make release VERSION=0.3.0-rc5`. Beide `dist/SHA256SUMS` sind ohne die Zeile `VERSION` gleich (Nachbau bytegleich); `go version -m` in beiden: `mod github.com/KNUFFIXX/postkauz v0.0.0-20261110094609-69117c5ef830`, `vcs.revision=69117c5ef830aa20b7e9f1c54acee2588b3bf976`.
 
@@ -97,4 +97,12 @@ Messung `BenchmarkCheckAfterSync22k` erneut (Cloud-Container, 4 Kerne, je drei L
 
 ### 7.4 Build 0.3.0-rc5 (neu)
 
-BUILD_N1
+Gebaut wie in Abschnitt 5 (zwei frische Klone ohne Tags, sauberer Arbeitsbaum, go1.27.3, `make release VERSION=0.3.0-rc5`) auf dem Build-Commit **`1fdd000`** (Doku des Nachtrags 1; letzter Code-Commit `d96b902`, Skript `1f001ed`). Beide `dist/SHA256SUMS` ohne die Zeile `VERSION` gleich (Nachbau bytegleich); `go version -m` in beiden `mod github.com/KNUFFIXX/postkauz v0.0.0-20261110192104-1fdd000aa2b6`, `vcs.revision=1fdd000aa2b6e6cb675019c39ee0a49e971f7d20`. **Ersetzt den Build an `69117c5`** (dessen Prüfsumme `97ab3d84…a231a78` gilt nicht mehr). `make check` (1.113 Testfunktionen, 40 Pakete mit Tests) und `make cross` auf `1fdd000` grün.
+
+| Datei | SHA256 |
+|---|---|
+| `postkauz-windows-amd64.exe` (22.760.448 Bytes) | `d001341b2fa85a6928d127bc98e34d874ce13edca17def89b43ddbe99de0d619` |
+| `postkauz-linux-amd64` | `4b2b710abb49532125ae5dcc7451805787237ad6dc3ca4a2139da156d5d524b6` |
+| `postkauz-darwin-arm64` | `c737b05786832c1ae097a5769720f91a915119bd105598f3cd2694a36edf2e09` |
+
+Für D13: `-ExpectSha256 d001341b2fa85a6928d127bc98e34d874ce13edca17def89b43ddbe99de0d619`.
