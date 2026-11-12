@@ -197,8 +197,8 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.S
 	if rep.Pushed > 0 {
 		e.log().Info("drafts pushed to the Drafts folder", "count", rep.Pushed, "draft_ids", rep.DraftIDs)
 	}
-	if rep.Rejected+rep.Failed > 0 {
-		e.log().Warn("drafts not pushed; see draft show", "rejected", rep.Rejected, "failed", rep.Failed)
+	if rep.Rejected+rep.Failed+rep.AttachDenied > 0 {
+		e.log().Warn("drafts not pushed; see draft show", "rejected", rep.Rejected, "failed", rep.Failed, "attach_denied", rep.AttachDenied)
 	}
 	if rep.Adopted > 0 {
 		e.log().Info("copies of interrupted pushes found in the Drafts folder and recorded", "count", rep.Adopted)

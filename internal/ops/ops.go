@@ -58,6 +58,10 @@ type Call struct {
 type DeniedError struct {
 	Reason string
 	Msg    string
+	// Audit: zusätzliche Parameter für den Audit-Eintrag der Ablehnung
+	// (Feld denied; ohne Inhalt, z. B. Regelart und gekürzter Dateiname der
+	// Anhang-Sperre, A08). Nie in Error().
+	Audit map[string]string
 }
 
 func (e *DeniedError) Error() string {

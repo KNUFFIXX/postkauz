@@ -228,6 +228,7 @@ var deniedHints = map[string]string{
 	"invalid_transition":   "not possible in the current status; see: draft show <id>",
 	"attach_outside_dir":   "attach files only from attach_dir (see: doctor)",
 	"attach_not_found":     "the file is not in attach_dir (see: doctor)",
+	"attach_denied":        "this file may not be attached: secret, key or settings file (attachment guard, see: doctor)",
 	"hidden_text_in_draft": "the HTML contains text a reader would not see; remove it",
 	"too_large":            "shorten the field named in the message (limits: docs/cli.md)",
 	"draft_changed":        "the draft was changed by someone else meanwhile; check it with: draft show <id>, then try again",

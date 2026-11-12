@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -213,6 +214,13 @@ type Draft struct {
 	// "2d"); fehlt der Schlüssel, gilt 24h. Nach dem Laden steht hier der
 	// wirksame Wert (Off oder Value > 0).
 	CopyGoneAfter CopyGoneAfter `toml:"copy_gone_after"`
+	// AttachDenyDirs, AttachDenyFiles: Erweiterung der Anhang-Sperre (A08)
+	// um Ordnernamen bzw. Muster für Dateinamen (wie path.Match, ohne
+	// Groß-/Kleinschreibung). Nur zusätzlich zu den fest eingebauten
+	// Listen in internal/compose; fehlen sie, gelten nur diese. Ein leerer
+	// Eintrag, ein Pfadtrenner oder „..“ ist ein Fehler.
+	AttachDenyDirs  []string `toml:"attach_deny_dirs"`
+	AttachDenyFiles []string `toml:"attach_deny_files"`
 }
 
 // DefaultCopyGoneAfter ist der Standard von [draft] copy_gone_after,
@@ -646,6 +654,36 @@ func checkDraft(d *Draft) error {
 	rest := strings.NewReplacer("{date}", "", "{date_numeric}", "", "{from}", "").Replace(d.QuoteLine)
 	if strings.ContainsAny(rest, "{}") {
 		return fmt.Errorf("config: draft.quote_line knows only the placeholders {date}, {date_numeric} and {from}")
+	}
+	if err := checkDenyList("attach_deny_dirs", d.AttachDenyDirs, false); err != nil {
+		return err
+	}
+	return checkDenyList("attach_deny_files", d.AttachDenyFiles, true)
+}
+
+// checkDenyList prüft eine Erweiterung der Anhang-Sperre (A08): je Eintrag
+// ein einzelner Ordner- bzw. Dateiname (Muster), nicht leer, ohne
+// Pfadtrenner und ohne „..“. Dieselben Regeln prüft
+// compose.NewAttachGuard noch einmal.
+func checkDenyList(key string, list []string, pattern bool) error {
+	const hint = "give a single folder or file name such as \"Steuer\" or \"*.xlsm\"; the list only adds to the built-in rules"
+	for i, e := range list {
+		v := strings.TrimSpace(e)
+		switch {
+		case v == "":
+			return fmt.Errorf("config: draft.%s[%d] is empty; %s", key, i, hint)
+		case strings.ContainsAny(v, `/\`):
+			return fmt.Errorf("config: draft.%s[%d] %q contains a path separator; %s", key, i, e, hint)
+		case strings.Contains(v, ".."):
+			return fmt.Errorf("config: draft.%s[%d] %q contains \"..\"; %s", key, i, e, hint)
+		case strings.ContainsAny(v, "\x00\r\n"):
+			return fmt.Errorf("config: draft.%s[%d] contains a control character; %s", key, i, hint)
+		}
+		if pattern {
+			if _, err := path.Match(strings.ToLower(v), ""); err != nil {
+				return fmt.Errorf("config: draft.%s[%d] %q is not a valid pattern (* and ? as in \"*.xlsm\"); %s", key, i, e, hint)
+			}
+		}
 	}
 	return nil
 }

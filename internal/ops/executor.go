@@ -387,6 +387,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 		case errors.As(herr, &de):
 			// Fachliche Ablehnung (S2.3): Ergebnis denied mit ihrem Grund.
 			end.Result, end.Reason = audit.ResultDenied, de.Reason
+			end.ParamsRedacted = withDenied(end.ParamsRedacted, de.Audit)
 		}
 	}
 	// Zähler auch bei einem Fehler, wenn die Operation eine Teil-Ausgabe
@@ -442,6 +443,29 @@ func withVia(params json.RawMessage, o Origin) json.RawMessage {
 // withCounts ergänzt die Audit-Parameter (ein JSON-Objekt) um "counts"
 // (Operation.AuditCounts). Sind die Parameter kein Objekt, bleiben sie;
 // null oder leer gilt als leeres Objekt.
+// withDenied ergänzt die Audit-Parameter einer fachlichen Ablehnung um
+// ihre Einzelheiten (Feld denied; A08: Regelart und gekürzter Dateiname der
+// Anhang-Sperre, nie ein Pfad).
+func withDenied(params json.RawMessage, extra map[string]string) json.RawMessage {
+	if len(extra) == 0 {
+		return params
+	}
+	obj, ok := paramsObject(params)
+	if !ok {
+		return params
+	}
+	c, err := json.Marshal(extra)
+	if err != nil {
+		return params
+	}
+	obj["denied"] = c
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return params
+	}
+	return b
+}
+
 func withCounts(params json.RawMessage, counts map[string]int64) json.RawMessage {
 	if len(counts) == 0 {
 		return params

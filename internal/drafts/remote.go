@@ -442,6 +442,28 @@ func (s *Service) NotePush(ctx context.Context, accountID, draftID int64, note s
 	})
 }
 
+// PushDenied vermerkt einen Entwurf, den der Push nicht ablegt, weil sein
+// Neubau fachlich abgelehnt wird (A08: Anhang-Sperre, reason
+// attach_denied): Hinweis push_failed (die CHECK-Liste von push_note bleibt
+// unverändert, kein Schema-Upgrade; draft show nennt den Grund) und ein
+// Systemereignis drafts.push mit Ergebnis denied, reason und params (ohne
+// Inhalt). Das Ereignis entsteht nur beim ersten Vermerk, nicht bei jedem
+// erneuten Versuch.
+func (s *Service) PushDenied(ctx context.Context, draftID int64, reason string, params map[string]any) error {
+	return s.tx(ctx, func(x *store.DraftTx) error {
+		d, err := x.Draft(draftID)
+		if err != nil || d.PushNote == PushNotePushFailed || d.PushNote == PushNoteApprovalStale {
+			return err
+		}
+		ev := s.pushEvent(s.now(), d, audit.ResultDenied, reason, 0, params)
+		if _, err := x.AppendAudit(ev); err != nil {
+			return err
+		}
+		d.PushNote = PushNotePushFailed
+		return x.UpdateDraft(d)
+	})
+}
+
 // HumanKeyID ist der Schlüssel des Menschen in created_by, updated_by und
 // approvals.requested_by (wie audit_events.api_key_id).
 const HumanKeyID = "cli"

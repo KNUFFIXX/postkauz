@@ -96,6 +96,9 @@ type DoctorReport struct {
 	AttachDir string `json:"attach_dir"`
 	// ExportDir: Ziel von attach save ([paths] export_dir, S3.3).
 	ExportDir string `json:"export_dir"`
+	// AttachGuard: Zahl der Regeln der Anhang-Sperre (A08), fest
+	// eingebaut plus [draft] attach_deny_dirs/attach_deny_files.
+	AttachGuard *doctorAttachGuard `json:"attach_guard,omitempty"`
 	// HTTP: Einstellungen für mcp --http ([http], T5); nie Geheimnisse
 	// (Principals nur als Zahl).
 	HTTP *DoctorHTTP `json:"http,omitempty"`
@@ -242,6 +245,11 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
 	rep.AttachDir = a.paths.AttachDir
 	rep.ExportDir = a.paths.ExportDir
+	if g, err := a.attachGuard(); err == nil {
+		d, f := g.Rules()
+		rep.AttachGuard = &doctorAttachGuard{DirRules: d, FileRules: f,
+			ExtraDirs: len(a.cfg.Draft.AttachDenyDirs), ExtraFiles: len(a.cfg.Draft.AttachDenyFiles)}
+	}
 	if a.cfg.HTTPErr != nil {
 		rep.HTTPError = a.cfg.HTTPErr.Error()
 	} else {
@@ -676,6 +684,9 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if r.ExportDir != "" {
 		fmt.Fprintf(w, "export:    %s [paths.export_dir]\n", r.ExportDir)
 	}
+	if g := r.AttachGuard; g != nil {
+		fmt.Fprintf(w, "attach_guard: %d dir rules, %d file rules\n", g.DirRules, g.FileRules)
+	}
 	if h := r.HTTP; h != nil {
 		listen := h.Listen
 		if !h.ListenAllowed {
@@ -761,4 +772,12 @@ func doctorHTTP(h config.HTTP) *DoctorHTTP {
 		d.ListenAllowed, d.ListenProblem = false, strings.TrimPrefix(err.Error(), httpmcp.ErrListenNotAllowed.Error()+": ")
 	}
 	return d
+}
+
+// doctorAttachGuard: Regeln der Anhang-Sperre (A08), nur Zahlen.
+type doctorAttachGuard struct {
+	DirRules   int `json:"dir_rules"`
+	FileRules  int `json:"file_rules"`
+	ExtraDirs  int `json:"extra_dirs"`
+	ExtraFiles int `json:"extra_files"`
 }

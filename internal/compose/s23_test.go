@@ -42,14 +42,14 @@ func TestLoadFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(base, "geheim.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data, name, err := LoadFile("attachments[0]", dir, "ok.txt", 0)
+	data, name, err := LoadFile("attachments[0]", dir, "ok.txt", 0, nil)
 	if err != nil || string(data) != "Inhalt\n" || name != "ok.txt" {
 		t.Fatalf("LoadFile = %q %q %v", data, name, err)
 	}
-	_, _, err = LoadFile("attachments[0]", dir, "../geheim.txt", 0)
+	_, _, err = LoadFile("attachments[0]", dir, "../geheim.txt", 0, nil)
 	wantReason(t, err, ReasonAttachOutsideDir)
-	_, _, err = LoadFile("attachments[0]", dir, "fehlt.txt", 0)
+	_, _, err = LoadFile("attachments[0]", dir, "fehlt.txt", 0, nil)
 	wantReason(t, err, ReasonAttachNotFound)
-	_, _, err = LoadFile("attachments[0]", dir, "ok.txt", 3)
+	_, _, err = LoadFile("attachments[0]", dir, "ok.txt", 3, nil)
 	wantReason(t, err, ReasonTooLarge)
 }

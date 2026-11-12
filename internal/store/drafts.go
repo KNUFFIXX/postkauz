@@ -45,6 +45,11 @@ type DraftAttachment struct {
 	Declared   string `json:"declared,omitempty"`
 	Mismatch   bool   `json:"mismatch,omitempty"`
 	Executable bool   `json:"executable,omitempty"`
+	// Source: Herkunft (A08, ohne Migration im JSON der Spalte): file
+	// (lokale Datei), blob (Anhang einer gespiegelten Nachricht), forward
+	// (aus der Ausgangsnachricht weitergeleitet); leer bei Entwürfen vor
+	// A08 (gilt beim Neubau als file).
+	Source string `json:"source,omitempty"`
 }
 
 // Draft ist eine Zeile der Tabelle drafts.

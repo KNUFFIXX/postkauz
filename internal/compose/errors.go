@@ -32,6 +32,10 @@ const (
 	// ReasonAttachNotFound: Dateianhang unterhalb von AttachDir fehlt oder
 	// ist keine reguläre Datei.
 	ReasonAttachNotFound Reason = "attach_not_found"
+	// ReasonAttachDenied: Die Anhang-Sperre (A08) verbietet die Datei:
+	// gesperrter Ordner im Pfad, gesperrtes Namensmuster, Ort von PostKauz
+	// selbst oder alternativer Datenstrom (Error.Rule).
+	ReasonAttachDenied Reason = "attach_denied"
 )
 
 // Error ist eine Ablehnung mit Grund. Field nennt das Eingabefeld (z. B.
@@ -42,6 +46,11 @@ type Error struct {
 	Field  string
 	// Detail ist eine kurze englische Erläuterung ohne Mailinhalt.
 	Detail string
+	// Rule und Name nur bei ReasonAttachDenied: Regelart (RuleDir,
+	// RuleFile, RuleOwnData, RuleStream) und der Dateiname, gekürzt auf 40
+	// Zeichen (für das Audit, A08; nie in Error()).
+	Rule string
+	Name string
 }
 
 func (e *Error) Error() string {

@@ -569,14 +569,14 @@ func TestAttachDirSymlinksAndSpecialFiles(t *testing.T) {
 		}
 	}
 	for _, c := range []struct{ dir, path string }{{dir, "inner.txt"}, {dir, "subl/ok.txt"}, {filepath.Join(base, "attachlink"), "sub/ok.txt"}} {
-		data, name, err := LoadFile("attachments[0]", c.dir, c.path, 0)
+		data, name, err := LoadFile("attachments[0]", c.dir, c.path, 0, nil)
 		if err != nil || string(data) != "Inhalt\n" || name == "" {
 			t.Errorf("%s in %s: %q %q %v", c.path, c.dir, data, name, err)
 		}
 	}
-	_, _, err := LoadFile("attachments[0]", dir, "outer.txt", 0)
+	_, _, err := LoadFile("attachments[0]", dir, "outer.txt", 0, nil)
 	wantReason(t, err, ReasonAttachOutsideDir)
-	_, _, err = LoadFile("attachments[0]", dir, "dirlink", 0)
+	_, _, err = LoadFile("attachments[0]", dir, "dirlink", 0, nil)
 	wantReason(t, err, ReasonAttachNotFound)
 }
 

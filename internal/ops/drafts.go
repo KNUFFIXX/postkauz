@@ -41,6 +41,9 @@ import (
 type DraftConfig struct {
 	// AttachDir: Dateianhänge nur von hier ([paths] attach_dir, E10).
 	AttachDir string
+	// AttachGuard: Anhang-Sperre (A08); nil = Standardlisten ohne die
+	// Orte von PostKauz (nur in Tests).
+	AttachGuard *compose.AttachGuard
 	// MaxAttachmentBytes: Summe der Anhänge ([draft] max_attachment_bytes;
 	// 0 = 25 MiB).
 	MaxAttachmentBytes int64
@@ -235,7 +238,12 @@ func draftErr(err error) error {
 		if ce.Reason == compose.ReasonInvalidInput {
 			return inputErr("invalid input: %s", msg)
 		}
-		return &DeniedError{Reason: string(ce.Reason), Msg: msg}
+		de := &DeniedError{Reason: string(ce.Reason), Msg: msg}
+		if rule, name, ok := compose.GuardOf(ce); ok {
+			// A08: Audit mit Regelart und gekürztem Dateinamen, ohne Pfad.
+			de.Audit = map[string]string{"field": ce.Field, "rule": rule, "file": name}
+		}
+		return de
 	}
 	return err
 }
@@ -584,7 +592,7 @@ func (o *draftOps) loadFile(field, file string, b *attachBudget) ([]byte, string
 	if b.left <= 0 {
 		return nil, "", errAttachTooLarge
 	}
-	data, name, err := compose.LoadFile(field, o.cfg.AttachDir, file, b.left)
+	data, name, err := compose.LoadFile(field, o.cfg.AttachDir, file, b.left, o.cfg.AttachGuard)
 	if err != nil {
 		return nil, "", draftErr(err)
 	}
@@ -691,7 +699,7 @@ func (o *draftOps) attachments(ctx context.Context, acc store.Account, in []Draf
 			if a.Filename != "" {
 				name = a.Filename
 			}
-			out = append(out, loadedAttachment{att: compose.Attachment{Filename: name, Data: data}})
+			out = append(out, loadedAttachment{att: compose.Attachment{Filename: name, Data: data, Origin: compose.SourceFile}})
 		}
 	}
 	return out, nil
@@ -706,9 +714,24 @@ func (o *draftOps) storedAttachments(atts []store.DraftAttachment, budget *attac
 		if err != nil {
 			return nil, draftErr(err)
 		}
-		out = append(out, loadedAttachment{att: compose.Attachment{Filename: a.Filename, ContentType: a.Declared, Data: data}})
+		out = append(out, loadedAttachment{att: compose.Attachment{Filename: a.Filename, ContentType: a.Declared, Data: data,
+			Origin: storedOrigin(a.Source)}})
 	}
 	return out, nil
+}
+
+// storedOrigin bildet die gespeicherte Herkunft eines Entwurfsanhangs auf
+// compose ab (A08). Ohne Angabe (Entwürfe vor A08) gilt der Anhang als
+// Datei: Build prüft dann den Namen gegen die Anhang-Sperre, damit ein
+// vorher angelegter Entwurf mit gesperrtem Anhang nicht abgelegt wird.
+func storedOrigin(source string) string {
+	switch source {
+	case compose.SourceBlob:
+		return ""
+	case compose.SourceForward:
+		return compose.SourceForward
+	}
+	return compose.SourceFile
 }
 
 // putFiles legt die Anhänge in den Blob-Store (nicht im Trockenlauf), auch
@@ -836,6 +859,7 @@ func composeIdentity(i store.Identity) compose.Identity {
 func (o *draftOps) build(in compose.Input) (*compose.Message, error) {
 	in.QuoteLine = o.cfg.QuoteLine
 	in.AttachDir = o.cfg.AttachDir
+	in.AttachGuard = o.cfg.AttachGuard
 	in.Limits = compose.Limits{MaxAttachmentBytes: o.cfg.maxBytes()}
 	if in.Now == nil {
 		in.Now = o.cfg.now // der Push setzt Date selbst (rebuildAt)
@@ -854,7 +878,7 @@ func content(m *compose.Message, md, html string, opts composeOptions) drafts.Co
 		BodyMarkdown: md, BodyText: m.BodyText, BodyHTML: html, HeadersJSON: headersOf(m), ComposeOptions: opts.String()}
 	for _, a := range m.Attachments {
 		c.Attachments = append(c.Attachments, store.DraftAttachment{SHA256: a.SHA256, Filename: a.Filename, ContentType: a.ContentType,
-			Size: a.Size, Declared: a.Declared, Mismatch: a.Mismatch, Executable: a.Executable})
+			Size: a.Size, Declared: a.Declared, Mismatch: a.Mismatch, Executable: a.Executable, Source: a.Source})
 	}
 	return c
 }
@@ -1571,6 +1595,9 @@ func pushFailedText(err error) string {
 		reason = de.Reason
 	case errors.As(err, &oe):
 		reason = oe.Reason // draftErr: compose.Error als Ablehnung
+		if f := oe.Audit["field"]; f != "" {
+			reason += " in " + f // A08: attach_denied in attachments[0]
+		}
 	}
 	var ie *InputError
 	if reason == "" && errors.As(err, &ie) {

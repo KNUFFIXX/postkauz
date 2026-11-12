@@ -23,7 +23,7 @@ func TestLoadFileRejectsFIFOWithoutBlocking(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := LoadFile("attachments[0]", dir, "pipe.pdf", 1<<20)
+		_, _, err := LoadFile("attachments[0]", dir, "pipe.pdf", 1<<20, nil)
 		done <- err
 	}()
 	select {
@@ -35,7 +35,7 @@ func TestLoadFileRejectsFIFOWithoutBlocking(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("LoadFile blocked on a FIFO")
 	}
-	if b, _, err := LoadFile("attachments[1]", dir, "ok.txt", 1<<20); err != nil || string(b) != "hallo" {
+	if b, _, err := LoadFile("attachments[1]", dir, "ok.txt", 1<<20, nil); err != nil || string(b) != "hallo" {
 		t.Fatalf("regular file: %q %v", b, err)
 	}
 }

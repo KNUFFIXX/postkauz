@@ -89,7 +89,10 @@
 //   - Anhänge (E10): Typ per Magic Bytes (internal/magic; gesendet wird der
 //     erkannte Typ, Widerspruch und ausführbare Typen stehen im Ergebnis),
 //     Summe ≤ Limits.MaxAttachmentBytes, Dateien nur unterhalb von AttachDir
-//     (Symlinks aufgelöst, geöffnet über os.Root).
+//     (Symlinks aufgelöst, geöffnet über os.Root); die Anhang-Sperre (A08,
+//     guard.go) verbietet Dateien in gesperrten Ordnern, mit gesperrten
+//     Namen, in den Orten von PostKauz und mit Datenstrom (attach_denied),
+//     bei Data mit Origin SourceFile den gesperrten Namen.
 //   - Grenzen: eigener Text (Markdown bzw. HTML) ≤ 200.000 Zeichen; der
 //     Text der Ausgangsnachricht in Zitat und Weiterleitung wird auf
 //     MaxQuoteChars gekürzt (Hinweis NoteQuoteTruncated); Betreff ≤ 500 (ein abgeleiteter
@@ -204,6 +207,11 @@ type Attachment struct {
 	ContentType string
 	Data        []byte
 	Path        string
+	// Origin nennt bei Data die Herkunft: SourceFile (Bytes einer lokalen
+	// Datei; Build prüft den Namen gegen die Anhang-Sperre, A08),
+	// SourceForward (aus einer Ausgangsnachricht weitergeleitet) oder ""
+	// (Blob, z. B. Anhang einer gespiegelten Nachricht; nicht geprüft).
+	Origin string
 }
 
 // Limits begrenzt die Eingabe (A02, „Vorgaben"). Nullwerte = DefaultLimits.
@@ -265,6 +273,8 @@ type Input struct {
 	Original    *Original
 	Attachments []Attachment
 	AttachDir   string
+	// AttachGuard: Anhang-Sperre für Dateien (A08); nil = Standardlisten.
+	AttachGuard *AttachGuard
 
 	MessageID string
 	Limits    Limits

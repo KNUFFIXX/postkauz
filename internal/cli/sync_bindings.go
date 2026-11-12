@@ -289,6 +289,9 @@ func renderSyncDrafts(w io.Writer, d *ops.SyncDrafts) {
 	if d.Failed > 0 {
 		parts = append(parts, fmt.Sprintf("%d could not be built (see draft show)", d.Failed))
 	}
+	if d.AttachDenied > 0 {
+		parts = append(parts, fmt.Sprintf("%d not stored: an attachment is blocked by the attachment guard (attach_denied); remove it with draft edit (see draft show)", d.AttachDenied))
+	}
 	if d.KeyRevoked > 0 {
 		parts = append(parts, fmt.Sprintf("%d not stored because their API key was revoked or expired; agent drafts abandoned, your drafts held until you check them (see draft show)", d.KeyRevoked))
 	}

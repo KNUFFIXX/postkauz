@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/actions"
 	"github.com/KNUFFIXX/postkauz/internal/backup"
 	"github.com/KNUFFIXX/postkauz/internal/blob"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
+	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/config"
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
@@ -184,13 +186,17 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 	if err != nil {
 		return nil, err
 	}
+	guard, err := a.attachGuard()
+	if err != nil {
+		return nil, err
+	}
 	deps := ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
 		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
 		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars(),
 		Drafts: &drafts.Service{Store: st, ApprovalTTL: a.cfg.Draft.ApprovalTTL, CopyGoneAfter: a.cfg.Draft.CopyGoneAfter.Effective(),
 			PolicyVersion: a.policyVersion},
 		DraftBlobs: blobs,
-		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
+		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, AttachGuard: guard, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
 		DraftCheck: newDraftChecker(a), OAuth: newOAuth(), SystemAudit: st.AuditWriter(), Log: a.log,
 		Actions: st, SyncKeywords: a.cfg.Tags.SyncKeywords, ExportDir: a.paths.ExportDir, Export: st,
@@ -302,4 +308,33 @@ func (a *app) close() {
 	if a.logFile != nil {
 		_ = a.logFile.Close()
 	}
+}
+
+// attachGuard baut die Anhang-Sperre (A08): Standardlisten, Erweiterung aus
+// [draft] attach_deny_dirs/attach_deny_files und die Orte von PostKauz
+// (Datenverzeichnis, Ordner der Konfigurationsdatei, export_dir; einzeln
+// immer: Datenbank samt WAL, Blobs, Log, Datei-Secrets, Profile,
+// Konfigurationsdatei, Ziel von audit export).
+func (a *app) attachGuard() (*compose.AttachGuard, error) {
+	p := a.paths
+	own := compose.OwnPaths{DataDir: p.DataDir, ExportDir: p.ExportDir}
+	if p.ConfigFile != "" {
+		own.ConfigDir = filepath.Dir(p.ConfigFile)
+		own.Entries = append(own.Entries, p.ConfigFile)
+	}
+	if p.Database != "" {
+		own.Entries = append(own.Entries, p.Database, p.Database+"-wal", p.Database+"-shm", p.Database+"-journal")
+	}
+	own.Entries = append(own.Entries, p.Blobs, p.Log, p.SecretsDir, p.ExportDir)
+	if p.DataDir != "" {
+		own.Entries = append(own.Entries, filepath.Join(p.DataDir, "profiles"))
+	}
+	if d := strings.TrimSpace(a.cfg.Audit.ExportDir); d != "" {
+		own.Entries = append(own.Entries, d)
+	}
+	g, err := compose.NewAttachGuard(a.cfg.Draft.AttachDenyDirs, a.cfg.Draft.AttachDenyFiles, own)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	return g, nil
 }

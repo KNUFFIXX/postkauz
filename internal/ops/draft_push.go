@@ -97,6 +97,10 @@ type DraftPushReport struct {
 	// KeyRevoked: Entwürfe, deren Schlüssel nicht mehr gilt (A8); nicht
 	// abgelegt, Freigabe abgelehnt, Entwurf verworfen.
 	KeyRevoked int `json:"key_revoked,omitempty"`
+	// AttachDenied: Entwürfe mit einem Anhang, den die Anhang-Sperre
+	// verbietet (A08; etwa vor der Sperre angelegt); nicht abgelegt,
+	// Hinweis push_failed mit Grund attach_denied (draft show).
+	AttachDenied int `json:"attach_denied,omitempty"`
 	// DraftIDs: die abgelegten Entwürfe.
 	DraftIDs []int64 `json:"draft_ids,omitempty"`
 	// Waiting: geänderte Entwürfe, die noch nicht 30 s unverändert sind
@@ -115,6 +119,7 @@ func (r *DraftPushReport) Add(o DraftPushReport) {
 	r.Rejected += o.Rejected
 	r.Adopted += o.Adopted
 	r.KeyRevoked += o.KeyRevoked
+	r.AttachDenied += o.AttachDenied
 	r.DraftIDs = append(r.DraftIDs, o.DraftIDs...)
 	// Wartende zählen nicht zusammen: Derselbe Entwurf wartet über mehrere
 	// Prüfungen; es gilt der letzte Stand.
@@ -296,6 +301,16 @@ func (p *DraftPusher) pushOne(ctx context.Context, acc store.Account, mailboxID,
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
+		}
+		if de := (*DeniedError)(nil); errors.As(err, &de) && de.Reason == string(compose.ReasonAttachDenied) {
+			// A08: Anhang-Sperre; kein APPEND, Systemereignis denied mit
+			// Feld, Regelart und gekürztem Dateinamen (nie ein Pfad).
+			rep.AttachDenied++
+			params := map[string]any{}
+			for k, v := range de.Audit {
+				params[k] = v
+			}
+			return svc.PushDenied(ctx, d.ID, de.Reason, params)
 		}
 		rep.Failed++
 		return svc.NotePush(ctx, acc.ID, d.ID, drafts.PushNotePushFailed)
