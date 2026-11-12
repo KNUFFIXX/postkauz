@@ -1,6 +1,6 @@
 # Abnahme D14: Umstellung auf 0.3.0-rc6 (A08 „Anhang-Sperre“)
 
-Stand: 12.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3). Skript: [abnahme_D14.ps1](abnahme_D14.ps1) (Muster D13, nur das Nötige). Programm: Build **0.3.0-rc6**; Build-Commit und SHA256 der `postkauz-windows-amd64.exe` stehen in [roadmap.md](roadmap.md) („Stand 12.11.2026“) und in `SHA256SUMS` neben dem Programm (für `-ExpectSha256`).
+Stand: 12.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3). Skript: [abnahme_D14.ps1](abnahme_D14.ps1) (Muster D13, nur das Nötige). Programm: Build **0.3.0-rc6** an `a711d93`, `postkauz-windows-amd64.exe` SHA256 `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c` (für `-ExpectSha256`; Nachbau und übrige Prüfsummen in [roadmap.md](roadmap.md), „Stand 12.11.2026“, und in `SHA256SUMS` neben dem Programm).
 
 **Worum es geht:** Der Dauerbetrieb auf dem Büro-PC läuft seit 10.11.2026 mit 0.3.0-rc5. D14 stellt ihn auf 0.3.0-rc6 um und zeigt an fünf Proben, dass die neue **Anhang-Sperre** wirkt: Eine harmlose Datei unter `attach_dir` lässt sich anhängen; eine Passwort-Datenbank (`probe.kdbx`), eine Datei in einem Ordner `_secrets`, eine Token-Datei (`probe-token.json`) und ein alternativer Datenstrom (`probe.txt:stream`) nicht. Alle Proben laufen mit `draft new --dry-run`: **keine Mail, kein Entwurf, kein APPEND.** Regeln und Grenzen: [sicherheit.md](sicherheit.md) Abschnitt 7, „Anhang-Sperre“.
 
@@ -40,7 +40,7 @@ Stand: 12.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3). Sk
 **Im Hintergrund starten**, danach das Protokoll mitlesen, bis die Schlusszeile `D14: …` dasteht:
 
 ```powershell
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d14\abnahme_D14.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d14\postkauz-windows-amd64.exe','-ExpectSha256','<SHA256 aus SHA256SUMS>','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-ProbeAccount','<konto1>','-KeepStdioMcp'
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d14\abnahme_D14.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d14\postkauz-windows-amd64.exe','-ExpectSha256','71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-ProbeAccount','<konto1>','-KeepStdioMcp'
 ```
 
 ```powershell

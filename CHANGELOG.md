@@ -4,6 +4,26 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### 0.3.0-rc6 (Build, noch kein Tag) – Auftrag A08 „Anhang-Sperre für Schlüssel-, Passwort- und Einstellungsdateien“
+
+Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60eef78` = Stand 0.3.0-rc5). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter, **solange `[draft] attach_deny_dirs`/`attach_deny_files` nicht in der Konfiguration stehen** (rc5 startet sonst nicht). Build **0.3.0-rc6** an `a711d93`, reproduzierbar (zwei frische Klone ohne Tags, `SHA256SUMS` gleich), Windows `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c`. Haltepunkt: Gegenprüfung und Abnahme D14 ([docs/abnahme_D14.md](docs/abnahme_D14.md)) nach Entscheid des Betreibers.
+
+#### Security
+
+- **Anhang-Sperre** (Teil 1): Eine lokale Datei unter `[paths] attach_dir` wird nie Anhang eines Entwurfs, wenn ein Ordner unterhalb von attach_dir gesperrt ist (`_secrets`, `.ssh`, `Passwörter` …; angefragter und aufgelöster Pfad, ohne Groß-/Kleinschreibung, NFC), ihr Name auf ein gesperrtes Muster passt (`*.kdbx`, `*token*.json`, `*secret*`, `config.toml` …, auch mit Sicherungsendung), sie im Datenverzeichnis, Konfigurationsordner oder `export_dir` von PostKauz liegt oder der Pfad einen alternativen Datenstrom nennt. Ergebnis `denied` mit neuem Grund `attach_denied` und Regelart (`dir`, `file`, `own_data`, `stream`), nie mit Pfad; Audit mit Feld, Regelart und Dateiname (40 Zeichen). Gilt für CLI, MCP und HTTP und beim Neubau gespeicherter Entwürfe.
+- Ein vor rc6 angelegter Entwurf mit gesperrtem Anhang wird nicht mehr abgelegt: Der Push zählt ihn als `attach_denied` (Sync-Zeile, `--json`), vermerkt `push_failed` mit Grund (`draft show`) und schreibt einmal ein Systemereignis `drafts.push` mit Ergebnis `denied`.
+
+#### Added
+
+- `[draft] attach_deny_dirs` und `[draft] attach_deny_files`: erweitern die fest eingebauten Listen, abschwächen geht nicht; leere Einträge, Pfadtrenner, `..` und ungültige Muster sind ein Konfigurationsfehler mit Hinweis.
+- `doctor`: Zeile `attach_guard: <n> dir rules, <m> file rules` (`--json`: `attach_guard`).
+- Gespeicherte Entwurfsanhänge tragen ihre Herkunft (`source`: `file`, `blob`, `forward`; im JSON der Spalte, ohne Migration).
+- Abnahme D14 ([docs/abnahme_D14.md](docs/abnahme_D14.md), [docs/abnahme_D14.ps1](docs/abnahme_D14.ps1)): Tausch rc5 → rc6 bei laufender Claude-App, `doctor` vorher/nachher, fünf Proben mit `draft new --dry-run`, Rückweg.
+
+#### Changed
+
+- Doku: [docs/sicherheit.md](docs/sicherheit.md) Abschnitte 4 und 7 („Anhang-Sperre“), Nachtrag zu E10 in [docs/entscheidungen.md](docs/entscheidungen.md), [docs/cli.md](docs/cli.md) Abschnitt 5, [docs/mcp.md](docs/mcp.md) Abschnitt 6, Entschiedene Frage 80 in [docs/roadmap.md](docs/roadmap.md).
+
 ### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
 #### Abnahme D13 bestanden (10.11.2026; noch kein Tag)
