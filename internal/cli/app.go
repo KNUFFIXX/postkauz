@@ -314,7 +314,9 @@ func (a *app) close() {
 // [draft] attach_deny_dirs/attach_deny_files und die Orte von PostKauz
 // (Datenverzeichnis, Ordner der Konfigurationsdatei, export_dir; einzeln
 // immer: Datenbank samt WAL, Blobs, Log, Datei-Secrets, Profile,
-// Konfigurationsdatei, Ziel von audit export).
+// Konfigurationsdatei, Ziel von audit export). [paths] export_dir ist nur
+// eine breite Ordnerregel (Entschiedene Frage 80(c)): Liegt attach_dir darin
+// oder ist es gleich, bleiben harmlose Dateien darunter erlaubt.
 func (a *app) attachGuard() (*compose.AttachGuard, error) {
 	p := a.paths
 	own := compose.OwnPaths{DataDir: p.DataDir, ExportDir: p.ExportDir}
@@ -325,7 +327,7 @@ func (a *app) attachGuard() (*compose.AttachGuard, error) {
 	if p.Database != "" {
 		own.Entries = append(own.Entries, p.Database, p.Database+"-wal", p.Database+"-shm", p.Database+"-journal")
 	}
-	own.Entries = append(own.Entries, p.Blobs, p.Log, p.SecretsDir, p.ExportDir)
+	own.Entries = append(own.Entries, p.Blobs, p.Log, p.SecretsDir)
 	if p.DataDir != "" {
 		own.Entries = append(own.Entries, filepath.Join(p.DataDir, "profiles"))
 	}

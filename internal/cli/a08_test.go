@@ -90,3 +90,54 @@ func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
 }
+
+// Nachbesserung A08, Punkt 1: [paths] export_dir ist nur eine breite
+// Ordnerregel (Entschiedene Frage 80(c)). Liegt attach_dir darin oder ist es
+// gleich, bleibt eine harmlose Datei erlaubt; [audit] export_dir bleibt
+// immer gesperrt.
+func TestA08CLIExportDirBroadOnly(t *testing.T) {
+	for _, c := range []struct{ name, exportRel, attachRel string }{
+		{"attach inside export", "", "attach"},
+		{"attach equals export", "attach", "attach"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			setupEnv(t)
+			base := filepath.Join(t.TempDir(), "Arbeit")
+			export := filepath.Join(base, c.exportRel)
+			attach := filepath.Join(base, c.attachRel)
+			auditExp := filepath.Join(attach, "auditexport")
+			cfg := filepath.Join(t.TempDir(), "pkconf", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(cfg), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			body := "[paths]\nattach_dir = '" + attach + "'\nexport_dir = '" + export + "'\n\n[audit]\nexport_dir = '" + auditExp + "'\n"
+			if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("POSTKAUZ_CONFIG", cfg)
+			addTestAccount(t, "demo")
+			if code, out, errs := run(t, "identity", "add", "-a", "demo", "--email", "probe@example.org"); code != ExitOK {
+				t.Fatalf("identity add: %d %s %s", code, out, errs)
+			}
+			for _, f := range []string{"Brief.pdf", "auditexport/audit.jsonl"} {
+				p := filepath.Join(attach, filepath.FromSlash(f))
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("Probe A08\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			draft := func(file string) (int, string, string) {
+				return run(t, "draft", "new", "-a", "demo", "--to", "b@example.org", "--subject", "Probe", "--attach", file, "--dry-run")
+			}
+			if code, out, errs := draft("Brief.pdf"); code != ExitOK {
+				t.Fatalf("harmless file under export_dir: %d %s %s", code, out, errs)
+			}
+			code, out, errs := draft("auditexport/audit.jsonl")
+			if code == ExitOK || !strings.Contains(errs, "attach_denied") || !strings.Contains(errs, "rule: "+compose.RuleOwnData) {
+				t.Fatalf("[audit] export_dir: %d\n%s%s", code, out, errs)
+			}
+		})
+	}
+}
