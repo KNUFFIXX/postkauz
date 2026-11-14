@@ -49,6 +49,11 @@ func (b *builder) attachments() ([]loadedAttachment, error) {
 			if a.Filename == "" {
 				a.Filename = name
 			}
+			// Ein eigener Anhangsname (filename) wird ebenso geprüft
+			// (Entschiedene Frage 80(f)).
+			if in.AttachGuard.deniedAttachName(a.Filename) {
+				return nil, denyGuard(field, RuleFile, a.Filename)
+			}
 			if err := take(field, a, data, SourceFile); err != nil {
 				return nil, err
 			}
@@ -58,7 +63,7 @@ func (b *builder) attachments() ([]loadedAttachment, error) {
 			// mehr; geprüft wird der Name, unter dem der Anhang verschickt
 			// würde. So meldet auch ein vor der Sperre angelegter Entwurf
 			// beim nächsten Bau attach_denied statt abgelegt zu werden.
-			if in.AttachGuard.DeniedName(a.Filename) {
+			if in.AttachGuard.deniedAttachName(a.Filename) {
 				return nil, denyGuard(field, RuleFile, a.Filename)
 			}
 			if err := take(field, a, a.Data, SourceFile); err != nil {
@@ -203,6 +208,9 @@ func readAttachFile(field, dir, p string, budget int64, g *AttachGuard) ([]byte,
 	if rule := g.attachDenied(absDir, realDir, target, realTarget); rule != "" {
 		return nil, "", denyGuard(field, rule, target)
 	}
+	if testHookBeforeOpen != nil {
+		testHookBeforeOpen()
+	}
 	root, err := os.OpenRoot(realDir)
 	if err != nil {
 		return nil, "", deny(ReasonAttachNotFound, field, "attach_dir cannot be opened")
@@ -235,6 +243,20 @@ func readAttachFile(field, dir, p string, budget int64, g *AttachGuard) ([]byte,
 	if err != nil || !st.Mode().IsRegular() || !os.SameFile(before, st) {
 		return nil, "", deny(ReasonAttachNotFound, field, "not a regular file")
 	}
+	// Nachbesserung A08, Punkt 6: Zeitfenster zwischen Prüfung und Öffnen.
+	// Wurde ein Ordner auf dem Weg inzwischen durch einen Symlink ersetzt
+	// (etwa ok/ → _secrets/), folgt os.Root ihm, solange er in attach_dir
+	// bleibt. Deshalb nach dem Öffnen den Pfad erneut auflösen, prüfen, dass
+	// er auf die geöffnete Datei zeigt, und ihn noch einmal gegen die Sperre
+	// halten. Ohne Systemaufruf je Plattform (Pfad eines Handles); bleibt
+	// ein Rest: ein Tausch hin und sofort zurück während des Öffnens fällt
+	// an SameFile auf, nicht an der Sperre.
+	if rule := recheckOpened(g, absDir, realDir, target, st); rule != "" {
+		if rule == ruleChanged {
+			return nil, "", deny(ReasonAttachNotFound, field, "the file changed while it was opened")
+		}
+		return nil, "", denyGuard(field, rule, target)
+	}
 	if st.Size() > budget {
 		return nil, "", deny(ReasonTooLarge, field, "attachments exceed the limit in total")
 	}
@@ -247,6 +269,29 @@ func readAttachFile(field, dir, p string, budget int64, g *AttachGuard) ([]byte,
 		return nil, "", deny(ReasonTooLarge, field, "attachments exceed the limit in total")
 	}
 	return data, filepath.Base(target), nil
+}
+
+// testHookBeforeOpen läuft (nur in Tests) zwischen der letzten Prüfung der
+// Sperre und dem Öffnen.
+var testHookBeforeOpen func()
+
+// ruleChanged: Der Pfad zeigt nach dem Öffnen nicht mehr auf die geöffnete
+// Datei (recheckOpened).
+const ruleChanged = "changed"
+
+// recheckOpened löst target nach dem Öffnen erneut auf und prüft, dass der
+// Pfad noch in attach_dir liegt, auf die geöffnete Datei st zeigt und nicht
+// gesperrt ist. Liefert die Regelart, ruleChanged oder "".
+func recheckOpened(g *AttachGuard, absDir, realDir, target string, st os.FileInfo) string {
+	real2, err := filepath.EvalSymlinks(target)
+	if err != nil || !within(realDir, real2) {
+		return ruleChanged
+	}
+	st2, err := os.Stat(real2)
+	if err != nil || !os.SameFile(st, st2) {
+		return ruleChanged
+	}
+	return g.attachDenied(absDir, realDir, target, real2)
 }
 
 // within: p liegt (lexikalisch) unterhalb von dir.

@@ -284,3 +284,74 @@ func TestA08NewAttachGuard(t *testing.T) {
 		}
 	}
 }
+
+// Nachbesserung A08, Punkt 3: Geprüft wird der bereinigte, tatsächlich
+// gespeicherte Anhangsname. Ein Nullbreiten-Leerzeichen oder ein
+// Steuerzeichen im Namen umgeht die Sperre nicht, auf dem Weg mit Pfad
+// (eigener filename) ebenso wie mit Daten (Herkunft file).
+func TestA08SanitizedNameChecked(t *testing.T) {
+	attach := t.TempDir()
+	a08Tree(t, attach, "brief.txt")
+	in := baseInput(KindNew)
+	in.AttachDir = attach
+	for _, name := range []string{".e\u200bnv", "tok\u200ben.json", "Vault.kd\u00adbx", "id_\x01rsa", "\u202etoken.json"} {
+		for _, a := range []Attachment{
+			{Path: "brief.txt", Filename: name},
+			{Filename: name, Data: []byte("x"), Origin: SourceFile},
+		} {
+			in.Attachments = []Attachment{a}
+			m, err := Build(in)
+			if _, _, ok := GuardOf(err); !ok {
+				stored := ""
+				if err == nil && len(m.Attachments) == 1 {
+					stored = m.Attachments[0].Filename
+				}
+				t.Errorf("%q (path %q): not denied, stored as %q (%v)", name, a.Path, stored, err)
+			}
+		}
+	}
+	// Ein harmloser eigener Name bleibt erlaubt.
+	in.Attachments = []Attachment{{Path: "brief.txt", Filename: "Brief\u200b 2026.txt"}}
+	if _, err := Build(in); err != nil {
+		t.Fatalf("harmless name: %v", err)
+	}
+}
+
+// Nachbesserung A08, Punkt 6: Ein Ordner auf dem Weg wird zwischen der
+// Prüfung und dem Öffnen durch einen Symlink auf _secrets/ ersetzt. Die
+// Nachprüfung nach dem Öffnen sperrt die Datei.
+func TestA08SwapBetweenCheckAndOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need extra rights on Windows")
+	}
+	attach := t.TempDir()
+	a08Tree(t, attach, "ok/brief.txt", "_secrets/brief.txt")
+	testHookBeforeOpen = func() {
+		if err := os.Rename(filepath.Join(attach, "ok"), filepath.Join(attach, "ok-alt")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink("_secrets", filepath.Join(attach, "ok")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { testHookBeforeOpen = nil })
+	_, _, err := LoadFile("attachments[0]", attach, "ok/brief.txt", 0, nil)
+	wantGuard(t, err, RuleDir, "brief")
+}
+
+// Nachbesserung A08, Punkt 6: Unicode-Faltung statt Kleinschreibung. Die
+// alte Schreibweise mit „ß“ fällt unter dieselben Regeln.
+func TestA08UnicodeFold(t *testing.T) {
+	var g *AttachGuard
+	for _, n := range []string{"Paßwörter.txt", "PASSWÖRTER.TXT", "Geheimes Paßwort.docx"} {
+		if !g.DeniedName(n) {
+			t.Errorf("%q not denied", n)
+		}
+	}
+	if d := g.orDefault(); !d.denyDir("Paßwörter") || !d.denyDir("PASSWÖRTER") {
+		t.Error("Paßwörter as folder not denied")
+	}
+	if g.DeniedName("Straße 12 Brief.pdf") {
+		t.Error("harmless name denied")
+	}
+}

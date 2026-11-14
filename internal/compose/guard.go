@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -152,10 +153,17 @@ func (g *AttachGuard) Rules() (dirs, files int) {
 	return g.nDirs, g.nFiles
 }
 
+// foldCaser faltet nach Unicode (zustandslos, nebenläufig nutzbar).
+var foldCaser = cases.Fold()
+
 // fold vergleicht ohne Groß-/Kleinschreibung in Unicode-NFC
-// („Passwörter“ in NFD ist derselbe Name).
+// („Passwörter“ in NFD ist derselbe Name). Unicode-Faltung statt
+// strings.ToLower (Nachbesserung A08, Punkt 6; golang.org/x/text ist schon
+// Abhängigkeit): auch Sonderfälle wie „ẞ“/„ß“ → „ss“ oder das Kelvin-Zeichen
+// gelten als gleich; das sperrt höchstens mehr. Die Faltung erhält keine
+// Normalform, daher danach erneut NFC.
 func fold(s string) string {
-	return strings.ToLower(norm.NFC.String(s))
+	return norm.NFC.String(foldCaser.String(norm.NFC.String(s)))
 }
 
 func absClean(p string) string {
@@ -199,6 +207,14 @@ func (g *AttachGuard) DeniedName(name string) bool {
 		}
 	}
 	return false
+}
+
+// deniedAttachName prüft einen Anhangsnamen so, wie er gespeichert und
+// verschickt würde: nach der Bereinigung durch attachName (unsichtbare und
+// Steuerzeichen fallen weg, „.e\u200bnv“ wird „.env“) und zur Vorsicht auch
+// in der angegebenen Form (Nachbesserung A08, Punkt 3).
+func (g *AttachGuard) deniedAttachName(name string) bool {
+	return g.DeniedName(attachName(name)) || g.DeniedName(name)
 }
 
 // hasStream: Der Pfad nennt einen alternativen Datenstrom (NTFS
