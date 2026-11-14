@@ -8,10 +8,20 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60eef78` = Stand 0.3.0-rc5). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter, **solange `[draft] attach_deny_dirs`/`attach_deny_files` nicht in der Konfiguration stehen** (rc5 startet sonst nicht). Build **0.3.0-rc6** an `a711d93`, reproduzierbar (zwei frische Klone ohne Tags, `SHA256SUMS` gleich), Windows `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c`. Haltepunkt: Gegenprüfung und Abnahme D14 ([docs/abnahme_D14.md](docs/abnahme_D14.md)) nach Entscheid des Betreibers.
 
+#### Nachbesserung nach der Gegenprüfung (14.11.2026; Build 0.3.0-rc6 neu an `eddf3f5`, Windows `b9e4dbc6df280abecd753a60ad35a7a667ca056ac3417d8912c05c13fbdf31f7`, ersetzt den Build an `a711d93`)
+
+- **Fixed:** `[paths] export_dir` sperrt nur als breite Ordnerregel; liegt `attach_dir` darin oder ist gleich, bleiben harmlose Dateien erlaubt (Entschiedene Frage 80(c)). `[audit] export_dir` bleibt immer gesperrt.
+- **Fixed:** Die Anhang-Sperre prüft den bereinigten, tatsächlich gespeicherten Anhangsnamen (vorher ging `.e\u200bnv` durch und wurde als `.env` gespeichert), auch einen eigenen `filename` zu einer Datei.
+- **Fixed:** Nach dem Öffnen wird der Pfad erneut aufgelöst, muss auf die geöffnete Datei zeigen und die Sperre bestehen (Ordner zwischen Prüfung und Öffnen gegen einen Symlink getauscht). Vergleich mit Unicode-Faltung (`Paßwort` wie `Passwort`).
+- **Fixed:** Ein schon mit `push_failed` vermerkter Altentwurf bekommt bei der ersten Erkennung als `attach_denied` sein Systemereignis `drafts.push` (einmal je Inhaltsstand, Abgleich mit dem Audit).
+- **Fixed:** Abnahmeskript D14: Ein FAIL in R.2 oder R.3 bricht den Rückweg ab, die Aufgaben bleiben aus (auch im `finally`); nach dem automatischen Rücktausch einer gescheiterten Umstellung erst `doctor` mit rc5 (E.0c).
+- **Added:** `attachments[].origin` (`file`, `blob`, `forward`, `unknown`) in `drafts.get/create/update` bzw. `draft show --json`; D14 Schritt 2.6 listet offene Entwürfe mit Anhängen ohne Herkunft (nur lesen).
+- **Changed (Doku):** Grenze beim Neubau benannt: Für gespeicherte Entwürfe gilt nur die Namensregel (`file`), nicht `dir`, `own_data`, `stream` ([docs/sicherheit.md](docs/sicherheit.md), [docs/entscheidungen.md](docs/entscheidungen.md), Entschiedene Frage 80). Die Zeile unten „Gilt … beim Neubau gespeicherter Entwürfe“ meint seitdem nur die Namensregel. Neue Offene Frage 5 (Windows-Kopienamen).
+
 #### Security
 
 - **Anhang-Sperre** (Teil 1): Eine lokale Datei unter `[paths] attach_dir` wird nie Anhang eines Entwurfs, wenn ein Ordner unterhalb von attach_dir gesperrt ist (`_secrets`, `.ssh`, `Passwörter` …; angefragter und aufgelöster Pfad, ohne Groß-/Kleinschreibung, NFC), ihr Name auf ein gesperrtes Muster passt (`*.kdbx`, `*token*.json`, `*secret*`, `config.toml` …, auch mit Sicherungsendung), sie im Datenverzeichnis, Konfigurationsordner oder `export_dir` von PostKauz liegt oder der Pfad einen alternativen Datenstrom nennt. Ergebnis `denied` mit neuem Grund `attach_denied` und Regelart (`dir`, `file`, `own_data`, `stream`), nie mit Pfad; Audit mit Feld, Regelart und Dateiname (40 Zeichen). Gilt für CLI, MCP und HTTP und beim Neubau gespeicherter Entwürfe.
-- Ein vor rc6 angelegter Entwurf mit gesperrtem Anhang wird nicht mehr abgelegt: Der Push zählt ihn als `attach_denied` (Sync-Zeile, `--json`), vermerkt `push_failed` mit Grund (`draft show`) und schreibt einmal ein Systemereignis `drafts.push` mit Ergebnis `denied`.
+- Ein vor rc6 angelegter Entwurf mit gesperrtem Anhang wird nicht mehr abgelegt: Der Push zählt ihn als `attach_denied` (Sync-Zeile, `--json`), vermerkt `push_failed` mit Grund (`draft show`) und schreibt einmal (je Inhaltsstand) ein Systemereignis `drafts.push` mit Ergebnis `denied`. Gilt für gesperrte **Namen**; ein harmlos benannter Anhang aus einem gesperrten Ordner wird beim Neubau nicht erkannt (Nachbesserung).
 
 #### Added
 
