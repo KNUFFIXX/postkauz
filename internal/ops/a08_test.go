@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
@@ -207,4 +210,60 @@ func deniedPush(t *testing.T, evs []audit.Event) map[string]any {
 	}
 	t.Fatal("no denied drafts.push in the audit")
 	return nil
+}
+
+// Nachbesserung A08, Punkt 5: Ein Altentwurf, der schon aus anderem Grund
+// mit push_failed vermerkt ist (etwa ein früherer Netzfehler), bekommt bei
+// seiner ersten Erkennung als attach_denied trotzdem genau ein
+// Systemereignis; weitere Versuche schreiben keins. Nach einer Änderung des
+// Inhalts (neuer Stand, wieder gesperrt) entsteht ein neues.
+func TestA08PushDeniedEventDespitePushFailedNote(t *testing.T) {
+	e := newPushEnv(t)
+	a08Files(t, e.attach, "vertrag.txt")
+	out := e.must(t, assistant, "drafts.create", map[string]any{"kind": "new", "account": "demo", "to": []string{"b@example.org"},
+		"subject": "Probe A08", "body_markdown": "Text", "attachments": []map[string]any{{"file": "vertrag.txt"}}}).(DraftsWriteOutput)
+	if err := e.st.ExecForTest(`UPDATE drafts SET push_note = 'push_failed',
+		attachment_blobs = replace(replace(attachment_blobs, '"vertrag.txt"', '"Vault.kdbx"'), ',"source":"file"', '')
+		WHERE id = ?`, out.DraftID); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		n := 0
+		evs, _ := e.auditJSON(t)
+		for _, ev := range evs {
+			if ev.Operation == drafts.OpPush && ev.Result == audit.ResultDenied && ev.Reason == string(compose.ReasonAttachDenied) &&
+				slices.Contains(ev.Targets, "draft:"+strconv.FormatInt(out.DraftID, 10)) {
+				n++
+			}
+		}
+		return n
+	}
+	for i := 1; i <= 2; i++ {
+		if rep := e.push(t); rep.AttachDenied != 1 {
+			t.Fatalf("push %d = %+v", i, rep)
+		}
+		if n := count(); n != 1 {
+			t.Fatalf("push %d: denied events = %d, want 1", i, n)
+		}
+	}
+	if d := e.draft(t, out.DraftID); d.PushNote != drafts.PushNotePushFailed {
+		t.Fatalf("push note = %q", d.PushNote)
+	}
+	// Punkt 4: drafts.get nennt die fehlende Herkunft (D14, Schritt 2.6).
+	got := e.must(t, assistant, "drafts.get", map[string]any{"draft_id": out.DraftID}).(DraftDetail)
+	if len(got.Attachments) != 1 || got.Attachments[0].Origin != OriginUnknown {
+		t.Fatalf("attachments = %+v", got.Attachments)
+	}
+	// Neuer Inhaltsstand (später geändert), Anhang weiter gesperrt: ein
+	// neues Ereignis.
+	if err := e.st.ExecForTest(`UPDATE drafts SET content_changed_at = ? WHERE id = ?`,
+		time.Now().Add(time.Hour).UnixMilli(), out.DraftID); err != nil {
+		t.Fatal(err)
+	}
+	if rep := e.push(t); rep.AttachDenied != 1 {
+		t.Fatalf("push after change = %+v", rep)
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("after a content change: denied events = %d, want 2", n)
+	}
 }

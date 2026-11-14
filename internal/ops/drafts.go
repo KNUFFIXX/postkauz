@@ -334,6 +334,11 @@ type DraftAttachmentOutput struct {
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 	SHA256      string `json:"sha256"`
+	// Origin: Herkunft des gespeicherten Anhangs (A08): file (lokale Datei),
+	// blob (Spiegel), forward (Ausgangsnachricht) oder unknown (gespeichert
+	// vor A08, ohne Herkunft). Nachbesserung A08, Punkt 4: So lassen sich
+	// Altentwürfe finden, bei denen der Neubau nur den Namen prüfen kann.
+	Origin string `json:"origin,omitempty"`
 	// Warning: Typ-Widerspruch oder ausführbarer Inhalt (Entscheid 39:
 	// erlaubt, gesendet wird der erkannte Typ).
 	Warning string `json:"warning,omitempty"`
@@ -367,9 +372,14 @@ type DraftsWriteOutput struct {
 	DryRun             bool                    `json:"dry_run"`
 }
 
+// OriginUnknown: Anhang eines Entwurfs ohne gespeicherte Herkunft (vor A08).
+const OriginUnknown = "unknown"
+
 const draftAttachmentsSchema = `{"type": "array", "items": {"type": "object", "properties": {
       "filename": {"type": "string"}, "content_type": {"type": "string"}, "size": {"type": "integer"},
-      "sha256": {"type": "string"}, "warning": {"type": "string"}},
+      "sha256": {"type": "string"},
+      "origin": {"type": "string", "enum": ["file", "blob", "forward", "unknown"], "description": "where a stored attachment came from: file (local file), blob (mirrored mail), forward (original message), unknown (stored before the attachment guard; a rebuild can only check its name)"},
+      "warning": {"type": "string"}},
       "required": ["filename", "content_type", "size", "sha256"]}}`
 
 const draftPreviewSchema = `{"type": "object", "properties": {
@@ -472,7 +482,12 @@ func attachmentOutputs(atts []store.DraftAttachment) ([]DraftAttachmentOutput, [
 	warn := []string{}
 	for i, a := range atts {
 		w := attachmentWarning(i, a)
-		out = append(out, DraftAttachmentOutput{Filename: a.Filename, ContentType: a.ContentType, Size: a.Size, SHA256: a.SHA256, Warning: w})
+		origin := a.Source
+		if origin == "" {
+			origin = OriginUnknown
+		}
+		out = append(out, DraftAttachmentOutput{Filename: a.Filename, ContentType: a.ContentType, Size: a.Size, SHA256: a.SHA256,
+			Origin: origin, Warning: w})
 		if w != "" {
 			warn = append(warn, w)
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 )
 
@@ -235,4 +236,25 @@ func (x *DraftTx) MirrorOrphan(mailboxID int64, messageID, contentHash string, k
 		}
 	}
 	return 0, 0, rows.Err()
+}
+
+// PushDeniedLogged sagt, ob es für den Entwurf draftID schon ein
+// Systemereignis drafts.push mit Ergebnis denied und Grund reason gibt, nicht
+// vor since (der letzten Änderung des Inhalts). Damit schreibt der Push das
+// Ereignis einer Ablehnung (A08, attach_denied) genau einmal, auch wenn der
+// Entwurf schon aus einem anderen Grund mit push_failed vermerkt war
+// (Nachbesserung A08, Punkt 5). Ohne Migration aus dem Audit, über den Index
+// audit_events_ts; nach einer Rotation des Audits entsteht es höchstens
+// einmal neu.
+func (x *DraftTx) PushDeniedLogged(draftID int64, reason string, since time.Time) (bool, error) {
+	var found bool
+	err := x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM audit_events WHERE ts >= ?
+		AND operation = 'drafts.push' AND result = 'denied' AND reason = ?
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
+		WHERE value = ?))`,
+		since.UnixMilli(), reason, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("store: push denied event: %w", err)
+	}
+	return found, nil
 }

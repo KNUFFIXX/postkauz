@@ -447,17 +447,29 @@ func (s *Service) NotePush(ctx context.Context, accountID, draftID int64, note s
 // attach_denied): Hinweis push_failed (die CHECK-Liste von push_note bleibt
 // unverändert, kein Schema-Upgrade; draft show nennt den Grund) und ein
 // Systemereignis drafts.push mit Ergebnis denied, reason und params (ohne
-// Inhalt). Das Ereignis entsteht nur beim ersten Vermerk, nicht bei jedem
-// erneuten Versuch.
+// Inhalt). Das Ereignis entsteht einmal je Inhaltsstand: nur, wenn seit der
+// letzten Änderung des Inhalts noch keins mit diesem Grund im Audit steht
+// (Nachbesserung A08, Punkt 5: vorher entschied der Vermerk, und ein schon
+// mit push_failed vermerkter Altentwurf bekam nie ein Ereignis). Ein
+// Hinweis approval_stale bleibt stehen.
 func (s *Service) PushDenied(ctx context.Context, draftID int64, reason string, params map[string]any) error {
 	return s.tx(ctx, func(x *store.DraftTx) error {
 		d, err := x.Draft(draftID)
-		if err != nil || d.PushNote == PushNotePushFailed || d.PushNote == PushNoteApprovalStale {
+		if err != nil {
 			return err
 		}
-		ev := s.pushEvent(s.now(), d, audit.ResultDenied, reason, 0, params)
-		if _, err := x.AppendAudit(ev); err != nil {
+		logged, err := x.PushDeniedLogged(d.ID, reason, d.ContentChangedAt)
+		if err != nil {
 			return err
+		}
+		if !logged {
+			ev := s.pushEvent(s.now(), d, audit.ResultDenied, reason, 0, params)
+			if _, err := x.AppendAudit(ev); err != nil {
+				return err
+			}
+		}
+		if d.PushNote == PushNotePushFailed || d.PushNote == PushNoteApprovalStale {
+			return nil
 		}
 		d.PushNote = PushNotePushFailed
 		return x.UpdateDraft(d)
