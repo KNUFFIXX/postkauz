@@ -1,6 +1,6 @@
 # Abnahme D14: Umstellung auf 0.3.0-rc6 (A08 „Anhang-Sperre“)
 
-Stand: 12.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3). Skript: [abnahme_D14.ps1](abnahme_D14.ps1) (Muster D13, nur das Nötige). Programm: Build **0.3.0-rc6** an `a711d93`, `postkauz-windows-amd64.exe` SHA256 `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c` (für `-ExpectSha256`; Nachbau und übrige Prüfsummen in [roadmap.md](roadmap.md), „Stand 12.11.2026“, und in `SHA256SUMS` neben dem Programm).
+Stand: 14.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3; Nachbesserung nach der Gegenprüfung vom 13.11.2026: Schritt 2.6, E.0c, Abbruch im Rückweg nach jedem FAIL). Skript: [abnahme_D14.ps1](abnahme_D14.ps1) (Muster D13, nur das Nötige). Programm: Build **0.3.0-rc6** an `a711d93`, `postkauz-windows-amd64.exe` SHA256 `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c` (für `-ExpectSha256`; Nachbau und übrige Prüfsummen in [roadmap.md](roadmap.md), „Stand 12.11.2026“, und in `SHA256SUMS` neben dem Programm).
 
 **Worum es geht:** Der Dauerbetrieb auf dem Büro-PC läuft seit 10.11.2026 mit 0.3.0-rc5. D14 stellt ihn auf 0.3.0-rc6 um und zeigt an fünf Proben, dass die neue **Anhang-Sperre** wirkt: Eine harmlose Datei unter `attach_dir` lässt sich anhängen; eine Passwort-Datenbank (`probe.kdbx`), eine Datei in einem Ordner `_secrets`, eine Token-Datei (`probe-token.json`) und ein alternativer Datenstrom (`probe.txt:stream`) nicht. Alle Proben laufen mit `draft new --dry-run`: **keine Mail, kein Entwurf, kein APPEND.** Regeln und Grenzen: [sicherheit.md](sicherheit.md) Abschnitt 7, „Anhang-Sperre“.
 
@@ -18,7 +18,7 @@ Stand: 12.11.2026 (Auftrag [A08](../auftraege/A08_anhang_sperre.md), Teil 3). Sk
 - **Sicherung nur mit `-BackupTo`** (optional): A08 ändert weder Schema noch Daten. Wer trotzdem sichern will, gibt den Ordner an (verschlüsselter Datenträger, [betrieb.md](betrieb.md) 2.2).
 - **Prüfordner:** Das Skript liest `attach_dir` aus `doctor --json`, legt darunter `postkauz-d14-probe` an (mit `_secrets\` darin) und entfernt am Ende **nur die Dateien und Ordner, die es selbst angelegt hat**, auch nach einem Abbruch (3.8 bzw. E.3). Gibt es den Ordner schon, bricht es ab (3.0); dann von Hand ansehen und löschen.
 - **Konfiguration:** `[draft] attach_deny_dirs` und `attach_deny_files` dürfen während D14 **nicht** in `config.toml` stehen (0.8): rc5 kennt die Schlüssel nicht und startet mit ihnen nicht (Rückweg). Die Standardlisten wirken ohne sie. Eigene Ergänzungen erst nach bestandenem D14 eintragen ([cli.md](cli.md) Abschnitt 5).
-- **Rückweg bei jedem FAIL:** wie D13 (E.0 vor dem Neustart der Aufgaben; die Aufgaben laufen nie mit dem neuen Programm an, wenn die Abnahme nicht bestanden ist).
+- **Rückweg bei jedem FAIL:** wie D13 (E.0 vor dem Neustart der Aufgaben; die Aufgaben laufen nie mit dem neuen Programm an, wenn die Abnahme nicht bestanden ist). Seit der Nachbesserung schaltet das Skript die Aufgaben danach nur ein, wenn rc5 mit der Datenbank läuft (E.0c); sonst bleiben sie aus (E.1 FAIL, weiter von Hand nach Abschnitt 5).
 - **Protokoll** `D14_windows.txt` neben dem Programm; ein vorhandenes wird als `D14_windows-<Zeitstempel>.txt` beiseitegelegt. Ins Protokoll kommen nur Prüfnummern, Exit-Codes, Gründe und Regelarten, **nie Pfade unter `attach_dir`**, Adressen oder Aufgabennamen (Aufgaben als laufende Nummer).
 
 ## 2. Vorbereitung
@@ -67,6 +67,7 @@ Bestanden ist die Abnahme nur mit der Schlusszeile `D14: <n> OK, 0 FAIL, <w> WAR
 | 2.2 | `doctor` nachher | `database ok`, Schema unverändert (22), keine neue Warnung |
 | 2.3 | Zeile `attach_guard` | da, z. B. `attach_guard: 19 dir rules, 34 file rules` |
 | 2.4 | `attach_dir` | aus `doctor --json` gelesen, vorhanden |
+| 2.6 | Altentwürfe (nur lesen, seit der Nachbesserung) | INFO: offene Entwürfe mit Anhängen ohne gespeicherte Herkunft (`draft show <id> --json`, `origin: unknown`), je Zeile Entwurfsnummer und Zahl, nie Dateinamen; bei ihnen prüft rc6 beim Neubau nur den Dateinamen (nicht Ordner, Orte von PostKauz, Datenstrom). Claude sieht die genannten Entwürfe danach mit `draft show <id>` an und meldet dir Anhänge, die aus einem gesperrten Ordner stammen könnten. WARN, wenn nicht lesbar |
 | 3.0 | Prüfordner | `postkauz-d14-probe` gibt es vorher nicht |
 | 3.1 | harmlose Datei | `draft new --dry-run` Exit 0 |
 | 3.2 | `probe.kdbx` | Exit 3, `attach_denied`, Regelart `file`, kein Pfad in der Ausgabe |
@@ -78,6 +79,7 @@ Bestanden ist die Abnahme nur mit der Schlusszeile `D14: <n> OK, 0 FAIL, <w> WAR
 | 3.8 | Aufräumen | Prüfdateien und -ordner entfernt (nur die eigenen) |
 | E.2 | Teil 3 nicht vollständig | FAIL |
 | E.0 | nach FAIL | altes Programm zurück (`postkauz.exe` meldet rc5) |
+| E.0c | nach E.0 | `doctor` mit rc5: `database ok`, Schema 22; sonst bleiben die Aufgaben aus |
 | 4.1 bzw. E.1 | Aufgaben wieder an | wie D13: je Aufgabe gestartet **und nach 20 s noch** `Running` (audit export nur eingeschaltet); je Konto ein `sync --watch` genau mit `-Exe`; `postkauz.exe` meldet rc6 |
 | Stand | letzte Zeilen | welche Version an `postkauz.exe` liegt und welche als `postkauz-rc5.exe` |
 
@@ -94,4 +96,4 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PostKauz\d14\abnahme_
   -Tasks "<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>" -Accounts <konto1>,<konto2>,<konto3> -KeepStdioMcp
 ```
 
-(mit denselben `-Exe`/`-DataDir`/`-Config` wie oben, im Hintergrund wie in Abschnitt 3). Erwartet: `R.0` bis `R.0e`, `R.1b` (neues Programm unter freiem Namen beiseite, meist `postkauz-rc6.exe`; fehlt `postkauz.exe`, nur das alte an seine Stelle), `R.2` rc5 mit Schema 22, `R.3` je Konto ein `sync` mit Exit 0 **und** `errors` 0 (eine Wiederholung erlaubt, dann WARN), `R.5` alle Aufgaben aus `-Tasks` wieder an. Mit rc5 gilt die Anhang-Sperre nicht mehr (nur die Betriebsregel).
+(mit denselben `-Exe`/`-DataDir`/`-Config` wie oben, im Hintergrund wie in Abschnitt 3). Erwartet: `R.0` bis `R.0e`, `R.1b` (neues Programm unter freiem Namen beiseite, meist `postkauz-rc6.exe`; fehlt `postkauz.exe`, nur das alte an seine Stelle), `R.2` rc5 mit Schema 22, `R.3` je Konto ein `sync` mit Exit 0 **und** `errors` 0 (eine Wiederholung erlaubt, dann WARN), `R.5` alle Aufgaben aus `-Tasks` wieder an. **Jeder FAIL vor R.5 (R.0 bis R.3) bricht ab, und die Aufgaben bleiben aus** (seit der Nachbesserung; Schlusszeile mit `E.1` FAIL „Aufgaben NICHT wieder eingeschaltet“). Dann `postkauz.exe version` und `postkauz.exe doctor` von Hand ansehen und die Aufgaben erst einschalten, wenn beide rc5 und `database: ok` zeigen (Aufgabenplanung → Aufgabe → Rechtsklick → „Aktivieren“, dann „Ausführen“; für „audit export“ nur „Aktivieren“). Mit rc5 gilt die Anhang-Sperre nicht mehr (nur die Betriebsregel).

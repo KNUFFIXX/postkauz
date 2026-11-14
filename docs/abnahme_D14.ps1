@@ -796,6 +796,35 @@ function Get-OpenCount {
     return @($j.drafts).Count
 }
 
+# Nachbesserung A08, Punkt 4: offene Entwuerfe mit Anhaengen ohne
+# gespeicherte Herkunft (vor A08 angelegt; draft show --json, Feld origin
+# "unknown"). Beim Neubau prueft rc6 bei ihnen nur den Dateinamen, nicht
+# Ordner, Orte von PostKauz oder Datenstrom. Nur lesen. Liefert ein Objekt
+# mit Ok (lesbar), Drafts (je Eintrag "Entwurf <id>: <n> von <m> Anhaengen")
+# und Count; nie Dateinamen oder Pfade.
+function Get-LegacyAttachDrafts {
+    param([string] $Prog)
+    $res = New-Object PSObject -Property @{ Ok = $false; Drafts = @(); Count = 0 }
+    $r = Invoke-Pk $Prog @('draft', 'list', '--json', '--limit', '500', '--status', 'draft', '--status', 'pending_approval', '--status', 'ready')
+    $j = Get-Json $r.Out
+    if ($r.Exit -ne 0 -or $null -eq $j -or $null -eq $j.drafts) { return $res }
+    $lines = @()
+    foreach ($d in @($j.drafts)) {
+        if ([int] $d.attachments -le 0) { continue }
+        $id = [string] $d.draft_id
+        $sr = Invoke-Pk $Prog @('draft', 'show', $id, '--json')
+        $sj = Get-Json $sr.Out
+        if ($sr.Exit -ne 0 -or $null -eq $sj -or $null -eq $sj.attachments) { return $res }
+        $all = @($sj.attachments)
+        $unknown = @($all | Where-Object { [string] $_.origin -eq 'unknown' -or -not [string] $_.origin }).Count
+        if ($unknown -gt 0) { $lines += ('Entwurf ' + $id + ': ' + $unknown + ' von ' + $all.Count + ' Anhaengen ohne Herkunft') }
+    }
+    $res.Ok = $true
+    $res.Drafts = $lines
+    $res.Count = $lines.Count
+    return $res
+}
+
 # Konfiguration mit [draft] attach_deny_dirs/attach_deny_files? rc5 und
 # aelter starten damit nicht (unbekannte Schluessel sind ein Fehler).
 function Test-DenyKeys {
@@ -931,6 +960,15 @@ function Invoke-Umstellung {
         $script:AttachDir = ''
         if ($null -ne $j) { $script:AttachDir = [string] $j.attach_dir }
         Add-Check '2.4' 'attach_dir aus doctor --json gelesen und vorhanden' ($script:AttachDir -and (Test-Path -LiteralPath $script:AttachDir)) ''
+        # Nachbesserung A08, Punkt 4: nur lesen, kein FAIL, wenn welche da sind.
+        $legacy = Get-LegacyAttachDrafts $script:ExeFull
+        if (-not $legacy.Ok) {
+            Add-Warn '2.6' 'offene Entwuerfe mit Anhaengen ohne Herkunft (vor A08): nicht lesbar; von Hand mit draft show <id> --json (Feld origin) ansehen'
+        } elseif ($legacy.Count -eq 0) {
+            Add-Info '2.6' 'offene Entwuerfe mit Anhaengen ohne Herkunft (vor A08): keine'
+        } else {
+            Add-Info '2.6' ('offene Entwuerfe mit Anhaengen ohne Herkunft (vor A08): ' + $legacy.Count + '; beim Neubau prueft rc6 bei ihnen nur den Dateinamen. Anhaenge von Hand ansehen (draft show <id>)') ($legacy.Drafts -join "`n")
+        }
         if ($script:NFail -gt 0) { $why = 'Tausch nicht in Ordnung' }
     } catch {
         Add-Check '2.x' ('Fehler beim Tausch: ' + $_.Exception.Message) $false
@@ -1036,7 +1074,17 @@ function Invoke-Rueckweg {
     $v = Invoke-Pk $script:ExeFull @('version') -NoDirs
     $d = Get-Doctor $script:ExeFull
     Add-Check 'R.2' ('altes Programm laeuft mit der Datenbank: ' + $OldVersion + ', database ok, Schema 22') ($v.Out -match [regex]::Escape($OldVersion) -and $d.Database -eq 'ok' -and $d.Schema -eq 22) ($v.Text + "`ndatabase " + $d.Database + ', schema ' + $d.Schema)
+    # Nachbesserung A08, Punkt 2: jeder FAIL vor dem Wiedereinschalten
+    # stoppt; die Aufgaben bleiben aus (auch im finally).
+    if ($script:NFail -gt 0) {
+        $script:KeepTasksOff = $true
+        Stop-D14 'R.2 nicht in Ordnung; kein sync, Aufgaben bleiben AUS (von Hand nach abnahme_D14.md Abschnitt 5 weiter)'
+    }
     Invoke-SyncRun 'R.3' ('Rueckweg mit ' + $OldVersion) $OldVersion
+    if ($script:NFail -gt 0) {
+        $script:KeepTasksOff = $true
+        Stop-D14 'R.3 nicht in Ordnung; Aufgaben bleiben AUS (von Hand nach abnahme_D14.md Abschnitt 5 weiter)'
+    }
     Add-Info 'R.4' 'Fall: ohne Migration. rc5 kennt die Anhang-Sperre nicht: Dateien unter attach_dir sind wieder nur durch die Betriebsregel geschuetzt.'
     [void] (Start-Tasks 'R.5' $OldVersion)
     $script:Restarted = $true
@@ -1090,15 +1138,27 @@ try {
     $restoreFailed = $false
     if ($umst -and $script:Swapped -and $script:NFail -gt 0) {
         try {
-            if (-not (Restore-Program $OldCopy 'E.0')) { $restoreFailed = $true }
+            if (-not (Restore-Program $OldCopy 'E.0')) {
+                $restoreFailed = $true
+            } else {
+                # Nachbesserung A08, Punkt 2: wie R.2 erst die Datenbank mit
+                # dem alten Programm pruefen, dann Aufgaben einschalten.
+                $d = Get-Doctor $script:ExeFull
+                $okDb = ($d.Database -eq 'ok' -and $d.Schema -eq 22)
+                Add-Check 'E.0c' ('altes Programm laeuft mit der Datenbank: database ok, Schema 22') $okDb ('database ' + $d.Database + ', schema ' + $d.Schema)
+                if (-not $okDb) { $restoreFailed = $true }
+            }
         } catch {
             Add-Check 'E.0' ('altes Programm zurueck: ' + $_.Exception.Message) $false
             $restoreFailed = $true
         }
     }
+    # Nachbesserung A08, Punkt 2: Im Rueckweg schaltet ein FAIL (R.0 bis R.3)
+    # keine Aufgabe wieder ein.
+    if ($Rueckweg -and $script:NFail -gt 0) { $script:KeepTasksOff = $true }
     if ($script:WasEnabled.Count -gt 0 -and -not $script:Restarted) {
         if ($restoreFailed -or $script:KeepTasksOff) {
-            Add-Check 'E.1' 'Aufgaben NICHT wieder eingeschaltet: das richtige Programm liegt nicht sicher an seinem Platz (von Hand nach abnahme_D14.md Abschnitt 5)' $false
+            Add-Check 'E.1' 'Aufgaben NICHT wieder eingeschaltet: FAIL vor dem Wiedereinschalten oder das richtige Programm liegt nicht sicher an seinem Platz (von Hand nach abnahme_D14.md Abschnitt 5)' $false
         } elseif ($umst -and $script:Complete -and $script:NFail -eq 0) {
             Write-Log '--- Teil 4: Dauerbetrieb wieder an'
             $started = $false
