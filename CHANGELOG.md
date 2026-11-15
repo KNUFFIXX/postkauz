@@ -4,6 +4,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### A08b „Windows-Kopienamen in der Anhang-Sperre“ (15.11.2026, noch kein Build)
+
+- **Security:** Die Anhang-Sperre prüft Datei- und Ordnernamen zusätzlich ohne die Kopiezusätze von Windows (` - Kopie`, ` - Copy`, ` (n)` mit beliebiger Zahl, vor der Endung oder am Ende): `config - Kopie.toml`, `config (1).toml`, `.env (1)`, `config - Copy (2).toml`, `_secrets - Kopie/` sind jetzt gesperrt, auch mit Sicherungsendung (`config - Kopie.toml.bak`). Die Regel sperrt nur mehr ([docs/roadmap.md](docs/roadmap.md), Entschiedene Frage 81). Folge: Ein gespeicherter Entwurf mit so benanntem Dateianhang wird beim nächsten Neubau oder Push gesperrt.
+
 ### 0.3.0-rc6 (Build, noch kein Tag) – Auftrag A08 „Anhang-Sperre für Schlüssel-, Passwort- und Einstellungsdateien“
 
 Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60eef78` = Stand 0.3.0-rc5). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter, **solange `[draft] attach_deny_dirs`/`attach_deny_files` nicht in der Konfiguration stehen** (rc5 startet sonst nicht). Build **0.3.0-rc6** an `a711d93`, reproduzierbar (zwei frische Klone ohne Tags, `SHA256SUMS` gleich), Windows `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c`. Haltepunkt: Gegenprüfung und Abnahme D14 ([docs/abnahme_D14.md](docs/abnahme_D14.md)) nach Entscheid des Betreibers.

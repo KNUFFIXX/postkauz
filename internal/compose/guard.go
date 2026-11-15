@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -180,13 +181,74 @@ func absClean(p string) string {
 	return filepath.Clean(a)
 }
 
-// denyDir: ein Ordnername der Liste.
+// copyMarker sind die Zusätze, die Windows (Explorer, auch Browser beim
+// Herunterladen) an Kopien hängt, in gefalteter Form: „ - Kopie“, „ - Copy“,
+// je mit oder ohne „ (n)“, und „ (n)“ allein mit beliebiger Zahl (A08b).
+// Vor „(n)“ sind beliebig viele Leerzeichen erlaubt, auch keins
+// („config(1).toml“); das sperrt höchstens mehr.
+var copyMarker = regexp.MustCompile(` - (?:kopie|copy)(?: *\([0-9]+\))?| *\([0-9]+\)`)
+
+// copyVariants liefert zu einem gefalteten Namen die Formen ohne
+// Kopiezusätze (A08b, Offene Frage 5): Ein Zusatz zählt nur direkt vor
+// einem Punkt (Dateiendung, auch „.bak“), vor „~“ oder am Namensende
+// („config - Kopie.toml“, „config.toml - Kopie“, „.env (1)“,
+// „config - Copy (2).toml“). Jede Runde entfernt alle solchen Zusätze; die
+// Runden laufen, bis nichts mehr wegfällt, so dass auch die Kopie einer
+// Kopie („config (1) - Kopie.toml“) auf „config.toml“ kommt. Alle
+// Zwischenformen zählen mit. Der Name selbst gehört nicht zum Ergebnis.
+func copyVariants(n string) []string {
+	var out []string
+	for range 16 {
+		next := stripCopyMarkers(n)
+		if next == n || next == "" {
+			break
+		}
+		out = append(out, next)
+		n = next
+	}
+	return out
+}
+
+// stripCopyMarkers entfernt in einer Runde jeden Kopiezusatz, der direkt
+// vor „.“, „~“ oder am Ende steht.
+func stripCopyMarkers(n string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range copyMarker.FindAllStringIndex(n, -1) {
+		if m[1] < len(n) && n[m[1]] != '.' && n[m[1]] != '~' {
+			continue
+		}
+		b.WriteString(n[last:m[0]])
+		last = m[1]
+	}
+	if last == 0 {
+		return n
+	}
+	b.WriteString(n[last:])
+	return b.String()
+}
+
+// denyDir: ein Ordnername der Liste, auch ohne Kopiezusätze
+// („_secrets - Kopie“, „.ssh (1)“; A08b).
 func (g *AttachGuard) denyDir(name string) bool {
-	return slices.Contains(g.dirs, fold(name))
+	n := fold(name)
+	if slices.Contains(g.dirs, n) {
+		return true
+	}
+	for _, v := range copyVariants(n) {
+		if slices.Contains(g.dirs, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // DeniedName sagt, ob ein Dateiname auf ein Muster der Sperre passt
-// (Regel file); nur der letzte Pfadteil zählt.
+// (Regel file); nur der letzte Pfadteil zählt. Geprüft wird der Name selbst
+// und jede Form ohne Windows-Kopiezusätze (copyVariants, A08b), jeweils
+// auch mit Sicherungsendung: „config (1).toml.bak“ wie „config.toml.bak“.
+// Die Formen kommen nur hinzu, der Name selbst wird immer geprüft; die
+// Regel sperrt dadurch höchstens mehr.
 func (g *AttachGuard) DeniedName(name string) bool {
 	g = g.orDefault()
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
@@ -196,6 +258,20 @@ func (g *AttachGuard) DeniedName(name string) bool {
 	if n == "" {
 		return false
 	}
+	if g.deniedFolded(n) {
+		return true
+	}
+	for _, v := range copyVariants(n) {
+		if g.deniedFolded(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// deniedFolded: ein gefalteter Name passt auf ein Muster, auch mit
+// Sicherungsendung.
+func (g *AttachGuard) deniedFolded(n string) bool {
 	for _, p := range g.files {
 		if ok, _ := path.Match(p, n); ok {
 			return true
