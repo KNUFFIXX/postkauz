@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/policy"
@@ -517,7 +519,14 @@ func (r *Runner) checkHeaders(ctx context.Context, mb store.Mailbox, ts []store.
 		case !found:
 			refused = append(refused, result(t, store.TargetNotFound))
 		case h.HeaderTooLarge || !bytes.Equal(normHeader(locals[provider.UID(t.UID)]), normHeader(h.RawHeader)):
-			r.log().Warn("server copy differs from the local message; action skipped for it (stale)", "message_id", t.MessageID, "uid", t.UID)
+			// A09 Teil 1b: nur Namen und Längen der abweichenden
+			// Kopfzeilen, nie ihr Inhalt.
+			diff := "header too large"
+			if !h.HeaderTooLarge {
+				diff = headerDiff(locals[provider.UID(t.UID)], h.RawHeader)
+			}
+			r.log().Warn("server copy differs from the local message; action skipped for it (stale)", "message_id", t.MessageID, "uid", t.UID,
+				"headers", diff)
 			refused = append(refused, result(t, store.TargetStale))
 		default:
 			if err := r.Store.MarkContentLoaded(ctx, t.MessageID, t.MailboxID); err != nil {
@@ -576,10 +585,127 @@ func readHeader(r io.Reader) ([]byte, error) {
 	}
 }
 
-// normHeader: CRLF zu LF, Leerzeilen am Ende weg.
+// normHeader: CRLF zu LF, dann entfaltet nach RFC 5322 3.2.2 (jedes LF,
+// auf das ein Leerzeichen oder Tab folgt, fällt weg; das Leerzeichen bzw.
+// der Tab bleibt), Leerzeilen am Ende weg. Sonst bleibt der Vergleich
+// bytegenau: Leerraum zwischen encoded-words wird nicht entfernt, eine neue
+// oder geänderte Kopfzeile bleibt eine Abweichung. Grund (A09 Teil 1b):
+// Gmail liefert eine lange Kopfzeile (etwa einen Betreff aus mehreren
+// encoded-words auf einer Zeile über 78 Zeichen) in BODY.PEEK[HEADER]
+// gefaltet, in BODY.PEEK[] aber so, wie PostKauz sie abgelegt hat; die
+// Papierkorb-Aktion nach drafts.supersede endete deshalb stale.
 func normHeader(b []byte) []byte {
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	b = bytes.ReplaceAll(b, []byte("\n "), []byte(" "))
+	b = bytes.ReplaceAll(b, []byte("\n\t"), []byte("\t"))
 	return bytes.TrimRight(b, "\n")
+}
+
+// maxHeaderDiff begrenzt die Zahl der Kopfzeilen, die headerDiff nennt.
+const maxHeaderDiff = 10
+
+// headerDiff nennt für das Log die Kopfzeilen, die nach normHeader nur auf
+// einer Seite stehen (als Mehrfachmenge verglichen), mit Namen und Längen in
+// Bytes je Seite, etwa „Subject (local 207; server 209), X-Extra (server
+// 12)“; nie Inhalt (A09 Teil 1b). Die Namen kommen vom Server: nur Zeichen
+// aus [A-Za-z0-9-], höchstens 40 Zeichen, sonst „?“.
+func headerDiff(local, server []byte) string {
+	lines := func(b []byte) []string {
+		n := normHeader(b)
+		if len(n) == 0 {
+			return nil
+		}
+		return strings.Split(string(n), "\n")
+	}
+	l, s := lines(local), lines(server)
+	count := map[string]int{}
+	for _, x := range s {
+		count[x]++
+	}
+	var onlyLocal []string
+	for _, x := range l {
+		if count[x] > 0 {
+			count[x]--
+			continue
+		}
+		onlyLocal = append(onlyLocal, x)
+	}
+	count = map[string]int{}
+	for _, x := range l {
+		count[x]++
+	}
+	var onlyServer []string
+	for _, x := range s {
+		if count[x] > 0 {
+			count[x]--
+			continue
+		}
+		onlyServer = append(onlyServer, x)
+	}
+	type entry struct {
+		name          string
+		local, server []string
+	}
+	var order []*entry
+	byName := map[string]*entry{}
+	add := func(line string, server bool) {
+		name := "?"
+		if i := strings.IndexByte(line, ':'); i >= 0 {
+			name = safeHeaderName(line[:i])
+		}
+		e := byName[name]
+		if e == nil {
+			e = &entry{name: name}
+			byName[name] = e
+			order = append(order, e)
+		}
+		n := strconv.Itoa(len(line))
+		if server {
+			e.server = append(e.server, n)
+		} else {
+			e.local = append(e.local, n)
+		}
+	}
+	for _, x := range onlyLocal {
+		add(x, false)
+	}
+	for _, x := range onlyServer {
+		add(x, true)
+	}
+	if len(order) == 0 {
+		return "none"
+	}
+	var parts []string
+	for i, e := range order {
+		if i == maxHeaderDiff {
+			parts = append(parts, fmt.Sprintf("and %d more", len(order)-maxHeaderDiff))
+			break
+		}
+		var side []string
+		if len(e.local) > 0 {
+			side = append(side, "local "+strings.Join(e.local, ", "))
+		}
+		if len(e.server) > 0 {
+			side = append(side, "server "+strings.Join(e.server, ", "))
+		}
+		parts = append(parts, e.name+" ("+strings.Join(side, "; ")+")")
+	}
+	return strings.Join(parts, ", ")
+}
+
+// safeHeaderName gibt einen Kopfzeilennamen nur zurück, wenn er aus
+// [A-Za-z0-9-] besteht und höchstens 40 Zeichen hat; sonst „?“.
+func safeHeaderName(n string) string {
+	if n == "" || len(n) > 40 {
+		return "?"
+	}
+	for i := 0; i < len(n); i++ {
+		c := n[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+			return "?"
+		}
+	}
+	return n
 }
 
 // apply führt eine Aktion für die Ziele eines Quellordners aus.
