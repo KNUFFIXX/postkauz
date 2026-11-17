@@ -4,7 +4,23 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-### A08b „Windows-Kopienamen in der Anhang-Sperre“ (15.11.2026, noch kein Build)
+### 0.3.0-rc7 (Build, noch kein Tag) – Auftrag A09 „Alltag 4: Ergänzte Empfänger, Kopfvergleich, Restfunde“
+
+Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main` `534e258` nach dem Fast-Forward von PR #15 = A08 und A08b). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; rc6 läuft mit den Daten weiter. Build **0.3.0-rc7** enthält A08b. Haltepunkt: Gegenprüfung, danach Abnahme D15 nach Entscheid des Betreibers.
+
+#### Fixed
+
+- **Antwort mit im Mailprogramm ergänztem Empfänger** (Teil 1, Offene Frage 4 → Entschiedene Frage 82): Eine unverändert gesendete Antwort, bei der der Mensch in Gmail einen Empfänger ergänzt hatte, erkannte kein Weg; nach 24 h schloss „Kopie weg“ sie mit `copy_gone`. Der Weg über den Verlauf nimmt (d) jetzt auch, wenn die Empfänger des Entwurfs eine echte, nicht leere Teilmenge der gesendeten sind; Rückfall, Betreff und „ersetzt“ bleiben streng. Gleiche Empfänger gehen vor. Audit weiter `thread`, neu Parameter `recipients_added` (nur die Zahl); `draft show`/`mail_get_draft` nennen es in `closed_note` („recipients added in the mail client (n)“).
+- **Kopfvergleich vor Aktionen bei langen Kopfzeilen** (Teil 1b): Gmail liefert eine lange Kopfzeile (Betreff aus mehreren encoded-words über 78 Zeichen) in `BODY.PEEK[HEADER]` gefaltet; die Papierkorb-Aktion nach `drafts.supersede` endete `stale`. Beide Köpfe werden vor dem Vergleich nach RFC 5322 3.2.2 entfaltet, sonst bytegenau. Die Warnung im Log nennt Namen und Längen der abweichenden Kopfzeilen, nie Inhalt.
+- **Hinweise zur Kopie bei geschlossenen Entwürfen** (Teil 2 (b), Sammelpunkt 0g (e)): Ein geschlossener Entwurf zeigt kein `remote_note` mehr, das nur für offene stimmt („in the Drafts folder“ nach `supersede`, „closes the draft as abandoned (copy_gone)“ nach dem Versand). Hat die Papierkorb-Aktion eines ersetzten Entwurfs abgeschlossen, ohne die Kopie zu verschieben, nennt `closed_note` die verbliebene Kopie und `drafts.cleanup_copies`.
+- Schema-Text von `closed_reason` (Teil 2 (a), 0g (a)): „queued for the trash“ statt „went to the trash“.
+- **Security, Anhang-Sperre** (Teil 2 (c), Gegenprüfung von A08b): Kopiezusätze werden ohne feste Rundenzahl entfernt (ein Name mit 17 verketteten Zusätzen gab frei); Kopie-Formen nur für Namen bis 1024 Bytes (ein Name aus 1 MiB „ (1)“ kostete 30 s, jetzt etwa 2 s für den Namen selbst). Monotonie-Test gegen feste Ergebnisse von `e8e9c54`.
+
+#### Docs
+
+- `docs/versanderkennung.md` (Stand, 3a (d), Rangfolge, Grenzen, 3b), `docs/sicherheit.md` (Kopfvergleich, Anhang-Sperre Abschnitt 7), `docs/mcp.md`, `docs/cli.md` (Versanderkennung, `draft show`, `attach_deny_dirs`), `docs/roadmap.md` (Stand, Entschiedene Frage 82, 0f, 0g (a)/(e) erledigt, neuer Sammelpunkt 0i, A09 unter „Als Nächstes“), neues Abnahmeskript `docs/abnahme_D15.ps1` mit `docs/abnahme_D15.md`; Teil 0: Tag und Release von 0.3.0-rc5 vermerkt (eigener Abschnitt unten).
+
+### A08b „Windows-Kopienamen in der Anhang-Sperre“ (15.11.2026; auf `main` seit 17.11.2026, im Build 0.3.0-rc7)
 
 - **Security:** Die Anhang-Sperre prüft Datei- und Ordnernamen zusätzlich ohne die Kopiezusätze von Windows (` - Kopie`, ` - Copy`, ` (n)` mit beliebiger Zahl, vor der Endung oder am Ende): `config - Kopie.toml`, `config (1).toml`, `.env (1)`, `config - Copy (2).toml`, `_secrets - Kopie/` sind jetzt gesperrt, auch mit Sicherungsendung (`config - Kopie.toml.bak`). Die Regel sperrt nur mehr ([docs/roadmap.md](docs/roadmap.md), Entschiedene Frage 81). Folge: Ein gespeicherter Entwurf mit so benanntem Dateianhang wird beim nächsten Neubau oder Push gesperrt.
 
