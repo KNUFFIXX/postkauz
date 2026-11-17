@@ -605,6 +605,11 @@ func renderDraftShow(w io.Writer, out any) error {
 		}
 	case drafts.ReasonSupersededByDraft:
 		// A07 Teil 5: durch einen eigenen, neueren Entwurf ersetzt.
+		if o.SupersedeActionID > 0 && o.ClosedNote == ops.SupersedeNotMovedNote(o.SupersedeActionID) {
+			// A09 Teil 2 (b): Die Aktion hat die Kopie nicht verschoben.
+			fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; %s\n", o.ClosedAt, o.SupersededByDraftID, termLine(o.ClosedNote))
+			break
+		}
 		fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; its unchanged copy is queued for the trash "+
 			"(check with: %s action show %d)\n", o.ClosedAt, o.SupersededByDraftID, brand.Name, o.SupersedeActionID)
 	}

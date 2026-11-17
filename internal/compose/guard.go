@@ -186,6 +186,11 @@ func absClean(p string) string {
 // je mit oder ohne „ (n)“, und „ (n)“ allein mit beliebiger Zahl (A08b).
 // Vor „(n)“ sind beliebig viele Leerzeichen erlaubt, auch keins
 // („config(1).toml“); das sperrt höchstens mehr.
+// maxCopyName: Kopie-Formen (copyVariants) nur für Namen bis zu dieser
+// Länge in Bytes (A09 Teil 2 c). Ein echter Datei- oder Ordnername ist
+// kürzer (NTFS und ext4: 255 Zeichen bzw. Bytes je Pfadteil).
+const maxCopyName = 1024
+
 var copyMarker = regexp.MustCompile(` - (?:kopie|copy)(?: *\([0-9]+\))?| *\([0-9]+\)`)
 
 // copyVariants liefert zu einem gefalteten Namen die Formen ohne
@@ -196,9 +201,18 @@ var copyMarker = regexp.MustCompile(` - (?:kopie|copy)(?: *\([0-9]+\))?| *\([0-9
 // Runden laufen, bis nichts mehr wegfällt, so dass auch die Kopie einer
 // Kopie („config (1) - Kopie.toml“) auf „config.toml“ kommt. Alle
 // Zwischenformen zählen mit. Der Name selbst gehört nicht zum Ergebnis.
+//
+// Seit A09 Teil 2 (c) ohne feste Rundenzahl (vorher 16: ein Name mit 17
+// verketteten Zusätzen ging durch); die Schleife endet, weil jede Runde den
+// Namen um mindestens drei Bytes kürzt („(0)“). Formen gibt es nur für
+// Namen bis maxCopyName Bytes (ein Name aus 1 MiB „ (1)“ kostete sonst
+// Sekunden); der Name selbst wird immer geprüft.
 func copyVariants(n string) []string {
+	if len(n) > maxCopyName {
+		return nil
+	}
 	var out []string
-	for range 16 {
+	for {
 		next := stripCopyMarkers(n)
 		if next == n || next == "" {
 			break

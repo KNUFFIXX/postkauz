@@ -29,3 +29,19 @@ func TestA09CLIShowsRecipientsAdded(t *testing.T) {
 		t.Fatalf("draft show without note:\n%s", b.String())
 	}
 }
+
+// A09 Teil 2 (b): Hat die Papierkorb-Aktion die Kopie nicht verschoben,
+// nennt draft show das statt „queued for the trash“.
+func TestA09CLIShowsSupersedeNotMoved(t *testing.T) {
+	var b bytes.Buffer
+	if err := renderDraftShow(&b, ops.DraftDetail{DraftID: 3, Kind: "reply", Account: "demo", Status: "abandoned", Remote: "pushed",
+		ClosedAt: "2026-11-17T10:00:00Z", ClosedReason: "superseded_by_draft", SupersededByDraftID: 5, SupersedeActionID: 12,
+		ClosedNote: ops.SupersedeNotMovedNote(12)}); err != nil {
+		t.Fatal(err)
+	}
+	s := b.String()
+	if !strings.Contains(s, "superseded by draft 5; copy still in the Drafts folder; action 12 did not move it (remove with drafts.cleanup_copies)\n") ||
+		strings.Contains(s, "queued for the trash") {
+		t.Fatalf("draft show:\n%s", s)
+	}
+}

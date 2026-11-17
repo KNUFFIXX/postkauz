@@ -137,7 +137,13 @@ func pushHoldNote(reason string) string {
 		"check the text, then change it (draft edit) or submit it yourself (draft request) to store it again"
 }
 
-// remoteNote erklärt den Stand der Serverkopie.
+// remoteNote erklärt den Stand der Serverkopie. Bei einem geschlossenen
+// Entwurf gibt es seit A09 Teil 2 (b) keinen Hinweis mehr (außer
+// pushed_after_close): remote_state wird nach dem Schließen nicht mehr
+// aufgefrischt, und jeder Satz zur Kopie (etwa „in the Drafts folder“ nach
+// supersede, „closes the draft as abandoned (copy_gone)“ nach dem Versand)
+// stimmte nur für offene Entwürfe. Was nach dem Schließen mit der Kopie
+// geschah, sagt closed_note, soweit bekannt.
 func remoteNote(d store.Draft) string {
 	if d.PushNote == drafts.PushNotePushedAfterClose {
 		if d.RemoteUID > 0 {
@@ -146,11 +152,11 @@ func remoteNote(d store.Draft) string {
 		}
 		return pushNotes[d.PushNote]
 	}
+	if drafts.Status(d.Status).Closed() {
+		return ""
+	}
 	switch d.RemoteState {
 	case drafts.RemotePending:
-		if drafts.Status(d.Status).Closed() {
-			return ""
-		}
 		if d.PushHold != "" {
 			return pushHoldNote(d.PushHold)
 		}
@@ -176,7 +182,7 @@ func remoteNote(d store.Draft) string {
 	case drafts.RemoteTakenOver:
 		return "taken over in the mail client; change it there"
 	case drafts.RemoteMissing:
-		if drafts.RecipientKey(d.To, d.Cc) == "" && d.InReplyToMsg > 0 && !drafts.Status(d.Status).Closed() {
+		if drafts.RecipientKey(d.To, d.Cc) == "" && d.InReplyToMsg > 0 {
 			// A07 Teil 1: ohne Empfänger in To und Cc schließt nur noch der
 			// Weg über den Verlauf (bzw. „ersetzt“) automatisch.
 			return "the copy in the Drafts folder is gone; this draft has no To or Cc, so it is closed automatically only when " +
@@ -1471,7 +1477,7 @@ func DraftsGet(d Deps) Operation {
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
-    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its copy went to the trash)"},
+    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its unchanged copy is queued for the trash; see closed_note)"},
     "superseded_by_draft_id": {"type": "integer", "description": "the newer draft (closed_reason superseded_by_draft)"},
     "supersede_action_id": {"type": "integer", "description": "the mailbox action that moves the unchanged copy to the trash (closed_reason superseded_by_draft; action show <id>)"},
     "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
@@ -1663,8 +1669,43 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 	case drafts.ReasonSupersededByDraft:
 		out.ClosedReason, out.SupersededByDraftID, out.SupersedeActionID, out.ClosedNote = drafts.ReasonSupersededByDraft, p.By,
 			p.Action, closedNoteSuperseded
+		if p.Action > 0 {
+			// A09 Teil 2 (b): Hat die Papierkorb-Aktion abgeschlossen und
+			// kein Ziel verschoben (etwa alle stale), liegt die Kopie
+			// noch im Entwürfe-Ordner.
+			a, err := o.svc.Store.Action(ctx, p.Action)
+			if err != nil && !errors.Is(err, store.ErrActionNotFound) {
+				return err
+			}
+			if err == nil && actionFinishedWithoutOK(a) {
+				out.ClosedNote = SupersedeNotMovedNote(p.Action)
+			}
+		}
 	}
 	return nil
+}
+
+// actionFinishedWithoutOK: Die Aktion ist abgeschlossen (done, partial,
+// failed, rejected, expired) und kein Ziel hat das Ergebnis ok.
+func actionFinishedWithoutOK(a store.Action) bool {
+	switch a.State {
+	case store.ActionDone, store.ActionPartial, store.ActionFailed, store.ActionRejected, store.ActionExpired:
+	default:
+		return false
+	}
+	for _, t := range a.Targets {
+		if t.Result == store.TargetOK {
+			return false
+		}
+	}
+	return true
+}
+
+// SupersedeNotMovedNote ist closed_note eines ersetzten Entwurfs, dessen
+// Papierkorb-Aktion abgeschlossen ist, ohne die Kopie zu verschieben (A09
+// Teil 2 (b)).
+func SupersedeNotMovedNote(actionID int64) string {
+	return fmt.Sprintf("copy still in the Drafts folder; action %d did not move it (remove with drafts.cleanup_copies)", actionID)
 }
 
 // sentNote setzt closed_note bei einem als gesendet erkannten Entwurf, wenn

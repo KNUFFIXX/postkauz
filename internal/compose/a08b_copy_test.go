@@ -169,18 +169,6 @@ func TestA08bCopyVariants(t *testing.T) {
 	}
 }
 
-// Die Regel sperrt nur mehr: Was ohne Kopie-Normalisierung gesperrt war,
-// bleibt gesperrt (alle Standardmuster, je mit und ohne Zusatz).
-func TestA08bOnlyMore(t *testing.T) {
-	g := (*AttachGuard)(nil).orDefault()
-	names := []string{"config.toml", ".env", "vault.kdbx", "token.json", "SECRETS.md.bak", "id_rsa", "x.local.json",
-		"brief.pdf", "Rechnung (1).pdf", "config - Kopie.toml", "a - copy (1)", "(1)", " - kopie"}
-	for _, p := range DefaultDenyFiles {
-		names = append(names, p, p+" - Kopie", p+" (1)")
-	}
-	for _, n := range names {
-		if g.deniedFolded(fold(n)) && !g.DeniedName(n) {
-			t.Errorf("%q was denied before A08b, now allowed", n)
-		}
-	}
-}
+// TestA08bOnlyMore ist seit A09 Teil 2 (c) durch TestA09OnlyMoreThanMain
+// ersetzt (feste Liste mit den Ergebnissen von main e8e9c54 statt eines
+// Vergleichs mit deniedFolded).
