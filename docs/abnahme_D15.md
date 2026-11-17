@@ -47,7 +47,7 @@ Stand: 17.11.2026 (Auftrag [A09](../auftraege/A09_alltag4.md), Teil 3). Skript: 
 **Im Hintergrund starten**, danach das Protokoll mitlesen, bis die Schlusszeile `D15: …` dasteht:
 
 ```powershell
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d15\abnahme_D15.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d15\postkauz-windows-amd64.exe','-ExpectSha256','<SHA256 aus SHA256SUMS>','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-KeepStdioMcp'
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d15\abnahme_D15.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d15\postkauz-windows-amd64.exe','-ExpectSha256','2647a49f793bd1507000e01c5d84a9990e0c4005a07947ba1129b1c2cc1f1630','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-KeepStdioMcp'
 ```
 
 Optional `'-BackupTo','<Sicherungsordner>'` anhängen.

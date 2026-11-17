@@ -6,7 +6,7 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc7 (Build, noch kein Tag) – Auftrag A09 „Alltag 4: Ergänzte Empfänger, Kopfvergleich, Restfunde“
 
-Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main` `534e258` nach dem Fast-Forward von PR #15 = A08 und A08b). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; rc6 läuft mit den Daten weiter. Build **0.3.0-rc7** enthält A08b. Haltepunkt: Gegenprüfung, danach Abnahme D15 nach Entscheid des Betreibers.
+Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main` `534e258` nach dem Fast-Forward von PR #15 = A08 und A08b). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; rc6 läuft mit den Daten weiter. Build **0.3.0-rc7** an `b043c01` (enthält A08b; zwei frische Klone ohne Tags bytegleich; Windows `2647a49f793bd1507000e01c5d84a9990e0c4005a07947ba1129b1c2cc1f1630`, Linux `28e652d6…4b18`, darwin `98afe272…7621`; Modulversion `v0.0.0-20261117100213-b043c010b9ed`, go1.27.3). Haltepunkt: Gegenprüfung, danach Abnahme D15 nach Entscheid des Betreibers.
 
 #### Fixed
 
