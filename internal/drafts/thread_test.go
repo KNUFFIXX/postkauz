@@ -85,6 +85,7 @@ type thSent struct {
 	// Entwurf, der Rückfall trifft dann nicht).
 	subject   string
 	to        []store.Addr
+	cc        []store.Addr // A09 Teil 1
 	date      time.Time
 	draftFlag bool
 }
@@ -119,7 +120,7 @@ func (e *thEnv) send(s thSent) int64 {
 	e.m.uid[box]++
 	irt := strings.Trim(s.inReplyTo, "<> ")
 	nm := store.NewMessage{Link: store.LinkFlags{UID: e.m.uid[box], Seen: true, Draft: s.draftFlag}, MessageID: s.messageID,
-		Subject: s.subject, From: s.from, To: addrs(s.to), Cc: addrs(nil), DateHeader: s.date, InternalDate: s.date,
+		Subject: s.subject, From: s.from, To: addrs(s.to), Cc: addrs(s.cc), DateHeader: s.date, InternalDate: s.date,
 		Size: int64(200 + len(s.text) + int(e.m.uid[box])), TextPlain: s.text, TextUnquoted: s.text, ContentHash: s.messageID + s.text,
 		InReplyTo: irt, References: []string{irt}, CleanVersion: 1, Links: json.RawMessage("[]")}
 	if _, err := e.st.ApplyBatch(context.Background(), store.MirrorBatch{AccountID: e.acc, MailboxID: box, New: []store.NewMessage{nm},

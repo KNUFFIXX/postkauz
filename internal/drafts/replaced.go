@@ -92,6 +92,8 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 			if c.ContentHash != "" && isCopy[c.ContentHash] {
 				continue
 			}
+			// (d) bleibt hier streng (A09 Teil 1): ergänzte Empfänger
+			// (threadRecipientsAdded) gelten nur im Weg über den Verlauf.
 			if !threadRecipientsMatch(rk, c) || !InFallbackWindow(changedAt(d), c.Date) || !c.Date.After(after) { // (d), (e), danach
 				continue
 			}

@@ -1476,7 +1476,7 @@ func DraftsGet(d Deps) Operation {
     "supersede_action_id": {"type": "integer", "description": "the mailbox action that moves the unchanged copy to the trash (closed_reason superseded_by_draft; action show <id>)"},
     "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
     "copy_missing_since": {"type": "string", "format": "date-time", "description": "when the sync noticed the copy was gone: for closed_reason copy_gone, and for an open draft with remote missing (the fallback rule [draft] copy_gone_after counts from here)"},
-    "closed_note": {"type": "string", "description": "one sentence on closed_reason"}
+    "closed_note": {"type": "string", "description": "one sentence on closed_reason; for status sent_by_human (closed_reason empty) it names recipients added in the mail client (n) when the thread way detected the sent reply with more recipients than the draft"}
   },
   "required": ["source", "draft_id", "account", "kind", "status", "message_id", "from", "to", "cc", "bcc", "subject", "body_text",
     "quote", "signature", "attachments", "warnings", "remote", "preview_hash", "created_by", "created_at", "updated_at"]
@@ -1555,6 +1555,11 @@ func DraftsGet(d Deps) Operation {
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
 			if dr.Status == string(drafts.StatusAbandoned) {
 				if err := o.closedReason(ctx, dr, &out); err != nil {
+					return nil, err
+				}
+			}
+			if dr.Status == string(drafts.StatusSentByHuman) {
+				if err := o.sentNote(ctx, dr, &out); err != nil {
 					return nil, err
 				}
 			}
@@ -1660,6 +1665,35 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 			p.Action, closedNoteSuperseded
 	}
 	return nil
+}
+
+// sentNote setzt closed_note bei einem als gesendet erkannten Entwurf, wenn
+// der Weg über den Verlauf ergänzte Empfänger zugelassen hat (A09 Teil 1;
+// Audit drafts.sent_detected, Parameter recipients_added, nur eine Zahl).
+// closed_reason bleibt leer (die Liste seiner Werte ändert sich nicht).
+// Nach einer Rotation des Audits bleibt das Feld leer.
+func (o *draftOps) sentNote(ctx context.Context, dr store.Draft, out *DraftDetail) error {
+	ev, ok, err := o.svc.Store.DraftSentBy(ctx, dr.ID, dr.ClosedAt)
+	if err != nil || !ok {
+		return err
+	}
+	var p struct {
+		Added int `json:"recipients_added"`
+	}
+	if err := json.Unmarshal(ev.Params, &p); err != nil {
+		return fmt.Errorf("ops: audit params of a sent draft: %w", err)
+	}
+	if p.Added > 0 {
+		out.ClosedNote = RecipientsAddedNote(p.Added)
+	}
+	return nil
+}
+
+// RecipientsAddedNote ist closed_note eines Entwurfs, den der Weg über den
+// Verlauf trotz im Mailprogramm ergänzter Empfänger als gesendet erkannt
+// hat (A09 Teil 1).
+func RecipientsAddedNote(n int) string {
+	return fmt.Sprintf("recipients added in the mail client (%d)", n)
 }
 
 // budgetSource wendet das Zeichenbudget auf den Quelltext des Entwurfs an

@@ -683,7 +683,13 @@ func sentText(b store.Body) string {
 // abandon) oder sein Inhalt nicht mehr der verglichene (expect, K4), ist
 // das kein Fehler; done ist dann false.
 func (s *Service) markSent(ctx context.Context, id, messageID int64, reason, expect string) (bool, error) {
-	_, err := s.SentDetected(ctx, id, messageID, reason, expect)
+	return s.markSentWith(ctx, id, messageID, reason, expect, nil)
+}
+
+// markSentWith ist markSent mit zusätzlichen Audit-Parametern (A09 Teil 1:
+// recipients_added; nie Inhalte oder Adressen).
+func (s *Service) markSentWith(ctx context.Context, id, messageID int64, reason, expect string, extra map[string]any) (bool, error) {
+	_, err := s.sentDetected(ctx, id, messageID, reason, expect, extra)
 	switch ReasonOf(err) {
 	case ReasonDraftClosed, ReasonInvalidTransition, ReasonDraftChanged:
 		return false, nil

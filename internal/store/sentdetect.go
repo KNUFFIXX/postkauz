@@ -495,6 +495,33 @@ func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time
 	return ev, true, nil
 }
 
+// DraftSentBy liefert den Audit-Eintrag drafts.sent_detected, mit dem das
+// System den Entwurf draftID zum Zeitpunkt closedAt als gesendet erkannt
+// hat (A09 Teil 1: Parameter recipients_added beim Weg über den Verlauf);
+// ohne Migration, gesucht wie DraftClosedBy in ±1 s über den Index
+// audit_events_ts. ok false: anders geschlossen oder schon aus dem Audit
+// rotiert.
+func (s *SQLite) DraftSentBy(ctx context.Context, draftID int64, closedAt time.Time) (ev DraftCloseEvent, ok bool, err error) {
+	if closedAt.IsZero() {
+		return ev, false, nil
+	}
+	var params string
+	err = s.db.QueryRowContext(ctx, `SELECT operation, COALESCE(reason, ''), params_redacted FROM audit_events WHERE ts BETWEEN ? AND ?
+		AND operation = 'drafts.sent_detected' AND result = 'ok'
+		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
+		WHERE value = ?)
+		ORDER BY id DESC LIMIT 1`,
+		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ev.Operation, &ev.Reason, &params)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DraftCloseEvent{}, false, nil
+	}
+	if err != nil {
+		return DraftCloseEvent{}, false, err
+	}
+	ev.Params = json.RawMessage(params)
+	return ev, true, nil
+}
+
 // NewMailSubjectsInDrafts liefert die Betreffs der Nachrichten des Kontos,
 // die im Entwürfe-Ordner liegen (wie EditedReplyInDrafts: \Draft, Rolle
 // drafts oder Ablageordner eines Entwurfs), nach after datiert sind, kein

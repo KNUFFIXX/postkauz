@@ -3,6 +3,7 @@ package drafts
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
@@ -29,7 +30,10 @@ import (
 //	(d) gleiche Empfängermenge (To und Cc) wie beim Rückfall; seit A07
 //	    Teil 1 auch erfüllt, wenn der Entwurf in To und Cc keinen
 //	    Empfänger hat und die gesendete Nachricht mindestens einen
-//	    (threadRecipientsMatch),
+//	    (threadRecipientsMatch); seit A09 Teil 1 nur hier auch, wenn die
+//	    Empfänger des Entwurfs eine echte, nicht leere Teilmenge der
+//	    gesendeten sind (der Mensch hat im Mailprogramm nur ergänzt;
+//	    threadRecipientsAdded),
 //	(e) Zeitfenster wie beim Rückfall,
 //	(f) die Kopie des Entwurfs fehlt im Entwürfe-Ordner, festgestellt am
 //	    Spiegel wie checkCopy, unabhängig vom gespeicherten remote_state;
@@ -65,6 +69,7 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 		fp    string
 		c     store.SentMessage
 		score float64
+		added int // A09 Teil 1: Zahl der im Mailprogramm ergänzten Empfänger
 	}
 	var pairs []pair
 	for _, d := range open {
@@ -77,11 +82,13 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 			return err
 		}
 		var cands []store.SentMessage
+		added := map[int64]int{}
 		for _, c := range list {
 			if claimed[c.ID] || (c.ContentHash != "" && isCopy[c.ContentHash]) {
 				continue
 			}
-			if !threadRecipientsMatch(rk, c) || !InFallbackWindow(changedAt(d), c.Date) { // (d), (e)
+			ok, n := threadRecipientsAdded(rk, c)
+			if !ok || !InFallbackWindow(changedAt(d), c.Date) { // (d), (e)
 				continue
 			}
 			if !c.InSent {
@@ -97,6 +104,7 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 				}
 			}
 			cands = append(cands, c)
+			added[c.ID] = n
 		}
 		if len(cands) == 0 {
 			continue
@@ -136,12 +144,15 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 				texts[c.ID] = w
 			}
 			if sc := fd.ScoreSent(*w); sc >= ThreadMinJaccard { // (g)
-				pairs = append(pairs, pair{d, fp, c, sc})
+				pairs = append(pairs, pair{d, fp, c, sc, added[c.ID]})
 			}
 		}
 	}
 	sort.SliceStable(pairs, func(i, j int) bool {
 		a, b := pairs[i], pairs[j]
+		if (a.added == 0) != (b.added == 0) {
+			return a.added == 0 // A09 Teil 1: gleiche Empfänger vor ergänzten
+		}
 		return pairBefore(a.score, b.score, a.d, b.d, a.c, b.c, 0, 0) // A07 Teil 2
 	})
 	used := map[int64]bool{}
@@ -150,7 +161,12 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 			continue
 		}
 		used[p.d.ID], claimed[p.c.ID] = true, true
-		done, err := s.markSent(ctx, p.d.ID, p.c.ID, DetectThread, p.fp)
+		var extra map[string]any
+		if p.added > 0 {
+			// A09 Teil 1: nur die Zahl, nie Adressen.
+			extra = map[string]any{"recipients_added": p.added}
+		}
+		done, err := s.markSentWith(ctx, p.d.ID, p.c.ID, DetectThread, p.fp, extra)
 		if err != nil {
 			return err
 		}
@@ -174,6 +190,39 @@ func threadRecipientsMatch(draftKey string, c store.SentMessage) bool {
 		return sent != ""
 	}
 	return sent == draftKey
+}
+
+// threadRecipientsAdded ist Bedingung (d) nur für den Weg über den Verlauf
+// (A09 Teil 1, Offene Frage 4): erfüllt wie threadRecipientsMatch (added
+// 0) oder, wenn die Empfänger des Entwurfs (To und Cc, normalisiert wie
+// RecipientKey) eine echte, nicht leere Teilmenge der Empfänger der
+// gesendeten Nachricht (To und Cc) sind; added ist dann die Zahl der
+// ergänzten Empfänger. Bcc zählt nicht. Ein Entwurf ohne Empfänger zählt
+// nicht als Teilmenge (dafür gilt A07 Teil 1). Rückfall, Betreff (3c) und
+// „ersetzt“ (3b, threadRecipientsMatch) bleiben streng.
+func threadRecipientsAdded(draftKey string, c store.SentMessage) (ok bool, added int) {
+	if threadRecipientsMatch(draftKey, c) {
+		return true, 0
+	}
+	if draftKey == "" {
+		return false, 0
+	}
+	sent := map[string]bool{}
+	for _, a := range strings.Split(RecipientKey(c.To, c.Cc), "\n") {
+		if a != "" {
+			sent[a] = true
+		}
+	}
+	mine := strings.Split(draftKey, "\n")
+	for _, a := range mine {
+		if !sent[a] {
+			return false, 0
+		}
+	}
+	if len(sent) <= len(mine) {
+		return false, 0
+	}
+	return true, len(sent) - len(mine)
 }
 
 // copyGone meldet, ob die zuletzt abgelegte Kopie des Entwurfs laut

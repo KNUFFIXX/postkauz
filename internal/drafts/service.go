@@ -713,14 +713,14 @@ func applyApproval(x *store.DraftTx, d *store.Draft, eff ApprovalEffect, now tim
 // offene oder erteilte Freigabe superseded. Die Serverkopie bleibt (kein
 // Expunge im MVP).
 func (s *Service) Abandon(ctx context.Context, id int64) (Result, error) {
-	return s.close(ctx, id, EvAbandon, 0, "", "")
+	return s.close(ctx, id, EvAbandon, 0, "", "", nil)
 }
 
 // MarkSent erklärt einen Entwurf für gesendet (nur Mensch, `draft
 // mark-sent`): sent_by_human, closed_at gesetzt, eine noch offene Freigabe
 // superseded (eine erteilte bleibt approved).
 func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
-	return s.close(ctx, id, EvMarkSent, 0, "", "")
+	return s.close(ctx, id, EvMarkSent, 0, "", "", nil)
 }
 
 // SentDetected schließt einen Entwurf, dessen Versand der Sync erkannt hat
@@ -735,13 +735,19 @@ func (s *Service) MarkSent(ctx context.Context, id int64) (Result, error) {
 // der Vergleich nicht mehr: draft_changed, nichts wird geschrieben, die
 // nächste Prüfung vergleicht den neuen Stand (Gegenprüfung S2.6–S2.8, K4).
 func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, reason, expect string) (Result, error) {
+	return s.sentDetected(ctx, id, sentMessageID, reason, expect, nil)
+}
+
+// sentDetected ist SentDetected mit zusätzlichen Audit-Parametern extra
+// (A09 Teil 1: recipients_added beim Weg über den Verlauf).
+func (s *Service) sentDetected(ctx context.Context, id, sentMessageID int64, reason, expect string, extra map[string]any) (Result, error) {
 	if reason != DetectMessageID && reason != DetectFallback && reason != DetectThread && reason != DetectSubject {
 		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
 	}
-	return s.close(ctx, id, EvSentDetected, sentMessageID, reason, expect)
+	return s.close(ctx, id, EvSentDetected, sentMessageID, reason, expect, extra)
 }
 
-func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason, expect string) (Result, error) {
+func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID int64, reason, expect string, extra map[string]any) (Result, error) {
 	now := s.now()
 	var res Result
 	err := s.tx(ctx, func(x *store.DraftTx) error {
@@ -797,7 +803,7 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 		res.Draft, res.From, res.To = d, from, t.To
 		if ev == EvSentDetected {
 			// Nur IDs: die lokale ID der gesendeten Nachricht, nie ihr Inhalt.
-			_, err := x.AppendAudit(s.systemEvent(now, OpSentDetected, reason, d, from, t.To, map[string]any{"sent_message_id": sentMessageID}))
+			_, err := x.AppendAudit(s.systemEvent(now, OpSentDetected, reason, d, from, t.To, map[string]any{"sent_message_id": sentMessageID}, extra))
 			return err
 		}
 		var aid int64
