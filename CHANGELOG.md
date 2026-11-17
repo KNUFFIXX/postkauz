@@ -38,17 +38,19 @@ Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60
 
 - Doku: [docs/sicherheit.md](docs/sicherheit.md) Abschnitte 4 und 7 („Anhang-Sperre“), Nachtrag zu E10 in [docs/entscheidungen.md](docs/entscheidungen.md), [docs/cli.md](docs/cli.md) Abschnitt 5, [docs/mcp.md](docs/mcp.md) Abschnitt 6, Entschiedene Frage 80 in [docs/roadmap.md](docs/roadmap.md).
 
-### 0.3.0-rc5 (Build, noch kein Tag) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
+## [0.3.0-rc5] – 2026-11-10 (Release-Kandidat; im Dauerbetrieb seit 10.11.2026, Tag `v0.3.0-rc5` an `1fdd000`, Release 11.11.2026) – Auftrag A07 „Alltag 3: Versanderkennung schließen, Kopien aufräumen“
 
-#### Abnahme D13 bestanden (10.11.2026; noch kein Tag)
+Tag `v0.3.0-rc5` (annotiert, an `1fdd000`) und GitHub-Release „PostKauz 0.3.0-rc5“ (Vorabversion, zwölf Dateien, bytegleich zu `SHA256SUMS` des abgenommenen Builds) vom Betreiber am 11.11.2026 gesetzt; `main` enthält den Stand seit dem Merge von PR #11 am 11.11.2026.
+
+### Abnahme D13 bestanden (10.11.2026; noch kein Tag)
 
 - Teil A **41 OK, 0 FAIL, 0 WARN** mit dem Build an `1fdd000`; Teil B inhaltlich bestanden (B.6/B.7 scheiterten im Skript mit `copy_missing`, danach von Hand über den MCP-Server). Dauerbetrieb seit 10.11.2026 21:19 auf 0.3.0-rc5. A07 abgeschlossen; Merge nach `main`, Tag und Release stehen aus (Entscheid des Betreibers).
 
-#### Nachtrag 2 (10.11.2026; nur das Abnahmeskript, kein neuer Build, Build bleibt an `1fdd000`)
+### Nachtrag 2 (10.11.2026; nur das Abnahmeskript, kein neuer Build, Build bleibt an `1fdd000`)
 
 - **Fixed:** Abnahmeskript D13: Erwartungslisten als `[int64[]]` (vorher blieben sie Text, jeder Abgleich mit dem Stand lief ins Leere), Marke im Audit nach der Vorher-Liste, `-ExpectStaysOpen`, Auffangregel direkt vor dem Tausch noch einmal, Zeitpunkt „Kopie fehlt“ je Entwurf ab `pushed_date` mit Seiten über `--after-id`, `sync --watch` nur genau mit `-Exe` und Konten nur aus `-a`/`--account`/`--all`, Rückweg verlangt `-Accounts`, Aufgaben nur als Nummer im Protokoll, MCP-Fehler mit Status und Grund, Eingabe an den MCP-Server ohne BOM, sauberes Ende nach einer Zeitgrenze.
 
-#### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu an `1fdd000`, Windows `d001341b…d0619`, ersetzt den Build an `69117c5`)
+### Nachtrag 1 nach der Gegenprüfung (10.11.2026; Build 0.3.0-rc5 neu an `1fdd000`, Windows `d001341b…d0619`, ersetzt den Build an `69117c5`)
 
 - **Fixed:** Abnahmeskript D13: `audit --limit 1000` statt 5000 (sonst immer FAIL), `Stop-D13` definiert, kein zweiter Lauf nach einem FAIL im ersten, Erwartung der Auffangregel vor dem Tausch geprüft, `sync --watch` je Konto in 4.1, Rückweg vermerkt die Aufgaben erst direkt vor R.1, Hilfsprozesse an Pfadgrenzen, Abschlüsse fremder Entwürfe sind nicht erwartet, Protokoll ohne Aufgaben- und Kontonamen.
 - **Fixed:** Auffangregel „Kopie weg“ lässt im Mailprogramm weiterbearbeitete Fassungen offen; eine nachweisbar zurückgekehrte Kopie setzt den Entwurf wieder auf `pushed` (`drafts.remote_check`, Grund `present`), die Frist zählt danach neu; `[draft] copy_gone_after` mindestens `1h`.
@@ -58,21 +60,21 @@ Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60
 
 Auftrag A07 (10.11.2026, Zweig `claude/compassionate-mayer-ntc1b5`, Basis `main` `d5d9af0` = Stand 0.3.0-rc4). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter (ohne `[draft] copy_gone_after` in der Konfiguration). Build **0.3.0-rc5** an `69117c5` (Windows `97ab3d84…a231a78`; Prüfsummen und Prüfläufe: `docs/protokolle/A07_stand.md`). Haltepunkt: Gegenprüfung, dann Abnahme D13 (`docs/abnahme_D13.md`).
 
-#### Fixed
+### Fixed
 
 - **Antwort-Entwurf ohne Empfänger** (Teil 1): Ein mit `derive_recipients: false` ohne Empfänger angelegter Antwort-Entwurf, den der Mensch in Gmail adressiert und gesendet hat, blieb für immer offen. Der Weg über den Verlauf und die Regel „ersetzt“ nehmen (d) jetzt als erfüllt, wenn der Entwurf kein To/Cc hat und die Antwort mindestens einen Empfänger; `draft show` nennt den Fall.
 - **Zwei Fassungen derselben Antwort** (Teil 2): Bei gleicher Ähnlichkeit gewann der älteste Entwurf, die gesendete jüngere Fassung blieb offen und wurde als `taken_over` nie mehr aufgefrischt. Jetzt gewinnt die übernommene bzw. jüngere Fassung, und `taken_over` wird `missing`, sobald keine Fassung mehr im Entwürfe-Ordner liegt (danach greifen „ersetzt“ und „Kopie weg“).
 - **Neue Mail mit Nachsatz** (Teil 3): Für neue Mails gab es nur Message-ID und Rückfall (0,9); eine um einen Satz ergänzte Mail (0,763) blieb offen.
 - **Sammelpunkt 0e** (Teil 6): Kommentar in `replaced.go` richtiggestellt (eine Übernahme wird mit `draft_changed` zurückgerollt); `push_failed` nennt den Grund des gescheiterten Neubaus (z. B. `invalid_address`); Abfragen in `store/sentdetect.go` aus Konstanten (golangci-lint G202).
 
-#### Added
+### Added
 
 - **Vierter Weg der Versanderkennung über den Betreff** (Teil 3, Grund `subject`): nur `kind new`, gleicher normalisierter Betreff, gesendete Nachricht ohne `In-Reply-To` und ohne Antwortpräfix, Empfänger streng, Kopie weg, Ähnlichkeit ≥ 0,5 bei mindestens 8 eigenen Wörtern; `draft_check.sent_by_subject`.
 - **Auffangregel „Kopie weg“** (Teil 4): offener Entwurf, dessen Kopie länger als `[draft] copy_gone_after` (Standard `24h`, `"off"` schaltet ab) fehlt und den kein Weg erkannt hat → `abandoned`, Grund `copy_gone`, Audit `drafts.copy_gone_detected`; `draft show`/`mail_get_draft` mit `closed_reason: "copy_gone"`, `copy_missing_since`, `closed_note`; `draft_check.copy_gone`, `copy_gone_draft_ids`.
 - **`drafts.supersede`** (Teil 5; MCP `mail_supersede_draft`, CLI `draft supersede <alt> --by <neu>`, R2, `mail:draft`): Ein Agent verwirft einen eigenen Entwurf, den eine neuere eigene Fassung ersetzt, und legt dessen unveränderte Kopie ohne Antrag in den Papierkorb (Nachtrag zu E2/E3); `closed_reason: "superseded_by_draft"`, `superseded_by_draft_id`.
 - Benchmark `BenchmarkCheckAfterSync22kSubject`; Sync-Test für die Reihenfolge von `MissingBefore`.
 
-#### Docs
+### Docs
 
 - `docs/versanderkennung.md` (Stand, Abschnitte 1, 3, 3a, 3b, neu 3c und 3d, 5, 6), `docs/entscheidungen.md` (ADR-009, Nachtrag A07 Teil 5), `docs/sicherheit.md` (Scopes, Rollen, Tabelle Abschnitt 5), `docs/mcp.md`, `docs/cli.md` (2j, 2b, Abschnitt 5 `copy_gone_after`), README, `docs/roadmap.md` (Stand, 0e erledigt, 0f, Entschiedene Fragen 78, 79), neues Abnahmeskript `docs/abnahme_D13.ps1` mit Anleitung `docs/abnahme_D13.md` (zwei Läufe nach dem Tausch, `-ExpectCopyGone`, WARN bei vorübergehendem Serverfehler, Punkte aus Sammelpunkt 0e), `docs/protokolle/A07_stand.md`.
 

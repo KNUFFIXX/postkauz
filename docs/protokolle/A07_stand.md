@@ -179,3 +179,4 @@ Abnahme D13 auf dem Büro-PC gelaufen (Betreiber-Sitzung DRACO-PK17). **A07 ist 
 - Offene Frage 4 in der Roadmap (Fall 48: Empfänger in Gmail ergänzt).
 - Sammelpunkt 0g um die Restfunde aus Runde 3 und D13 ergänzt.
 
+- Nachtrag 17.11.2026 (A09 Teil 0): PR #11 ist am 11.11.2026 nach `main` gemergt; der Betreiber hat am selben Tag den Tag `v0.3.0-rc5` (annotiert, an `1fdd000`) und das GitHub-Release „PostKauz 0.3.0-rc5“ (zwölf Dateien, bytegleich zu `SHA256SUMS`) gesetzt.
