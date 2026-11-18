@@ -53,7 +53,7 @@ Stand: 18.11.2026 (Auftrag [A10](../auftraege/A10_geplant.md), Teil 4). Skript: 
 5. **[Claude] Lesetest (fester Schritt vor dem Tausch):** ein echter Aufruf mit allen Angaben wie in Abschnitt 3, aber mit `-OldVersion 0.0.0-probe` und eigener Protokolldatei. Er prüft Parameter, Prüfsumme, Konten, Aufgaben (auch 0.6b) und Ordnerrollen (0.8) und **ändert nichts**, weil 0.4 (altes Programm meldet nicht `0.0.0-probe`) FAIL ist:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PostKauz\d16\abnahme_D16.ps1 -Exe '<Ordner des Programms>\postkauz.exe' -DataDir '<Datenordner>' -Config '<Datenordner>\config.toml' -NewExe C:\PostKauz\d16\postkauz-windows-amd64.exe -ExpectSha256 '<SHA256 aus SHA256SUMS>' -Tasks "<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>" -Accounts <konto1>,<konto2>,<konto3> -KeepStdioMcp -OldVersion 0.0.0-probe -LogFile C:\PostKauz\d16\D16_lesetest.txt
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\PostKauz\d16\abnahme_D16.ps1 -Exe '<Ordner des Programms>\postkauz.exe' -DataDir '<Datenordner>' -Config '<Datenordner>\config.toml' -NewExe C:\PostKauz\d16\postkauz-windows-amd64.exe -ExpectSha256 'bf2a9452b04f3838ac9ba1a903bf1f1e427456fbf098ce8ba88ddbd591388fba' -Tasks "<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>" -Accounts <konto1>,<konto2>,<konto3> -KeepStdioMcp -OldVersion 0.0.0-probe -LogFile C:\PostKauz\d16\D16_lesetest.txt
    ```
 
    Erwartet in `C:\PostKauz\d16\D16_lesetest.txt`: **nur `0.4` und `E.2` als FAIL**, die Zeilen `Abbruch: Voraussetzungen fehlen; nichts geaendert` und `Ergebnis: nichts geaendert (…)`, `Stand: … meldet 0.3.0-rc7`. WARN in 0.6b oder 0.8 sind erlaubt; Claude nennt sie dir. Jeder andere FAIL (etwa 0.2b falsche Prüfsumme, 0.5 Konten, 0.6 Aufgabe fehlt, **0.6b Sicherungsaufgabe in `-Tasks`**) wird vor dem Tausch behoben. Danach `postkauz.exe version` ansehen: weiter rc7, die Aufgaben laufen unverändert.
@@ -66,7 +66,7 @@ Stand: 18.11.2026 (Auftrag [A10](../auftraege/A10_geplant.md), Teil 4). Skript: 
 **Im Hintergrund starten**, danach das Protokoll mitlesen, bis die Schlusszeile `D16: …` dasteht:
 
 ```powershell
-Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d16\abnahme_D16.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d16\postkauz-windows-amd64.exe','-ExpectSha256','<SHA256 aus SHA256SUMS>','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-KeepStdioMcp','-BackupTo','<Sicherungsordner>'
+Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','C:\PostKauz\d16\abnahme_D16.ps1','-Exe','<Ordner des Programms>\postkauz.exe','-DataDir','<Datenordner>','-Config','<Datenordner>\config.toml','-NewExe','C:\PostKauz\d16\postkauz-windows-amd64.exe','-ExpectSha256','bf2a9452b04f3838ac9ba1a903bf1f1e427456fbf098ce8ba88ddbd591388fba','-Tasks','"<Aufgabe 1>,<Aufgabe 2>,<Aufgabe 3>,<Aufgabe 4>,<Aufgabe 5>"','-Accounts','<konto1>,<konto2>,<konto3>','-KeepStdioMcp','-BackupTo','<Sicherungsordner>'
 ```
 
 Ohne Sicherung `'-BackupTo','<Sicherungsordner>'` weglassen (dann INFO 1.4).

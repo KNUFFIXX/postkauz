@@ -172,6 +172,20 @@ Treffer → `sent_by_human`, Grund **`subject`**, Audit `drafts.sent_detected` (
 | `steady_replies` (dazu 30 offene Antworten) | 17,3–17,9 ms | 15,8–17,5 ms |
 | `steady_subject` (30 neue Entwürfe ohne Kopie) | 4,9–5,2 ms (Weg gab es nicht) | 37,6–40,6 ms |
 
+**Seit A10** (18.11.2026; Teil 1: Gesendet-Ordner, Marke je Gesendet-Ordner; Teil 2: Prüfung auf geplante Nachrichten bei jedem Lauf mit offenen Entwürfen ohne Kopie, neu `steady_scheduled` mit 10 geplanten Nachrichten, die zu keinem Entwurf passen, und `scheduled_lookup` = `Store.ScheduledMessages` allein). Gleicher Container, je drei Läufe; die Maschine streut um etwa ±20 %:
+
+| Teil | vor A10 (`d65d62e`) | mit A10 |
+|---|---|---|
+| `steady` | 4,5–5,1 ms | 5,8–6,6 ms |
+| `one_new` | 6,7–7,5 ms | 8,6–9,5 ms |
+| `steady_replies` | 14,8–15,5 ms | 17,1–19,6 ms |
+| `steady_subject` | 32,9–35,4 ms | 34,4–37,0 ms |
+| `steady_copy_gone` | 17,6–20,1 ms | 20,3–20,7 ms |
+| `steady_scheduled` | (gab es nicht) | 23,7–25,1 ms |
+| `scheduled_lookup` | (gab es nicht) | 0,37–0,39 ms |
+
+Mehrkosten je Lauf etwa 1 bis 3 ms: Lesen der Vermerke und Gesendet-Ordner, die längere Bedingung „gesendet“; die geplanten Nachrichten liest ein Lauf über den Datumsindex (0,4 ms) und prüft die Kopie eines Entwurfs nur, wenn danach eine geplante Nachricht gespiegelt wurde (eine erste Fassung las alle Nachrichten des Kontos und kostete in `steady_replies` 10 ms mehr).
+
 `steady` bleibt unter der Grenze von 20 ms aus dem Auftrag. Der Weg kostet nur, solange offene neue Entwürfe ohne Kopie da sind (die Auffangregel „Kopie weg“ schließt sie nach 24 Stunden, Abschnitt 3d), und wächst mit der Zahl der Nachrichten im Fenster. Eine erste Fassung, die alle Nachrichten im Fenster mit der vollen Bedingung „gesendet“ las und jeden Betreff normalisierte, brauchte 414–561 ms; seitdem liest der Vorfilter nur ID und Betreff ohne `In-Reply-To` (`Store.NewMailSubjects`), prüft ohne unsichtbare Zeichen zuerst, ob das längste Wort des Entwurfsbetreffs vorkommt, normalisiert erst dann und prüft „gesendet“ nur für die Treffer (`Store.SentMessagesByID`).
 
 ## 3d. Auffangregel „Kopie weg“
@@ -233,7 +247,7 @@ Konten ohne Ordner mit Rolle `all` haben keine geplanten Nachrichten.
 | (iii) | weg (nicht mehr im Spiegel, ohne Serverkopie oder nur noch im Papierkorb bzw. Spam) | `missing`, Audit `drafts.remote_check` Grund `missing` (damit `DraftMissingSince` neu zählt und die Frist `copy_gone_after` mit diesem Lauf beginnt); Vermerk `gone`. Das Zeitfenster der vier Wege reicht für diesen Entwurf bis **Termin + 14 Tage** (falls Gmail beim Versand eine neue Nachricht anlegt; Abnahme D16 B.3 misst das). |
 | (iv) | nur Konten mit Gesendet: Termin verstrichen, weiter nur in „Alle Nachrichten“ | noch **1 Stunde** geplant (Gmail braucht einen Moment), danach wie (iii). |
 
-**Kosten** (`BenchmarkCheckAfterSync22k`, Teil `steady_scheduled`): siehe Abschnitt 3c.1.
+**Kosten** (`BenchmarkCheckAfterSync22kSubject`, Teile `steady_scheduled` und `scheduled_lookup`): siehe Abschnitt 3c.1.
 
 **Bekannte Grenzen:**
 
