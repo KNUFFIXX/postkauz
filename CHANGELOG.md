@@ -4,6 +4,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### Vermerk 18.11.2026 (A10 Teil 0 (a)): Tags, D15, Dauerbetrieb
+
+- `git ls-remote --tags` (18.11.2026): `v0.3.0-rc6` und `v0.3.0-rc7` sind **nicht** gesetzt (zuletzt `v0.3.0-rc5`); 0.3.0-rc6 und 0.3.0-rc7 bleiben „Build, noch kein Tag“.
+- **Abnahme D15 bestanden** (18.11.2026, Büro-PC, Build 0.3.0-rc7): Teil A 30 OK, 0 FAIL, 0 WARN, 0 SKIP; Teil B 25 OK, 0 FAIL, 0 WARN, 0 SKIP. Das Protokoll liegt nicht im Repository. A09 ist seit dem 18.11.2026 im Dauerbetrieb; `main` per Fast-Forward auf `d65d62e` (PR #16, 18.11.2026 11:31 MEZ).
+
 ### 0.3.0-rc7 (Build, noch kein Tag) – Auftrag A09 „Alltag 4: Ergänzte Empfänger, Kopfvergleich, Restfunde“
 
 Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main` `534e258` nach dem Fast-Forward von PR #15 = A08 und A08b). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; rc6 läuft mit den Daten weiter. Build **0.3.0-rc7** an `b043c01` (enthält A08b; zwei frische Klone ohne Tags bytegleich; Windows `2647a49f793bd1507000e01c5d84a9990e0c4005a07947ba1129b1c2cc1f1630`, Linux `28e652d6…4b18`, darwin `98afe272…7621`; Modulversion `v0.0.0-20261117100213-b043c010b9ed`, go1.27.3). Haltepunkt: Gegenprüfung, danach Abnahme D15 nach Entscheid des Betreibers. Prüfläufe: `make check` (40 Pakete, guard, pii-check), `make cross`, `make race` (40 Pakete, 30 min) grün; `make integration` nicht gelaufen (Docker Hub 429 beim Laden der Testserver). `BenchmarkCheckAfterSync22k` (Cloud, 4 Kerne, je drei Läufe): `steady` 5,1–5,7 ms, `one_new` 8,0–9,0 ms, `steady_replies` 16,4–17,3 ms, `edited_reply_lookup` 0,13 ms (A05: 4,4–4,6 / 8,3–8,9 / 15,2–15,7 ms; Abweichung im Rahmen der Maschine).

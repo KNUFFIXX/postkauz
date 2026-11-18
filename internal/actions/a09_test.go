@@ -93,6 +93,10 @@ func TestA09NormHeaderAndDiff(t *testing.T) {
 	if got := headerDiff([]byte("A: 1\r\n"), []byte("A: 1\r\n")); got != "none" {
 		t.Fatalf("same = %q", got)
 	}
+	// A10 Teil 0 (b): nur umgestellt, nicht „none“.
+	if got := headerDiff([]byte("A: 1\r\nB: 2\r\n"), []byte("B: 2\r\nA: 1\r\n")); got != "order differs" {
+		t.Fatalf("reordered = %q", got)
+	}
 	long := strings.Repeat("X", 41)
 	got := headerDiff([]byte("A: 1\r\nB: 22\r\n"), []byte("A: 1\r\nB: 2\r\nX y: z\r\n"+long+": 1\r\nkein Doppelpunkt\r\n"))
 	want := "B (local 5; server 4), ? (server 6, 44, 16)"

@@ -156,3 +156,29 @@ func TestA09ActionFinishedWithoutOK(t *testing.T) {
 		}
 	}
 }
+
+// A10 Teil 0 (b): Sind alle Ziele not_found, sagt closed_note, dass die
+// Kopie nicht mehr gefunden wurde, nicht „still in the Drafts folder“.
+func TestA10SupersedeNoteNotFound(t *testing.T) {
+	for _, c := range []struct {
+		results []string
+		want    bool
+	}{
+		{[]string{store.TargetNotFound}, true},
+		{[]string{store.TargetNotFound, store.TargetNotFound}, true},
+		{[]string{store.TargetNotFound, store.TargetStale}, false},
+		{nil, false},
+	} {
+		a := store.Action{State: store.ActionDone}
+		for _, r := range c.results {
+			a.Targets = append(a.Targets, store.ActionTarget{Result: r})
+		}
+		if got := allTargetsNotFound(a); got != c.want {
+			t.Errorf("%v = %v", c.results, got)
+		}
+	}
+	n := SupersedeNotFoundNote(7)
+	if !strings.Contains(n, "copy no longer found") || !strings.Contains(n, "action 7") || strings.Contains(n, "still in the Drafts folder") {
+		t.Fatalf("note = %q", n)
+	}
+}

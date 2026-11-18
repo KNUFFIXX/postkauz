@@ -95,6 +95,46 @@ func TestA09SameRecipientsNoParam(t *testing.T) {
 	}
 }
 
+// A10 Teil 0 (b): wie oben, aber der Entwurf trägt wirklich ein Bcc an B.
+// Der Spiegel kennt kein Bcc der gesendeten Nachricht (messages hat keine
+// Spalte dafür; Gmail schreibt es nicht in die Kopie in Gesendet). Bcc
+// zählt auf keiner Seite: gesendet an A → gleiche Empfänger; gesendet an A
+// und B in To → B gilt als ergänzt (recipients_added 1).
+func TestA10DraftWithBcc(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		to    []store.Addr
+		added int
+	}{
+		{"sent to A, B only as Bcc", []store.Addr{a09A}, -1},
+		{"sent to A and B in To", []store.Addr{a09A, a09B}, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newThEnv(t)
+			ctx := context.Background()
+			in := NewDraft{AccountID: e.acc, Kind: KindReply, CreatedBy: "key:agent", InReplyToMsg: e.orig,
+				Content: Content{To: []store.Addr{a09A}, Bcc: []store.Addr{a09B}, Subject: "Re: Abrechnung", BodyMarkdown: thOwn,
+					BodyText: thOwn + "\n\nAm 22.10.2026 08:00 schrieb Anna <anna@example.org>:\n> Bitte prüfen Sie die Abrechnung.\n"}}
+			r, err := e.svc.Create(ctx, in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(r.Draft.Bcc) != 1 || r.Draft.Bcc[0].Address != a09B.Address {
+				t.Fatalf("draft bcc = %+v", r.Draft.Bcc)
+			}
+			d := e.pushAt(r.Draft, e.now)
+			e.dropCopy(d)
+			e.send(thSent{text: thOwn, to: c.to})
+			if rep := e.check(); rep.SentByThread != 1 {
+				t.Fatalf("report = %+v", rep)
+			}
+			if n := e.a09Added(); n != c.added {
+				t.Fatalf("recipients_added = %d, want %d", n, c.added)
+			}
+		})
+	}
+}
+
 // Fälle, in denen der Entwurf offen bleibt.
 func TestA09RecipientsStayOpen(t *testing.T) {
 	for _, c := range []struct {

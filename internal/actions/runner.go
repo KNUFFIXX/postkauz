@@ -607,7 +607,8 @@ const maxHeaderDiff = 10
 // headerDiff nennt für das Log die Kopfzeilen, die nach normHeader nur auf
 // einer Seite stehen (als Mehrfachmenge verglichen), mit Namen und Längen in
 // Bytes je Seite, etwa „Subject (local 207; server 209), X-Extra (server
-// 12)“; nie Inhalt (A09 Teil 1b). Die Namen kommen vom Server: nur Zeichen
+// 12)“; nie Inhalt (A09 Teil 1b). Stehen beide Seiten nur in anderer
+// Reihenfolge, „order differs“ (A10 Teil 0 (b)); sonst „none“. Die Namen kommen vom Server: nur Zeichen
 // aus [A-Za-z0-9-], höchstens 40 Zeichen, sonst „?“.
 func headerDiff(local, server []byte) string {
 	lines := func(b []byte) []string {
@@ -673,6 +674,10 @@ func headerDiff(local, server []byte) string {
 		add(x, true)
 	}
 	if len(order) == 0 {
+		if !bytes.Equal(normHeader(local), normHeader(server)) {
+			// A10 Teil 0 (b): gleiche Zeilen, andere Reihenfolge.
+			return "order differs"
+		}
 		return "none"
 	}
 	var parts []string

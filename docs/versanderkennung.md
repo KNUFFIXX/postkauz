@@ -86,6 +86,7 @@ Der Weg über den Verlauf kostet also etwa 0,2 ms je offener, abgelegter Antwort
 **Bekannte Grenzen:**
 
 - Verwirft der Mensch den Entwurf und schreibt im selben Verlauf binnen 14 Tagen an dieselben Empfänger eine eigene Antwort mit mindestens der Hälfte gleicher Wörter, gilt der Entwurf als gesendet statt verworfen. Das ändert nur den Zustand in PostKauz, nie einen Versand. Seit A09 Teil 1 gilt das auch für eine eigene Antwort an **mehr** Empfänger (alle des Entwurfs und weitere).
+- **Zwei Entwürfe mit getrennten Empfängern, eine Antwort an beide** (seit A09 Teil 1; Gegenprüfung von A09, vermerkt mit A10 Teil 0): Liegt im selben Verlauf ein Entwurf an A und einer an B, und sendet der Mensch eine Antwort an A und B, sind beide Empfängermengen echte Teilmengen. Die Nachricht schließt nur einen Entwurf (Rangfolge wie oben, bei gleichem Text der jüngere) mit `recipients_added` 1; der andere bleibt offen und läuft nach `[draft] copy_gone_after` in `copy_gone` („ersetzt“, 3b, greift nicht, weil (d) dort streng bleibt).
 - Webmail, die `In-Reply-To` beim Senden entfernt (D5, zweites Postfach beim anderen Anbieter), bleibt beim Rückfall (Abschnitt 3).
 - Ohne Original im Spiegel (`purge`, Entwurf ohne `in_reply_to_msg`) und ohne abgelegte Kopie gilt der Weg nicht; dann schließt der Mensch den Entwurf (Abschnitt 5).
 

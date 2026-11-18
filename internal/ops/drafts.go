@@ -1679,6 +1679,11 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 			}
 			if err == nil && actionFinishedWithoutOK(a) {
 				out.ClosedNote = SupersedeNotMovedNote(p.Action)
+				if allTargetsNotFound(a) {
+					// A10 Teil 0 (b): Kein Ziel war mehr da; „still in the
+					// Drafts folder“ stimmte dann nicht.
+					out.ClosedNote = SupersedeNotFoundNote(p.Action)
+				}
 			}
 		}
 	}
@@ -1699,6 +1704,27 @@ func actionFinishedWithoutOK(a store.Action) bool {
 		}
 	}
 	return true
+}
+
+// allTargetsNotFound: Die Aktion hat Ziele, und jedes endete not_found
+// (die Kopie lag nicht mehr unter Ordner und UID; A10 Teil 0 (b)).
+func allTargetsNotFound(a store.Action) bool {
+	if len(a.Targets) == 0 {
+		return false
+	}
+	for _, t := range a.Targets {
+		if t.Result != store.TargetNotFound {
+			return false
+		}
+	}
+	return true
+}
+
+// SupersedeNotFoundNote ist closed_note eines ersetzten Entwurfs, dessen
+// Papierkorb-Aktion abgeschlossen ist und kein Ziel mehr gefunden hat (A10
+// Teil 0 (b)).
+func SupersedeNotFoundNote(actionID int64) string {
+	return fmt.Sprintf("copy no longer found; action %d did not move it (it was moved or deleted in the mail client)", actionID)
 }
 
 // SupersedeNotMovedNote ist closed_note eines ersetzten Entwurfs, dessen

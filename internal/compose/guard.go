@@ -186,12 +186,12 @@ func absClean(p string) string {
 // je mit oder ohne „ (n)“, und „ (n)“ allein mit beliebiger Zahl (A08b).
 // Vor „(n)“ sind beliebig viele Leerzeichen erlaubt, auch keins
 // („config(1).toml“); das sperrt höchstens mehr.
+var copyMarker = regexp.MustCompile(` - (?:kopie|copy)(?: *\([0-9]+\))?| *\([0-9]+\)`)
+
 // maxCopyName: Kopie-Formen (copyVariants) nur für Namen bis zu dieser
 // Länge in Bytes (A09 Teil 2 c). Ein echter Datei- oder Ordnername ist
 // kürzer (NTFS und ext4: 255 Zeichen bzw. Bytes je Pfadteil).
 const maxCopyName = 1024
-
-var copyMarker = regexp.MustCompile(` - (?:kopie|copy)(?: *\([0-9]+\))?| *\([0-9]+\)`)
 
 // copyVariants liefert zu einem gefalteten Namen die Formen ohne
 // Kopiezusätze (A08b, Offene Frage 5): Ein Zusatz zählt nur direkt vor
