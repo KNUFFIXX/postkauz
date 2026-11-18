@@ -16,6 +16,7 @@ func TestT3NDetectGmailDotsAndPlusAsOwn(t *testing.T) {
 	const gm = "@gmail.com"
 	e := newEnv(t)
 	m := newMirror(e)
+	m.noSent() // A10 Teil 1 (c): „All Mail“ zählt nur bei Konten ohne Gesendet
 	if err := e.st.ExecForTest(`UPDATE accounts SET email = ? WHERE id = ?`, "pktestowner"+gm, e.acc); err != nil {
 		t.Fatal(err)
 	}

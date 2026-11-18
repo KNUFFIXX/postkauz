@@ -22,8 +22,9 @@ import (
 //	(a) kind reply, reply_all oder forward mit Original (in_reply_to_msg);
 //	    H = Message-ID des Originals. Ohne Original (etwa nach purge) gilt
 //	    der Weg nicht.
-//	(b) die gesendete Nachricht liegt in Gesendet oder „Alle Nachrichten"
-//	    (dort nur mit eigenem Absender), nicht \Draft, in keinem
+//	(b) die gesendete Nachricht liegt in Gesendet (seit A10 Teil 1 nur
+//	    dort; „Alle Nachrichten" nur bei Konten ohne Gesendet, dann mit
+//	    eigenem Absender und ohne Termin in der Zukunft), nicht \Draft, in keinem
 //	    Entwürfe-Ordner, keine Kopie, die PostKauz abgelegt hat (dieselben
 //	    Ausschlüsse wie bei Message-ID und Rückfall),
 //	(c) ihr In-Reply-To ist H (Store.SentReplies),
@@ -92,6 +93,9 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 				continue
 			}
 			if !c.InSent {
+				if c.InternalDate.After(s.now().Add(ScheduledLead)) {
+					continue // A10 Teil 1 (c): Termin in der Zukunft, nicht gesendet
+				}
 				if own == nil {
 					addrs, err := s.Store.OwnAddresses(ctx, accountID)
 					if err != nil {

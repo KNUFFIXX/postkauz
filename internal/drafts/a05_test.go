@@ -37,6 +37,7 @@ func TestFallbackRecheckAfterUpgrade(t *testing.T) {
 		if err := e.st.SetFallbackChecked(ctx, r.Draft.ID, e.draft(r.Draft.ID).ContentChangedAt); err != nil {
 			t.Fatal(err)
 		}
+		e.markBoxes() // A10 Teil 1 (d): auch die Marke von Gesendet steht darüber
 		return r.Draft, sent
 	}
 	t.Run("full run", func(t *testing.T) {

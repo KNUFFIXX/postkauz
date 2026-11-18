@@ -36,7 +36,40 @@ func newMirror(e *env) *mirror {
 	for _, b := range mbs {
 		m.boxes[b.Role] = b.ID
 	}
+	// A10 Teil 1 (b): Ein Gesendet-Ordner im Erstabgleich hält die Marke an;
+	// der Spiegel der Tests gilt als fertig abgeglichen.
+	if err := e.st.ExecForTest(`UPDATE mailboxes SET sync_phase = 'ready', uidvalidity = 1 WHERE account_id = ?`, e.acc); err != nil {
+		e.t.Fatal(err)
+	}
 	return m
+}
+
+// markBoxes setzt die Marken der Gesendet-Ordner auf ihren jetzigen Stand
+// (A10 Teil 1 (d)), wie nach einem vollständigen Lauf: für Tests, die den
+// Stand nach einem Lauf eines älteren Builds nachstellen.
+func (e *env) markBoxes() {
+	e.t.Helper()
+	ctx := context.Background()
+	boxes, err := e.st.SentBoxes(ctx, e.acc)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, b := range boxes {
+		if err := e.st.SetSentBoxMark(ctx, b.ID, b.UIDValidity, b.MaxUID); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+}
+
+// noSent macht aus dem Konto eines ohne Gesendet (A10 Teil 1 (c): Gmail mit
+// für IMAP ausgeblendetem Gesendet). Danach genügt „Alle Nachrichten“ mit
+// eigenem Absender wie vor A10.
+func (m *mirror) noSent() {
+	m.e.t.Helper()
+	if err := m.e.st.ExecForTest(`DELETE FROM mailboxes WHERE id = ?`, m.boxes["sent"]); err != nil {
+		m.e.t.Fatal(err)
+	}
+	delete(m.boxes, "sent")
 }
 
 // sentMsg beschreibt eine gespiegelte Nachricht.
@@ -188,11 +221,18 @@ func TestDetectSentIgnoresDraftCopies(t *testing.T) {
 	if got := e.draft(d.ID); got.Status != string(StatusPendingApproval) {
 		t.Fatalf("status = %s", got.Status)
 	}
-	// Entfernt der Client die Kopie aus den Entwürfen (Senden), zählt die
-	// Nachricht in „All Mail" ohne \Draft.
+	// Entfernt der Client die Kopie aus den Entwürfen, liegt die Nachricht
+	// nur noch in „All Mail" ohne \Draft. Seit A10 Teil 1 (Befund B5: eine
+	// Zwischenfassung, die der Spiegel kurz nur dort sieht) ist sie damit
+	// nicht gesendet, solange das Konto Gesendet hat ...
 	if err := e.st.ExecForTest(`DELETE FROM message_mailboxes WHERE message_id = ? AND mailbox_id = ?`, id2, m.boxes["drafts"]); err != nil {
 		t.Fatal(err)
 	}
+	if rep := e.check(); !rep.Empty() {
+		t.Fatalf("only in All Mail detected as sent: %+v", rep)
+	}
+	// ... erst ihre Kopie in Gesendet zählt.
+	m.link("sent", id2, false)
 	if rep := e.check(); rep.SentByMessageID != 1 {
 		t.Fatalf("report = %+v", rep)
 	}
@@ -258,6 +298,7 @@ func TestDetectSentFallback(t *testing.T) {
 func TestDetectSentFallbackOnePerMessageAndOwnSender(t *testing.T) {
 	e := newEnv(t)
 	m := newMirror(e)
+	m.noSent() // A10 Teil 1 (c): „All Mail“ zählt nur bei Konten ohne Gesendet
 	a := e.fallbackDraft("Re: Doppelt")
 	b := e.fallbackDraft("Re: Doppelt")
 	to := []store.Addr{{Address: "anna@example.org"}, {Address: "bob@example.org"}}

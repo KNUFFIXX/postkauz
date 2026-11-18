@@ -254,6 +254,7 @@ func TestA06CaseBReplySubject(t *testing.T) {
 				if err := e.st.SetSentCheckRev(ctx, e.acc, SentCheckRev); err != nil {
 					t.Fatal(err)
 				}
+				e.env.markBoxes() // A10 Teil 1 (d)
 			}
 			rep := e.check()
 			if len(rep.SentDraftIDs) != 1 || (way == DetectFallback && rep.SentByFallback != 1) || (way == DetectThread && rep.SentByThread != 1) {

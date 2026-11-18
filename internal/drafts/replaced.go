@@ -98,6 +98,9 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 				continue
 			}
 			if !c.InSent {
+				if c.InternalDate.After(s.now().Add(ScheduledLead)) {
+					continue // A10 Teil 1 (c): Termin in der Zukunft, nicht gesendet
+				}
 				if own == nil {
 					addrs, err := s.Store.OwnAddresses(ctx, accountID)
 					if err != nil {

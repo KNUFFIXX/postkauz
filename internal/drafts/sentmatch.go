@@ -17,9 +17,10 @@ import (
 // Hier stehen nur reine Funktionen ohne Datenbank; den Ablauf beim Sync
 // macht Service.CheckAfterSync (detect.go).
 //
-// Zuerst gilt die Message-ID: Liegt in Gesendet (Rolle sent) oder „Alle
-// Nachrichten" (Rolle all) eine Nachricht mit der Message-ID des Entwurfs,
-// ist er gesendet (Grund message_id). Sonst der Rückfall-Abgleich (Grund
+// Zuerst gilt die Message-ID: Liegt in Gesendet (Rolle sent; seit A10
+// Teil 1 nur dort, „Alle Nachrichten" mit Rolle all nur bei Konten ohne
+// Gesendet) eine Nachricht mit der Message-ID des Entwurfs, ist er
+// gesendet (Grund message_id). Sonst der Rückfall-Abgleich (Grund
 // fallback), alle Bedingungen zugleich:
 //
 //   - gleiche Empfängermenge (To und Cc, nur die Adressen, klein),

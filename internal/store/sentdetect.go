@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,7 +16,13 @@ import (
 // (Message-ID, Rückfall-Abgleich) stehen in internal/drafts.
 //
 // Als gesendet zählt eine Nachricht des Kontos, die
-//   - in einem Ordner mit Rolle sent oder all liegt,
+//   - in einem Ordner mit Rolle sent liegt; seit A10 Teil 1 nur noch dort,
+//     wenn das Konto Gesendet hat (einen Ordner mit Rolle sent und
+//     virtual_view = 0). Hat es keins (für IMAP ausgeblendet), genügt wie
+//     bisher ein Ordner mit Rolle all; den eigenen Absender und den
+//     Zeitpunkt (INTERNALDATE höchstens 2 Minuten nach dem Lauf) prüft
+//     internal/drafts. Ordner mit virtual_view = 1 (Gmail „Wichtig“,
+//     „Markiert“) zählen nie,
 //   - in keinem Ordner das Flag \Draft trägt und in keinem Entwürfe-Ordner
 //     liegt (Rolle drafts oder ein Ordner, in den PostKauz Entwürfe abgelegt
 //     hat; Befund K8: Gmail führt jede Entwurfskopie auch in „All Mail"),
@@ -24,14 +32,23 @@ import (
 // Dazu schließt die Versanderkennung Nachrichten aus, deren Inhalts-Hash
 // der einer von PostKauz abgelegten Entwurfskopie ist (DraftCopyHashes,
 // K3).
+//
+// Befund A10 (B4, B5): Gmail legt eine geplante Nachricht nur in „Alle
+// Nachrichten“ ab (kein \Draft, Datum = künftiger Termin), ebenso eine
+// Zwischenfassung eines bearbeiteten Entwurfs, die der Spiegel kurz nur
+// dort sieht (alle Nachrichten werden vor den Entwürfen gespiegelt). Beide
+// galten als gesendet.
+
+// hasSentCond: Das Konto der Nachricht m hat Gesendet (A10 Teil 1).
+const hasSentCond = `EXISTS (SELECT 1 FROM mailboxes hs WHERE hs.account_id = m.account_id AND hs.role = 'sent' AND hs.virtual_view = 0)`
 
 // sentOrAllCond ist die Bedingung oben ohne die letzte (Zuordnung zu einem
-// Entwurf): in Gesendet bzw. „Alle Nachrichten“, nirgends \Draft, in
-// keinem Entwürfe-Ordner. Für ersetzte Entwürfe (A06 Teil 4) zählt auch
-// eine Nachricht, die schon einem anderen Entwurf als gesendet zugeordnet
-// ist.
+// Entwurf): in Gesendet (ohne Gesendet im Konto: in „Alle Nachrichten“),
+// nirgends \Draft, in keinem Entwürfe-Ordner. Für ersetzte Entwürfe (A06
+// Teil 4) zählt auch eine Nachricht, die schon einem anderen Entwurf als
+// gesendet zugeordnet ist.
 const sentOrAllCond = `EXISTS (SELECT 1 FROM message_mailboxes sl JOIN mailboxes sb ON sb.id = sl.mailbox_id
-		WHERE sl.message_id = m.id AND sb.role IN ('sent','all'))
+		WHERE sl.message_id = m.id AND sb.virtual_view = 0 AND (sb.role = 'sent' OR (sb.role = 'all' AND NOT ` + hasSentCond + `)))
 	AND NOT EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
 		WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
 			OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))`
@@ -43,8 +60,13 @@ const sentMessageCond = sentOrAllCond + `
 // SentByMessageID liefert die kleinste ID einer gesendeten Nachricht (siehe
 // oben) des Kontos mit dieser Message-ID (ohne <>), deren Inhalts-Hash
 // nicht in exclude steht (Kopien, die PostKauz abgelegt hat; K3); ok false
-// = keine.
-func (s *SQLite) SentByMessageID(ctx context.Context, accountID int64, messageID string, exclude []string) (id int64, ok bool, err error) {
+// = keine. Liegt sie nicht in Gesendet (Konto ohne Gesendet, nur „Alle
+// Nachrichten“), darf ihr INTERNALDATE nicht nach notAfter liegen (A10
+// Teil 1 (c): Lauf + 2 Minuten; eine geplante Nachricht ist nicht
+// gesendet). skip: lokale IDs, die nicht zählen (A10 Teil 2: vermerkte
+// geplante Nachrichten).
+func (s *SQLite) SentByMessageID(ctx context.Context, accountID int64, messageID string, exclude []string, notAfter time.Time,
+	skip []int64) (id int64, ok bool, err error) {
 	if exclude == nil {
 		exclude = []string{}
 	}
@@ -52,13 +74,29 @@ func (s *SQLite) SentByMessageID(ctx context.Context, accountID int64, messageID
 	if err != nil {
 		return 0, false, err
 	}
-	err = s.db.QueryRowContext(ctx, `SELECT m.id FROM messages m WHERE m.account_id = ? AND m.message_id_header = ?
+	// Zeitpunkt und gesperrte IDs in Go: Die Abfrage bleibt so, wie sie
+	// vor A10 über den Index messages_message_id lief (mit beiden Prüfungen
+	// in SQL kostete sie im Benchmark ein Drittel mehr).
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id, `+inSentCond+`, COALESCE(m.internal_date, 0) FROM messages m
+		WHERE m.account_id = ? AND m.message_id_header = ?
 		AND COALESCE(m.content_hash, '') NOT IN (SELECT value FROM json_each(?))
-		AND `+sentMessageCond+` ORDER BY m.id LIMIT 1`, accountID, messageID, string(ex)).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		AND `+sentMessageCond+` ORDER BY m.id`, accountID, messageID, string(ex))
+	if err != nil {
+		return 0, false, err
 	}
-	return id, err == nil, err
+	defer rows.Close()
+	for rows.Next() {
+		var mid, internal int64
+		var inSent bool
+		if err := rows.Scan(&mid, &inSent, &internal); err != nil {
+			return 0, false, err
+		}
+		if slices.Contains(skip, mid) || (!inSent && internal > notAfter.UnixMilli()) {
+			continue
+		}
+		return mid, true, nil
+	}
+	return 0, false, rows.Err()
 }
 
 // DraftCopyHashes liefert die Inhalts-Hashes aller Kopien, die PostKauz für
@@ -102,9 +140,12 @@ type SentMessage struct {
 	To, Cc []Addr
 	// Date: Date-Kopfzeile, sonst INTERNALDATE.
 	Date time.Time
-	// InSent: Die Nachricht liegt in einem Ordner mit Rolle sent (sonst nur
-	// in einem mit Rolle all).
+	// InSent: Die Nachricht liegt in einem Ordner mit Rolle sent und
+	// virtual_view = 0 (sonst nur in einem mit Rolle all; das gibt es seit
+	// A10 Teil 1 nur noch bei Konten ohne Gesendet).
 	InSent bool
+	// InternalDate: INTERNALDATE (A10 Teil 1 (c); Nullwert = unbekannt).
+	InternalDate time.Time
 	// ContentHash wie messages.content_hash ("" = unbekannt).
 	ContentHash string
 	// InReplyTo wie messages.in_reply_to ohne Spitzklammern und Leerraum
@@ -112,13 +153,18 @@ type SentMessage struct {
 	InReplyTo string
 }
 
+// inSentCond: Die Nachricht m liegt in Gesendet (Rolle sent,
+// virtual_view = 0).
+const inSentCond = `EXISTS (SELECT 1 FROM message_mailboxes il JOIN mailboxes ib ON ib.id = il.mailbox_id
+		WHERE il.message_id = m.id AND ib.role = 'sent' AND ib.virtual_view = 0)`
+
 // sentCandidateCols sind die Spalten eines Kandidaten (scanSentMessages).
 const sentCandidateCols = `m.id, m.subject, m.from_addr, m.to_addrs, m.cc_addrs,
 	COALESCE(m.date_header, m.internal_date, 0),
-	EXISTS (SELECT 1 FROM message_mailboxes il JOIN mailboxes ib ON ib.id = il.mailbox_id
-		WHERE il.message_id = m.id AND ib.role = 'sent'),
+	` + inSentCond + `,
 	COALESCE(m.content_hash, ''),
-	trim(COALESCE(m.in_reply_to, ''), ` + trimIDChars + `)`
+	trim(COALESCE(m.in_reply_to, ''), ` + trimIDChars + `),
+	COALESCE(m.internal_date, 0)`
 
 // SentCandidates liefert die gesendeten Nachrichten (siehe oben) des
 // Kontos mit Datum (Date-Kopfzeile, sonst INTERNALDATE) zwischen from und
@@ -219,9 +265,12 @@ func scanSentMessages(rows *sql.Rows) ([]SentMessage, error) {
 	for rows.Next() {
 		var m SentMessage
 		var to, cc string
-		var date int64
-		if err := rows.Scan(&m.ID, &m.Subject, &m.From, &to, &cc, &date, &m.InSent, &m.ContentHash, &m.InReplyTo); err != nil {
+		var date, internal int64
+		if err := rows.Scan(&m.ID, &m.Subject, &m.From, &to, &cc, &date, &m.InSent, &m.ContentHash, &m.InReplyTo, &internal); err != nil {
 			return nil, err
+		}
+		if internal != 0 {
+			m.InternalDate = time.UnixMilli(internal).UTC()
 		}
 		// Unlesbare Adresslisten zählen als leer (der Abgleich passt dann nicht).
 		_ = json.Unmarshal([]byte(to), &m.To)
@@ -289,6 +338,88 @@ func (s *SQLite) replies(ctx context.Context, accountID, original int64, query s
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, query, accountID, h, h)
+	if err != nil {
+		return nil, err
+	}
+	return scanSentMessages(rows)
+}
+
+// SentBox ist ein Gesendet-Ordner eines Kontos (Rolle sent,
+// virtual_view = 0; A10 Teil 1) mit seinem Stand im Spiegel.
+type SentBox struct {
+	ID          int64
+	UIDValidity uint32
+	Phase       string
+	// MaxUID: höchste gespiegelte UID im Ordner (0 = leer).
+	MaxUID uint32
+}
+
+// SentBoxes liefert die Gesendet-Ordner des Kontos (A10 Teil 1). Leer: Das
+// Konto hat kein Gesendet.
+func (s *SQLite) SentBoxes(ctx context.Context, accountID int64) ([]SentBox, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT b.id, COALESCE(b.uidvalidity, 0), b.sync_phase,
+		COALESCE((SELECT max(uid) FROM message_mailboxes WHERE mailbox_id = b.id), 0)
+		FROM mailboxes b WHERE b.account_id = ? AND b.role = 'sent' AND b.virtual_view = 0 ORDER BY b.id`, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SentBox
+	for rows.Next() {
+		var b SentBox
+		var uv, maxUID int64
+		if err := rows.Scan(&b.ID, &uv, &b.Phase, &maxUID); err != nil {
+			return nil, err
+		}
+		b.UIDValidity, b.MaxUID = uint32(uv), uint32(maxUID)
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// sentBoxMarkKey ist der Schlüssel in meta für die Marke eines
+// Gesendet-Ordners (A10 Teil 1 (d), ohne Migration).
+func sentBoxMarkKey(mailboxID int64) string { return fmt.Sprintf("sent_check_box/%d", mailboxID) }
+
+// SentBoxMark liefert die Marke eines Gesendet-Ordners: UIDVALIDITY und
+// höchste UID, die eine vollständige Prüfung gesehen hat. ok false = noch
+// keine (oder unlesbar).
+func (s *SQLite) SentBoxMark(ctx context.Context, mailboxID int64) (uidValidity, uid uint32, ok bool, err error) {
+	var v string
+	err = s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, sentBoxMarkKey(mailboxID)).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	a, b, found := strings.Cut(v, ":")
+	uv, err1 := strconv.ParseUint(a, 10, 32)
+	u, err2 := strconv.ParseUint(b, 10, 32)
+	if !found || err1 != nil || err2 != nil {
+		return 0, 0, false, nil // unlesbar: wie keine Marke
+	}
+	return uint32(uv), uint32(u), true, nil
+}
+
+// SetSentBoxMark setzt die Marke eines Gesendet-Ordners.
+func (s *SQLite) SetSentBoxMark(ctx context.Context, mailboxID int64, uidValidity, uid uint32) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, sentBoxMarkKey(mailboxID), fmt.Sprintf("%d:%d", uidValidity, uid))
+	return err
+}
+
+// NewSentInBox liefert die gesendeten Nachrichten (siehe oben), deren
+// Kopie im Gesendet-Ordner mailboxID eine UID mit after < uid <= upto hat,
+// älteste zuerst (A10 Teil 1 (d)): Der Spiegel hängt eine Kopie in Gesendet
+// an eine schon bekannte Zeile (gleiche Message-ID und Größe); über die
+// Hochwassermarke der messages.id fände der Rückfall sie nie. Auswahl über
+// den Index UNIQUE (mailbox_id, uid).
+func (s *SQLite) NewSentInBox(ctx context.Context, accountID, mailboxID int64, after, upto uint32) ([]SentMessage, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+sentCandidateCols+`
+		FROM message_mailboxes nb CROSS JOIN messages m ON m.id = nb.message_id
+		WHERE nb.mailbox_id = ? AND nb.uid > ? AND nb.uid <= ? AND m.account_id = ?
+		AND `+sentMessageCond+` ORDER BY COALESCE(m.date_header, m.internal_date, 0), m.id`, mailboxID, after, upto, accountID)
 	if err != nil {
 		return nil, err
 	}

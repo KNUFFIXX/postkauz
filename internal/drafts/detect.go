@@ -162,6 +162,18 @@ func (s *Service) MissingDrafts(ctx context.Context, accountID int64) (map[int64
 func (s *Service) CheckAfterSync(ctx context.Context, accountID int64, o CheckOptions) (CheckReport, error) {
 	var rep CheckReport
 	if !o.SkipSent {
+		// A10 Teil 1 (b): Ist ein Gesendet-Ordner noch nicht fertig
+		// gespiegelt (Erstabgleich), fehlt dem Spiegel ein Teil von
+		// Gesendet: wie ein ausgelassener Ordner (KeepMark).
+		boxes, err := s.Store.SentBoxes(ctx, accountID)
+		if err != nil {
+			return rep, err
+		}
+		for _, b := range boxes {
+			if b.Phase != store.PhaseReady {
+				o.KeepMark = true
+			}
+		}
 		if o.MissingBefore == nil {
 			m, err := s.MissingDrafts(ctx, accountID)
 			if err != nil {
@@ -251,7 +263,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 	var rest []store.Draft
 	for _, d := range open {
 		if d.MessageIDHeader != "" {
-			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader, copies)
+			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader, copies, s.now().Add(ScheduledLead), nil)
 			if err != nil {
 				return err
 			}
@@ -373,13 +385,43 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 		return err
 	}
 	recheck := rev < SentCheckRev
+	// A10 Teil 1 (d): Marke je Gesendet-Ordner (UIDVALIDITY und höchste
+	// UID in meta). Eine schon bekannte Nachricht, deren Kopie in Gesendet
+	// erst jetzt dazukam (der Spiegel hängt sie an die vorhandene Zeile),
+	// zählt als neu. Fehlt die Marke (erster Lauf nach dem Update) oder hat
+	// UIDVALIDITY gewechselt, prüft dieser Lauf jeden offenen Entwurf einmal
+	// über sein ganzes Fenster (wie nach einer Regeländerung).
+	boxes, err := s.Store.SentBoxes(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	type boxRange struct {
+		id          int64
+		uv          uint32
+		after, upto uint32
+	}
+	var ranges []boxRange
+	boxRecheck := false
+	for _, b := range boxes {
+		uv, uid, ok, err := s.Store.SentBoxMark(ctx, b.ID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !ok || uv != b.UIDValidity:
+			boxRecheck = true
+			ranges = append(ranges, boxRange{b.ID, b.UIDValidity, b.MaxUID, b.MaxUID})
+		default:
+			ranges = append(ranges, boxRange{b.ID, b.UIDValidity, uid, max(uid, b.MaxUID)})
+		}
+	}
 	// Entwürfe, deren ganzes Fenster zu prüfen ist (neu oder geändert);
 	// ohne Empfänger in To/Cc kann der Rückfall nie treffen (K7: ihr Fenster
 	// zählt nicht).
 	var changed []store.Draft
 	var windows [][2]time.Time
 	for _, d := range open {
-		if marked && !recheck && d.FallbackCheckedAt.Equal(d.ContentChangedAt) {
+		if marked && !recheck && !boxRecheck && d.FallbackCheckedAt.Equal(d.ContentChangedAt) {
 			continue
 		}
 		changed = append(changed, d)
@@ -404,6 +446,18 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 			return err
 		}
 		add(list)
+	}
+	if marked && len(open) > 0 {
+		for _, r := range ranges {
+			if r.upto <= r.after {
+				continue
+			}
+			list, err := s.Store.NewSentInBox(ctx, accountID, r.id, r.after, r.upto)
+			if err != nil {
+				return err
+			}
+			add(list)
+		}
 	}
 	for _, w := range mergeWindows(windows) {
 		list, err := s.Store.SentCandidates(ctx, accountID, w[0], w[1])
@@ -431,6 +485,11 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 			return err
 		}
 	}
+	for _, r := range ranges {
+		if err := s.Store.SetSentBoxMark(ctx, r.id, r.uv, r.upto); err != nil {
+			return err
+		}
+	}
 	if upto > last || !marked {
 		return s.Store.SetSentCheckMark(ctx, accountID, upto)
 	}
@@ -447,7 +506,15 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 //	2  A06 Teil 3: verwaiste Fortsetzungszeilen umbrochener Zitatzeilen
 //	   (sentText, sanitize.JoinWrappedQuotes); eine Antwort mit eigenem
 //	   Betreff, die Gmail ohne In-Reply-To sendet, findet nur der Rückfall
+//
+// A10 Teil 1 macht die Regel nur enger (gesendet ist nur, was in Gesendet
+// liegt); der Stand bleibt 2.
 const SentCheckRev = 2
+
+// ScheduledLead: Eine Nachricht, deren INTERNALDATE mehr als so viel nach
+// der Zeit des Laufs liegt, ist nicht gesendet (Konten ohne Gesendet, A10
+// Teil 1 (c)) bzw. geplant (A10 Teil 2).
+const ScheduledLead = 2 * time.Minute
 
 // changedAt ist die letzte Inhaltsänderung eines Entwurfs (Bestand ohne
 // content_changed_at: updated_at).
@@ -544,6 +611,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 		return nil
 	}
 	var own mailaddr.Set
+	notAfter := s.now().Add(ScheduledLead)
 	type pair struct {
 		e     *entry
 		c     int
@@ -559,9 +627,14 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 			continue
 		}
 		if !c.InSent {
-			// Nur „Alle Nachrichten" (Gmail): Dort liegen auch empfangene
-			// Mails; gesendet hat nur, wer von einer eigenen Adresse
-			// schreibt (Konto, Identitäten, Aliasse; Entscheid 26).
+			// Nur „Alle Nachrichten" (seit A10 Teil 1 nur bei Konten ohne
+			// Gesendet): Dort liegen auch empfangene Mails; gesendet hat
+			// nur, wer von einer eigenen Adresse schreibt (Konto,
+			// Identitäten, Aliasse; Entscheid 26), und nicht mit einem
+			// Termin in der Zukunft (geplant, A10 Teil 1 (c)).
+			if c.InternalDate.After(notAfter) {
+				continue
+			}
 			if own == nil {
 				addrs, err := s.Store.OwnAddresses(ctx, accountID)
 				if err != nil {

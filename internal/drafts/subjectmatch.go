@@ -158,6 +158,9 @@ func (s *Service) detectSubject(ctx context.Context, accountID int64, open []sto
 				continue // (a'), (d), (e)
 			}
 			if !c.InSent {
+				if c.InternalDate.After(s.now().Add(ScheduledLead)) {
+					continue // A10 Teil 1 (c): Termin in der Zukunft, nicht gesendet
+				}
 				if own == nil {
 					addrs, err := s.Store.OwnAddresses(ctx, accountID)
 					if err != nil {

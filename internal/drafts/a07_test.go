@@ -433,9 +433,13 @@ func TestA07SubjectStaysOpen(t *testing.T) {
 // Teil 3: nur in „Alle Nachrichten“, aber mit eigenem Absender → trifft.
 func TestA07SubjectAllMailOwnSender(t *testing.T) {
 	e := newThEnv(t)
+	e.m.noSent() // A10 Teil 1 (c): „All Mail“ zählt nur bei Konten ohne Gesendet
 	d := e.draftTo(KindNew, sjOwn, sjTo, sjSubject, true)
 	e.dropCopy(d)
-	e.sjSend(sjSubject, sjOwn+sjAdded, sjTo, "all", "Demo <demo@example.org>")
+	// INTERNALDATE höchstens 2 Minuten nach dem Lauf (A10 Teil 1 (c); die
+	// Hilfe datiert sonst 10 Minuten in die Zukunft).
+	e.send(thSent{subject: sjSubject, text: sjOwn + sjAdded, to: sjTo, role: "all", from: "Demo <demo@example.org>", inReplyTo: " ",
+		date: e.now.Add(time.Minute)})
 	if rep := e.check(); rep.SentBySubject != 1 {
 		t.Fatalf("report = %+v", rep)
 	}
