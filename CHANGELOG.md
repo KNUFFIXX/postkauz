@@ -4,6 +4,28 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### 0.3.0-rc8 (Build, noch kein Tag) – Auftrag A10 „Geplant ist nicht gesendet“
+
+Auftrag A10 (18.11.2026, Zweig `claude/dreamy-carson-504gf7`, Basis `main` `d65d62e` nach dem Fast-Forward von PR #16 = A09). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; neue Vermerke nur in der Tabelle `meta` (`sent_check_box/<Ordner-ID>`, `scheduled/<Entwurf-ID>`). rc7 läuft mit den Daten weiter (es kennt die Schlüssel nicht und lässt sie liegen). Haltepunkt: Gegenprüfung, danach Abnahme D16 nach Entscheid des Betreibers.
+
+#### Fixed
+
+- **Geplantes Senden galt als gesendet** (Teil 1, Befund B4; Entschiedene Frage 83): Gmail legt einen geplanten Entwurf als neue Nachricht nur in „Alle Nachrichten“ ab, mit dem künftigen Termin als Datum. Der Rückfall schloss den Entwurf eine Minute später als `sent_by_human`. Hat das Konto Gesendet (Rolle `sent`, keine virtuelle Sicht), zählt in allen vier Wegen und in „ersetzt“ nur noch eine Nachricht in Gesendet. Konten ohne Gesendet: „Alle Nachrichten“ wie bisher, aber nicht mit INTERNALDATE mehr als 2 Minuten nach dem Lauf. Gesendet im Erstabgleich hält die Marken an (KeepMark). Neue Marke je Gesendet-Ordner (UIDVALIDITY und höchste UID in `meta`), damit eine Nachricht, die erst nur in „Alle Nachrichten“ und später in Gesendet gespiegelt wird, im Rückfall als neu gilt. Zuordnungen bleiben endgültig; `SentCheckRev` bleibt 2.
+- **Zwischenfassung eines in Gmail bearbeiteten Entwurfs** (Befund B5, Dauerbetrieb 13.11.2026): am Code bestätigt. Ein vollständiger Lauf spiegelt „[Gmail]/All Mail“ vor „[Gmail]/Drafts“ (`store.Mailboxes`: INBOX zuerst, dann nach Pfad); ersetzt Gmail die Fassung dazwischen, kannte der Spiegel sie nur in „Alle Nachrichten“ ohne `\Draft`. Mit Teil 1 zählt sie bei Konten mit Gesendet nicht mehr (Test `TestA10IntermediateVersionNeverSent`).
+
+#### Added
+
+- **Geplante Entwürfe** (Teil 2, Befund B1/B2; Entschiedene Frage 84): Ein offener Entwurf mit fehlender Kopie, zu dem eine geplante Nachricht passt (nur „Alle Nachrichten“, Termin mehr als 2 Minuten in der Zukunft, eigener Absender, kein `\Draft`; Message-ID oder die Bedingungen von Rückfall, Verlauf oder Betreff ohne „gesendet“ und ohne Zeitfenster), heißt `remote: scheduled` mit `scheduled_for` und `scheduled_message_id`; Status bleibt offen. Audit `drafts.scheduled_detected`. Solange geplant: kein `copy_gone`, kein „ersetzt“, `draft edit`, `draft request`, `draft supersede` (CLI und MCP) → `draft_scheduled`. Übergänge: in Gesendet → `sent_by_human` (Grund `scheduled`); wieder im Entwürfe-Ordner → `taken_over` (Grund `schedule_cancelled`); weg → `missing` (Frist `copy_gone_after` ab dann, Zeitfenster der Wege bis Termin + 14 Tage); Termin überschritten, nicht in Gesendet → noch 1 Stunde, dann wie weg. Sync-Zeile und `draft_check` (`scheduled`, `scheduled_draft_ids`, `sent_by_scheduled`, `schedule_cancelled`, `scheduled_gone`).
+- **Treffer sagen, was sie sind** (Teil 3; Entschiedene Frage 85): `roles` in `mail_search`/`search` und `mail_get_thread`/`thread` (sortierte Rollen der Ordner, ohne virtuelle Sichten); `scheduled_for` dort und in `mail_get_message`/`show`; CLI-Marken `[draft]` und `[scheduled <Termin>]`. Suchsprache `is:scheduled`; `is:draft` trifft auch Nachrichten im Entwürfe-Ordner ohne `\Draft` (B3). Ein Satz in den Beschreibungen von `mail_search`, `mail_get_message`, `mail_get_thread`, `mail_list_drafts`.
+
+#### Changed (Teil 0, Restfunde der Gegenprüfung von A09)
+
+- `closed_note` nach `supersede`: sind alle Ziele `not_found`, „copy no longer found …“ statt „copy still in the Drafts folder“. `headerDiff` meldet bloß umgestellte Kopfzeilen als „order differs“. `maxCopyName` steht nicht mehr zwischen Doc-Kommentar und `copyMarker`. Test mit echtem Bcc im Entwurf. Doku: Testliste in sicherheit.md, Darstellung von 0g (e), Grenze „zwei Entwürfe mit getrennten Teilmengen“ in versanderkennung.md 3a.
+
+#### Docs
+
+- `docs/versanderkennung.md` (neue Abschnitte 2a „Gesendet ist nur, was in Gesendet liegt“ und 3e „Geplantes Senden“; 1, 2, 3, 3a, 3b, 3c, 3d, 4, 5, 6, 8), `docs/sicherheit.md` (Abschnitt 5), `docs/datenmodell.md` (`meta`), `docs/cli.md` (Versanderkennung, `draft show`/`list`, Suche 2d), `docs/mcp.md`, `docs/roadmap.md` (Stand, Entschiedene Fragen 83 bis 85, „Als Nächstes“ 0k), neues Abnahmeskript `docs/abnahme_D16.ps1` mit `docs/abnahme_D16.md`.
+
 ### Vermerk 18.11.2026 (A10 Teil 0 (a)): Tags, D15, Dauerbetrieb
 
 - `git ls-remote --tags` (18.11.2026): `v0.3.0-rc6` und `v0.3.0-rc7` sind **nicht** gesetzt (zuletzt `v0.3.0-rc5`); 0.3.0-rc6 und 0.3.0-rc7 bleiben „Build, noch kein Tag“.

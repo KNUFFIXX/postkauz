@@ -384,7 +384,13 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 			rest = append(rest, d)
 		}
 	}
-	if err := s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep); err != nil {
+	scheduledMsgs := map[int64]bool{}
+	for _, sc := range vm {
+		if sc.State != store.ScheduledGone {
+			scheduledMsgs[sc.MessageID] = true
+		}
+	}
+	if err := s.detectReplaced(ctx, accountID, rest, copies, missingBefore, scheduledMsgs, rep); err != nil {
 		return err
 	}
 	// A07 Teil 4: Auffangregel „Kopie weg“ als letzter Weg.

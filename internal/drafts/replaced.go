@@ -68,7 +68,7 @@ const ReasonReplaced = "replaced"
 // open, die eine eigene Antwort ersetzt hat (siehe oben). copies:
 // Inhalts-Hashes der Entwurfskopien (nie eine Antwort).
 func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []store.Draft, copies []string, missingBefore map[int64]bool,
-	rep *CheckReport) error {
+	locked map[int64]bool, rep *CheckReport) error {
 	isCopy := map[string]bool{}
 	for _, h := range copies {
 		isCopy[h] = true
@@ -89,8 +89,8 @@ func (s *Service) detectReplaced(ctx context.Context, accountID int64, open []st
 		after := replacedAfter(d)
 		var reply int64
 		for _, c := range list {
-			if c.ContentHash != "" && isCopy[c.ContentHash] {
-				continue
+			if (c.ContentHash != "" && isCopy[c.ContentHash]) || locked[c.ID] {
+				continue // A10 Teil 2: eine vermerkte geplante Nachricht ersetzt nie
 			}
 			// (d) bleibt hier streng (A09 Teil 1): ergänzte Empfänger
 			// (threadRecipientsAdded) gelten nur im Weg über den Verlauf.
