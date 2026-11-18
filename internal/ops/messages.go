@@ -17,6 +17,10 @@ import (
 // MessageRepo liefert gespiegelte Nachrichten, Threads und Anhänge.
 type MessageRepo interface {
 	MessageByID(ctx context.Context, id int64) (store.Message, error)
+	// A10 Teil 3: Rollen der Ordner je Nachricht und Termin geplanter
+	// Nachrichten (internal/store/scheduled.go).
+	MessageRoles(ctx context.Context, ids []int64) (map[int64][]string, error)
+	ScheduledAt(ctx context.Context, ids []int64, notBefore time.Time) (map[int64]time.Time, error)
 	MessageIDsByHeader(ctx context.Context, accountID int64, messageID string) ([]int64, error)
 	MessageBody(ctx context.Context, id int64) (store.Body, error)
 	ThreadByID(ctx context.Context, id int64) (store.Thread, []store.ThreadMessage, error)
@@ -74,21 +78,24 @@ type MessageLocation struct {
 // Untrusted-Hülle (seit S1.8).
 type MessageOutput struct {
 	Envelope
-	ID             int64           `json:"id"`
-	Account        string          `json:"account"`
-	MessageID      string          `json:"message_id,omitempty"`
-	ThreadID       int64           `json:"thread_id,omitempty"`
-	Subject        string          `json:"subject"`
-	From           string          `json:"from"`
-	To             json.RawMessage `json:"to"`
-	Cc             json.RawMessage `json:"cc"`
-	Date           string          `json:"date,omitempty"` // Date-Kopfzeile, sonst INTERNALDATE (RFC 3339)
-	InternalDate   string          `json:"internal_date,omitempty"`
-	Size           int64           `json:"size"`
-	Flags          []string        `json:"flags"` // seen, flagged, answered, draft
-	Keywords       []string        `json:"keywords"`
-	HasAttachments bool            `json:"has_attachments"`
-	DeletedRemote  bool            `json:"deleted_remote"`
+	ID           int64           `json:"id"`
+	Account      string          `json:"account"`
+	MessageID    string          `json:"message_id,omitempty"`
+	ThreadID     int64           `json:"thread_id,omitempty"`
+	Subject      string          `json:"subject"`
+	From         string          `json:"from"`
+	To           json.RawMessage `json:"to"`
+	Cc           json.RawMessage `json:"cc"`
+	Date         string          `json:"date,omitempty"` // Date-Kopfzeile, sonst INTERNALDATE (RFC 3339)
+	InternalDate string          `json:"internal_date,omitempty"`
+	// ScheduledFor: Die Nachricht ist im Mailprogramm zum Senden geplant
+	// und noch nicht gesendet (A10 Teil 3; Termin = INTERNALDATE).
+	ScheduledFor   string   `json:"scheduled_for,omitempty"`
+	Size           int64    `json:"size"`
+	Flags          []string `json:"flags"` // seen, flagged, answered, draft
+	Keywords       []string `json:"keywords"`
+	HasAttachments bool     `json:"has_attachments"`
+	DeletedRemote  bool     `json:"deleted_remote"`
 	// RemoteStatus (A4, T1b): present (mindestens eine Serverkopie),
 	// imported_only (nur importiert) oder deleted_remote (auf dem Server
 	// gelöscht); deleted_remote allein liest sich bei Importen falsch.
@@ -156,6 +163,7 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
     "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]},
     "tags": {"type": "array", "items": {"type": "string"}, "description": "local tags (tag add)"},
     "pending_flags": {"type": "boolean", "description": "a change by mark is in the archive but not yet on the server"},
+    "scheduled_for": {"type": "string", "format": "date-time", "description": "scheduled in the mail client for this time; not sent yet"},
     "mailboxes": {"type": "array", "items": {"type": "object", "properties": {
       "mailbox": {"type": "string"}, "role": {"type": "string"}, "uid": {"type": "integer"}},
       "required": ["mailbox", "role", "uid"]}},
@@ -247,6 +255,13 @@ func MessagesGet(accounts AccountRepo, msgs MessageRepo, blobs BlobReader) Opera
 			}
 			for _, l := range m.Locations {
 				out.Mailboxes = append(out.Mailboxes, MessageLocation{Mailbox: l.Mailbox, Role: l.Role, UID: l.UID})
+			}
+			sched, err := msgs.ScheduledAt(ctx, []int64{m.ID}, time.Now().Add(store.ScheduledLead))
+			if err != nil {
+				return nil, err
+			}
+			if at, ok := sched[m.ID]; ok {
+				out.ScheduledFor = rfc3339(at)
 			}
 			if in.Headers {
 				if m.BlobSHA256 != "" {

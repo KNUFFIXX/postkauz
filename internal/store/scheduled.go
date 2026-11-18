@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/mail"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 )
 
 // Geplantes Senden (A10 Teil 2; docs/versanderkennung.md, Abschnitt
@@ -314,11 +318,12 @@ func (s *SQLite) ScheduledMessageIDs(ctx context.Context, accountID int64) (map[
 	return out, nil
 }
 
-// IsScheduled meldet für die Nachrichten ids des Kontos, welche nach den
-// Bedingungen (a), (b) und (d) geplant sind (INTERNALDATE nach notBefore),
-// mit ihrem Termin. (c) eigener Absender: own (klein geschriebene eigene
-// Adressen; nil = nicht prüfen). Für die Anzeige (A10 Teil 3).
-func (s *SQLite) IsScheduled(ctx context.Context, ids []int64, notBefore time.Time, own func(from string) bool) (map[int64]time.Time, error) {
+// ScheduledAt liefert für die Nachrichten ids (beliebiger Konten) die
+// geplanten mit ihrem Termin: Bedingungen (a), (b) und (d), INTERNALDATE
+// nach notBefore, und (c) Absender eine eigene Adresse des Kontos der
+// Nachricht (OwnAddresses, mit den Gmail-Schreibweisen aus mailaddr wie im
+// Rückfall). Für die Anzeige (A10 Teil 3: scheduled_for).
+func (s *SQLite) ScheduledAt(ctx context.Context, ids []int64, notBefore time.Time) (map[int64]time.Time, error) {
 	out := map[int64]time.Time{}
 	if len(ids) == 0 {
 		return out, nil
@@ -327,32 +332,152 @@ func (s *SQLite) IsScheduled(ctx context.Context, ids []int64, notBefore time.Ti
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.from_addr, m.internal_date FROM messages m
+	rows, err := s.db.QueryContext(ctx, `SELECT m.id, m.account_id, m.from_addr, m.internal_date FROM messages m
 		WHERE m.id IN (SELECT value FROM json_each(?)) AND COALESCE(m.internal_date, 0) > ?
 		AND `+scheduledPlaceCond, string(b), notBefore.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	type cand struct {
+		id, acc  int64
+		from     string
+		internal int64
+	}
+	var cands []cand
 	for rows.Next() {
-		var id, internal int64
-		var from string
-		if err := rows.Scan(&id, &from, &internal); err != nil {
+		var c cand
+		if err := rows.Scan(&c.id, &c.acc, &c.from, &c.internal); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		if own != nil && !own(from) {
-			continue
+		cands = append(cands, c)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	own := map[int64]mailaddr.Set{}
+	for _, c := range cands {
+		set, ok := own[c.acc]
+		if !ok {
+			addrs, err := s.OwnAddresses(ctx, c.acc)
+			if err != nil {
+				return nil, err
+			}
+			set = mailaddr.NewSet(addrs...)
+			own[c.acc] = set
 		}
-		out[id] = time.UnixMilli(internal).UTC()
+		if set.Has(addrOf(c.from)) {
+			out[c.id] = time.UnixMilli(c.internal).UTC()
+		}
+	}
+	return out, nil
+}
+
+// addrOf liefert die Adresse aus messages.from_addr („Name <adresse>"
+// oder nur die Adresse), klein (wie drafts.fromAddress).
+func addrOf(s string) string {
+	if a, err := mail.ParseAddress(s); err == nil {
+		return mailaddr.Lower(a.Address)
+	}
+	if i, j := strings.LastIndex(s, "<"), strings.LastIndex(s, ">"); i >= 0 && j > i {
+		return mailaddr.Lower(strings.TrimSpace(s[i+1 : j]))
+	}
+	return mailaddr.Lower(strings.TrimSpace(s))
+}
+
+// OwnAddr ist eine eigene Adresse eines Kontos (für is:scheduled in der
+// Suche).
+type OwnAddr struct {
+	AccountID int64
+	Address   string
+}
+
+// OwnAddrs liefert die eigenen Adressen des Kontos accountID (0 = aller
+// Konten), klein.
+func (s *SQLite) OwnAddrs(ctx context.Context, accountID int64) ([]OwnAddr, error) {
+	var ids []int64
+	if accountID > 0 {
+		ids = []int64{accountID}
+	} else {
+		rows, err := s.db.QueryContext(ctx, `SELECT id FROM accounts ORDER BY id`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	var out []OwnAddr
+	for _, id := range ids {
+		addrs, err := s.OwnAddresses(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range addrs {
+			out = append(out, OwnAddr{AccountID: id, Address: mailaddr.Lower(a)})
+		}
+	}
+	return out, nil
+}
+
+// MessageRoles liefert je Nachricht die sortierte Liste der Rollen ihrer
+// Ordner, wie messages.get sie unter mailboxes nennt: Ordner des Servers
+// ohne virtuelle Sichten, importierte Ordner mit der Rolle „import“; leer
+// ohne Serverkopie und ohne Importordner (A10 Teil 3).
+func (s *SQLite) MessageRoles(ctx context.Context, ids []int64) (map[int64][]string, error) {
+	out := map[int64][]string{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT id, role FROM (
+		SELECT mm.message_id AS id, bx.role AS role FROM message_mailboxes mm JOIN mailboxes bx ON bx.id = mm.mailbox_id
+			WHERE mm.message_id IN (SELECT value FROM json_each(?)) AND bx.virtual_view = 0
+		UNION ALL SELECT mf.message_id, 'import' FROM message_import_folders mf
+			WHERE mf.message_id IN (SELECT value FROM json_each(?)))
+		ORDER BY id, role`, string(b), string(b))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var role string
+		if err := rows.Scan(&id, &role); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], role)
 	}
 	return out, rows.Err()
 }
 
-// ScheduledSQL ist die Bedingung „geplant“ ((a), (b), (d)) für die
-// Nachricht m mit einem Platzhalter für notBefore (Millisekunden), für die
-// Suche (is:scheduled, A10 Teil 3); den eigenen Absender (c) prüft der
-// Aufrufer.
-const ScheduledSQL = `COALESCE(m.internal_date, 0) > ? AND ` + scheduledPlaceCond
+// DraftsFolderSQL ist die Bedingung „liegt in einem Entwürfe-Ordner“ für
+// die Nachricht m (Rolle drafts oder Ablageordner eines Entwurfs; wie
+// sentOrAllCond), für is:draft (A10 Teil 3, B3: Gmail-Entwürfe tragen über
+// IMAP kein \Draft).
+const DraftsFolderSQL = `m.id IN (SELECT dl.message_id FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
+		WHERE db.role = 'drafts' OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE remote_mailbox_id IS NOT NULL))`
+
+// scheduledSearchSQL ist is:scheduled (A10 Teil 3): (a), (b) und (d) mit
+// Platzhalter für notBefore (Millisekunden) und (c) über eine JSON-Liste
+// [[Konto-ID, Adresse], …] eigener Adressen (OwnAddrs): From gleich der
+// Adresse oder „… <Adresse>“. Gmail-Schreibweisen mit Punkten oder „+“
+// erkennt die Suche nicht (die Anzeige über ScheduledAt schon; Gmail setzt
+// bei geplanten Nachrichten die Kontoadresse).
+const scheduledSearchSQL = `(COALESCE(m.internal_date, 0) > ? AND ` + scheduledPlaceCond + `
+	AND EXISTS (SELECT 1 FROM json_each(?) o WHERE json_extract(o.value, '$[0]') = m.account_id
+		AND (lower(trim(m.from_addr)) = json_extract(o.value, '$[1]') OR lower(m.from_addr) LIKE '%<' || json_extract(o.value, '$[1]') || '>')))`
 
 // ScheduledKeysForTest liefert die Schlüssel aller Vermerke, auch die
 // geschlossener Entwürfe (die beim Schließen gelöscht sein müssen).

@@ -18,6 +18,11 @@ import (
 type SearchRepo interface {
 	Search(ctx context.Context, p store.SearchParams) (store.SearchResult, error)
 	IndexPending(ctx context.Context, accountID int64) (int, error)
+	// A10 Teil 3: Rollen der Ordner, Termin geplanter Nachrichten und
+	// eigene Adressen (für is:scheduled).
+	MessageRoles(ctx context.Context, ids []int64) (map[int64][]string, error)
+	ScheduledAt(ctx context.Context, ids []int64, notBefore time.Time) (map[int64]time.Time, error)
+	OwnAddrs(ctx context.Context, accountID int64) ([]store.OwnAddr, error)
 }
 
 // SearchHitOutput ist ein Treffer von messages.search: Kopf und Snippet,
@@ -35,7 +40,14 @@ type SearchHitOutput struct {
 	DeletedRemote  bool     `json:"deleted_remote"`
 	RemoteStatus   string   `json:"remote_status"` // A4: present | imported_only | deleted_remote
 	Tags           []string `json:"tags"`          // lokale Tags (E5, T2)
-	Score          float64  `json:"score"`
+	// Roles: sortierte Rollen der Ordner, in denen die Nachricht liegt,
+	// wie mailboxes in messages.get, ohne virtuelle Sichten; importierte
+	// Ordner als „import“; leer ohne Serverkopie und Importordner. Gesendet
+	// ist, was die Rolle sent trägt (A10 Teil 3).
+	Roles []string `json:"roles"`
+	// ScheduledFor: im Mailprogramm zum Senden geplant, noch nicht gesendet.
+	ScheduledFor string  `json:"scheduled_for,omitempty"`
+	Score        float64 `json:"score"`
 	// Cursor ist die Position nach diesem Treffer: Mit ihm setzt eine
 	// Folgeanfrage genau dahinter fort (auch mitten in einer NDJSON-Liste).
 	Cursor string `json:"cursor"`
@@ -80,8 +92,10 @@ const searchOutputSchema = `{
       "flags": {"type": "array", "items": {"type": "string", "enum": ["seen", "flagged", "answered", "draft"]}},
       "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]}, "score": {"type": "number"},
       "tags": {"type": "array", "items": {"type": "string"}},
+      "roles": {"type": "array", "items": {"type": "string"}, "description": "roles of the mailboxes holding the message, sorted (sent = sent; import = imported folder)"},
+      "scheduled_for": {"type": "string", "format": "date-time", "description": "scheduled in the mail client for this time; not sent yet"},
       "cursor": {"type": "string"}},
-      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "remote_status", "tags", "score", "cursor"]}},
+      "required": ["id", "account", "from", "subject", "snippet", "flags", "has_attachments", "deleted_remote", "remote_status", "tags", "roles", "score", "cursor"]}},
     "total": {"type": "integer"}, "next_cursor": {"type": "string"},
     "order": {"type": "string", "enum": ["relevance", "date"]}, "index_pending": {"type": "integer"},
     "explain": {"type": "object", "properties": {
@@ -194,6 +208,10 @@ func runSearch(ctx context.Context, accounts AccountRepo, repo SearchRepo, in se
 		q.Filters = append(q.Filters, search.Filter{Kind: "mailbox", Value: in.Mailbox})
 	}
 	params := store.SearchParams{Query: q, Limit: in.Limit, Now: time.Now()}
+	scheduled := false
+	for _, f := range q.Filters {
+		scheduled = scheduled || (f.Kind == "is" && f.Value == "scheduled")
+	}
 	scope := "all accounts"
 	if in.Account != "" {
 		a, err := ResolveAccount(ctx, accounts, in.Account)
@@ -210,12 +228,30 @@ func runSearch(ctx context.Context, accounts AccountRepo, repo SearchRepo, in se
 		}
 		params.After, params.Now = &c, time.UnixMilli(c.Now)
 	}
+	if scheduled {
+		// A10 Teil 3: is:scheduled braucht die eigenen Adressen (Absender).
+		if params.Own, err = repo.OwnAddrs(ctx, params.AccountID); err != nil {
+			return SearchOutput{}, err
+		}
+	}
 	res, err := repo.Search(ctx, params)
 	if err != nil {
 		return SearchOutput{}, err
 	}
 	out := SearchOutput{Envelope: emailEnvelope(), Hits: []SearchHitOutput{}, Total: res.Total, Order: q.Order()}
 	if out.IndexPending, err = repo.IndexPending(ctx, params.AccountID); err != nil {
+		return SearchOutput{}, err
+	}
+	ids := make([]int64, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		ids = append(ids, h.ID)
+	}
+	roles, err := repo.MessageRoles(ctx, ids)
+	if err != nil {
+		return SearchOutput{}, err
+	}
+	sched, err := repo.ScheduledAt(ctx, ids, time.Now().Add(store.ScheduledLead))
+	if err != nil {
 		return SearchOutput{}, err
 	}
 	for _, h := range res.Hits {
@@ -225,6 +261,12 @@ func runSearch(ctx context.Context, accounts AccountRepo, repo SearchRepo, in se
 			DeletedRemote: h.DeletedRemote, RemoteStatus: h.RemoteStatus, Tags: h.Tags, Score: h.Score, Cursor: c.Encode()}
 		if o.Tags == nil {
 			o.Tags = []string{}
+		}
+		if o.Roles = roles[h.ID]; o.Roles == nil {
+			o.Roles = []string{}
+		}
+		if at, ok := sched[h.ID]; ok {
+			o.ScheduledFor = rfc3339(at)
 		}
 		for _, f := range []struct {
 			on   bool

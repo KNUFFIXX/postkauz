@@ -24,7 +24,12 @@ type ThreadMessageOutput struct {
 	HasAttachments bool     `json:"has_attachments"`
 	DeletedRemote  bool     `json:"deleted_remote"`
 	RemoteStatus   string   `json:"remote_status"` // A4: present | imported_only | deleted_remote
-	Snippet        string   `json:"snippet"`
+	// Roles: Rollen der Ordner, sortiert, ohne virtuelle Sichten
+	// (importierte: „import“); ScheduledFor: geplant, nicht gesendet (A10
+	// Teil 3).
+	Roles        []string `json:"roles"`
+	ScheduledFor string   `json:"scheduled_for,omitempty"`
+	Snippet      string   `json:"snippet"`
 	// Text ist der neue Text ohne Zitate (nur mit text=true).
 	Text              *string `json:"text,omitempty"`
 	HiddenTextRemoved bool    `json:"hidden_text_removed,omitempty"`
@@ -89,9 +94,11 @@ func ThreadsGet(msgs MessageRepo) Operation {
       "id": {"type": "integer"}, "date": {"type": "string", "format": "date-time"}, "from": {"type": "string"},
       "subject": {"type": "string"}, "flags": {"type": "array", "items": {"type": "string"}},
       "has_attachments": {"type": "boolean"}, "deleted_remote": {"type": "boolean"}, "remote_status": {"type": "string", "enum": ["present", "imported_only", "deleted_remote"]}, "snippet": {"type": "string"},
+      "roles": {"type": "array", "items": {"type": "string"}, "description": "roles of the mailboxes holding the message (sent = sent)"},
+      "scheduled_for": {"type": "string", "format": "date-time", "description": "scheduled in the mail client for this time; not sent yet"},
       "text": {"type": "string"}, "hidden_text_removed": {"type": "boolean"}, "alternative_mismatch": {"type": "boolean"},
       "truncated": {"type": "boolean"}},
-      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "remote_status", "snippet"]}},
+      "required": ["id", "from", "subject", "flags", "has_attachments", "deleted_remote", "remote_status", "roles", "snippet"]}},
     "messages_omitted": {"type": "integer"}
   },
   "required": ["untrusted", "source", "notice", "id", "account", "subject", "message_count", "participants", "messages", "messages_omitted"]
@@ -157,9 +164,28 @@ func ThreadsGet(msgs MessageRepo) Operation {
 				out.MessagesOmitted = len(list) - in.MaxMessages
 				list = list[out.MessagesOmitted:]
 			}
+			ids := make([]int64, 0, len(list))
+			for _, m := range list {
+				ids = append(ids, m.ID)
+			}
+			roles, err := msgs.MessageRoles(ctx, ids)
+			if err != nil {
+				return nil, err
+			}
+			sched, err := msgs.ScheduledAt(ctx, ids, time.Now().Add(store.ScheduledLead))
+			if err != nil {
+				return nil, err
+			}
 			for _, m := range list {
 				tm := ThreadMessageOutput{ID: m.ID, Date: rfc3339(m.Date), From: m.From, Subject: m.Subject, Flags: []string{},
-					HasAttachments: m.HasAttachments, DeletedRemote: m.DeletedRemote, RemoteStatus: m.RemoteStatus, Snippet: m.Snippet}
+					HasAttachments: m.HasAttachments, DeletedRemote: m.DeletedRemote, RemoteStatus: m.RemoteStatus, Snippet: m.Snippet,
+					Roles: roles[m.ID]}
+				if tm.Roles == nil {
+					tm.Roles = []string{}
+				}
+				if at, ok := sched[m.ID]; ok {
+					tm.ScheduledFor = rfc3339(at)
+				}
 				if m.Seen {
 					tm.Flags = append(tm.Flags, "seen")
 				}

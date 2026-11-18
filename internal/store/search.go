@@ -45,7 +45,14 @@ type SearchParams struct {
 	Limit     int
 	After     *search.Cursor // nil = erste Seite
 	Now       time.Time      // Bezugszeit des Datumsanteils (bei After dessen Now)
+	// Own: eigene Adressen der Konten (OwnAddrs), nur für is:scheduled
+	// (A10 Teil 3); Bezugszeit ist Now (Termin mehr als 2 Minuten danach).
+	Own []OwnAddr
 }
+
+// ScheduledLead: Eine Nachricht ist geplant, wenn ihr INTERNALDATE mehr als
+// so viel nach der Bezugszeit liegt (wie drafts.ScheduledLead).
+const ScheduledLead = 2 * time.Minute
 
 // SearchHit ist ein Treffer.
 type SearchHit struct {
@@ -138,7 +145,7 @@ func searchWhereOpt(p SearchParams, negatives bool) (string, []any) {
 		args = append(args, p.AccountID)
 	}
 	for _, f := range p.Query.Filters {
-		cond, a := filterSQL(f)
+		cond, a := filterSQL(f, p)
 		if f.Negated {
 			cond = `NOT (` + cond + `)`
 		}
@@ -196,13 +203,26 @@ func buildSearch(p SearchParams) (string, []any) {
 // filterSQL übersetzt einen Operator in eine Bedingung über messages m.
 // Ordner und Tags sind Mengen (IN mit Unterabfrage): SQLite baut sie
 // einmal auf, statt je Nachricht nachzusehen.
-func filterSQL(f search.Filter) (string, []any) {
+func filterSQL(f search.Filter, p SearchParams) (string, []any) {
 	switch f.Kind {
 	case "has_attachment":
 		return `m.has_attachments = 1`, nil
 	case "is":
+		switch f.Value {
+		case "scheduled":
+			// A10 Teil 3: geplant (Regel aus versanderkennung.md 3e).
+			own := [][2]any{}
+			for _, o := range p.Own {
+				own = append(own, [2]any{o.AccountID, o.Address})
+			}
+			b, _ := json.Marshal(own)
+			return scheduledSearchSQL, []any{p.Now.Add(ScheduledLead).UnixMilli(), string(b)}
+		case "draft":
+			// A10 Teil 3 (B3): \Draft oder in einem Entwürfe-Ordner.
+			return `(m.flag_draft = 1 OR ` + DraftsFolderSQL + `)`, nil
+		}
 		return map[string]string{"unread": `m.flag_seen = 0`, "read": `m.flag_seen = 1`, "flagged": `m.flag_flagged = 1`,
-			"answered": `m.flag_answered = 1`, "draft": `m.flag_draft = 1`}[f.Value], nil
+			"answered": `m.flag_answered = 1`}[f.Value], nil
 	case "mailbox":
 		// Pfad (ohne Groß-/Kleinschreibung), Unterordner (Trenner / oder .)
 		// oder Rolle (inbox, sent, archive …).

@@ -129,6 +129,11 @@ func TestMCPReaderSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		names = append(names, tl.Name)
+		// A10 Teil 3 (d): geplant ist nicht gesendet.
+		if (tl.Name == "mail_search" || tl.Name == "mail_get_message" || tl.Name == "mail_get_thread") &&
+			!strings.Contains(tl.Description, "scheduled_for is scheduled in the mail client and not sent yet") {
+			t.Errorf("%s: description without the scheduled note", tl.Name)
+		}
 		if tl.Annotations == nil || !tl.Annotations.ReadOnlyHint {
 			t.Errorf("%s is not marked read-only", tl.Name)
 		}
@@ -145,6 +150,10 @@ func TestMCPReaderSession(t *testing.T) {
 	hits := v["hits"].([]any)
 	if len(hits) != 1 || hits[0].(map[string]any)["subject"] != "Rechnung" {
 		t.Fatalf("search hits = %v", hits)
+	}
+	// A10 Teil 3: roles je Treffer (Rollen der Ordner, sortiert).
+	if r, ok := hits[0].(map[string]any)["roles"].([]any); !ok || len(r) == 0 {
+		t.Fatalf("search hit roles = %v", hits[0])
 	}
 	v, _ = callTool(t, cs, "mail_search", map[string]any{"query": "Heizung", "mailbox": "INBOX", "limit": 1})
 	if len(v["hits"].([]any)) != 1 || v["next_cursor"] == nil {
@@ -172,6 +181,9 @@ func TestMCPReaderSession(t *testing.T) {
 	assertEnvelope(t, "mail_get_thread", v)
 	if msgs := v["messages"].([]any); len(msgs) != 2 || msgs[1].(map[string]any)["text"] != "Der Monteur kommt am Freitag." {
 		t.Fatalf("thread = %v", v)
+	}
+	if _, ok := v["messages"].([]any)[0].(map[string]any)["roles"].([]any); !ok {
+		t.Fatalf("thread message without roles: %v", v["messages"])
 	}
 	v, _ = callTool(t, cs, "mail_list_attachments", map[string]any{"message": json.Number(ph["html"])})
 	assertEnvelope(t, "mail_list_attachments", v)

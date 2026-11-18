@@ -78,6 +78,12 @@ const dryRunSchema = `{"type": "boolean", "description": "true: check and previe
 // neverSends steht in jeder Beschreibung eines Entwurfs-Tools (A02 S2.8).
 const neverSends = "This server never sends: a human checks the draft and sends it from the mail client."
 
+// scheduledNote ergänzt die Beschreibungen der lesenden Werkzeuge (A10
+// Teil 3): geplant ist nicht gesendet; gesendet ist, was die Rolle sent
+// trägt.
+const scheduledNote = "A message with scheduled_for is scheduled in the mail client and not sent yet; sent is what carries the role sent " +
+	"(roles; in:sent)."
+
 // Budgets für Agenten (docs/mcp.md, Grundsatz 7).
 const (
 	threadMaxMessages = 10
@@ -93,22 +99,22 @@ var tools = []toolBinding{
 			"Without account: the only configured account."},
 	{tool: "mail_search", op: "messages.search", title: "Search mail", mail: true, maxInt: map[string]int{"limit": searchMaxLimit},
 		desc: "Search the local mail archive. Query language: words (German word forms and parts of compound words are found), " +
-			"\"exact phrases\", -exclusions, from:, to:, subject:, has:attachment, is:unread|read|flagged|answered|draft, in:<mailbox or role>, " +
+			"\"exact phrases\", -exclusions, from:, to:, subject:, has:attachment, is:unread|read|flagged|answered|draft|scheduled, in:<mailbox or role>, " +
 			"thread:<id>, after:YYYY-MM-DD, before:YYYY-MM-DD; all parts must match (no OR). Returns headers and a short snippet per hit, " +
-			"never full bodies; use mail_get_message for the text. Page with cursor/next_cursor (limit at most 100)."},
+			"never full bodies; use mail_get_message for the text. Page with cursor/next_cursor (limit at most 100). " + scheduledNote},
 	{tool: "mail_get_message", op: "messages.get", title: "Read a message", mail: true,
 		defaults: map[string]any{"strip_quotes": true, "max_chars": ops.DefaultMaxChars},
 		desc: "Read one message by local id (from mail_search) or Message-ID: headers, sender checks (spf/dkim/dmarc), cleaned text " +
 			"(HTML reduced to text, hidden text removed and flagged in hidden_text_removed; alternative_mismatch=true when the " +
 			"plain-text part differs from the HTML part a person sees), links listed separately with warnings, " +
 			"attachment list. Defaults: quoted earlier messages removed (strip_quotes=false keeps them), text cut after {max_chars} characters " +
-			"(max_chars; truncated=true when cut). headers=true returns the raw header lines instead of the text."},
+			"(max_chars; truncated=true when cut). headers=true returns the raw header lines instead of the text. " + scheduledNote},
 	{tool: "mail_get_thread", op: "threads.get", title: "Read a thread", mail: true,
 		defaults: map[string]any{"text": true, "max_messages": threadMaxMessages, "max_chars_per_message": threadMaxChars},
 		desc: "Read a conversation by thread id (from mail_search or mail_get_message), or by a message id in the field message. " +
 			"Messages in date order with sender, subject, flags and the new text of each message without quotes. Defaults: the newest " +
 			"10 messages (max_messages; older ones are counted in messages_omitted), 2000 characters per message (max_chars_per_message). " +
-			"No interpretation: open questions or tasks are for you to find."},
+			"No interpretation: open questions or tasks are for you to find. " + scheduledNote},
 	{tool: "mail_list_attachments", op: "attachments.list", title: "List attachments", mail: true,
 		desc: "List the attachments of a message: file name, type detected from the content (not the file name), size, sha256, " +
 			"type mismatch and executable warnings, and whether text was extracted (extract_status ok)."},
@@ -172,7 +178,8 @@ var tools = []toolBinding{
 	{tool: "mail_list_drafts", op: "drafts.list", title: "List drafts", mail: true,
 		desc: "List drafts, last changed first: status (draft, pending_approval, ready, sent_by_human, abandoned), subject, " +
 			"number of recipients and attachments, approval and the state of the copy in the Drafts folder. Filter by account " +
-			"and status. The subject of a reply or forward may come from the original email (derived_from_email). " + neverSends},
+			"and status. The subject of a reply or forward may come from the original email (derived_from_email). " +
+			"remote=scheduled with scheduled_for: the human scheduled the draft in the mail client; it is not sent yet. " + neverSends},
 	{tool: "mail_request_ready", op: "drafts.request_ready", title: "Submit a draft for approval", mail: true, dryRun: true,
 		desc: "Submit a draft (draft_id) to the human for approval. The user's check hook runs first: hook=pass gives status " +
 			"pending_approval and an approval_id; any other result keeps status draft, and hook_output (untrusted, it may repeat " +

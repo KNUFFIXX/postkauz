@@ -206,6 +206,7 @@ func renderSearch(w io.Writer, out any) error {
 			if len(h.Tags) > 0 {
 				subject += " [" + strings.Join(h.Tags, ", ") + "]"
 			}
+			subject += stateMarks(h.Roles, h.ScheduledFor)
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", h.ID, date, cut(h.From, 40), subject)
 		}
 		_ = tw.Flush()
@@ -226,4 +227,26 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// stateMarks sind die Marken der Textausgabe von search und thread (A10
+// Teil 3): „[draft]“, wenn die Nachricht in einem Entwürfe-Ordner liegt,
+// „[scheduled <Termin>]“ bei einer im Mailprogramm geplanten Nachricht
+// (nicht gesendet; Termin in Ortszeit).
+func stateMarks(roles []string, scheduledFor string) string {
+	var out string
+	for _, r := range roles {
+		if r == "drafts" {
+			out += " [draft]"
+			break
+		}
+	}
+	if scheduledFor != "" {
+		at := scheduledFor
+		if t, err := time.Parse(time.RFC3339, scheduledFor); err == nil {
+			at = t.Local().Format("2006-01-02 15:04")
+		}
+		out += " [scheduled " + at + "]"
+	}
+	return out
 }

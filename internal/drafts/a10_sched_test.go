@@ -385,7 +385,7 @@ func TestA10NotScheduled(t *testing.T) {
 }
 
 // Eine geplante Nachricht ohne passenden Entwurf bleibt nur an der
-// Nachricht erkennbar (Teil 3: IsScheduled); kein Entwurf wird geplant.
+// Nachricht erkennbar (Teil 3: ScheduledAt); kein Entwurf wird geplant.
 func TestA10ScheduledMessageWithoutDraft(t *testing.T) {
 	e := newThEnv(t)
 	at := e.now.Add(72 * time.Hour)
@@ -393,9 +393,9 @@ func TestA10ScheduledMessageWithoutDraft(t *testing.T) {
 	if rep := e.check(); rep.Scheduled != 0 {
 		t.Fatalf("report = %+v", rep)
 	}
-	got, err := e.st.IsScheduled(context.Background(), []int64{mid, e.orig}, e.now.Add(ScheduledLead), nil)
+	got, err := e.st.ScheduledAt(context.Background(), []int64{mid, e.orig}, e.now.Add(ScheduledLead))
 	if err != nil || len(got) != 1 || !got[mid].Equal(at) {
-		t.Fatalf("IsScheduled = %v, %v", got, err)
+		t.Fatalf("ScheduledAt = %v, %v", got, err)
 	}
 }
 

@@ -553,6 +553,10 @@ func renderShow(w io.Writer, out any) error {
 	fmt.Fprintf(tw, "mailboxes:\t%s\n", strings.Join(where, ", "))
 	fmt.Fprintf(tw, "message-id:\t%s\n", termLine(o.MessageID))
 	fmt.Fprintf(tw, "date:\t%s\n", termLine(o.Date))
+	if o.ScheduledFor != "" {
+		// A10 Teil 3: geplant, nicht gesendet.
+		fmt.Fprintf(tw, "scheduled:\t%s (scheduled in the mail client; not sent yet)\n", o.ScheduledFor)
+	}
 	fmt.Fprintf(tw, "from:\t%s\n", termLine(o.From))
 	fmt.Fprintf(tw, "to:\t%s\n", termLine(addrList(o.To)))
 	if cc := addrList(o.Cc); cc != "" {
@@ -702,7 +706,7 @@ func renderThread(w io.Writer, out any) error {
 		if m.HasAttachments {
 			flags = strings.Trim(flags+",attachment", ",")
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.ID, m.Date, termLine(m.From), termLine(m.Subject), flags)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n", m.ID, m.Date, termLine(m.From), termLine(m.Subject)+stateMarks(m.Roles, m.ScheduledFor), flags)
 	}
 	if err := tw.Flush(); err != nil {
 		return err

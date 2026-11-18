@@ -223,9 +223,10 @@ func operator(key, val string, quoted, neg bool, loc *time.Location) (*Term, *Fi
 		return nil, nil, qerr("has: only has:attachment is supported")
 	case "is":
 		canon := map[string]string{"unread": "unread", "read": "read", "seen": "read", "flagged": "flagged",
-			"starred": "flagged", "answered": "answered", "draft": "draft"}[lv]
+			"starred": "flagged", "answered": "answered", "draft": "draft", "scheduled": "scheduled"}[lv]
 		if canon == "" {
-			return nil, nil, qerr("is: not a supported value; use is:unread, is:read, is:flagged, is:answered or is:draft")
+			return nil, nil, qerr("is: not a supported value; use is:unread, is:read, is:flagged, is:answered, is:draft " +
+				"(flag \\Draft or in a Drafts folder) or is:scheduled (scheduled in the mail client, not sent yet); for sent mail use in:sent")
 		}
 		return nil, &Filter{Kind: "is", Value: canon, Negated: neg}, nil
 	case "in", "mailbox":
