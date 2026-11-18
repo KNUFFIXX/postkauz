@@ -122,6 +122,12 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		if !nw.CreatedAt.After(old.CreatedAt) {
 			return denied(ReasonSuccessorNotNewer, "draft %d is not newer than draft %d", nw.ID, old.ID)
 		}
+		// A10 Teil 2: geplant hat Vorrang vor copy_missing.
+		if !Status(old.Status).Closed() {
+			if err := checkScheduled(x, old.ID); err != nil {
+				return err
+			}
+		}
 		switch Status(old.Status) {
 		case StatusDraft, StatusPendingApproval:
 		case StatusReady:

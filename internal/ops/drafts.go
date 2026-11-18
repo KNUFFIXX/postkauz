@@ -195,6 +195,11 @@ func remoteNote(d store.Draft) string {
 	return ""
 }
 
+// ScheduledNote ist remote_note eines geplanten Entwurfs (A10 Teil 2).
+func ScheduledNote(at time.Time) string {
+	return "scheduled in the mail client for " + at.UTC().Format(time.RFC3339) + "; not sent yet"
+}
+
 // previousUIDs nennt die UIDs früherer Kopien ("uid 3, 5").
 func previousUIDs(l []store.RemoteCopy) string {
 	parts := make([]string, 0, len(l))
@@ -412,7 +417,7 @@ const draftsWriteOutputSchema = `{
     "attachments": ` + draftAttachmentsSchema + `,
     "warnings": {"type": "array", "items": {"type": "string"}},
     "notes": {"type": "array", "items": {"type": "string"}},
-    "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
+    "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing", "scheduled"]},
     "remote_note": {"type": "string"}, "push_job_id": {"type": "integer"},
     "approval_superseded": {"type": "integer"}, "preview_hash": {"type": "string"},
     "dry_run": {"type": "boolean"}
@@ -1223,6 +1228,10 @@ func (o *draftOps) updateOnce(ctx context.Context, call Call, in DraftsUpdateInp
 		_, err := drafts.Next(st, drafts.EvUpdate)
 		return nil, draftErr(err)
 	}
+	// A10 Teil 2: geplant hat Vorrang vor draft_taken_over.
+	if err := o.svc.CheckScheduled(ctx, cur.ID); err != nil {
+		return nil, draftErr(err)
+	}
 	if cur.RemoteState == drafts.RemoteTakenOver || cur.RemoteState == drafts.RemoteMissing {
 		// Die Prüfung gegen den Spiegel (E6) macht der Dienst in der
 		// Schreibtransaktion; hier nur der schon gespeicherte Befund.
@@ -1365,8 +1374,13 @@ type DraftDetail struct {
 	ApprovalExpiresAt string                  `json:"approval_expires_at,omitempty"`
 	Remote            string                  `json:"remote"`
 	RemoteNote        string                  `json:"remote_note,omitempty"`
-	RemoteMailboxID   int64                   `json:"remote_mailbox_id,omitempty"`
-	RemoteUID         int64                   `json:"remote_uid,omitempty"`
+	// ScheduledFor, ScheduledMessageID: remote scheduled (A10 Teil 2): Der
+	// Mensch hat den Versand im Mailprogramm geplant; Termin (RFC 3339)
+	// und lokale ID der geplanten Nachricht. Nicht gesendet.
+	ScheduledFor       string `json:"scheduled_for,omitempty"`
+	ScheduledMessageID int64  `json:"scheduled_message_id,omitempty"`
+	RemoteMailboxID    int64  `json:"remote_mailbox_id,omitempty"`
+	RemoteUID          int64  `json:"remote_uid,omitempty"`
 	// RemotePreviousUIDs: UIDs früherer Kopien im Entwürfe-Ordner (nach
 	// einer Änderung legt der Push eine neue Kopie ab, die alte bleibt; S2.5).
 	RemotePreviousUIDs []int64 `json:"remote_previous_uids,omitempty"`
@@ -1468,8 +1482,10 @@ func DraftsGet(d Deps) Operation {
     "approval_id": {"type": "integer"},
     "approval_status": {"type": "string", "enum": ["pending", "approved", "rejected", "superseded", "expired"]},
     "approval_expires_at": {"type": "string", "format": "date-time"},
-    "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
+    "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing", "scheduled"]},
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
+    "scheduled_for": {"type": "string", "format": "date-time", "description": "remote scheduled: the send time the mail client scheduled; the message is not sent yet"},
+    "scheduled_message_id": {"type": "integer", "description": "remote scheduled: local id of the scheduled message"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
     "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
     "older_copies": {"type": "integer"}, "older_copy_uids": {"type": "array", "items": {"type": "integer"}},
@@ -1569,7 +1585,14 @@ func DraftsGet(d Deps) Operation {
 					return nil, err
 				}
 			}
-			if !drafts.Status(dr.Status).Closed() && dr.RemoteState == drafts.RemoteMissing {
+			if sc, ok, err := o.svc.Store.ScheduledOf(ctx, dr.ID); err != nil {
+				return nil, err
+			} else if drafts.ScheduledActive(sc, ok) {
+				// A10 Teil 2: geplant, nicht gesendet (abgeleitet aus dem
+				// Vermerk; remote_state bleibt gespeichert, meist missing).
+				out.Remote, out.RemoteNote = drafts.RemoteScheduled, ScheduledNote(sc.At)
+				out.ScheduledFor, out.ScheduledMessageID = rfc3339(sc.At), sc.MessageID
+			} else if !drafts.Status(dr.Status).Closed() && dr.RemoteState == drafts.RemoteMissing {
 				// Nachtrag 1 zu A07: seit wann die Kopie fehlt (Auffangregel
 				// „Kopie weg“; Abnahme D13 prüft damit die Erwartung).
 				since, ok, err := o.svc.Store.DraftMissingSince(ctx, dr.ID, drafts.LastPushAt(dr))
@@ -1897,9 +1920,11 @@ type DraftSummary struct {
 	Recipients  int    `json:"recipients"`
 	Attachments int    `json:"attachments"`
 	Remote      string `json:"remote"`
-	ApprovalID  int64  `json:"approval_id,omitempty"`
-	HookResult  string `json:"hook_result,omitempty"`
-	UpdatedAt   string `json:"updated_at"`
+	// ScheduledFor: remote scheduled (A10 Teil 2), der Termin.
+	ScheduledFor string `json:"scheduled_for,omitempty"`
+	ApprovalID   int64  `json:"approval_id,omitempty"`
+	HookResult   string `json:"hook_result,omitempty"`
+	UpdatedAt    string `json:"updated_at"`
 	// OlderCopies: ältere Kopien im Entwürfe-Ordner (Entscheid 43, S2.7).
 	OlderCopies int `json:"older_copies,omitempty"`
 	// DerivedFromEmail: Betreff (oder anderes) aus der Ausgangsnachricht (W3).
@@ -1948,7 +1973,8 @@ func DraftsList(d Deps) Operation {
       "kind": {"type": "string", "enum": ["new", "reply", "reply_all", "forward"]},
       "status": {"type": "string", "enum": ` + draftStatusEnum + `}, "subject": {"type": "string"},
       "recipients": {"type": "integer"}, "attachments": {"type": "integer"},
-      "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing"]},
+      "remote": {"type": "string", "enum": ["pending", "pushed", "taken_over", "missing", "scheduled"]},
+      "scheduled_for": {"type": "string", "format": "date-time", "description": "remote scheduled: scheduled in the mail client for this time, not sent yet"},
       "approval_id": {"type": "integer"}, "hook_result": {"type": "string", "enum": ["pass", "fail", "timeout", "error"]},
       "updated_at": {"type": "string", "format": "date-time"}, "older_copies": {"type": "integer"},
       "derived_from_email": ` + derivedEnvelopeSchema + `},
@@ -1986,15 +2012,24 @@ func DraftsList(d Deps) Operation {
 				names[a.ID] = a.Name
 			}
 			out := DraftsListOutput{Source: DraftSource, Drafts: []DraftSummary{}}
+			// A10 Teil 2: Vermerke zum geplanten Senden (offene Entwürfe).
+			vm, err := o.svc.Store.ScheduledOfAccount(ctx, f.AccountID)
+			if err != nil {
+				return nil, err
+			}
 			for _, dr := range list {
 				older, err := o.olderCopies(ctx, dr)
 				if err != nil {
 					return nil, err
 				}
-				out.Drafts = append(out.Drafts, DraftSummary{DraftID: dr.ID, Account: names[dr.AccountID], Kind: dr.Kind, Status: dr.Status,
+				sum := DraftSummary{DraftID: dr.ID, Account: names[dr.AccountID], Kind: dr.Kind, Status: dr.Status,
 					Subject: dr.Subject, Recipients: len(dr.To) + len(dr.Cc) + len(dr.Bcc), Attachments: len(dr.Attachments),
 					Remote: dr.RemoteState, ApprovalID: dr.ApprovalID, HookResult: dr.HookResult, UpdatedAt: rfc3339(dr.UpdatedAt),
-					OlderCopies: len(older), DerivedFromEmail: derivedEnvelope(dr)})
+					OlderCopies: len(older), DerivedFromEmail: derivedEnvelope(dr)}
+				if sc, ok := vm[dr.ID]; drafts.ScheduledActive(sc, ok) {
+					sum.Remote, sum.ScheduledFor = drafts.RemoteScheduled, rfc3339(sc.At)
+				}
+				out.Drafts = append(out.Drafts, sum)
 			}
 			return out, nil
 		},
@@ -2168,6 +2203,10 @@ func DraftsRequestReady(d Deps) Operation {
 			// Erst der Übergang (kein Hook für einen abgeschlossenen oder
 			// schon vorgelegten Entwurf), dann Nachrichtenbau und Hook.
 			if _, err := drafts.Next(drafts.Status(dr.Status), drafts.EvRequestReady); err != nil {
+				return nil, draftErr(err)
+			}
+			// A10 Teil 2: kein Hook für einen geplanten Entwurf.
+			if err := o.svc.CheckScheduled(ctx, dr.ID); err != nil {
 				return nil, draftErr(err)
 			}
 			// Ohne Empfänger keine Vorlage und kein Hook (B1, S2.9).

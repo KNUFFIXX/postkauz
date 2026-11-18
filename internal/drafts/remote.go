@@ -146,7 +146,18 @@ func checkCopy(x *store.DraftTx, d store.Draft) (string, error) {
 			return "", err
 		}
 	}
-	return copyState(d, mc, valid), nil
+	st := copyState(d, mc, valid)
+	if st == RemoteMissing {
+		// A10 Teil 2 (ii): Liegt die vermerkte geplante Nachricht im
+		// Entwürfe-Ordner (Plan abgebrochen), ist sie die übernommene
+		// Fassung des Entwurfs, obwohl sie eine andere Message-ID trägt.
+		if back, err := cancelledCopy(x, d); err != nil {
+			return "", err
+		} else if back {
+			return RemoteTakenOver, nil
+		}
+	}
+	return st, nil
 }
 
 // adoptOrphan übernimmt die Kopie eines Ablageversuchs, dessen Ausgang ein

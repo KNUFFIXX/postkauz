@@ -273,4 +273,50 @@ func BenchmarkCheckAfterSync22kSubject(b *testing.B) {
 			}
 		}
 	})
+	// A10 Teil 2: Prüfung auf geplante Nachrichten. Seit A10 läuft sie in
+	// jedem Lauf mit offenen Entwürfen ohne Kopie (steady_subject und
+	// steady_copy_gone enthalten sie schon, ohne geplante Nachricht); hier
+	// dazu 10 geplante Nachrichten (eigener Absender, Termin in 3 Tagen),
+	// die zu keinem Entwurf passen (anderer Betreff, andere Empfänger).
+	var sched []store.NewMessage
+	for k := 0; k < 10; k++ {
+		at := base.Add(72 * time.Hour)
+		sched = append(sched, store.NewMessage{Link: store.LinkFlags{UID: uint32(total + 1 + k), Seen: true},
+			MessageID: fmt.Sprintf("geplant%d@mail.example.com", k), Subject: fmt.Sprintf("Termin %d", k), From: "demo@example.org",
+			To: json.RawMessage(`[{"address":"y@example.com"}]`), Cc: json.RawMessage("[]"), DateHeader: at, InternalDate: at,
+			Size: int64(50 + k), TextPlain: "Hallo, kurze Nachricht zum Termin.", TextUnquoted: "Hallo, kurze Nachricht zum Termin.",
+			ContentHash: fmt.Sprintf("g%d", k), CleanVersion: 1, Links: json.RawMessage("[]")})
+	}
+	if _, err := st.ApplyBatch(ctx, store.MirrorBatch{AccountID: acc, MailboxID: box, New: sched,
+		State: &store.MailboxState{UIDValidity: 1, UIDNext: uint32(total + 11), Phase: store.PhaseReady}}); err != nil {
+		b.Fatal(err)
+	}
+	// Ablageordner ein eigener Entwürfe-Ordner (oben war es „Alle
+	// Nachrichten“, dann läge jede Nachricht im Sinn der Regel im
+	// Entwürfe-Ordner).
+	if err := st.ExecForTest(`INSERT INTO mailboxes(account_id, path, name, role, sync_phase, uidvalidity) VALUES (?, 'Drafts', 'Drafts', 'drafts', 'ready', 1)`,
+		acc); err != nil {
+		b.Fatal(err)
+	}
+	if err := st.ExecForTest(`UPDATE drafts SET remote_mailbox_id = (SELECT id FROM mailboxes WHERE path = 'Drafts')`); err != nil {
+		b.Fatal(err)
+	}
+	if _, err := svc.CheckAfterSync(ctx, acc, CheckOptions{}); err != nil {
+		b.Fatal(err)
+	}
+	b.Run("steady_scheduled", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			rep, err := svc.CheckAfterSync(ctx, acc, CheckOptions{})
+			if err != nil || rep.Scheduled != 0 || rep.CopyGone != 0 {
+				b.Fatalf("%+v %v", rep, err)
+			}
+		}
+	})
+	b.Run("scheduled_lookup", func(b *testing.B) {
+		for n := 0; n < b.N; n++ {
+			if l, err := st.ScheduledMessages(ctx, acc, base.Add(ScheduledLead)); err != nil || len(l) != 10 {
+				b.Fatal(len(l), err)
+			}
+		}
+	})
 }

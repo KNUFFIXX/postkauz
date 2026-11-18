@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
@@ -57,7 +58,7 @@ var threadKinds = map[string]bool{string(KindReply): true, string(KindReplyAll):
 // open (nach Message-ID und Rückfall). claimed: schon zugeordnete
 // gesendete Nachrichten; copies: Inhalts-Hashes der Entwurfskopien.
 func (s *Service) detectThread(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, copies []string,
-	rep *CheckReport) error {
+	ext map[int64]time.Time, rep *CheckReport) error {
 	isCopy := map[string]bool{}
 	for _, h := range copies {
 		isCopy[h] = true
@@ -89,7 +90,7 @@ func (s *Service) detectThread(ctx context.Context, accountID int64, open []stor
 				continue
 			}
 			ok, n := threadRecipientsAdded(rk, c)
-			if !ok || !InFallbackWindow(changedAt(d), c.Date) { // (d), (e)
+			if !ok || !inWindow(d, c.Date, ext) { // (d), (e); A10 Teil 2: bis Termin + 14 Tage
 				continue
 			}
 			if !c.InSent {

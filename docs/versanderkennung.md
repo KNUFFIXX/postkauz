@@ -1,6 +1,6 @@
 # Versanderkennung: Wie PostKauz merkt, dass ein Entwurf gesendet wurde
 
-Stand: A10 Teil 1 (18.11.2026; gesendet ist nur, was in Gesendet liegt, Abschnitt 2a; Marke je Gesendet-Ordner, Abschnitt 3; kein Schema-Upgrade). Davor A09 Teil 1 (17.11.2026; ergänzte Empfänger im Weg über den Verlauf, 3a (d); 3b bleibt streng; kein Schema-Upgrade). Davor A07 mit Nachtrag 1 (10.11.2026; Nachtrag 1: Auffangregel mit Sicherung gegen weiterbearbeitete Fassungen und Rückkehr der Kopie, 3d; `supersede` nur in Entwürfe-Ordnern, 5; Verlauf und Betreff übernehmen erst eine verwaiste Kopie, 1; Teil 1 Antwort ohne Empfänger in 3a/3b, Teil 2 Rangfolge in 3/3a und `taken_over` → `missing` in 1, Teil 3 vierter Weg über den Betreff, Abschnitt 3c, Teil 4 Auffangregel „Kopie weg“, Abschnitt 3d, Teil 5 `drafts.supersede` in 5, Sammelpunkt 0e in 3b; kein Schema-Upgrade). Davor A06 (05.11.2026; D12 bestanden, Messtabelle Abschnitt 9 ergänzt; Teil 3 verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3; Teil 4 ersetzte Entwürfe, Abschnitt 3b). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
+Stand: A10 Teile 1 und 2 (18.11.2026; gesendet ist nur, was in Gesendet liegt, Abschnitt 2a; Marke je Gesendet-Ordner, Abschnitt 3; geplantes Senden, Abschnitt 3e; kein Schema-Upgrade). Davor A09 Teil 1 (17.11.2026; ergänzte Empfänger im Weg über den Verlauf, 3a (d); 3b bleibt streng; kein Schema-Upgrade). Davor A07 mit Nachtrag 1 (10.11.2026; Nachtrag 1: Auffangregel mit Sicherung gegen weiterbearbeitete Fassungen und Rückkehr der Kopie, 3d; `supersede` nur in Entwürfe-Ordnern, 5; Verlauf und Betreff übernehmen erst eine verwaiste Kopie, 1; Teil 1 Antwort ohne Empfänger in 3a/3b, Teil 2 Rangfolge in 3/3a und `taken_over` → `missing` in 1, Teil 3 vierter Weg über den Betreff, Abschnitt 3c, Teil 4 Auffangregel „Kopie weg“, Abschnitt 3d, Teil 5 `drafts.supersede` in 5, Sammelpunkt 0e in 3b; kein Schema-Upgrade). Davor A06 (05.11.2026; D12 bestanden, Messtabelle Abschnitt 9 ergänzt; Teil 3 verwaiste Fortsetzungszeilen im Vergleich von Rückfall und Verlauf, Abschnitt 3; Teil 4 ersetzte Entwürfe, Abschnitt 3b). Davor A05 (03.11.2026; Teil 1 symmetrische Kürzung im Rückfall, Teil 2 dritter Weg über den Verlauf, Abschnitt 3a), davor S2.9 (23.10.2026; Regeln seit S2.6 mit den Nachbesserungen der Gegenprüfung S2.6–S2.8, gegen den Code geprüft; A02 E5, E6, E7; Entscheide 26, 38, 43, 44). Die Messtabelle (Abschnitt 9) füllt die Abnahme D5 (Runde 1 am 23.10.2026, danach Nachbesserung N1 im Rückfall-Abgleich, Abschnitt 3). PostKauz sendet nie (ADR-002). Ein Entwurf liegt als Kopie im Entwürfe-Ordner; der Mensch öffnet ihn in seinem Mailprogramm und drückt dort auf „Senden". Dieses Dokument beschreibt, woran PostKauz das danach erkennt, was es nicht erkennen kann und wie sich die Mailprogramme verhalten (Messtabelle unten, gefüllt vom Betreiber in Abnahme D5).
 
 ## 1. Wann geprüft wird
 
@@ -195,9 +195,52 @@ Seit A07 Teil 4 (10.11.2026; Default, Einspruch bis zum Merge). Ziel: Kein offen
 
 **Bekannte Grenzen:**
 
-- Bei **geplantem Senden** in Gmail verschwindet die Kopie aus den Entwürfen; wird erst nach mehr als 24 Stunden gesendet, heißt der Entwurf `copy_gone` statt gesendet (ein späterer Versand ändert daran nichts, der Entwurf ist abgeschlossen).
+- ~~Bei **geplantem Senden** in Gmail verschwindet die Kopie aus den Entwürfen; wird erst nach mehr als 24 Stunden gesendet, heißt der Entwurf `copy_gone` statt gesendet.~~ Seit A10 Teil 2 erkennt der Sync geplante Entwürfe (Abschnitt 3e); solange ein Entwurf geplant ist, greift die Auffangregel nicht.
 - Ein Mailprogramm, das beim Senden keine Kopie in Gesendet ablegt (Abschnitt 8), führt ebenfalls zu `copy_gone`; seit A10 Teil 1 bei Konten mit Gesendet **immer**, auch wenn die Nachricht in „Alle Nachrichten“ liegt (Abschnitt 2a).
 - Wird die Kopie wieder in den Entwürfe-Ordner gelegt, wird der Entwurf seit Nachtrag 1 wieder `pushed` (siehe oben); liegt sie nur an einem anderen Platz oder ist sie nicht prüfbar, bleibt er `missing`, die Prüfung in der Transaktion findet eine Kopie am Ablageplatz aber trotzdem, und er bleibt offen.
+
+## 3e. Geplantes Senden (seit A10 Teil 2)
+
+Seit A10 Teil 2 (18.11.2026; Entschiedene Frage 84, Einspruch bis zum Merge). **Befund** (Betreiber-Sitzung 17.11.2026, Proben am Gmail-Server über IMAP, nur lesend): Plant der Mensch einen Entwurf in Gmail („Senden planen“), verschwindet die Kopie aus dem Entwürfe-Ordner. Gmail legt eine **neue** Nachricht an (neue Message-ID `…@mail.gmail.com`), auch wenn der Entwurf unverändert ist. Sie liegt nur in „Alle Nachrichten“ (und, wenn Gmail sie so einstuft, in „Wichtig“/„Markiert“), `Date` und INTERNALDATE sind der **künftige Termin**, Flags `\Seen`, kein `\Draft`, kein eigenes Kennzeichen (B1). Bricht der Mensch den Plan ab, liegt dieselbe Nachricht (gleiche Message-ID, gleiche UID in „Alle Nachrichten“) wieder im Entwürfe-Ordner und behält den künftigen Termin (B2). Vor A10 galt sie als gesendet (B4); seit Teil 1 nicht mehr (Abschnitt 2a), Teil 2 sagt, was sie ist.
+
+**Geplante Nachricht** (aus dem Spiegel abgeleitet, ohne Zugriff auf den Server und ohne Gmail-Erweiterung; `store.ScheduledMessages`, `store.IsScheduled`): eine Nachricht des Kontos, die
+
+| | Bedingung |
+|---|---|
+| (a) | in einem Ordner mit Rolle `all` liegt und in keinem mit Rolle `inbox`, `sent`, `drafts`, `trash` oder `junk` und in keinem Entwürfe-Ordner (Rolle `drafts` oder Ablageordner eines Entwurfs); virtuelle Sichten zählen nie, |
+| (b) | ein INTERNALDATE mehr als **2 Minuten** nach der aktuellen Zeit hat (der **Termin**), |
+| (c) | von einer eigenen Adresse kommt (wie im Rückfall, Abschnitt 3), |
+| (d) | nirgends `\Draft` trägt. |
+
+Konten ohne Ordner mit Rolle `all` haben keine geplanten Nachrichten.
+
+**Geplanter Entwurf:** Ein offener Entwurf, dessen Kopie am Spiegel fehlt (geprüft wie Bedingung (f), unabhängig vom gespeicherten `remote_state`, auch nach `taken_over`), ist geplant, wenn eine geplante Nachricht zu ihm passt und **nach seiner letzten Ablage gespiegelt** wurde (`messages.created_at`). „Passt“: gleiche Message-ID, oder die Bedingungen eines der Wege Rückfall (Abschnitt 3), Verlauf (3a, samt Entwurf ohne Empfänger und ergänzten Empfängern) oder Betreff (3c) **ohne** die Bedingung „gesendet“ (b) und **ohne** das Zeitfenster (e). Rangfolge wie in Abschnitt 3 (A07 Teil 2); eine geplante Nachricht gehört höchstens einem Entwurf. Geprüft bei jedem vollständigen Lauf (nicht bei KeepMark und SkipSent), nach den vier Wegen, für alle offenen Entwürfe mit fehlender Kopie; die geplanten Nachrichten liest der Lauf nur, wenn es solche Entwürfe gibt.
+
+**Vermerk:** Die Zuordnung steht in der Tabelle `meta` unter `scheduled/<draft_id>` (lokale ID der Nachricht, Termin, Zustand `scheduled`, `cancelled` oder `gone`), nicht nur im Audit (das rotiert). Er endet in derselben Transaktion, die den Entwurf schließt (alle Wege: erkannt, `draft mark-sent`, `draft abandon`, Schlüssel widerrufen, `supersede`, `copy_gone`, „ersetzt“; zentral in `store.DraftTx.UpdateDraft`); Vermerke geschlossener Entwürfe gelten als nicht vorhanden. Eine neue geplante Nachricht, die passt, ersetzt einen Vermerk im Zustand `gone` (neues Audit). Audit `drafts.scheduled_detected` (Akteur `system`, Grund `scheduled`, Parameter `draft_id`, `message_id` lokal, `scheduled_for`; ohne Inhalt), einmal je Zuordnung.
+
+**Wirkung:** Der Status bleibt offen (`draft`, `pending_approval`, `ready`; eine Freigabe bleibt und läuft wie bisher ab). Überall, wo `remote` steht, heißt es `scheduled` (abgeleitet; der gespeicherte `remote_state` bleibt im Rahmen des CHECK, meist `missing`), dazu `scheduled_for` (RFC 3339) und in `draft show`/`mail_get_draft` `scheduled_message_id` und `remote_note` „scheduled in the mail client for <Termin>; not sent yet“. Solange der Entwurf geplant ist:
+
+- keine Auffangregel `copy_gone` (3d) und kein „ersetzt“ (3b);
+- `drafts.update` (auch `draft edit` des Menschen), `drafts.supersede` und `drafts.request_ready` werden mit **`draft_scheduled`** abgelehnt (Vorrang vor `draft_taken_over` und `copy_missing`): Der Mensch hat den Versand geplant, ein neuer Push legte eine zweite Fassung neben die geplante. `draft abandon` und `draft mark-sent` des Menschen bleiben möglich.
+- Der Sync zählt den Entwurf nicht als „Kopie weg ohne gesendete Nachricht“ (`missing` in `draft_check`), sondern meldet `N scheduled in the mail client, not sent yet (draft …)` (`--json`: `draft_check.scheduled`, `scheduled_draft_ids`).
+
+**Übergänge** (je vollständigem Lauf an der vermerkten Nachricht, **vor** den vier Wegen; die vermerkte Nachricht ist für alle Wege und für „ersetzt“ anderer Entwürfe gesperrt, wie eine schon zugeordnete):
+
+| | Lage der vermerkten Nachricht | Folge |
+|---|---|---|
+| (i) | in Gesendet (Gmail sendet zum Termin) | `sent_by_human`, Grund **`scheduled`**, `sent_message_id` = diese Nachricht (`draft_check.sent_by_scheduled`). Konten ohne Gesendet: Termin + 2 Minuten verstrichen und weiter nur in „Alle Nachrichten“ → ebenso. |
+| (ii) | im Entwürfe-Ordner (Plan abgebrochen, B2) | wieder offen wie nach einer Bearbeitung im Mailprogramm: `taken_over`, Audit `drafts.remote_check` Grund **`schedule_cancelled`** (`draft_check.schedule_cancelled`). Bis die Nachricht dort verschwindet, werten `checkCopy` und `refreshRemote` sie als übernommene Fassung, obwohl sie eine andere Message-ID trägt. Plant der Mensch dieselbe Nachricht erneut, greift die Regel wieder (ohne neues Audit). |
+| (iii) | weg (nicht mehr im Spiegel, ohne Serverkopie oder nur noch im Papierkorb bzw. Spam) | `missing`, Audit `drafts.remote_check` Grund `missing` (damit `DraftMissingSince` neu zählt und die Frist `copy_gone_after` mit diesem Lauf beginnt); Vermerk `gone`. Das Zeitfenster der vier Wege reicht für diesen Entwurf bis **Termin + 14 Tage** (falls Gmail beim Versand eine neue Nachricht anlegt; Abnahme D16 B.3 misst das). |
+| (iv) | nur Konten mit Gesendet: Termin verstrichen, weiter nur in „Alle Nachrichten“ | noch **1 Stunde** geplant (Gmail braucht einen Moment), danach wie (iii). |
+
+**Kosten** (`BenchmarkCheckAfterSync22k`, Teil `steady_scheduled`): siehe Abschnitt 3c.1.
+
+**Bekannte Grenzen:**
+
+- Ob Gmail beim Versand zum Termin dieselbe Nachricht nach Gesendet legt (dann (i)) oder eine neue anlegt (dann (iii) und einer der vier Wege), ist am echten Gmail nicht geprüft (D16 B.3).
+- Plant der Mensch eine **neue** Mail in Gmail, die PostKauz nie abgelegt hat, gibt es keinen Entwurf; die Nachricht zeigt nur in Suche und Verlauf `scheduled_for` (Teil 3).
+- Ein Mailprogramm, das geplante Nachrichten anders ablegt (etwa in einem eigenen Ordner „Geplant“), wird nicht erkannt; die Kopie ist dann einfach weg (3d).
+- Ein Entwurf, den der Mensch mit **weniger als 2 Minuten** Vorlauf plant, ist nie geplant; zum Termin entscheiden die vier Wege wie bei einem gewöhnlichen Versand.
 
 ## 4. Was nie als gesendet zählt
 
@@ -211,7 +254,7 @@ Grund (Befund K8 der Gegenprüfung von S2.4/S2.5): **Gmail führt jede Entwurfsk
 
 ## 5. Kein Treffer ist kein Fehler; wer schließt
 
-Stand A07 (10.11.2026). Findet die Prüfung nichts (keine der vier Wege, Abschnitte 2 bis 3c, und keine ersetzende eigene Antwort, Abschnitt 3b), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; if no sent message is detected, the sync closes the draft as abandoned (copy_gone) once [draft] copy_gone_after (default 24h) has passed; or close it now with draft mark-sent or draft abandon` (bei einer Antwort ohne To/Cc der Hinweis aus Abschnitt 3a, Bedingung (d)). Änderungen sind dann `draft_taken_over`.
+Stand A07 (10.11.2026), ergänzt A10. Findet die Prüfung nichts (keine der vier Wege, Abschnitte 2 bis 3c, und keine ersetzende eigene Antwort, Abschnitt 3b), bleibt der Entwurf in seinem Zustand (`ready` bleibt `ready`). Ist seine Kopie aus dem Entwürfe-Ordner verschwunden, zeigt `draft list` `remote: missing` und `draft show` den Hinweis `the copy in the Drafts folder is gone; if no sent message is detected, the sync closes the draft as abandoned (copy_gone) once [draft] copy_gone_after (default 24h) has passed; or close it now with draft mark-sent or draft abandon` (bei einer Antwort ohne To/Cc der Hinweis aus Abschnitt 3a, Bedingung (d)). Änderungen sind dann `draft_taken_over`.
 
 **Im Alltag schließt das System** (seit A07 muss der Mensch dafür nichts auf der Kommandozeile tun):
 
@@ -222,7 +265,9 @@ Stand A07 (10.11.2026). Findet die Prüfung nichts (keine der vier Wege, Abschni
 
 **Der Agent** darf seit A07 Teil 5 genau eines: einen **eigenen** Entwurf verwerfen, den eine neuere eigene Fassung ersetzt (`drafts.supersede`, MCP `mail_supersede_draft`, CLI `draft supersede <alt> --by <neu>`): Der alte wird `abandoned` (Grund `superseded_by_draft`), seine unveränderte Kopie geht ohne Antrag in den Papierkorb ([entscheidungen.md](entscheidungen.md), ADR-009, Nachtrag A07 Teil 5). Seit Nachtrag 1 nur innerhalb der Entwürfe-Ordner: frühere Kopien anderswo bleiben liegen (`skipped`), eine Aktion mit einem Ziel außerhalb scheitert mit `not_in_drafts`; läuft beim alten Entwurf noch eine Ablage, Ablehnung `push_in_progress`. **Grenze:** Sendet der Mensch die alte Kopie, bevor die Aktion ausgeführt ist (ein laufender `sync --watch` braucht höchstens etwa 10 s), bleibt der Entwurf `abandoned`; die Versanderkennung prüft nur offene Entwürfe, und die Aktion findet die Kopie nicht mehr (`not_found`). Für gesendet erklären kann ein Agent einen Entwurf weiterhin nie (E2).
 
-**Der Mensch** kann jederzeit selbst schließen, etwa wenn er nicht 24 Stunden warten will oder der Entwurf nach einem geplanten Senden als gesendet zählen soll:
+**Geplant** (seit A10 Teil 2, Abschnitt 3e): Hat der Mensch den Versand im Mailprogramm geplant, zeigt `draft list` `remote: scheduled` und `draft show` den Termin; der Entwurf bleibt offen, bis die geplante Nachricht in Gesendet liegt (dann schließt das System ihn mit Grund `scheduled`).
+
+**Der Mensch** kann jederzeit selbst schließen, etwa wenn er nicht 24 Stunden warten will:
 
 - `postkauz draft mark-sent <id>` → `sent_by_human` (er hat gesendet),
 - `postkauz draft abandon <id>` → `abandoned` (er hat verworfen).
@@ -231,7 +276,7 @@ Beides darf **nur der Mensch** (ohne `--key`; mit jedem Schlüssel Exit 3 `human
 
 ## 6. Audit
 
-Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback`, (seit A05) `thread` oder (seit A07) `subject`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Auffangregel (seit A07, Abschnitt 3d): Akteur `system`, Operation `drafts.copy_gone_detected`, Grund `copy_gone`, Parameter `draft_id`, `missing_since`, `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Betreff, Adressen und Text stehen nie im Audit oder Log.
+Jede Erkennung steht als Systemereignis im Audit, **ohne Mailinhalt**: Akteur `system`, Operation `drafts.sent_detected`, Grund `message_id`, `fallback`, (seit A05) `thread` oder (seit A07) `subject`, Parameter `draft_id`, `sent_message_id` (lokale ID), `approval_id` (falls vorhanden), `from`/`to` (Zustand vorher und nachher). Ersetzte Entwürfe (seit A06, Abschnitt 3b): Akteur `system`, Operation `drafts.replaced_detected`, Grund `replaced`, Parameter `draft_id`, `reply_message_id` (lokale ID der Antwort), `approval_id` (falls vorhanden), `from`/`to`. Auffangregel (seit A07, Abschnitt 3d): Akteur `system`, Operation `drafts.copy_gone_detected`, Grund `copy_gone`, Parameter `draft_id`, `missing_since`, `approval_id` (falls vorhanden), `from`/`to`. Ablauf: `drafts.expire` mit Grund `approval_expired`; verschwundene oder bearbeitete Kopie: `drafts.remote_check` mit Grund `missing` bzw. `taken_over`. Geplantes Senden (seit A10, Abschnitt 3e): `drafts.scheduled_detected` (Grund `scheduled`, Parameter `draft_id`, `message_id`, `scheduled_for`), `drafts.sent_detected` mit Grund `scheduled`, `drafts.remote_check` mit Grund `schedule_cancelled`. Betreff, Adressen und Text stehen nie im Audit oder Log.
 
 ## 7. Ablage geänderter Entwürfe (Entscheid 43)
 

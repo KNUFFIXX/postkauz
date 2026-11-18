@@ -74,6 +74,16 @@ type CheckReport struct {
 	// jetzt abandoned (A07 Teil 4, copygone.go).
 	CopyGone         int     `json:"copy_gone,omitempty"`
 	CopyGoneDraftIDs []int64 `json:"copy_gone_draft_ids,omitempty"`
+	// A10 Teil 2, geplantes Senden (scheduled.go): Scheduled und
+	// ScheduledDraftIDs neu als geplant erkannte Entwürfe; SentByScheduled
+	// gesendete geplante Nachrichten (Grund scheduled, auch in
+	// SentDraftIDs); ScheduleCancelled abgebrochene Pläne (taken_over);
+	// ScheduledGone verschwundene geplante Nachrichten (missing).
+	Scheduled         int     `json:"scheduled,omitempty"`
+	ScheduledDraftIDs []int64 `json:"scheduled_draft_ids,omitempty"`
+	SentByScheduled   int     `json:"sent_by_scheduled,omitempty"`
+	ScheduleCancelled int     `json:"schedule_cancelled,omitempty"`
+	ScheduledGone     int     `json:"scheduled_gone,omitempty"`
 	// AdoptedClosed: Kopien abgebrochener Ablageversuche abgeschlossener
 	// Entwürfe, die die Prüfung übernommen hat (A7; push_note
 	// pushed_after_close). LostAttempts: solche Versuche ohne Kopie im
@@ -89,7 +99,7 @@ type CheckReport struct {
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
 	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.SentBySubject+r.ReplacedInThread+r.CopyGone+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
-		r.LostAttempts == 0
+		r.LostAttempts+r.Scheduled+r.SentByScheduled+r.ScheduleCancelled+r.ScheduledGone == 0
 }
 
 // Add zählt o dazu (Dauerbetrieb: eine Prüfung je Runde).
@@ -108,6 +118,11 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.ReplacedDraftIDs = append(r.ReplacedDraftIDs, o.ReplacedDraftIDs...)
 	r.CopyGone += o.CopyGone
 	r.CopyGoneDraftIDs = append(r.CopyGoneDraftIDs, o.CopyGoneDraftIDs...)
+	r.Scheduled += o.Scheduled
+	r.ScheduledDraftIDs = append(r.ScheduledDraftIDs, o.ScheduledDraftIDs...)
+	r.SentByScheduled += o.SentByScheduled
+	r.ScheduleCancelled += o.ScheduleCancelled
+	r.ScheduledGone += o.ScheduledGone
 	r.Examined += o.Examined
 }
 
@@ -260,10 +275,42 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		return err
 	}
 	claimed := map[int64]bool{}
+	// A10 Teil 2: Vermerke zum geplanten Senden. Ihre Nachrichten (geplant
+	// oder abgebrochen) sind für alle Wege und „ersetzt“ gesperrt; die
+	// Übergänge laufen vor den Wegen, nur bei einem vollständigen Lauf.
+	vm, err := s.Store.ScheduledOfAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	ext := map[int64]time.Time{}
+	var lockedIDs []int64
+	for id, sc := range vm {
+		ext[id] = sc.At.Add(FallbackAfter)
+		if sc.State != store.ScheduledGone {
+			claimed[sc.MessageID] = true
+			lockedIDs = append(lockedIDs, sc.MessageID)
+		}
+	}
+	if !keepMark && len(vm) > 0 {
+		boxes, err := s.Store.SentBoxes(ctx, accountID)
+		if err != nil {
+			return err
+		}
+		done, err := s.scheduledTransitions(ctx, accountID, len(boxes) > 0, open, vm, rep)
+		if err != nil {
+			return err
+		}
+		open = drop(open, done)
+		if len(done) > 0 {
+			if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
+				return err
+			}
+		}
+	}
 	var rest []store.Draft
 	for _, d := range open {
 		if d.MessageIDHeader != "" {
-			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader, copies, s.now().Add(ScheduledLead), nil)
+			mid, ok, err := s.Store.SentByMessageID(ctx, accountID, d.MessageIDHeader, copies, s.now().Add(ScheduledLead), lockedIDs)
 			if err != nil {
 				return err
 			}
@@ -281,7 +328,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		rest = append(rest, d)
 	}
 	before := len(rep.SentDraftIDs)
-	if err := s.detectFallback(ctx, accountID, rest, claimed, copies, keepMark, rep); err != nil {
+	if err := s.detectFallback(ctx, accountID, rest, claimed, copies, keepMark, ext, rep); err != nil {
 		return err
 	}
 	closed := map[int64]bool{}
@@ -295,7 +342,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		}
 	}
 	before = len(rep.SentDraftIDs)
-	if err := s.detectThread(ctx, accountID, left, claimed, copies, rep); err != nil {
+	if err := s.detectThread(ctx, accountID, left, claimed, copies, ext, rep); err != nil {
 		return err
 	}
 	// A07 Teil 3: neue Mails über den Betreff (läuft auch bei KeepMark,
@@ -305,7 +352,7 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 	}
 	left = drop(left, closed)
 	before = len(rep.SentDraftIDs)
-	if err := s.detectSubject(ctx, accountID, left, claimed, copies, rep); err != nil {
+	if err := s.detectSubject(ctx, accountID, left, claimed, copies, ext, rep); err != nil {
 		return err
 	}
 	// A06 Teil 4: Was danach noch offen ist, kann eine eigene Antwort
@@ -318,6 +365,25 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 		closed[id] = true
 	}
 	rest = drop(left, closed)
+	// A10 Teil 2: Geplant erkennen (nach den Wegen: eine gesendete
+	// Nachricht geht vor), danach greifen „ersetzt“ und „Kopie weg“ für
+	// geplante Entwürfe nicht.
+	locked := map[int64]bool{}
+	for id := range claimed {
+		locked[id] = true
+	}
+	if err := s.detectScheduled(ctx, accountID, rest, vm, locked, copies, rep); err != nil {
+		return err
+	}
+	if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
+		return err
+	}
+	rest = rest[:0:0]
+	for _, d := range drop(left, closed) {
+		if sc, ok := vm[d.ID]; !ScheduledActive(sc, ok) {
+			rest = append(rest, d)
+		}
+	}
 	if err := s.detectReplaced(ctx, accountID, rest, copies, missingBefore, rep); err != nil {
 		return err
 	}
@@ -364,7 +430,7 @@ func drop(list []store.Draft, closed map[int64]bool) []store.Draft {
 // und der nächste Lauf prüft dieselben Nachrichten erneut (zugeordnete
 // zählen dann nicht mehr).
 func (s *Service) detectFallback(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, copies []string,
-	keepMark bool, rep *CheckReport) error {
+	keepMark bool, ext map[int64]time.Time, rep *CheckReport) error {
 	isCopy := map[string]bool{}
 	for _, h := range copies {
 		isCopy[h] = true
@@ -427,7 +493,7 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 		changed = append(changed, d)
 		if RecipientKey(d.To, d.Cc) != "" {
 			at := changedAt(d)
-			windows = append(windows, [2]time.Time{at.Add(-FallbackBefore), at.Add(FallbackAfter)})
+			windows = append(windows, [2]time.Time{at.Add(-FallbackBefore), windowEnd(d, ext)})
 		}
 	}
 	var cands []store.SentMessage
@@ -468,7 +534,7 @@ func (s *Service) detectFallback(ctx context.Context, accountID int64, open []st
 	}
 	rep.Examined += len(cands)
 	if len(cands) > 0 {
-		if err := s.matchFallback(ctx, accountID, open, cands, claimed, rep); err != nil {
+		if err := s.matchFallback(ctx, accountID, open, cands, claimed, ext, rep); err != nil {
 			return err
 		}
 	}
@@ -551,7 +617,7 @@ func fallbackKey(recipients, subject string) string {
 // matchFallback vergleicht die Kandidaten cands (nach Datum sortiert) mit
 // den offenen Entwürfen und schließt die Treffer (siehe detectSent).
 func (s *Service) matchFallback(ctx context.Context, accountID int64, open []store.Draft, cands []store.SentMessage,
-	claimed map[int64]bool, rep *CheckReport) error {
+	claimed map[int64]bool, ext map[int64]time.Time, rep *CheckReport) error {
 	sort.SliceStable(cands, func(i, j int) bool {
 		if !cands[i].Date.Equal(cands[j].Date) {
 			return cands[i].Date.Before(cands[j].Date)
@@ -570,7 +636,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 	index := map[string][]*entry{}
 	for _, d := range open {
 		at := changedAt(d)
-		if lastDate.Before(at.Add(-FallbackBefore)) || first.After(at.Add(FallbackAfter)) {
+		if lastDate.Before(at.Add(-FallbackBefore)) || first.After(windowEnd(d, ext)) {
 			continue // Fenster abgelaufen bzw. noch nicht erreicht
 		}
 		rk := RecipientKey(d.To, d.Cc)
@@ -649,7 +715,7 @@ func (s *Service) matchFallback(ctx context.Context, accountID int64, open []sto
 		}
 		var w *SentWords // Wortmengen des gesendeten Texts, nur bei Bedarf gelesen
 		for _, e := range list {
-			if !InFallbackWindow(changedAt(e.d), c.Date) {
+			if !inWindow(e.d, c.Date, ext) {
 				continue
 			}
 			if err := prepare(e); err != nil {
@@ -784,6 +850,12 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 	if err != nil {
 		return err
 	}
+	// A10 Teil 2: Ein geplanter Entwurf wird missing wie jeder (seine Kopie
+	// ist weg), zählt aber nicht als „Kopie weg ohne gesendete Nachricht“.
+	vm, err := s.Store.ScheduledOfAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
 	now := s.now()
 	for _, o := range open {
 		if o.RemoteState == RemoteMissing {
@@ -819,7 +891,9 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 		}
 		switch state {
 		case RemoteMissing:
-			rep.Missing++
+			if sc, ok := vm[o.ID]; !ScheduledActive(sc, ok) {
+				rep.Missing++
+			}
 		case RemoteTakenOver:
 			rep.TakenOver++
 		}

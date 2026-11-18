@@ -326,6 +326,12 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 			_, err := Next(from, EvUpdate)
 			return err
 		}
+		// A10 Teil 2: geplant hat Vorrang vor draft_taken_over (der Mensch
+		// hat den Versand geplant; ein neuer Push legte eine zweite Fassung
+		// neben die geplante).
+		if err := checkScheduled(x, d.ID); err != nil {
+			return err
+		}
 		if d.RemoteState == RemoteTakenOver || d.RemoteState == RemoteMissing {
 			return takenOver(d.ID, d.RemoteState)
 		}
@@ -457,6 +463,9 @@ func (s *Service) RequestReady(ctx context.Context, id int64, requestedBy, hook 
 		from := Status(d.Status)
 		t, err := Next(from, EvRequestReady)
 		if err != nil {
+			return err
+		}
+		if err := checkScheduled(x, d.ID); err != nil { // A10 Teil 2
 			return err
 		}
 		if chk.Fingerprint != "" && Fingerprint(d) != chk.Fingerprint {
@@ -741,7 +750,7 @@ func (s *Service) SentDetected(ctx context.Context, id, sentMessageID int64, rea
 // sentDetected ist SentDetected mit zusätzlichen Audit-Parametern extra
 // (A09 Teil 1: recipients_added beim Weg über den Verlauf).
 func (s *Service) sentDetected(ctx context.Context, id, sentMessageID int64, reason, expect string, extra map[string]any) (Result, error) {
-	if reason != DetectMessageID && reason != DetectFallback && reason != DetectThread && reason != DetectSubject {
+	if reason != DetectMessageID && reason != DetectFallback && reason != DetectThread && reason != DetectSubject && reason != DetectScheduled {
 		return Result{}, fmt.Errorf("drafts: unknown detection reason %q", reason)
 	}
 	return s.close(ctx, id, EvSentDetected, sentMessageID, reason, expect, extra)

@@ -314,7 +314,7 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		return
 	}
 	var parts []string
-	if n := c.SentByMessageID + c.SentByFallback + c.SentByThread + c.SentBySubject; n > 0 {
+	if n := c.SentByMessageID + c.SentByFallback + c.SentByThread + c.SentBySubject + c.SentByScheduled; n > 0 {
 		how := []string{}
 		if c.SentByMessageID > 0 {
 			how = append(how, fmt.Sprintf("%d by Message-ID", c.SentByMessageID))
@@ -328,12 +328,29 @@ func renderDraftCheck(w io.Writer, c *drafts.CheckReport) {
 		if c.SentBySubject > 0 {
 			how = append(how, fmt.Sprintf("%d by subject (new email, same recipients and subject, similar text)", c.SentBySubject))
 		}
+		if c.SentByScheduled > 0 {
+			how = append(how, fmt.Sprintf("%d by the scheduled message (scheduled in the mail client, now sent)", c.SentByScheduled))
+		}
 		ids := make([]string, 0, len(c.SentDraftIDs))
 		for _, id := range c.SentDraftIDs {
 			ids = append(ids, strconv.FormatInt(id, 10))
 		}
 		parts = append(parts, fmt.Sprintf("%d sent in the mail client, now sent_by_human (%s; draft %s)", n, strings.Join(how, ", "),
 			strings.Join(ids, ", ")))
+	}
+	if c.Scheduled > 0 {
+		ids := make([]string, 0, len(c.ScheduledDraftIDs))
+		for _, id := range c.ScheduledDraftIDs {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		parts = append(parts, fmt.Sprintf("%d scheduled in the mail client, not sent yet (draft %s)", c.Scheduled, strings.Join(ids, ", ")))
+	}
+	if c.ScheduleCancelled > 0 {
+		parts = append(parts, fmt.Sprintf("%d schedule(s) cancelled in the mail client (back in the Drafts folder, taken over)", c.ScheduleCancelled))
+	}
+	if c.ScheduledGone > 0 {
+		parts = append(parts, fmt.Sprintf("%d scheduled message(s) gone without a copy in Sent (closed as copy_gone after "+
+			"[draft] copy_gone_after unless a sent message is detected)", c.ScheduledGone))
 	}
 	if c.ReplacedInThread > 0 {
 		ids := make([]string, 0, len(c.ReplacedDraftIDs))

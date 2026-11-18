@@ -51,7 +51,7 @@ const DetectSubject = "subject"
 // open (nach Message-ID, Rückfall und Verlauf). claimed: schon zugeordnete
 // gesendete Nachrichten; copies: Inhalts-Hashes der Entwurfskopien.
 func (s *Service) detectSubject(ctx context.Context, accountID int64, open []store.Draft, claimed map[int64]bool, copies []string,
-	rep *CheckReport) error {
+	ext map[int64]time.Time, rep *CheckReport) error {
 	type cand struct {
 		d       store.Draft
 		subject string
@@ -76,7 +76,7 @@ func (s *Service) detectSubject(ctx context.Context, accountID int64, open []sto
 		}
 		drafts = append(drafts, cand{d, subj, rk})
 		at := changedAt(d)
-		windows = append(windows, [2]time.Time{at.Add(-FallbackBefore), at.Add(FallbackAfter)})
+		windows = append(windows, [2]time.Time{at.Add(-FallbackBefore), windowEnd(d, ext)})
 	}
 	if len(drafts) == 0 {
 		return nil
@@ -154,7 +154,7 @@ func (s *Service) detectSubject(ctx context.Context, accountID int64, open []sto
 		d := dc.d
 		var fd *FallbackDraft
 		for _, c := range cands {
-			if NormalizeSubject(c.Subject) != dc.subject || RecipientKey(c.To, c.Cc) != dc.rk || !InFallbackWindow(changedAt(d), c.Date) {
+			if NormalizeSubject(c.Subject) != dc.subject || RecipientKey(c.To, c.Cc) != dc.rk || !inWindow(d, c.Date, ext) {
 				continue // (a'), (d), (e)
 			}
 			if !c.InSent {

@@ -383,6 +383,11 @@ func (x *DraftTx) UpdateDraft(d Draft) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: %d", ErrDraftNotFound, d.ID)
 	}
+	if d.Status == "sent_by_human" || d.Status == "abandoned" {
+		// A10 Teil 2: Der Vermerk zum geplanten Senden endet in derselben
+		// Transaktion, die den Entwurf schließt (alle Wege).
+		return x.deleteScheduled(d.ID)
+	}
 	return nil
 }
 

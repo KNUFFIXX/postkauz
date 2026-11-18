@@ -563,6 +563,10 @@ func renderDraftShow(w io.Writer, out any) error {
 	if o.RemoteNote != "" {
 		fmt.Fprintf(w, " (%s)", o.RemoteNote)
 	}
+	if o.ScheduledMessageID > 0 {
+		// A10 Teil 2: geplant, nicht gesendet.
+		fmt.Fprintf(w, "\nscheduled:   %s (message %d; not sent yet)", o.ScheduledFor, o.ScheduledMessageID)
+	}
 	// Kopien im Entwürfe-Ordner (S2.5): die aktuelle und frühere (die
 	// bleiben, kein Löschen im MVP).
 	if o.RemoteUID > 0 || len(o.RemotePreviousUIDs) > 0 {
@@ -650,6 +654,12 @@ func renderDraftList(w io.Writer, out any) error {
 	}
 	if err := tw.Flush(); err != nil {
 		return err
+	}
+	// A10 Teil 2: geplante Entwürfe, je Entwurf eine Zeile.
+	for _, d := range o.Drafts {
+		if d.ScheduledFor != "" {
+			fmt.Fprintf(w, "draft %d: scheduled in the mail client for %s; not sent yet\n", d.DraftID, d.ScheduledFor)
+		}
 	}
 	// Entscheid 43: ältere Kopien im Entwürfe-Ordner, je Entwurf eine Zeile.
 	for _, d := range o.Drafts {
