@@ -418,7 +418,10 @@ func AttachmentsText(accounts AccountRepo, msgs MessageRepo, blobs BlobReader, e
 			if a.ExtractStatus != extract.StatusOK {
 				out.Text = ""
 			}
-			if a.ExtractStatus == "pending" && ex != nil && a.SHA256 != "" {
+			// A11 Teil 3 (b): bei failed nur dann jetzt, wenn der gespeicherte
+			// Grund vorübergehend ist (das Hilfsprogramm lief nicht).
+			retry := a.ExtractStatus == "pending" || (a.ExtractStatus == extract.StatusFailed && extract.IsTransientReason(a.ExtractError))
+			if retry && ex != nil && a.SHA256 != "" {
 				rc, err := blobs.Get(a.SHA256)
 				if err != nil {
 					return nil, err

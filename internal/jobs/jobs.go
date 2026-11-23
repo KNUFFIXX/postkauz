@@ -36,9 +36,13 @@ type Store interface {
 	CompleteJob(ctx context.Context, j store.Job, owner string) (bool, error)
 	ReleaseJob(ctx context.Context, id int64, owner string, runAt time.Time) error
 	FailJob(ctx context.Context, id int64, owner, errText string, maxAttempts int, retryAt time.Time) error
-	PendingExtractions(ctx context.Context, accountID int64, limit int) ([]store.ExtractItem, error)
+	PendingExtractionsAt(ctx context.Context, accountID int64, limit int, now time.Time) ([]store.ExtractItem, error)
 	SetExtraction(ctx context.Context, id int64, status, text, errText string, hidden bool) error
 	RequeueSkipped(ctx context.Context, accountID int64, reason string) (int, error)
+	// A11 Teil 3: vorübergehend gescheiterte Auszüge.
+	ExtractRetryOf(ctx context.Context, id int64) (store.ExtractRetry, bool, error)
+	DeferExtraction(ctx context.Context, id int64, r store.ExtractRetry) error
+	RequeueTransientFailed(ctx context.Context, accountID int64) (int, bool, error)
 	IndexBatch(ctx context.Context, accountID int64, limit int, build func(search.Source) search.Doc) (int, error)
 	IndexPending(ctx context.Context, accountID int64) (int, error)
 	ExtractPending(ctx context.Context, accountID int64) (int, error)
@@ -67,6 +71,12 @@ const (
 	MaxAttempts = 5
 	// KeepDone: erledigte und gescheiterte Jobs werden danach gelöscht.
 	KeepDone = 7 * 24 * time.Hour
+	// ExtractRetryAfter, ExtractMaxAttempts (A11 Teil 3): Nach einem
+	// vorübergehenden Fehler des Auszugs (das Hilfsprogramm lief nicht)
+	// frühestens so viel später erneut, höchstens so viele Versuche; danach
+	// failed mit Grund und Zahl der Versuche.
+	ExtractRetryAfter  = 10 * time.Minute
+	ExtractMaxAttempts = 5
 )
 
 // Event ist eine Fortschrittsmeldung (ohne Inhalte).
@@ -100,6 +110,16 @@ type Runner struct {
 	Batch    int           // 0 = DefaultBatch
 	Owner    string        // "" = aus Prozess-ID und Startzeit
 	Progress func(Event)
+	// Now ist die Uhr der Wartezeit nach einem vorübergehenden Fehler (nil =
+	// time.Now; Tests setzen eine feste).
+	Now func() time.Time
+}
+
+func (r *Runner) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 func (r *Runner) log() *slog.Logger {
@@ -153,6 +173,13 @@ func (r *Runner) RunAccount(ctx context.Context, accountID int64) (Report, error
 			} else if n > 0 {
 				r.log().Info("pdftotext found; PDF attachments skipped earlier are extracted now", "count", n)
 			}
+		}
+		// A11 Teil 3 (b): einmal je Konto die vorübergehend gescheiterten
+		// Auszüge des Bestands wieder einreihen.
+		if n, ran, err := r.Store.RequeueTransientFailed(ctx, accountID); err != nil {
+			return rep, err
+		} else if ran && n > 0 {
+			r.log().Info("attachments whose text extraction failed for a transient reason are extracted again", "count", n)
 		}
 		if rep.Extracted, err = r.runExtract(ctx, accountID); err != nil {
 			return rep, fmt.Errorf("extract: %w", err)
@@ -214,7 +241,9 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 	done := 0
 	// Mindestens ein Anhang je Lauf, auch bei winzigem Budget (Fortschritt).
 	for done == 0 || inTime() {
-		items, err := r.Store.PendingExtractions(ctx, accountID, 20)
+		// A11 Teil 3: Anhänge in der Wartezeit schließt schon die Abfrage
+		// aus (sonst holte die Schleife sie immer wieder).
+		items, err := r.Store.PendingExtractionsAt(ctx, accountID, 20, r.now())
 		if err != nil {
 			return done, r.fail(ctx, j, err)
 		}
@@ -229,6 +258,17 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 			if ctx.Err() != nil {
 				r.release(ctx, j) // abgebrochen: nicht als Fehler des Anhangs speichern
 				return done, ctx.Err()
+			}
+			deferred, err := r.settleFailure(ctx, it, &res)
+			if err != nil {
+				return done, r.fail(ctx, j, err)
+			}
+			if deferred {
+				// bleibt pending; nicht abgeschlossen
+				if !inTime() {
+					break
+				}
+				continue
 			}
 			if err := r.Store.SetExtraction(ctx, it.ID, res.Status, res.Text, res.Error, res.Hidden); err != nil {
 				return done, r.fail(ctx, j, err)
@@ -253,6 +293,38 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 	r.release(ctx, j)
 	r.log().Info("extraction budget used up; the rest follows in the next run", "extracted", done)
 	return done, nil
+}
+
+// settleFailure behandelt einen gescheiterten Auszug (A11 Teil 3):
+// vorübergehend und noch nicht ExtractMaxAttempts Versuche → Vermerk in
+// meta, der Anhang bleibt pending (deferred); sonst bleibt res failed, nach
+// vorübergehenden Versuchen mit ihrer Zahl im Grund. Jeder gescheiterte
+// Auszug steht als Warnung im Log (IDs, Art, Grund, vorübergehend, Versuch;
+// nie Dateiname oder Inhalt).
+func (r *Runner) settleFailure(ctx context.Context, it store.ExtractItem, res *extract.Result) (deferred bool, err error) {
+	if res.Status != extract.StatusFailed {
+		return false, nil
+	}
+	attempt := 1
+	prev, ok, err := r.Store.ExtractRetryOf(ctx, it.ID)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		attempt = prev.N + 1
+	}
+	r.log().Warn("text extraction of an attachment failed", "attachment_id", it.ID, "message_id", it.MessageID,
+		"type", string(extract.KindOf(it.ContentType)), "error_kind", res.ErrKind, "reason", res.Error, "transient", res.Transient,
+		"attempt", attempt)
+	if res.Transient && attempt < ExtractMaxAttempts {
+		now := r.now()
+		return true, r.Store.DeferExtraction(ctx, it.ID, store.ExtractRetry{N: attempt, Reason: res.Error, Kind: res.ErrKind, At: now,
+			Next: now.Add(ExtractRetryAfter)})
+	}
+	if attempt > 1 {
+		res.Error = fmt.Sprintf("%s (%d attempts)", res.Error, attempt)
+	}
+	return false, nil
 }
 
 func (r *Runner) extractOne(ctx context.Context, it store.ExtractItem) extract.Result {

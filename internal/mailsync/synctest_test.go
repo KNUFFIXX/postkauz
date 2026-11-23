@@ -106,6 +106,16 @@ func (nopStore) MarkSkipped(context.Context, int64, uint32, uint32, int64, strin
 func (nopStore) PruneSkipped(context.Context, int64, uint32, []uint32) (int, error)   { return 0, nil }
 func (nopStore) ClearSkipped(context.Context, int64) error                            { return nil }
 func (nopStore) RecordIncompleteAnswers(context.Context, int64, int, time.Time) error { return nil }
+func (nopStore) ExtractRetryOf(context.Context, int64) (store.ExtractRetry, bool, error) {
+	return store.ExtractRetry{}, false, nil
+}
+func (nopStore) DeferExtraction(context.Context, int64, store.ExtractRetry) error { return nil }
+func (nopStore) RequeueTransientFailed(context.Context, int64) (int, bool, error) {
+	return 0, false, nil
+}
+func (nopStore) PendingExtractionsAt(context.Context, int64, int, time.Time) ([]store.ExtractItem, error) {
+	return nil, nil
+}
 func (nopStore) PendingExtractions(context.Context, int64, int) ([]store.ExtractItem, error) {
 	return nil, nil
 }

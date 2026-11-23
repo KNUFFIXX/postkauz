@@ -131,6 +131,67 @@ type Result struct {
 	// Hidden: Der Anhang (HTML, Mail, DOCX mit <w:vanish/>) enthielt
 	// versteckten Text, der entfernt wurde.
 	Hidden bool
+	// ErrKind: Art des Fehlers bei failed (A11 Teil 3): start, signal,
+	// ntstatus (vorübergehend: das Hilfsprogramm lief nicht), exit,
+	// timeout, internal (endgültig). Transient: vorübergehend; der
+	// extract-Job versucht es später erneut.
+	ErrKind   string
+	Transient bool
+}
+
+// Arten eines Fehlers (Result.ErrKind, A11 Teil 3).
+const (
+	ErrKindStart    = "start"    // der Start scheiterte (fork/exec, exec:)
+	ErrKindSignal   = "signal"   // durch ein Signal beendet (Unix)
+	ErrKindNTStatus = "ntstatus" // Windows: Exit-Code ab 0xC0000000 (NTSTATUS, etwa 0xC0000142)
+	ErrKindExit     = "exit"     // gewöhnlicher Exit-Code mit Meldung
+	ErrKindTimeout  = "timeout"
+	ErrKindInternal = "internal" // Fehler im Parser oder in der Bereinigung
+)
+
+// RunError ist ein Fehler des Kindprozesses mit seiner Art (A11 Teil 3:
+// vorher ging der Fehlertyp in run verloren).
+type RunError struct {
+	Kind      string
+	Transient bool
+	Msg       string
+	Err       error
+}
+
+func (e *RunError) Error() string { return "extractor failed: " + e.Msg }
+func (e *RunError) Unwrap() error { return e.Err }
+
+// classifyRun ordnet den Fehler von cmd.Run ein: vorübergehend, wenn das
+// Hilfsprogramm nicht lief (Start gescheitert, Signal, NTSTATUS).
+func classifyRun(err error) (kind string, transient bool) {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return ErrKindStart, true // *fs.PathError „fork/exec …“ oder „exec: …“
+	}
+	code := ee.ExitCode()
+	switch {
+	case code == -1:
+		return ErrKindSignal, true // Unix: durch ein Signal beendet (Signaled)
+	case uint32(code) >= 0xC0000000:
+		return ErrKindNTStatus, true // Windows: „exit status 0xc0000142“
+	}
+	return ErrKindExit, false
+}
+
+// IsTransientReason meldet, ob ein gespeicherter extract_error einen
+// vorübergehenden Grund nennt (A11 Teil 3 (b)): beginnt mit „extractor
+// failed: exit status 0xc“ oder enthält „fork/exec“, „exec:“ oder
+// „signal:“ (dieselben Muster wie store.RequeueTransientFailed).
+func IsTransientReason(s string) bool {
+	if strings.HasPrefix(strings.ToLower(s), "extractor failed: exit status 0xc") {
+		return true
+	}
+	for _, c := range []string{"fork/exec", "exec:", "signal:"} {
+		if strings.Contains(s, c) {
+			return true
+		}
+	}
+	return false
 }
 
 // ReasonNoPDFTool ist der Grund übersprungener PDFs ohne pdftotext; ist
@@ -210,7 +271,15 @@ func (x *Extractor) Extract(ctx context.Context, kind Kind, r io.Reader, size in
 		return Result{Status: StatusSkipped, Error: "no text extractor for this type"}
 	}
 	if err != nil {
-		return Result{Status: StatusFailed, Error: err.Error()}
+		out := Result{Status: StatusFailed, Error: err.Error(), ErrKind: ErrKindInternal}
+		var re *RunError
+		switch {
+		case errors.As(err, &re):
+			out.ErrKind, out.Transient = re.Kind, re.Transient
+		case errors.Is(err, ErrTimeout):
+			out.ErrKind = ErrKindTimeout
+		}
+		return out
 	}
 	res.Status = StatusOK
 	res.Text = sanitize.Text(strings.ToValidUTF8(res.Text, "�"))
@@ -275,11 +344,15 @@ func (x *Extractor) run(ctx context.Context, name string, args, env []string, in
 		return Result{Text: out.buf.String(), Truncated: true}, nil
 	}
 	if err != nil {
+		// A11 Teil 3: Art des Fehlers erhalten (vorher %s ohne Typ).
+		kind, transient := classifyRun(err)
 		msg := firstLine(errOut.buf.String())
-		if msg == "" {
-			msg = err.Error()
+		if msg == "" || transient {
+			// Lief das Programm nicht, ist err der Grund (etwa „exit status
+			// 0xc0000142“, „signal: killed“, „fork/exec …“), nicht stderr.
+			msg = firstLine(err.Error())
 		}
-		return Result{}, fmt.Errorf("extractor failed: %s", msg)
+		return Result{}, &RunError{Kind: kind, Transient: transient, Msg: msg, Err: err}
 	}
 	return Result{Text: out.buf.String()}, nil
 }

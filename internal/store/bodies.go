@@ -212,31 +212,20 @@ func hasRealAttachments(atts []NewAttachment) bool {
 
 // ExtractItem ist ein Anhang, dessen Text noch aussteht.
 type ExtractItem struct {
-	ID          int64
+	ID int64
+	// MessageID: lokale ID der Nachricht (Log bei gescheitertem Auszug,
+	// A11 Teil 3 (c)).
+	MessageID   int64
 	SHA256      string
 	ContentType string
 	Size        int64
 }
 
 // PendingExtractions liefert bis zu limit Anhänge des Kontos mit Status
-// pending (älteste zuerst).
+// pending (älteste zuerst), ohne die in der Wartezeit nach einem
+// vorübergehenden Fehler (PendingExtractionsAt mit der Uhrzeit jetzt).
 func (s *SQLite) PendingExtractions(ctx context.Context, accountID int64, limit int) ([]ExtractItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id, COALESCE(a.sha256, ''), a.content_type, a.size FROM attachments a
-		JOIN messages m ON m.id = a.message_id
-		WHERE m.account_id = ? AND a.extract_status = 'pending' ORDER BY a.id LIMIT ?`, accountID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ExtractItem
-	for rows.Next() {
-		var it ExtractItem
-		if err := rows.Scan(&it.ID, &it.SHA256, &it.ContentType, &it.Size); err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return s.PendingExtractionsAt(ctx, accountID, limit, time.Now())
 }
 
 // RequeueSkipped setzt übersprungene Anhänge des Kontos mit genau diesem
@@ -261,6 +250,12 @@ func (s *SQLite) SetExtraction(ctx context.Context, id int64, status, text, errT
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE attachments SET extract_status = ?, extracted_text = ?, extract_error = ?,
 		hidden_text = ? WHERE id = ?`, status, t, nullStr(errText), b2i(hidden), id)
+	if err != nil || status == "pending" {
+		return err
+	}
+	// A11 Teil 3: Mit dem Abschluss endet der Vermerk eines vorübergehenden
+	// Fehlers.
+	_, err = s.db.ExecContext(ctx, `DELETE FROM meta WHERE key = ?`, extractRetryKey(id))
 	return err
 }
 
