@@ -4,7 +4,20 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
-### 0.3.0-rc8 (Build, noch kein Tag) – Auftrag A10 „Geplant ist nicht gesendet“
+### 0.3.0-rc9 (Build, kein Tag) – Auftrag A11 „Alltag 5: Eigene Entwurfskopien aufräumen, eigenen Entwurf verwerfen, Textauszug wiederholen“
+
+Auftrag A11 (23.11.2026, Zweig `claude/keen-heisenberg-wou13l`, Basis `main` `54b9f93`). Kein Schema-Upgrade (Schema 22).
+
+#### Fixed (Teil 0 (b), Restfund der Gegenprüfung von A10)
+
+- **Geplanter Entwurf blieb ohne Gesendet-Ordner für immer geplant**, wenn die gesendete Nachricht zusätzlich den Posteingang bekam (Mail an sich selbst, selbst in Cc): Übergang (i) schloss nur, solange die Nachricht weiter nur in „Alle Nachrichten“ lag. Jetzt gilt sie nach Termin + 2 Minuten als gesendet, wenn sie weder weg ist noch in einem Entwürfe-Ordner liegt (Test `TestA11ScheduledSentNoSentFolderWithInbox`; [versanderkennung.md](docs/versanderkennung.md) 3e).
+
+### Vermerk 23.11.2026 (A11 Teil 0 (a)): Tags, D16, Dauerbetrieb
+
+- `git ls-remote --tags` (23.11.2026): `v0.3.0-rc8` ist gesetzt (annotiert, an `7813087`); `v0.3.0-rc6` und `v0.3.0-rc7` sind nicht gesetzt und bleiben nach Entscheid des Betreibers vom 20.11.2026 ohne Tag und ohne Release („Build, kein Tag“ statt „noch kein Tag“). GitHub-Release `v0.3.0-rc8` (Vorabversion, zwölf Dateien, bytegleich zum abgenommenen Build) seit dem 20.11.2026. Der Build rc8 stammt aus `7813087`, nicht aus dem letzten Commit `54b9f93`; dazwischen liegt nur Doku.
+- **Abnahme D16 bestanden** (20.11.2026, Büro-PC, Build 0.3.0-rc8): Teil A 31 OK, 0 FAIL, 0 WARN, 0 SKIP; Teil B 29 OK, 0 FAIL, 0 WARN, 0 SKIP (B.3: Gmail legte beim erneuten Planen eine neue Nachricht an; nach dem Versand `sent_by_human` mit Grund `scheduled`). Das Protokoll liegt nicht im Repository. A10 ist seit dem 20.11.2026 im Dauerbetrieb; `main` per Fast-Forward auf `54b9f93` (PR #17, 20.11.2026 12:17 MEZ).
+
+### 0.3.0-rc8 (Tag `v0.3.0-rc8`, Vorabversion) – Auftrag A10 „Geplant ist nicht gesendet“
 
 Auftrag A10 (18.11.2026, Zweig `claude/dreamy-carson-504gf7`, Basis `main` `d65d62e` nach dem Fast-Forward von PR #16 = A09). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; neue Vermerke nur in der Tabelle `meta` (`sent_check_box/<Ordner-ID>`, `scheduled/<Entwurf-ID>`). rc7 läuft mit den Daten weiter (es kennt die Schlüssel nicht und lässt sie liegen). Haltepunkt: Gegenprüfung, danach Abnahme D16 nach Entscheid des Betreibers. Build **0.3.0-rc8** an `7813087` (zwei frische Klone ohne Tags bytegleich; Windows `bf2a9452b04f3838ac9ba1a903bf1f1e427456fbf098ce8ba88ddbd591388fba`, Linux `1569bbb2…9834`, darwin `4ad4969c…3227`; Modulversion `v0.0.0-20261118115901-7813087dcd4f`, go1.27.3). Prüfläufe: `make check` vor jedem Commit grün (40 Pakete, guard, pii-check), `make cross` grün, `make race` grün (40 Pakete, etwa 30 min; `internal/drafts` nach der letzten Codeänderung erneut grün); `make integration` **nicht gelaufen**: Docker-Dienst gestartet, aber Docker Hub antwortete beim Laden der Testserver zweimal mit 429. Benchmarks: [versanderkennung.md](docs/versanderkennung.md) 3c.1 (`steady` 5,8–6,6 ms, vorher 4,5–5,1 ms).
 
@@ -31,7 +44,7 @@ Auftrag A10 (18.11.2026, Zweig `claude/dreamy-carson-504gf7`, Basis `main` `d65d
 - `git ls-remote --tags` (18.11.2026): `v0.3.0-rc6` und `v0.3.0-rc7` sind **nicht** gesetzt (zuletzt `v0.3.0-rc5`); 0.3.0-rc6 und 0.3.0-rc7 bleiben „Build, noch kein Tag“.
 - **Abnahme D15 bestanden** (18.11.2026, Büro-PC, Build 0.3.0-rc7): Teil A 30 OK, 0 FAIL, 0 WARN, 0 SKIP; Teil B 25 OK, 0 FAIL, 0 WARN, 0 SKIP. Das Protokoll liegt nicht im Repository. A09 ist seit dem 18.11.2026 im Dauerbetrieb; `main` per Fast-Forward auf `d65d62e` (PR #16, 18.11.2026 11:31 MEZ).
 
-### 0.3.0-rc7 (Build, noch kein Tag) – Auftrag A09 „Alltag 4: Ergänzte Empfänger, Kopfvergleich, Restfunde“
+### 0.3.0-rc7 (Build, kein Tag) – Auftrag A09 „Alltag 4: Ergänzte Empfänger, Kopfvergleich, Restfunde“
 
 Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main` `534e258` nach dem Fast-Forward von PR #15 = A08 und A08b). Kein Schema-Upgrade (Schema 22), keine Migration, keine neuen Konfigurationsschlüssel; rc6 läuft mit den Daten weiter. Build **0.3.0-rc7** an `b043c01` (enthält A08b; zwei frische Klone ohne Tags bytegleich; Windows `2647a49f793bd1507000e01c5d84a9990e0c4005a07947ba1129b1c2cc1f1630`, Linux `28e652d6…4b18`, darwin `98afe272…7621`; Modulversion `v0.0.0-20261117100213-b043c010b9ed`, go1.27.3). Haltepunkt: Gegenprüfung, danach Abnahme D15 nach Entscheid des Betreibers. Prüfläufe: `make check` (40 Pakete, guard, pii-check), `make cross`, `make race` (40 Pakete, 30 min) grün; `make integration` nicht gelaufen (Docker Hub 429 beim Laden der Testserver). `BenchmarkCheckAfterSync22k` (Cloud, 4 Kerne, je drei Läufe): `steady` 5,1–5,7 ms, `one_new` 8,0–9,0 ms, `steady_replies` 16,4–17,3 ms, `edited_reply_lookup` 0,13 ms (A05: 4,4–4,6 / 8,3–8,9 / 15,2–15,7 ms; Abweichung im Rahmen der Maschine).
 
@@ -51,7 +64,7 @@ Auftrag A09 (17.11.2026, Zweig `claude/eloquent-heisenberg-fj709l`, Basis `main`
 
 - **Security:** Die Anhang-Sperre prüft Datei- und Ordnernamen zusätzlich ohne die Kopiezusätze von Windows (` - Kopie`, ` - Copy`, ` (n)` mit beliebiger Zahl, vor der Endung oder am Ende): `config - Kopie.toml`, `config (1).toml`, `.env (1)`, `config - Copy (2).toml`, `_secrets - Kopie/` sind jetzt gesperrt, auch mit Sicherungsendung (`config - Kopie.toml.bak`). Die Regel sperrt nur mehr ([docs/roadmap.md](docs/roadmap.md), Entschiedene Frage 81). Folge: Ein gespeicherter Entwurf mit so benanntem Dateianhang wird beim nächsten Neubau oder Push gesperrt.
 
-### 0.3.0-rc6 (Build, noch kein Tag) – Auftrag A08 „Anhang-Sperre für Schlüssel-, Passwort- und Einstellungsdateien“
+### 0.3.0-rc6 (Build, kein Tag) – Auftrag A08 „Anhang-Sperre für Schlüssel-, Passwort- und Einstellungsdateien“
 
 Auftrag A08 (12.11.2026, Zweig `claude/sweet-ramanujan-r6m55p`, Basis `main` `60eef78` = Stand 0.3.0-rc5). Kein Schema-Upgrade (Schema 22), keine Migration; das alte Programm läuft mit den Daten weiter, **solange `[draft] attach_deny_dirs`/`attach_deny_files` nicht in der Konfiguration stehen** (rc5 startet sonst nicht). Build **0.3.0-rc6** an `a711d93`, reproduzierbar (zwei frische Klone ohne Tags, `SHA256SUMS` gleich), Windows `71077bea2556df444f3cbca1030d25fb8a482b8cb47e9f4ce1db881223f69a6c`. Haltepunkt: Gegenprüfung und Abnahme D14 ([docs/abnahme_D14.md](docs/abnahme_D14.md)) nach Entscheid des Betreibers.
 

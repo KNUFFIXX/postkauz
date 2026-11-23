@@ -161,6 +161,36 @@ func TestA10ScheduledSentNoSentFolder(t *testing.T) {
 	}
 }
 
+// A11 Teil 0 (b): Konto ohne Gesendet, die geplante Nachricht bekommt nach
+// dem Versand zusätzlich den Posteingang (Mail an sich selbst, selbst in
+// Cc). Vorher blieb der Entwurf für immer geplant; jetzt gilt er nach
+// Termin + 2 Minuten als gesendet. Vor Ablauf bleibt er geplant.
+func TestA11ScheduledSentNoSentFolderWithInbox(t *testing.T) {
+	e := newThEnv(t)
+	e.m.noSent()
+	at := e.now.Add(time.Hour)
+	d, mid := e.scheduledReply(at)
+	if rep := e.check(); rep.Scheduled != 1 || len(rep.SentDraftIDs) != 0 {
+		t.Fatalf("report = %+v", rep)
+	}
+	e.now = at.Add(time.Minute)
+	e.m.link("inbox", mid, false)
+	if rep := e.check(); len(rep.SentDraftIDs) != 0 {
+		t.Fatalf("within 2 minutes = %+v", rep)
+	}
+	if sc, ok := e.vermerk(d.ID); !ScheduledActive(sc, ok) {
+		t.Fatalf("vermerk within 2 minutes = %+v %v", sc, ok)
+	}
+	e.now = at.Add(3 * time.Minute)
+	if rep := e.check(); rep.SentByScheduled != 1 || len(rep.SentDraftIDs) != 1 || rep.SentDraftIDs[0] != d.ID {
+		t.Fatalf("after the time = %+v", rep)
+	}
+	got := e.draft(d.ID)
+	if got.Status != string(StatusSentByHuman) || got.SentMessageID != mid {
+		t.Fatalf("draft = %s, sent %d", got.Status, got.SentMessageID)
+	}
+}
+
 // (ii) Plan abgebrochen: Die Nachricht liegt wieder im Entwürfe-Ordner
 // (B2). Der Entwurf ist taken_over (Audit schedule_cancelled) und bleibt es
 // auch im zweiten Lauf (refreshRemote); plant der Mensch erneut, greift

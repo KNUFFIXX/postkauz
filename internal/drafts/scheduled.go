@@ -42,8 +42,9 @@ import (
 // für „ersetzt“ gesperrt:
 //
 //	(i)   in Gesendet → sent_by_human, Grund scheduled; Konten ohne
-//	      Gesendet: Termin + 2 Minuten verstrichen und weiter nur in
-//	      „Alle Nachrichten“ → ebenso;
+//	      Gesendet: Termin + 2 Minuten verstrichen, die Nachricht weder
+//	      weg noch im Entwürfe-Ordner (auch mit Posteingang, A11 Teil 0
+//	      (b)) → ebenso;
 //	(ii)  im Entwürfe-Ordner (Plan abgebrochen, B2) → taken_over, Audit
 //	      drafts.remote_check Grund schedule_cancelled; checkCopy wertet die
 //	      Nachricht dort als übernommene Fassung, bis sie verschwindet;
@@ -193,9 +194,13 @@ func (s *Service) scheduledTransitions(ctx context.Context, accountID int64, has
 			}
 			rep.ScheduledGone++
 		case !hasSent:
-			// (i) ohne Gesendet: Termin + 2 Minuten verstrichen, weiter nur in
-			// „Alle Nachrichten“.
-			if p.OnlyAll() && !now.Before(sc.At.Add(ScheduledLead)) {
+			// (i) ohne Gesendet: Termin + 2 Minuten verstrichen, und die
+			// Nachricht ist weder weg noch in einem Entwürfe-Ordner (beides
+			// fangen (ii) und (iii) oben ab). A11 Teil 0 (b): nicht nur, wenn
+			// sie weiter nur in „Alle Nachrichten“ liegt; bekommt sie nach
+			// dem Versand zusätzlich den Posteingang (Mail an sich selbst,
+			// selbst in Cc), blieb der Entwurf sonst für immer geplant.
+			if !p.Gone() && !p.InDrafts && !now.Before(sc.At.Add(ScheduledLead)) {
 				done, err := s.markSent(ctx, d.ID, sc.MessageID, DetectScheduled, "")
 				if err != nil {
 					return nil, err
