@@ -6,11 +6,29 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ### 0.3.0-rc9 (Build, kein Tag) – Auftrag A11 „Alltag 5: Eigene Entwurfskopien aufräumen, eigenen Entwurf verwerfen, Textauszug wiederholen“
 
-Auftrag A11 (23.11.2026, Zweig `claude/keen-heisenberg-wou13l`, Basis `main` `54b9f93`). Kein Schema-Upgrade (Schema 22).
+Auftrag A11 (23.11.2026, Zweig `claude/keen-heisenberg-wou13l`, Basis `main` `54b9f93`). Kein Schema-Upgrade (Schema 22), keine Migration; neue Vermerke nur in `meta` (`draft_copy_cleanup/…`, `extract_retry/…`, `extract_requeue/…`), neue Herkünfte und `draft_id` im JSON von `actions.params`, neue Gründe im Audit. Neuer Konfigurationsschlüssel `[draft] previous_copies` (Standard ohne Schlüssel `"trash"`; rc8 und älter starten mit ihm nicht, in der Abnahme nicht setzen). Neue Ausnahmen zu ADR-009 / E2 und E3 vom Betreiber beim Start freigegeben (Nachträge A11 Teil 1 und Teil 2 in [entscheidungen.md](docs/entscheidungen.md); Entschiedene Fragen 86 bis 88, Einspruch bis zum Merge). Haltepunkt: Gegenprüfung, danach Abnahme D17 nach Entscheid des Betreibers. Prüfläufe: `make check` vor jedem Commit grün (40 Pakete, guard, pii-check), `make cross` grün, `make race` grün (40 Pakete); `make integration` gelaufen (Docker, Dovecot, Stalwart, GreenMail): 11 Tests grün, `TestIntegrationAuthelia` braucht `make testauth-up` (nicht gestartet), `TestIntegrationSentDetection` scheiterte schon auf `54b9f93` (die Auffangregel „Kopie weg“ aus A07 schloss beim Zeitsprung einen Entwurf; Test korrigiert, `internal/mailsync` danach gegen alle drei Server grün). Benchmark `BenchmarkCheckAfterSync22k/steady` 5,4–6,0 ms (vorher 4,4–4,6 ms; der Nachlauf läuft in jedem vollständigen Lauf). Build 0.3.0-rc9: Prüfsummen folgen im nächsten Commit (nur Doku).
 
-#### Fixed (Teil 0 (b), Restfund der Gegenprüfung von A10)
+#### Added
 
-- **Geplanter Entwurf blieb ohne Gesendet-Ordner für immer geplant**, wenn die gesendete Nachricht zusätzlich den Posteingang bekam (Mail an sich selbst, selbst in Cc): Übergang (i) schloss nur, solange die Nachricht weiter nur in „Alle Nachrichten“ lag. Jetzt gilt sie nach Termin + 2 Minuten als gesendet, wenn sie weder weg ist noch in einem Entwürfe-Ordner liegt (Test `TestA11ScheduledSentNoSentFolderWithInbox`; [versanderkennung.md](docs/versanderkennung.md) 3e).
+- **Frühere eigene Entwurfskopien gehen nach einer Änderung in den Papierkorb** (Teil 1, Befund B1): Legt der Push die neue Fassung eines offenen Entwurfs ab (`draft` oder `pending_approval`, nicht geplant, zuletzt von dem geändert, der ihn angelegt hat), entsteht in derselben Transaktion eine Aktion `trash` mit Herkunft `draft_update` für die früheren eigenen, unveränderten Kopien (ohne Antrag, Scope `mail:draft`, nur in Entwürfe-Ordnern, `[delete] agent_may = none` verbietet es, Audit `drafts.cleanup_queued`). Abschaltbar mit `[draft] previous_copies = "keep"`.
+- **Nachlauf** in jedem Lauf über alle Ordner (Teil 1 (d), Befund B4): holt nicht gespiegelte frühere Kopien nach und wiederholt gescheiterte Aktionen `draft_update`, `draft_supersede`, `draft_discard` (geschlossene Entwürfe bis 7 Tage), höchstens drei Versuche je Kopie (Zähler in `meta`, überlebt das Schließen). Der erste Lauf nach dem Programmwechsel räumt die früheren Kopien offener Entwürfe aus der Zeit davor auf.
+- **`drafts.discard`** (Teil 2, Befund B3; MCP `mail_discard_draft`, CLI `draft discard <id>`, auch mit `--key`): Ein Agent verwirft einen eigenen, vom Menschen nicht angefassten Entwurf (`abandoned`, Grund `discarded`, nie gesendet); seine unveränderte Kopie geht ohne Antrag in den Papierkorb (Herkunft `draft_discard`). Nie für `ready`, geplante, übernommene oder geänderte Entwürfe; ohne Kopie wird nur geschlossen.
+- Ausgaben: `source` und `draft_id` in `actions.get`/`actions.list` (`action show` zeigt `source: …`), `cleanup_action_ids` in `drafts.get`, `closed_reason` `discarded`.
+
+#### Changed
+
+- **Spiegel nach der Ablage** (Teil 1 (a), Befund B2): Der Push spiegelt den Entwürfe-Ordner sofort nach APPEND nach (ohne Prüfung der Entwürfe); `drafts.supersede` gleich nach der Ablage scheitert nicht mehr am Spiegel. `sync.request` weist einen Ordner ab, den das Konto im Spiegel nicht hat (Eingabefehler).
+- `drafts.supersede`: neuer Grund `copy_not_mirrored` (UID noch nicht gespiegelt; erneut versuchen); `copy_missing` jetzt auch bei geänderter UIDVALIDITY und mit „try again after the next sync“; Kopien mit wartender Aktion zählen als `skipped` statt die zweite Aktion `stale` zu machen.
+- `remote_note`, `draft show`, `remote_previous_uids` und `drafts.cleanup_copies` nennen als frühere Kopien nur, was laut Spiegel noch im Entwürfe-Ordner liegt; `closed_note` folgt der letzten Aktion je Kopie. Beschreibung von `mail_update_draft` angepasst.
+
+#### Fixed
+
+- **Textauszug: vorübergehende Fehler werden wiederholt** (Teil 3, Befund B5): Lief das Hilfsprogramm nicht (Start gescheitert, Signal, Windows-Exit-Code ab 0xC0000000 wie 0xc0000142), bleibt der Anhang `pending`, nächster Versuch frühestens nach 10 Minuten, höchstens fünf; danach `failed` mit Zahl der Versuche. Der erste Lauf je Konto setzt den Bestand mit solchem Grund einmal zurück; `attachments.text` versucht ihn jetzt. Jeder gescheiterte Auszug steht als Warnung im Log (ohne Dateiname und Inhalt).
+- **Geplanter Entwurf blieb ohne Gesendet-Ordner für immer geplant** (Teil 0 (b)), wenn die gesendete Nachricht zusätzlich den Posteingang bekam (Mail an sich selbst, selbst in Cc): Übergang (i) schloss nur, solange die Nachricht weiter nur in „Alle Nachrichten“ lag. Jetzt gilt sie nach Termin + 2 Minuten als gesendet, wenn sie weder weg ist noch in einem Entwürfe-Ordner liegt (Test `TestA11ScheduledSentNoSentFolderWithInbox`; [versanderkennung.md](docs/versanderkennung.md) 3e).
+
+#### Docs
+
+- `docs/entscheidungen.md` (Nachträge A11 Teil 1 und Teil 2 zu ADR-009), `docs/sicherheit.md` (Tabelle, Zustandsmaschine, Scopes), `docs/versanderkennung.md` (Abschnitt 3e, 5), `docs/cli.md` (`draft discard`, `draft supersede`, ältere Kopien, `draft cleanup`, `attach text`, `[draft] previous_copies`), `docs/mcp.md`, `docs/datenmodell.md` (`meta`, `actions.params`), `docs/architektur.md` (Job `extract`), `docs/betrieb.md` (1.7c Rückweg auf rc8), `docs/roadmap.md` (Stand, 0l, Sammelpunkt 0m, Entschiedene Fragen 86 bis 88), neues Abnahmeskript `docs/abnahme_D17.ps1` mit `docs/abnahme_D17.md`.
 
 ### Vermerk 23.11.2026 (A11 Teil 0 (a)): Tags, D16, Dauerbetrieb
 

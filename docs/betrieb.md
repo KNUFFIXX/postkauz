@@ -222,6 +222,20 @@ Also nach jeder Änderung: Dauer-Sync neu starten (1.6, `Stop-ScheduledTask …`
 
 Gut zu wissen (V8, Betreiber 28.10.2026): In Ordner mit Rolle Spam (`junk`), Entwürfe (`drafts`) oder Gesendet (`sent`) verschiebt nur der Mensch an der Kommandozeile ohne `--key`. Ein Agent bekommt `denied (target_role_human_only)`, auch wenn er den Ordner per Namen nennt.
 
+### 1.7c Rückweg von 0.3.0-rc9 auf 0.3.0-rc8 (A11)
+
+0.3.0-rc9 hat kein Schema-Upgrade (Schema 22); rc8 läuft mit den Daten weiter. Zwei Dinge sind beim Rückweg zu beachten:
+
+1. **`[draft] previous_copies` nicht gesetzt lassen.** 0.3.0-rc8 und älter starten mit diesem Schlüssel nicht (unbekannter Schlüssel). Steht er in `config.toml`, vor dem Rückweg entfernen.
+2. **Keine offene Aktion der Herkunft `draft_update` oder `draft_discard`.** rc8 kennt diese Herkünfte nicht und behandelte eine solche Aktion wie eine gewöhnliche Papierkorb-Aktion ohne die Grenze „nur Entwürfe-Ordner“. Deshalb **nach** dem Anhalten der Aufgaben und **vor** dem Tausch mit dem **neuen** Programm (nur es zeigt `source`) prüfen:
+
+   ```powershell
+   C:\PostKauz\postkauz.exe action list --state queued,running,requested --json --data-dir C:\PostKauz\data
+   ```
+
+   Für jede genannte Aktion `action show <id> --json`: Steht `"source": "draft_update"` oder `"source": "draft_discard"` darin, je Konto einmal `postkauz sync -a <konto>` mit dem neuen Programm laufen lassen (führt die Aktion aus) und erneut prüfen. Bleibt eine solche Aktion offen, den Rückweg abbrechen und das neue Programm weiterlaufen lassen. Das Abnahmeskript D17 macht das im Modus `-Rueckweg` selbst ([abnahme_D17.md](abnahme_D17.md)).
+3. Danach wie 1.7: altes Programm (`postkauz-rc8.exe`) an seine Stelle, `doctor`, Aufgaben starten. Zähler in `meta` (`draft_copy_cleanup/…`, `extract_retry/…`, `extract_requeue/…`) lässt rc8 liegen; ein Anhang, der beim Rückweg auf einen Wiederholversuch wartet, bleibt `pending` und wird von rc8 beim nächsten Lauf ohne Wartezeit erneut versucht.
+
 ### 1.8 Zusammenspiel mit dem Audit-Export
 
 Beide Aufgaben vertragen sich: Der Audit-Export liest nur das Audit und schreibt Dateien an den zweiten Ort; der Dauer-Sync hält nur die Sperren der Konten. Richte den Export ein, wie im README („Daily audit export“) beschrieben, mit **denselben** Pfaden:

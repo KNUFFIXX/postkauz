@@ -205,9 +205,12 @@ func TestIntegrationSentDetection(t *testing.T) {
 
 		// Eine weitere Freigabe läuft ab: ready älter als approval_ttl → draft.
 		ttl := e.readyPushed("IT TTL "+tag, pushSync)
-		e.svc.Now = func() time.Time { return time.Now().Add(drafts.DefaultApprovalTTL + time.Minute) }
+		// Seit A07 Teil 4 schlösse der Sprung um sieben Tage C (Kopie fehlt)
+		// über die Auffangregel „Kopie weg“; dieser Test prüft nur den Ablauf
+		// der Freigabe (A11 Teil 4: Test lief seit A07 nicht mehr grün).
+		e.svc.Now, e.svc.CopyGoneAfter = func() time.Time { return time.Now().Add(drafts.DefaultApprovalTTL + time.Minute) }, -1
 		out = sync()
-		e.svc.Now = nil
+		e.svc.Now, e.svc.CopyGoneAfter = nil, 0
 		// C läuft dabei mit ab (auch ready); beide fallen auf draft.
 		if out.DraftCheck == nil || out.DraftCheck.Expired != 2 {
 			t.Fatalf("expiry check = %+v", out.DraftCheck)
