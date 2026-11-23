@@ -232,6 +232,9 @@ var cliSamples = []cliSample{
 	// endet mit Exit 3 (sampleCode); geprüft werden Eingabe und Bindung, die
 	// Bedingungen an die Entwürfe prüft internal/ops (TestA07Supersede*).
 	{"drafts.supersede", []string{"draft", "supersede", "1", "--by", "2"}, false},
+	// A11 Teil 2: wie supersede; Entwurf 1 ist hier schon geschlossen
+	// (Exit 3), die Bedingungen prüft internal/drafts (TestA11Discard*).
+	{"drafts.discard", []string{"draft", "discard", "1"}, false},
 	// S3.4: Sicherung in einen Ordner; Tar-Strom nur als Trockenlauf (die
 	// Ausgabe geht dann auf stderr, stdout gehört dem Strom).
 	{"backup.create", []string{"backup", "create", "--to", "{backupdir}"}, false},
@@ -254,6 +257,7 @@ var sampleCode = map[string]int{
 	"trash {answer} --from INBOX -a demo --confirm-count 1": ExitNeedsApproval,
 	"trash {html} -a demo":     ExitNeedsApproval,
 	"draft supersede 1 --by 2": ExitDenied,
+	"draft discard 1":          ExitDenied,
 }
 
 // seedS16: Konto demo mit den drei Nachrichten aus s16Server, gesynct;

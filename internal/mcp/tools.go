@@ -200,6 +200,17 @@ var tools = []toolBinding{
 			"when the mirror no longer has it (copy_missing: it may have been sent or changed in the mail client; try again after " +
 			"the next sync). Copies already queued by an earlier action count as skipped. Do not delete draft copies with other " +
 			"tools. dry_run=true only checks. " + neverSends},
+	// A11 Teil 2: eigenen, vom Menschen nicht angefassten Entwurf
+	// verwerfen (Nachtrag zu E2).
+	{tool: "mail_discard_draft", op: "drafts.discard", title: "Discard an own draft", dryRun: true, destructive: true,
+		desc: "Close an own draft that nobody needs any more (draft_id; status abandoned with reason discarded, never sent) and " +
+			"move its unchanged copy in the Drafts folder to the trash (never deleted for good; a running sync --watch moves it " +
+			"within about 10 s). The draft must have been created and last changed with your key. A draft the human approved " +
+			"(approved_by_human), scheduled (draft_scheduled) or changed in the mail client (copy_changed) only the human closes. " +
+			"Refused while a copy is being stored (push_in_progress), right after it was stored (copy_not_mirrored: try again in a " +
+			"few seconds) and when the mirror no longer has its copy (copy_missing: try again after the next sync). A draft that " +
+			"never reached the Drafts folder is closed without an action. Do not delete draft copies with other tools. " +
+			"dry_run=true only checks and names the number of copies. " + neverSends},
 	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
 		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +
 			"the reason of the human), superseded (the draft changed) or expired, with who decided and when. " + neverSends},

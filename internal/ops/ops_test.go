@@ -284,6 +284,7 @@ var contractInputs = map[string]struct {
 	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
 	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
 	"drafts.supersede":      {input: `{"draft_id":1,"by_draft_id":2}`, prep: prepSupersede},
+	"drafts.discard":        {input: `{"draft_id":1}`, prep: prepSupersede},
 	// Sicherung (S3.4): der Runner ist ein Fake (contractBackup), der Pfad
 	// wird nie angefasst.
 	"backup.create": {input: `{"to":"/nonexistent/backup-target"}`},

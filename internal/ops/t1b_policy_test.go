@@ -30,6 +30,11 @@ var policyInputCases = map[string][]struct {
 		{`{"draft_id":1,"by_draft_id":2}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, "policy_forbids"},
 		{`{"draft_id":1,"by_draft_id":2}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, ""},
 	},
+	// A11 Teil 2: ebenso drafts.discard, solange es ein Ziel gäbe.
+	"drafts.discard": {
+		{`{"draft_id":1}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, "policy_forbids"},
+		{`{"draft_id":1}`, policy.Key{ID: "key:nacht", Name: "nacht", Scopes: policy.Roles["triage"]}, ""},
+	},
 	"messages.tag": {
 		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"]}`, opKey, "confirm_count_required"},
 		{`{"account":"demo","ids":` + idList(51) + `,"add":["x"],"confirm_count":50}`, opKey, "confirm_count_mismatch"},
@@ -60,8 +65,10 @@ var policyInputCases = map[string][]struct {
 // policy.DefaultRules; policyInputPrep: Vorbereitung der Umgebung wie
 // contractInputs.prep.
 var (
-	policyInputRules = map[string]map[int]*policy.Rules{"drafts.supersede": {0: {DeleteAgentMay: "none"}}}
-	policyInputPrep  = map[string]func(t *testing.T, st *store.SQLite, keyID string){"drafts.supersede": prepSupersede}
+	policyInputRules = map[string]map[int]*policy.Rules{"drafts.supersede": {0: {DeleteAgentMay: "none"}},
+		"drafts.discard": {0: {DeleteAgentMay: "none"}}}
+	policyInputPrep = map[string]func(t *testing.T, st *store.SQLite, keyID string){"drafts.supersede": prepSupersede,
+		"drafts.discard": prepSupersede}
 )
 
 var (

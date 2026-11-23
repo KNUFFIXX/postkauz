@@ -50,6 +50,9 @@ func init() {
 				cmd.Flags().Int64("by", 0, "the newer draft that replaces it (required)")
 			},
 			input: supersedeInput, human: renderSupersede, covers: []string{"draft_id", "by_draft_id"}},
+		// A11 Teil 2: eigenen Entwurf verwerfen (auch mit --key).
+		binding{op: "drafts.discard", path: []string{"draft", "discard"}, use: "<draft-id>", args: cobra.ExactArgs(1),
+			input: draftIDInput, human: renderDiscard, covers: []string{"draft_id"}},
 	)
 }
 
@@ -423,6 +426,25 @@ func renderCleanup(w io.Writer, out any) error {
 		prefix = "dry run: "
 	}
 	fmt.Fprintf(w, "%sdraft %d: %d earlier copies to the trash, %d not touched\n", prefix, o.DraftID, o.Copies, o.Skipped)
+	fmt.Fprintln(w, termLine(o.NextStep))
+	return nil
+}
+
+// renderDiscard zeigt das Ergebnis von drafts.discard (A11 Teil 2).
+func renderDiscard(w io.Writer, out any) error {
+	o, ok := out.(ops.DiscardOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	prefix := ""
+	if o.DryRun {
+		prefix = "dry run: "
+	}
+	fmt.Fprintf(w, "%sdraft %d discarded: %s (not sent), %d own copy/copies queued for the trash", prefix, o.DraftID, o.Status, o.Copies)
+	if o.Trash != "" {
+		fmt.Fprintf(w, " (%s)", termLine(o.Trash))
+	}
+	fmt.Fprintf(w, ", %d copy/copies skipped (outside the Drafts folders, changed in the mail client or already queued)\n", o.Skipped)
 	fmt.Fprintln(w, termLine(o.NextStep))
 	return nil
 }

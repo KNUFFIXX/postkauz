@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
 
@@ -90,4 +91,84 @@ func TestA11RemoteNoteEarlierCopies(t *testing.T) {
 	if n := remoteNoteFor(p, nil, true); !strings.Contains(n, "nothing is deleted") {
 		t.Fatalf("pending keep: %q", n)
 	}
+}
+
+// A11 Teil 2: drafts.discard über den Executor. Rolle triage und
+// assistant dürfen, eine Rolle ohne mail:draft nicht; [delete] agent_may =
+// none verbietet den Aufruf nur, wenn es ein Ziel gäbe; drafts.get nennt
+// danach closed_reason discarded mit closed_note und cleanup_action_ids.
+func TestA11DiscardExecutor(t *testing.T) {
+	t.Run("triage runs", func(t *testing.T) {
+		e, x := supEnv(t, triageKey)
+		res, err := execJSON(t, x, triageKey, "drafts.discard", `{"draft_id":1}`, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := res.Output.(DiscardOutput)
+		if out.Status != "abandoned" || out.Copies != 1 || out.ActionID == 0 || out.Trash != "Papierkorb" {
+			t.Fatalf("output = %+v", out)
+		}
+		g, err := execJSON(t, x, triageKey, "drafts.get", `{"draft_id":1}`, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := g.Output.(DraftDetail)
+		if got.ClosedReason != "discarded" || !strings.Contains(got.ClosedNote, "drafts.discard") || len(got.CleanupActionIDs) != 1 ||
+			got.CleanupActionIDs[0] != out.ActionID {
+			t.Fatalf("drafts.get: %q %q %v", got.ClosedReason, got.ClosedNote, got.CleanupActionIDs)
+		}
+		remote := &supRemote{}
+		e.runActions(t, policy.DefaultRules(), remote)
+		a, _ := e.st.Action(context.Background(), out.ActionID)
+		if a.State != store.ActionDone || len(remote.moves) != 1 || a.Params.Source != store.ActionSourceDraftDiscard {
+			t.Fatalf("after run: %s %s, moves %v", a.State, a.Error, remote.moves)
+		}
+	})
+	t.Run("reader denied", func(t *testing.T) {
+		_, x := supEnv(t, triageKey)
+		reader := policy.Key{ID: "key:leser", Name: "leser", Scopes: policy.Roles["reader"]}
+		if _, err := execJSON(t, x, reader, "drafts.discard", `{"draft_id":1}`, false); deniedReason(err) != "missing_scope" {
+			t.Fatalf("reader: %v", err)
+		}
+	})
+	t.Run("agent_may none with a copy", func(t *testing.T) {
+		e, x := supEnv(t, triageKey)
+		x.Rules = &policy.Rules{MoveAgentMay: "within_account", DeleteAgentMay: "none", BulkConfirmThreshold: 50}
+		if _, err := execJSON(t, x, triageKey, "drafts.discard", `{"draft_id":1}`, false); deniedReason(err) != "policy_forbids" {
+			t.Fatalf("err = %v", err)
+		}
+		if d, _ := e.st.Draft(context.Background(), 1); d.Status != string(drafts.StatusDraft) {
+			t.Fatalf("status = %s", d.Status)
+		}
+	})
+	t.Run("agent_may none without a copy", func(t *testing.T) {
+		e, x := supEnv(t, triageKey)
+		e.exec(t, `UPDATE drafts SET remote_state = 'missing' WHERE id = 1`)
+		x.Rules = &policy.Rules{MoveAgentMay: "within_account", DeleteAgentMay: "none", BulkConfirmThreshold: 50}
+		res, err := execJSON(t, x, triageKey, "drafts.discard", `{"draft_id":1}`, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out := res.Output.(DiscardOutput); out.Copies != 0 || out.ActionID != 0 || !strings.Contains(out.NextStep, "no copy") {
+			t.Fatalf("output = %+v", out)
+		}
+		g, _ := execJSON(t, x, triageKey, "drafts.get", `{"draft_id":1}`, false)
+		if got := g.Output.(DraftDetail); got.ClosedReason != "discarded" || !strings.Contains(got.ClosedNote, "no copy") {
+			t.Fatalf("drafts.get: %q %q", got.ClosedReason, got.ClosedNote)
+		}
+	})
+	t.Run("human at the CLI", func(t *testing.T) {
+		e, x := supEnv(t, policy.Key{ID: "key:assi"})
+		res, err := x.Execute(context.Background(), Request{Key: humanKey, Actor: "human", Operation: "drafts.discard",
+			Input: json.RawMessage(`{"draft_id":1}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out := res.Output.(DiscardOutput); out.Copies != 1 {
+			t.Fatalf("output = %+v", out)
+		}
+		if d, _ := e.st.Draft(context.Background(), 1); d.Status != string(drafts.StatusAbandoned) {
+			t.Fatalf("status = %s", d.Status)
+		}
+	})
 }

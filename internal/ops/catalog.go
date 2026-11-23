@@ -150,6 +150,7 @@ func Catalog(d Deps) []Operation {
 		ActionsList(d),
 		DraftsCleanupCopies(d),
 		DraftsSupersede(d),
+		DraftsDiscard(d),
 		BackupCreate(d.Backup, d.BackupStdout),
 		RetentionPurge(d),
 		BlobsGC(d),
