@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/KNUFFIXX/postkauz/internal/actions"
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -56,6 +55,14 @@ const OpSupersede = "drafts.supersede"
 // ReasonSupersededByDraft ist der Grund im Audit, mit dem drafts.supersede
 // den alten Entwurf schließt (draft show: closed_reason).
 const ReasonSupersededByDraft = "superseded_by_draft"
+
+// ReasonDiscarded ist der Grund im Audit, mit dem drafts.discard einen
+// eigenen Entwurf schließt (A11 Teil 2; draft show: closed_reason).
+const ReasonDiscarded = "discarded"
+
+// ReasonCopyNotMirrored: Die Kopie liegt im Entwürfe-Ordner, der Spiegel
+// hat ihre UID aber noch nicht gesehen (A11 Teil 1 (b)).
+const ReasonCopyNotMirrored = "copy_not_mirrored"
 
 // SourceDraftSupersede ist die Herkunft der Aktion (store.ActionParams.Source).
 const SourceDraftSupersede = store.ActionSourceDraftSupersede
@@ -154,51 +161,12 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		if old.PushAttempt != nil || old.RemoteState == RemotePending {
 			return denied(ReasonPushInProgress, "a copy of draft %d is being put into the Drafts folder; try again after the next sync", old.ID)
 		}
-		switch {
-		case old.RemoteState == RemoteTakenOver:
+		if old.RemoteState == RemoteTakenOver {
 			return denied(ReasonCopyChanged, "the copy of draft %d was changed in the mail client; only the human removes it", old.ID)
-		case old.PushedContentHash == "" || old.RemoteMailboxID == 0 || old.RemoteUID <= 0 || old.RemoteUIDValidity == 0 ||
-			old.RemoteState == RemoteMissing:
-			return denied(ReasonCopyMissing, "draft %d has no copy in the Drafts folder (it may have been sent; the sync closes it then)", old.ID)
 		}
-		c, hash, ok, err := x.CopyAt(old.RemoteMailboxID, uint32(old.RemoteUID))
+		cs, err := ownCopiesFor(x, old)
 		if err != nil {
 			return err
-		}
-		if !ok {
-			return denied(ReasonCopyMissing, "the copy of draft %d is not in the mirror of the Drafts folder (it may have been sent)", old.ID)
-		}
-		if c.UIDValidity != old.RemoteUIDValidity || hash != old.PushedContentHash {
-			return denied(ReasonCopyChanged, "the copy of draft %d is not the one PostKauz put there; only the human removes it", old.ID)
-		}
-		targets := []store.ActionTarget{{MessageID: c.MessageID, MailboxID: c.MailboxID, UID: c.UID, UIDValidity: c.UIDValidity,
-			Mailbox: c.Mailbox, Role: c.Role}}
-		ids := []int64{c.MessageID}
-		// Nachtrag 1 zu A07, B3: Die Ausnahme von E3 gilt nur innerhalb der
-		// Entwürfe-Ordner; eine frühere Kopie anderswo (etwa nach einem
-		// Verschieben ins Archiv) wird übersprungen und gezählt.
-		inDrafts, err := x.DraftMailboxIDs(old.AccountID)
-		if err != nil {
-			return err
-		}
-		for _, p := range old.RemotePrevious {
-			if p.UIDValidity == 0 || p.UID <= 0 || p.ContentHash == "" {
-				continue
-			}
-			if !inDrafts[p.MailboxID] {
-				res.Skipped++
-				continue
-			}
-			pc, ph, ok, err := x.CopyAt(p.MailboxID, uint32(p.UID))
-			if err != nil {
-				return err
-			}
-			if !ok || pc.UIDValidity != p.UIDValidity || ph != p.ContentHash {
-				continue
-			}
-			targets = append(targets, store.ActionTarget{MessageID: pc.MessageID, MailboxID: pc.MailboxID, UID: pc.UID,
-				UIDValidity: pc.UIDValidity, Mailbox: pc.Mailbox, Role: pc.Role})
-			ids = append(ids, pc.MessageID)
 		}
 		trash, ok, err := x.TrashMailbox(old.AccountID)
 		if err != nil {
@@ -207,13 +175,12 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		if !ok {
 			return denied(ReasonNoTrashMailbox, "the account has no mailbox with role trash in the mirror; run sync first")
 		}
-		res.Copies, res.Trash = len(targets), trash.Path
-		actionID, err := x.CreateQueuedAction(store.NewAction{AccountID: old.AccountID, Kind: store.ActionTrash,
-			Params:  store.ActionParams{TargetMailboxID: trash.ID, TargetMailbox: trash.Path, TargetRole: trash.Role, Source: SourceDraftSupersede},
-			IDsHash: actions.IDsHash(ids), MessageCount: len(ids), RequestedBy: r.KeyID, AuditID: r.AuditID, Targets: targets, Now: now})
+		res.Copies, res.Trash, res.Skipped = len(cs.targets), trash.Path, cs.skipped
+		actionID, _, err := s.queueCleanup(x, old, SourceDraftSupersede, r.KeyID, r.AuditID, cs, now)
 		if err != nil {
 			return err
 		}
+		targets := cs.targets
 		from := Status(old.Status)
 		t, err := Next(from, EvAbandon)
 		if err != nil {
@@ -232,8 +199,10 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		res.Old = old
 		params := map[string]any{"draft_id": old.ID, "by_draft_id": nw.ID, "copies": len(targets), "skipped": res.Skipped, "action_id": actionID,
 			"from": from, "to": t.To}
-		targetsAudit := []string{"draft:" + strconv.FormatInt(old.ID, 10), "draft:" + strconv.FormatInt(nw.ID, 10),
-			"action:" + strconv.FormatInt(actionID, 10)}
+		targetsAudit := []string{"draft:" + strconv.FormatInt(old.ID, 10), "draft:" + strconv.FormatInt(nw.ID, 10)}
+		if actionID > 0 {
+			targetsAudit = append(targetsAudit, "action:"+strconv.FormatInt(actionID, 10))
+		}
 		if old.ApprovalID > 0 {
 			params["approval_id"] = old.ApprovalID
 			targetsAudit = append(targetsAudit, "approval:"+strconv.FormatInt(old.ApprovalID, 10))

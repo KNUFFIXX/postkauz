@@ -92,8 +92,12 @@ type ActionParams struct {
 	AddKeywords    []string `json:"add_keywords,omitempty"`
 	RemoveKeywords []string `json:"remove_keywords,omitempty"`
 	// Source: Herkunft außerhalb der Operationen (draft_cleanup,
-	// seit A07 Teil 5 draft_supersede).
+	// seit A07 Teil 5 draft_supersede, seit A11 draft_update und
+	// draft_discard; IsDraftSource).
 	Source string `json:"source,omitempty"`
+	// DraftID: der Entwurf einer Aktion mit Herkunft eines Entwurfs (seit
+	// A11; ältere Aktionen ohne, siehe DraftCleanupActions).
+	DraftID int64 `json:"draft_id,omitempty"`
 }
 
 // ActionSourceDraftSupersede ist die Herkunft der Aktion, die

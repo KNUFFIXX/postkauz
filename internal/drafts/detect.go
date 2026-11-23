@@ -90,6 +90,11 @@ type CheckReport struct {
 	// gespiegelten Entwürfe-Ordner (abgeschlossen mit attempt_without_copy).
 	AdoptedClosed int `json:"adopted_after_close,omitempty"`
 	LostAttempts  int `json:"attempts_without_copy,omitempty"`
+	// CleanupActions, CleanupCopies: Papierkorb-Aktionen für eigene
+	// Entwurfskopien, die der Nachlauf angelegt hat, und ihre Kopien (A11
+	// Teil 1 (d), cleanup.go).
+	CleanupActions int `json:"cleanup_actions,omitempty"`
+	CleanupCopies  int `json:"cleanup_copies,omitempty"`
 	// Examined: gesendete Nachrichten, die der Rückfall-Abgleich geladen
 	// hat (neue und solche im Fenster neuer oder geänderter Entwürfe; W2).
 	// Nur für Tests und Messungen, nicht in der Ausgabe.
@@ -99,7 +104,7 @@ type CheckReport struct {
 // Empty meldet, ob die Prüfung nichts geändert hat.
 func (r CheckReport) Empty() bool {
 	return r.SentByMessageID+r.SentByFallback+r.SentByThread+r.SentBySubject+r.ReplacedInThread+r.CopyGone+r.Expired+r.Missing+r.TakenOver+r.AdoptedClosed+
-		r.LostAttempts+r.Scheduled+r.SentByScheduled+r.ScheduleCancelled+r.ScheduledGone == 0
+		r.LostAttempts+r.Scheduled+r.SentByScheduled+r.ScheduleCancelled+r.ScheduledGone+r.CleanupActions == 0
 }
 
 // Add zählt o dazu (Dauerbetrieb: eine Prüfung je Runde).
@@ -123,6 +128,8 @@ func (r *CheckReport) Add(o CheckReport) {
 	r.SentByScheduled += o.SentByScheduled
 	r.ScheduleCancelled += o.ScheduleCancelled
 	r.ScheduledGone += o.ScheduledGone
+	r.CleanupActions += o.CleanupActions
+	r.CleanupCopies += o.CleanupCopies
 	r.Examined += o.Examined
 }
 
@@ -208,7 +215,15 @@ func (s *Service) CheckAfterSync(ctx context.Context, accountID int64, o CheckOp
 	if err := s.settleClosedAttempts(ctx, accountID, &rep); err != nil {
 		return rep, err
 	}
-	return rep, s.refreshRemote(ctx, accountID, &rep)
+	if err := s.refreshRemote(ctx, accountID, &rep); err != nil || o.KeepMark {
+		return rep, err
+	}
+	// A11 Teil 1 (d): Nachlauf für eigene Entwurfskopien, nur nach einem
+	// Lauf über alle Ordner (nicht SkipSent, nicht KeepMark), nach der
+	// Versanderkennung und dem Stand der Kopien.
+	cr, err := s.RetryCleanup(ctx, accountID)
+	rep.CleanupActions, rep.CleanupCopies = cr.Actions, cr.Copies
+	return rep, err
 }
 
 // settleClosedAttempts erledigt offene Ablageversuche abgeschlossener

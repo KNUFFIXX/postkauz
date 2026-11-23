@@ -78,7 +78,7 @@ func TestSyncPushesDraftCLI(t *testing.T) {
 	}
 
 	out = step(ExitOK, "", "draft", "edit", "1", "--subject", subject+" 2")
-	if !strings.Contains(out, "remote pending") || !strings.Contains(out, "earlier copy (uid 1) stays") {
+	if !strings.Contains(out, "remote pending") || !strings.Contains(out, "the earlier copy (uid 1) goes to the trash") {
 		t.Fatalf("draft edit: %s", out)
 	}
 	// Entscheid 43 (S2.6): Ein geänderter Entwurf wird erst nach 30 s Ruhe
@@ -91,7 +91,9 @@ func TestSyncPushesDraftCLI(t *testing.T) {
 	settleDrafts(t, dataDir)
 	step(ExitOK, "", "sync", "-a", "demo")
 	out = step(ExitOK, "", "draft", "show", "1")
-	if !strings.Contains(out, "copies:      uid 2, earlier uid 1") {
+	// A11 Teil 1 (c): Die frühere Kopie (uid 1) ist im selben Lauf in den
+	// Papierkorb gegangen; draft show nennt nur noch die neue.
+	if !strings.Contains(out, "copies:      uid 2 (date of the copy: ") || strings.Contains(out, "earlier uid 1") {
 		t.Fatalf("draft show after change: %s", out)
 	}
 	out = step(ExitOK, "", "draft", "show", "1", "--json")
@@ -102,7 +104,7 @@ func TestSyncPushesDraftCLI(t *testing.T) {
 		PushedDate         string  `json:"pushed_date"`
 	}
 	if err := json.Unmarshal([]byte(out), &d); err != nil || d.Remote != "pushed" || d.RemoteUID != 2 ||
-		!slices.Equal(d.RemotePreviousUIDs, []int64{1}) || d.PushedDate == "" {
+		len(d.RemotePreviousUIDs) != 0 || d.PushedDate == "" {
 		t.Fatalf("draft show --json: %s (%v)", out, err)
 	}
 	// --jobs-interval nur mit --watch.

@@ -221,7 +221,18 @@ type Draft struct {
 	// Eintrag, ein Pfadtrenner oder „..“ ist ein Fehler.
 	AttachDenyDirs  []string `toml:"attach_deny_dirs"`
 	AttachDenyFiles []string `toml:"attach_deny_files"`
+	// PreviousCopies: frühere eigene, unveränderte Kopien eines Entwurfs
+	// nach einer Änderung (A11 Teil 1 (c)): "trash" (Standard, auch ohne
+	// Schlüssel) legt sie in den Papierkorb, "keep" lässt sie liegen (wie
+	// bis 0.3.0-rc8). Ältere Programme starten mit dem Schlüssel nicht.
+	PreviousCopies string `toml:"previous_copies"`
 }
+
+// Werte von [draft] previous_copies (A11 Teil 1 (c)).
+const (
+	PreviousCopiesTrash = "trash"
+	PreviousCopiesKeep  = "keep"
+)
 
 // DefaultCopyGoneAfter ist der Standard von [draft] copy_gone_after,
 // MinCopyGoneAfter die kleinste erlaubte Dauer (Nachtrag 1 zu A07, B7).
@@ -650,6 +661,14 @@ func checkDraft(d *Draft) error {
 	}
 	if !d.CopyGoneAfter.set && !d.CopyGoneAfter.Off && d.CopyGoneAfter.Value == 0 {
 		d.CopyGoneAfter.Value = DefaultCopyGoneAfter // Schlüssel fehlt: 24h
+	}
+	switch strings.TrimSpace(d.PreviousCopies) {
+	case "", PreviousCopiesTrash:
+		d.PreviousCopies = PreviousCopiesTrash
+	case PreviousCopiesKeep:
+		d.PreviousCopies = PreviousCopiesKeep
+	default:
+		return fmt.Errorf(`config: draft.previous_copies %q is not valid: use "trash" (default) or "keep"`, d.PreviousCopies)
 	}
 	rest := strings.NewReplacer("{date}", "", "{date_numeric}", "", "{from}", "").Replace(d.QuoteLine)
 	if strings.ContainsAny(rest, "{}") {

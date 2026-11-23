@@ -166,7 +166,9 @@ var tools = []toolBinding{
 			"attachments, body_markdown or body_html: the whole text); fields you leave out stay. A submitted or approved draft " +
 			"goes back to status draft and its approval is superseded; it must be submitted again. Refused with draft_closed after " +
 			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client. The changed " +
-			"copy reaches the Drafts folder with the next sync; the earlier copy stays there. " + neverSends},
+			"copy reaches the Drafts folder with the next sync; once it is stored, the earlier copy goes to the trash by itself if " +
+			"it is unchanged (never deleted for good; see cleanup_action_ids in mail_get_draft). Do not delete draft copies with " +
+			"other tools. " + neverSends},
 	{tool: "mail_get_draft", op: "drafts.get", title: "Read a draft", mail: true, omit: []string{"eml"},
 		defaults: map[string]any{"max_chars": ops.DefaultMaxChars},
 		desc: "Show a draft: status, recipients, subject, own text (body_text with signature, source=draft), the quoted or " +
@@ -193,8 +195,10 @@ var tools = []toolBinding{
 			"original, or for new emails the same subject), close the older one (status abandoned) and move its unchanged copy " +
 			"in the Drafts folder to the trash (never deleted for good; a running sync --watch moves it within about 10 s). " +
 			"Both drafts must have been created and last changed with your key; the newer one must be open and newer. Refused " +
-			"when the older draft is ready (approved by the human), when its copy was changed in the mail client (copy_changed) " +
-			"or is gone (copy_missing: it may have been sent; the sync closes it then). Do not delete draft copies with other " +
+			"when the older draft is ready (approved by the human), when its copy was changed in the mail client (copy_changed), " +
+			"right after its copy was stored and before the mirror knows it (copy_not_mirrored: try again in a few seconds) or " +
+			"when the mirror no longer has it (copy_missing: it may have been sent or changed in the mail client; try again after " +
+			"the next sync). Copies already queued by an earlier action count as skipped. Do not delete draft copies with other " +
 			"tools. dry_run=true only checks. " + neverSends},
 	{tool: "mail_get_approval", op: "approvals.get", title: "State of an approval",
 		desc: "Show the state of an approval request (approval_id from mail_request_ready): pending, approved, rejected (with " +

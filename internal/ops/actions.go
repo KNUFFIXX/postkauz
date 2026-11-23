@@ -597,26 +597,31 @@ func (o *actionOps) queueKeywordAction(ctx context.Context, call Call, a store.A
 // ActionView ist eine Aktion zum Lesen (actions.get, actions.list): Art,
 // Zustand, Herkunft, Ziele mit Ordner, UID und Ergebnis; nie Inhalt.
 type ActionView struct {
-	ID           int64              `json:"id"`
-	Account      string             `json:"account"`
-	Kind         string             `json:"kind"`
-	State        string             `json:"state"`
-	Messages     int                `json:"messages"`
-	IDsHash      string             `json:"ids_hash"`
-	ConfirmCount *int               `json:"confirm_count,omitempty"`
-	RequestedBy  string             `json:"requested_by"`
-	ApprovalID   int64              `json:"approval_id,omitempty"`
-	Error        string             `json:"error,omitempty"`
-	Seen         *bool              `json:"seen,omitempty"`
-	Flagged      *bool              `json:"flagged,omitempty"`
-	Target       *ActionTarget      `json:"target,omitempty"`
-	AddKeywords  []string           `json:"add_keywords,omitempty"`
-	RemoveKW     []string           `json:"remove_keywords,omitempty"`
-	CreatedAt    string             `json:"created_at"`
-	UpdatedAt    string             `json:"updated_at"`
-	DoneAt       string             `json:"done_at,omitempty"`
-	Targets      []ActionTargetView `json:"targets,omitempty"`
-	NextStep     string             `json:"next_step,omitempty"`
+	ID           int64  `json:"id"`
+	Account      string `json:"account"`
+	Kind         string `json:"kind"`
+	State        string `json:"state"`
+	Messages     int    `json:"messages"`
+	IDsHash      string `json:"ids_hash"`
+	ConfirmCount *int   `json:"confirm_count,omitempty"`
+	RequestedBy  string `json:"requested_by"`
+	// Source, DraftID: Herkunft außerhalb der Operationen (draft_cleanup,
+	// draft_supersede, draft_update, draft_discard) und der Entwurf (A11
+	// Teil 1 (c); damit ein Agent den Verlauf prüfen kann).
+	Source      string             `json:"source,omitempty"`
+	DraftID     int64              `json:"draft_id,omitempty"`
+	ApprovalID  int64              `json:"approval_id,omitempty"`
+	Error       string             `json:"error,omitempty"`
+	Seen        *bool              `json:"seen,omitempty"`
+	Flagged     *bool              `json:"flagged,omitempty"`
+	Target      *ActionTarget      `json:"target,omitempty"`
+	AddKeywords []string           `json:"add_keywords,omitempty"`
+	RemoveKW    []string           `json:"remove_keywords,omitempty"`
+	CreatedAt   string             `json:"created_at"`
+	UpdatedAt   string             `json:"updated_at"`
+	DoneAt      string             `json:"done_at,omitempty"`
+	Targets     []ActionTargetView `json:"targets,omitempty"`
+	NextStep    string             `json:"next_step,omitempty"`
 }
 
 // ActionTargetView ist ein Ziel einer Aktion.
@@ -633,7 +638,10 @@ const actionViewSchema = `{"type": "object", "properties": {
       "id": {"type": "integer"}, "account": {"type": "string"}, "kind": {"type": "string", "enum": ["mark", "move", "trash", "keywords"]},
       "state": {"type": "string", "enum": ["requested", "queued", "running", "done", "partial", "failed", "rejected", "expired"]},
       "messages": {"type": "integer"}, "ids_hash": {"type": "string"}, "confirm_count": {"type": "integer"},
-      "requested_by": {"type": "string"}, "approval_id": {"type": "integer"}, "error": {"type": "string"},
+      "requested_by": {"type": "string"},
+      "source": {"type": "string", "enum": ["draft_cleanup", "draft_supersede", "draft_update", "draft_discard"], "description": "origin outside the operations: draft_cleanup = drafts.cleanup_copies of the human; draft_supersede, draft_update, draft_discard = own unchanged draft copies to the trash after drafts.supersede, after a change of the draft, after drafts.discard"},
+      "draft_id": {"type": "integer", "description": "the draft of an action with a draft origin"},
+      "approval_id": {"type": "integer"}, "error": {"type": "string"},
       "seen": {"type": "boolean"}, "flagged": {"type": "boolean"},
       "target": {"type": "object", "properties": {"mailbox": {"type": "string"}, "role": {"type": "string"}}},
       "add_keywords": {"type": "array", "items": {"type": "string"}}, "remove_keywords": {"type": "array", "items": {"type": "string"}},
@@ -655,7 +663,8 @@ func (o *actionOps) view(ctx context.Context, a store.Action, withTargets bool) 
 		}
 	}
 	v := ActionView{ID: a.ID, Account: name, Kind: a.Kind, State: a.State, Messages: a.TargetCount, IDsHash: a.IDsHash,
-		ConfirmCount: a.ConfirmCount, RequestedBy: a.RequestedBy, ApprovalID: a.ApprovalID, Error: a.Error,
+		ConfirmCount: a.ConfirmCount, RequestedBy: a.RequestedBy, Source: a.Params.Source, DraftID: a.Params.DraftID,
+		ApprovalID: a.ApprovalID, Error: a.Error,
 		AddKeywords: a.Params.AddKeywords, RemoveKW: a.Params.RemoveKeywords,
 		CreatedAt: rfc3339(a.CreatedAt), UpdatedAt: rfc3339(a.UpdatedAt), DoneAt: rfc3339(a.DoneAt)}
 	if m := a.Params.Mark; m != nil {
@@ -949,7 +958,7 @@ func DraftsCleanupCopies(d Deps) Operation {
   "required": ["draft_id"], "additionalProperties": false}`),
 		OutputSchema: json.RawMessage(`{"type": "object", "properties": {"dry_run": {"type": "boolean"}, "draft_id": {"type": "integer"},
     "copies": {"type": "integer", "description": "earlier copies that will go to the trash"},
-    "skipped": {"type": "integer", "description": "earlier copies not touched (gone, changed or without own hash)"},
+    "skipped": {"type": "integer", "description": "earlier copies still in the mirror but not touched: changed in the mail client, outside the Drafts folders, without own hash, or already in a waiting or running action (copies no longer in the Drafts folder do not count)"},
     "action_id": {"type": "integer"}, "next_step": {"type": "string"}},
   "required": ["dry_run", "draft_id", "copies", "skipped", "next_step"]}`),
 		Redact: redactDraftInput,
@@ -970,8 +979,17 @@ func DraftsCleanupCopies(d Deps) Operation {
 			out := CleanupOutput{DryRun: call.DryRun, DraftID: dr.ID}
 			var plan actions.Plan
 			var ids []int64
+			// A11 Teil 1: dieselbe Bedingung wie beim Aufräumen durch
+			// PostKauz (eigene, unveränderte Kopie im Entwürfe-Ordner). Eine
+			// Kopie, die laut Spiegel nicht mehr da ist, zählt nicht (sie
+			// ist schon weg, etwa im Papierkorb); eine mit wartender Aktion
+			// zählt als übersprungen.
+			inDrafts, err := o.drafts.Store.DraftMailboxIDs(ctx, dr.AccountID)
+			if err != nil {
+				return nil, err
+			}
 			for _, p := range dr.RemotePrevious {
-				if p.UIDValidity == 0 || p.UID <= 0 || p.ContentHash == "" {
+				if p.UIDValidity == 0 || p.UID <= 0 || p.ContentHash == "" || !inDrafts[p.MailboxID] {
 					out.Skipped++
 					continue
 				}
@@ -979,7 +997,16 @@ func DraftsCleanupCopies(d Deps) Operation {
 				if err != nil {
 					return nil, err
 				}
-				if !ok || c.UIDValidity != p.UIDValidity || hash != p.ContentHash {
+				if !ok || c.UIDValidity != p.UIDValidity {
+					continue
+				}
+				if hash != p.ContentHash {
+					out.Skipped++
+					continue
+				}
+				if busy, err := o.drafts.Store.CopyBusy(ctx, p.MailboxID, p.UID, p.UIDValidity); err != nil {
+					return nil, err
+				} else if busy {
 					out.Skipped++
 					continue
 				}
@@ -1069,5 +1096,16 @@ func ActionOriginCheck(keys KeyRepo, rules *policy.Rules) actions.OriginCheck {
 			return dec.Reason, nil
 		}
 		return "", nil
+	}
+}
+
+// DraftCleanupCheck ist drafts.CleanupCheck für den Sync (A11 Teil 1):
+// dieselbe Prüfung wie vor der Ausführung (ActionOriginCheck) mit Scope
+// mail:draft und einer Papierkorb-Aktion mit copies Zielen.
+func DraftCleanupCheck(keys KeyRepo, rules *policy.Rules) drafts.CleanupCheck {
+	check := ActionOriginCheck(keys, rules)
+	return func(ctx context.Context, keyID string, copies int) (string, error) {
+		return check(ctx, actions.Origin{KeyID: keyID, Scope: policy.ScopeMailDraft,
+			Facts: policy.Facts{Action: policy.ActionTrash, Targets: copies}})
 	}
 }

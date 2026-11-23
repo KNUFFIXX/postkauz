@@ -607,10 +607,14 @@ func renderDraftShow(w io.Writer, out any) error {
 			// A09 Teil 1: Weg über den Verlauf mit ergänzten Empfängern.
 			fmt.Fprintf(w, "closed:      %s, sent: %s\n", o.ClosedAt, termLine(o.ClosedNote))
 		}
+	case drafts.ReasonDiscarded:
+		// A11 Teil 2: vom Schlüssel verworfen, der ihn geschrieben hat.
+		fmt.Fprintf(w, "closed:      %s, abandoned: %s\n", o.ClosedAt, termLine(o.ClosedNote))
 	case drafts.ReasonSupersededByDraft:
 		// A07 Teil 5: durch einen eigenen, neueren Entwurf ersetzt.
-		if o.SupersedeActionID > 0 && o.ClosedNote == ops.SupersedeNotMovedNote(o.SupersedeActionID) {
-			// A09 Teil 2 (b): Die Aktion hat die Kopie nicht verschoben.
+		if strings.HasPrefix(o.ClosedNote, "copy ") {
+			// A09 Teil 2 (b), seit A11 nach der letzten Aktion je Kopie:
+			// Die Kopie ist nicht verschoben (oder nicht mehr gefunden).
 			fmt.Fprintf(w, "closed:      %s, abandoned: superseded by draft %d; %s\n", o.ClosedAt, o.SupersededByDraftID, termLine(o.ClosedNote))
 			break
 		}

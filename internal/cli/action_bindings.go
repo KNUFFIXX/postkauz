@@ -371,6 +371,14 @@ func renderActionView(w io.Writer, out any) error {
 	if o.Target != nil {
 		fmt.Fprintf(w, "target: %s\n", termLine(o.Target.Mailbox))
 	}
+	if o.Source != "" {
+		// A11 Teil 1 (c): Herkunft und Entwurf.
+		if o.DraftID > 0 {
+			fmt.Fprintf(w, "source: %s (draft %d)\n", o.Source, o.DraftID)
+		} else {
+			fmt.Fprintf(w, "source: %s\n", o.Source)
+		}
+	}
 	if o.Error != "" {
 		fmt.Fprintf(w, "error: %s\n", o.Error)
 	}
@@ -428,8 +436,9 @@ func renderSupersede(w io.Writer, out any) error {
 	if o.DryRun {
 		prefix = "dry run: "
 	}
-	fmt.Fprintf(w, "%sdraft %d superseded by draft %d: %s, %d own copy/copies queued for the trash (%s), %d earlier copy/copies "+
-		"outside the Drafts folders left alone\n", prefix, o.DraftID, o.ByDraftID, o.Status, o.Copies, termLine(o.Trash), o.Skipped)
+	fmt.Fprintf(w, "%sdraft %d superseded by draft %d: %s, %d own copy/copies queued for the trash (%s), %d copy/copies "+
+		"skipped (outside the Drafts folders, changed in the mail client or already queued)\n", prefix, o.DraftID, o.ByDraftID, o.Status,
+		o.Copies, termLine(o.Trash), o.Skipped)
 	fmt.Fprintln(w, termLine(o.NextStep))
 	return nil
 }

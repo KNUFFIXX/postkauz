@@ -235,7 +235,9 @@ func TestDraftsCleanupCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := res.Output.(CleanupOutput)
-	if out.Copies != 1 || out.Skipped != 1 || out.ActionID == 0 {
+	// A11 Teil 1: Die zweite frühere Kopie (UID 10) liegt laut Spiegel
+	// nicht mehr im Entwürfe-Ordner und zählt deshalb nicht als skipped.
+	if out.Copies != 1 || out.Skipped != 0 || out.ActionID == 0 {
 		t.Fatalf("out = %+v", out)
 	}
 	a, _ := e.st.Action(context.Background(), out.ActionID)

@@ -593,12 +593,15 @@ type DraftCloseEvent struct {
 	Operation string
 	Reason    string
 	Params    json.RawMessage
+	// KeyID: wer geschlossen hat ("cli", "key:<name>" oder "system"; A11
+	// Teil 1 (d): requested_by einer erneuten Papierkorb-Aktion).
+	KeyID string
 }
 
 // DraftClosedBy liefert den Audit-Eintrag, der den Entwurf draftID zum
 // Zeitpunkt closedAt geschlossen hat, soweit er einen eigenen Grund trägt
 // (A06 Teil 4 replaced, A07 Teil 4 copy_gone, A07 Teil 5
-// superseded_by_draft); ohne Migration, gesucht wie DraftReplacedBy in ±1 s
+// superseded_by_draft, A11 Teil 2 discarded); ohne Migration, gesucht wie DraftReplacedBy in ±1 s
 // über den Index audit_events_ts. Bei drafts.supersede muss draftID der
 // alte Entwurf (params.draft_id) sein, nie der Nachfolger, der im selben
 // Eintrag als Ziel steht (Nachtrag 1 zu A07, B6). ok false: anders geschlossen oder schon
@@ -608,14 +611,16 @@ func (s *SQLite) DraftClosedBy(ctx context.Context, draftID int64, closedAt time
 		return ev, false, nil
 	}
 	var params string
-	err = s.db.QueryRowContext(ctx, `SELECT operation, COALESCE(reason, ''), params_redacted FROM audit_events WHERE ts BETWEEN ? AND ?
-		AND operation IN ('drafts.replaced_detected', 'drafts.copy_gone_detected', 'drafts.supersede') AND result = 'ok'
-		AND reason IN ('replaced', 'copy_gone', 'superseded_by_draft')
+	err = s.db.QueryRowContext(ctx, `SELECT operation, COALESCE(reason, ''), params_redacted, COALESCE(api_key_id, '') FROM audit_events
+		WHERE ts BETWEEN ? AND ?
+		AND operation IN ('drafts.replaced_detected', 'drafts.copy_gone_detected', 'drafts.supersede', 'drafts.discard') AND result = 'ok'
+		AND reason IN ('replaced', 'copy_gone', 'superseded_by_draft', 'discarded')
 		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
 		WHERE value = ?)
 		AND (operation != 'drafts.supersede' OR (json_valid(params_redacted) AND json_extract(params_redacted, '$.draft_id') = ?))
 		ORDER BY id DESC LIMIT 1`,
-		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10), draftID).Scan(&ev.Operation, &ev.Reason, &params)
+		closedAt.UnixMilli()-1000, closedAt.UnixMilli()+1000, "draft:"+strconv.FormatInt(draftID, 10), draftID).Scan(&ev.Operation, &ev.Reason,
+		&params, &ev.KeyID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DraftCloseEvent{}, false, nil
 	}

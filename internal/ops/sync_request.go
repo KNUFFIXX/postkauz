@@ -135,6 +135,29 @@ func SyncRequest(d Deps) Operation {
 			if err != nil {
 				return nil, err
 			}
+			if in.Mailbox != "" && d.Mailboxes != nil {
+				// A11 Teil 1 (a), Befund B2: Ein Ordner, den das Konto im
+				// Spiegel nicht hat, ist ein Eingabefehler. Vorher reihte
+				// sync.request ihn ein, SyncAll übersprang den unbekannten
+				// Pfad still, und der Job galt als erledigt.
+				boxes, err := d.Mailboxes.Mailboxes(ctx, a.ID)
+				if err != nil {
+					return nil, err
+				}
+				// Kennt der Spiegel noch keinen Ordner des Kontos (nie
+				// gespiegelt), lässt sich nichts prüfen; der erste Lauf holt
+				// die Ordnerliste.
+				known := len(boxes) == 0
+				for _, b := range boxes {
+					if b.Path == in.Mailbox {
+						known = true
+						break
+					}
+				}
+				if !known {
+					return nil, inputErr("account %s has no mailbox with this path in the mirror (see mailboxes.list; the path is case-sensitive)", a.Name)
+				}
+			}
 			out := SyncRequestOutput{Account: a.Name, Mailbox: in.Mailbox, Status: "would_queue", Note: SyncRequestNote, DryRun: call.DryRun}
 			if call.DryRun {
 				return out, nil

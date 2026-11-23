@@ -75,7 +75,7 @@ func TestA07N1RenderSuperseded(t *testing.T) {
 		ActionID: 12, NextStep: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "1 own copy/copies queued for the trash (Papierkorb), 1 earlier copy/copies outside the Drafts folders left alone") {
+	if !strings.Contains(b.String(), "1 own copy/copies queued for the trash (Papierkorb), 1 copy/copies skipped (outside the Drafts folders, changed in the mail client or already queued)") {
 		t.Fatalf("supersede:\n%s", b.String())
 	}
 }

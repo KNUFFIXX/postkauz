@@ -194,7 +194,7 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
 		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars(),
 		Drafts: &drafts.Service{Store: st, ApprovalTTL: a.cfg.Draft.ApprovalTTL, CopyGoneAfter: a.cfg.Draft.CopyGoneAfter.Effective(),
-			PolicyVersion: a.policyVersion},
+			PreviousCopies: a.cfg.Draft.PreviousCopies, PolicyVersion: a.policyVersion},
 		DraftBlobs: blobs,
 		Draft: ops.DraftConfig{AttachDir: a.paths.AttachDir, AttachGuard: guard, MaxAttachmentBytes: a.cfg.Draft.MaxAttachmentBytes,
 			QuoteLine: a.cfg.Draft.QuoteLine, Operator: a.cfg.Operator.Name},
@@ -231,6 +231,10 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		// policy.toml erst nach seinem Neustart).
 		runRules := a.policy.Rules()
 		r.Actions = &actions.Runner{Store: st, Blobs: blobs, Origin: ops.ActionOriginCheck(st, &runRules), Log: a.log}
+		// A11 Teil 1 (c), (d): Bevor der Sync eigene Entwurfskopien in den
+		// Papierkorb legt, gelten Schlüssel und Regeln wie bei der
+		// Ausführung ([delete] agent_may = none: keine Aktion).
+		deps.Drafts.CleanupCheck = ops.DraftCleanupCheck(st, &runRules)
 		// Job sync (T2, sync.request/mail_sync_now): Der Sync führt
 		// angeforderte Läufe aus bzw. erledigt sie mit.
 		if sj := ops.NewSyncJobs(deps); sj != nil {

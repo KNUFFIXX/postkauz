@@ -179,7 +179,22 @@ func TestA07SupersedeDenied(t *testing.T) {
 			e.exec(t, `UPDATE drafts SET remote_state = 'taken_over' WHERE id = 1`)
 		}, ""},
 		{"copy gone from the mirror", drafts.ReasonCopyMissing, triageKey, "", func(t *testing.T, e *contractEnv) {
+			// A11 Teil 1 (b): Der Spiegel hat die UID schon gesehen
+			// (uidnext > 9) und führt sie nicht mehr.
 			e.exec(t, `DELETE FROM message_mailboxes WHERE uid = 9`)
+			e.exec(t, `UPDATE mailboxes SET uidnext = 10 WHERE path = 'Entwuerfe'`)
+		}, ""},
+		{"copy not mirrored yet", drafts.ReasonCopyNotMirrored, triageKey, "", func(t *testing.T, e *contractEnv) {
+			// A11 Teil 1 (b): gleich nach der Ablage (uidnext ≤ UID).
+			e.exec(t, `DELETE FROM message_mailboxes WHERE uid = 9`)
+			e.exec(t, `UPDATE mailboxes SET uidnext = 9 WHERE path = 'Entwuerfe'`)
+		}, ""},
+		{"folder never mirrored", drafts.ReasonCopyNotMirrored, triageKey, "", func(t *testing.T, e *contractEnv) {
+			e.exec(t, `DELETE FROM message_mailboxes WHERE uid = 9`)
+			e.exec(t, `UPDATE mailboxes SET uidnext = NULL WHERE path = 'Entwuerfe'`)
+		}, ""},
+		{"uidvalidity changed", drafts.ReasonCopyMissing, triageKey, "", func(t *testing.T, e *contractEnv) {
+			e.exec(t, `UPDATE mailboxes SET uidvalidity = 7 WHERE path = 'Entwuerfe'`)
 		}, ""},
 		{"new one older", drafts.ReasonSuccessorNotNewer, triageKey, "", func(t *testing.T, e *contractEnv) {
 			e.exec(t, `UPDATE drafts SET created_at = created_at - 600000 WHERE id = 2`)

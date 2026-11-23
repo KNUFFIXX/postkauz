@@ -63,7 +63,7 @@ type RunStore interface {
 	MessageHeaderBlob(ctx context.Context, messageID int64) (string, error)
 	MarkContentLoaded(ctx context.Context, messageID, mailboxID int64) error
 	// DraftMailboxIDs: Ordner mit Rolle drafts und Ablageordner von
-	// Entwürfen (A07 Teil 5, Herkunft draft_supersede).
+	// Entwürfen (A07 Teil 5; Herkunft eines Entwurfs, store.IsDraftSource).
 	DraftMailboxIDs(ctx context.Context, accountID int64) (map[int64]bool, error)
 }
 
@@ -253,10 +253,11 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 			open = append(open, t)
 		}
 	}
-	supersede := a.Params.Source == store.ActionSourceDraftSupersede
+	supersede := store.IsDraftSource(a.Params.Source)
 	if supersede {
-		// A07 Teil 5 (Nachtrag zu E3): eigene, unveränderte Entwurfskopien
-		// eines ersetzten Entwurfs brauchen mail:draft statt mail:trash und
+		// A07 Teil 5 (Nachtrag zu E3), seit A11 für jede Herkunft eines
+		// Entwurfs (draft_supersede, draft_update, draft_discard):
+		// eigene, unveränderte Entwurfskopien brauchen mail:draft statt mail:trash und
 		// keinen Antrag, aber nur, solange jedes Ziel im Entwürfe-Ordner
 		// (Rolle drafts oder Ablageordner) liegt. Sonst scheitert die Aktion
 		// mit not_in_drafts, ohne Kommando an den Server (Nachtrag 1, B3:
@@ -369,7 +370,7 @@ func (r *Runner) runOne(ctx context.Context, a store.Action, boxes map[int64]sto
 				unsaved = append(unsaved, res)
 			}
 		}
-		r.log().Warn("a copy of a superseded draft no longer matches; nothing moved (stale)", "action_id", a.ID)
+		r.log().Warn("an own draft copy no longer matches; nothing moved (stale)", "action_id", a.ID, "source", a.Params.Source)
 		return results, unsaved, code, nil
 	}
 	var saved []store.TargetResult

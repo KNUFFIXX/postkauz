@@ -145,6 +145,18 @@ func pushHoldNote(reason string) string {
 // stimmte nur für offene Entwürfe. Was nach dem Schließen mit der Kopie
 // geschah, sagt closed_note, soweit bekannt.
 func remoteNote(d store.Draft) string {
+	var earlier []int64
+	for _, c := range d.RemotePrevious {
+		earlier = append(earlier, c.UID)
+	}
+	return remoteNoteFor(d, earlier, false)
+}
+
+// remoteNoteFor ist remoteNote mit den früheren Kopien, die laut Spiegel
+// noch im Entwürfe-Ordner liegen (earlier, UIDs; A11 Teil 1 (c):
+// earlierInDrafts), und keep für [draft] previous_copies = "keep" (die
+// früheren Kopien bleiben liegen, wie bis 0.3.0-rc8).
+func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 	if d.PushNote == drafts.PushNotePushedAfterClose {
 		if d.RemoteUID > 0 {
 			return fmt.Sprintf("a copy (uid %d) reached the Drafts folder just after the draft was closed; it stays there, "+
@@ -164,19 +176,28 @@ func remoteNote(d store.Draft) string {
 			return n
 		}
 		if d.PushedContentHash != "" {
-			earlier := "the earlier copy"
+			prev := "the earlier copy"
 			if d.RemoteUID > 0 {
-				earlier = fmt.Sprintf("the earlier copy (uid %d)", d.RemoteUID)
+				prev = fmt.Sprintf("the earlier copy (uid %d)", d.RemoteUID)
 			}
-			return "changed after the push: a new copy is queued (it is put once the draft has been unchanged for 30 s: " +
-				"a running sync --watch does that, otherwise the next sync); " +
-				earlier + " stays in the Drafts folder, nothing is deleted"
+			head := "changed after the push: a new copy is queued (it is put once the draft has been unchanged for 30 s: " +
+				"a running sync --watch does that, otherwise the next sync); "
+			if keep {
+				return head + prev + " stays in the Drafts folder, nothing is deleted ([draft] previous_copies = \"keep\")"
+			}
+			// A11 Teil 1 (c): Die frühere Kopie geht in den Papierkorb,
+			// sobald die neue abgelegt ist (nur eine eigene, unveränderte).
+			return head + "once it is stored, " + prev + " goes to the trash (only if it is unchanged; see cleanup_action_ids)"
 		}
 		return RemoteNotePending
 	case drafts.RemotePushed:
-		if len(d.RemotePrevious) > 0 {
-			return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s stay there, nothing is deleted)", d.RemoteUID,
-				previousUIDs(d.RemotePrevious))
+		if len(earlier) > 0 {
+			if keep {
+				return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s stay there, nothing is deleted)", d.RemoteUID,
+					joinUIDs(earlier))
+			}
+			return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s are still there: own unchanged copies go to the trash "+
+				"(see cleanup_action_ids), others only the human removes)", d.RemoteUID, joinUIDs(earlier))
 		}
 		return fmt.Sprintf("in the Drafts folder (uid %d)", d.RemoteUID)
 	case drafts.RemoteTakenOver:
@@ -200,13 +221,52 @@ func ScheduledNote(at time.Time) string {
 	return "scheduled in the mail client for " + at.UTC().Format(time.RFC3339) + "; not sent yet"
 }
 
-// previousUIDs nennt die UIDs früherer Kopien ("uid 3, 5").
-func previousUIDs(l []store.RemoteCopy) string {
+// joinUIDs nennt UIDs früherer Kopien ("uid 3, uid 5").
+func joinUIDs(l []int64) string {
 	parts := make([]string, 0, len(l))
-	for _, c := range l {
-		parts = append(parts, "uid "+strconv.FormatInt(c.UID, 10))
+	for _, u := range l {
+		parts = append(parts, "uid "+strconv.FormatInt(u, 10))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// earlierInDrafts liefert die UIDs der früheren Kopien eines Entwurfs, die
+// laut Spiegel noch im Entwürfe-Ordner liegen (A11 Teil 1 (c): Anzeige in
+// remote_note, remote_previous_uids, draft show): unter Ordner und UID
+// vorhanden, UIDVALIDITY wie bei der Ablage (0 = unbekannt), Ordner ein
+// Entwürfe-Ordner.
+func (o *draftOps) earlierInDrafts(ctx context.Context, d store.Draft) ([]int64, error) {
+	if len(d.RemotePrevious) == 0 || o.svc == nil {
+		return nil, nil
+	}
+	inDrafts, err := o.svc.Store.DraftMailboxIDs(ctx, d.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	var out []int64
+	for _, p := range d.RemotePrevious {
+		if p.UID <= 0 || !inDrafts[p.MailboxID] || slices.Contains(out, p.UID) {
+			continue
+		}
+		c, _, ok, err := o.svc.Store.CopyAt(ctx, p.MailboxID, uint32(p.UID))
+		if err != nil {
+			return nil, err
+		}
+		if ok && (p.UIDValidity == 0 || c.UIDValidity == p.UIDValidity) {
+			out = append(out, p.UID)
+		}
+	}
+	return out, nil
+}
+
+// noteFor ist remote_note mit dem Stand des Spiegels (earlierInDrafts).
+func (o *draftOps) noteFor(ctx context.Context, d store.Draft) (string, []int64, error) {
+	earlier, err := o.earlierInDrafts(ctx, d)
+	if err != nil {
+		return "", nil, err
+	}
+	keep := o.svc != nil && o.svc.PreviousCopies == drafts.PreviousCopiesKeep
+	return remoteNoteFor(d, earlier, keep), earlier, nil
 }
 
 // draftOps hält die Abhängigkeiten der Entwurfsoperationen.
@@ -931,7 +991,10 @@ func (o *draftOps) writeOutput(ctx context.Context, acc string, res drafts.Resul
 	out := DraftsWriteOutput{Source: DraftSource, DraftID: d.ID, Account: acc, Kind: d.Kind, Status: string(res.To), Changed: res.Changed,
 		MessageID: d.MessageIDHeader, OriginalID: d.InReplyToMsg, Preview: preview(d, own), Original: orig,
 		DerivedFromEmail: derivedEnvelope(d), Notes: []string{},
-		Remote: d.RemoteState, RemoteNote: remoteNote(d), PushJobID: res.PushJobID, PreviewHash: d.PreviewHash, DryRun: dry}
+		Remote: d.RemoteState, PushJobID: res.PushJobID, PreviewHash: d.PreviewHash, DryRun: dry}
+	if out.RemoteNote, _, err = o.noteFor(ctx, d); err != nil {
+		return DraftsWriteOutput{}, err
+	}
 	if res.From != "" {
 		out.PreviousStatus = string(res.From)
 	}
@@ -1381,9 +1444,15 @@ type DraftDetail struct {
 	ScheduledMessageID int64  `json:"scheduled_message_id,omitempty"`
 	RemoteMailboxID    int64  `json:"remote_mailbox_id,omitempty"`
 	RemoteUID          int64  `json:"remote_uid,omitempty"`
-	// RemotePreviousUIDs: UIDs früherer Kopien im Entwürfe-Ordner (nach
-	// einer Änderung legt der Push eine neue Kopie ab, die alte bleibt; S2.5).
+	// RemotePreviousUIDs: UIDs früherer Kopien, die laut Spiegel noch im
+	// Entwürfe-Ordner liegen (nach einer Änderung legt der Push eine neue
+	// Kopie ab; seit A11 geht die frühere eigene, unveränderte in den
+	// Papierkorb).
 	RemotePreviousUIDs []int64 `json:"remote_previous_uids,omitempty"`
+	// CleanupActionIDs: Papierkorb-Aktionen für eigene Kopien dieses
+	// Entwurfs (Herkunft draft_update, draft_supersede, draft_discard),
+	// neueste zuerst (A11 Teil 1 (c)).
+	CleanupActionIDs []int64 `json:"cleanup_action_ids,omitempty"`
 	// PushedDate: Date-Kopfzeile der abgelegten Kopie (S2.5).
 	PushedDate string `json:"pushed_date,omitempty"`
 	// PushNote: Hinweis des Pushs als Code (approval_stale,
@@ -1486,14 +1555,16 @@ func DraftsGet(d Deps) Operation {
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "scheduled_for": {"type": "string", "format": "date-time", "description": "remote scheduled: the send time the mail client scheduled; the message is not sent yet"},
     "scheduled_message_id": {"type": "integer", "description": "remote scheduled: local id of the scheduled message"},
-    "remote_previous_uids": {"type": "array", "items": {"type": "integer"}}, "pushed_date": {"type": "string"},
+    "remote_previous_uids": {"type": "array", "items": {"type": "integer"}, "description": "uids of earlier copies that are still in the Drafts folder according to the mirror"},
+    "cleanup_action_ids": {"type": "array", "items": {"type": "integer"}, "description": "mailbox actions that move own unchanged copies of this draft to the trash (after a change, drafts.supersede, drafts.discard), newest first; actions.get shows source and state"},
+    "pushed_date": {"type": "string"},
     "push_note": {"type": "string", "enum": ["approval_stale", "no_drafts_mailbox", "push_failed", "push_rejected", "pushed_after_close"]}, "push_note_text": {"type": "string"},
     "older_copies": {"type": "integer"}, "older_copy_uids": {"type": "array", "items": {"type": "integer"}},
     "updated_by": {"type": "string", "description": "who changed the content last"}, "push_hold": {"type": "string", "description": "why the push holds the draft back (key no longer valid)"},
     "preview_hash": {"type": "string"}, "created_by": {"type": "string"},
     "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"},
     "closed_at": {"type": "string", "format": "date-time"}, "sent_message_id": {"type": "integer"},
-    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its unchanged copy is queued for the trash; see closed_note)"},
+    "closed_reason": {"type": "string", "enum": ["replaced", "copy_gone", "superseded_by_draft", "discarded"], "description": "why the draft was closed: replaced = an own reply in the thread replaced it (status abandoned, its text was not sent); copy_gone = its copy was gone from the Drafts folder for longer than [draft] copy_gone_after and no way detected a sent message (status abandoned; it may or may not have been sent); superseded_by_draft = a newer draft of the same key replaced it (drafts.supersede, its unchanged copy is queued for the trash; see closed_note); discarded = the key that wrote it discarded it (drafts.discard; not sent; see closed_note)"},
     "superseded_by_draft_id": {"type": "integer", "description": "the newer draft (closed_reason superseded_by_draft)"},
     "supersede_action_id": {"type": "integer", "description": "the mailbox action that moves the unchanged copy to the trash (closed_reason superseded_by_draft; action show <id>)"},
     "replaced_by_message_id": {"type": "integer", "description": "local id of the own reply that replaced the draft (closed_reason replaced)"},
@@ -1553,7 +1624,7 @@ func DraftsGet(d Deps) Operation {
 				OriginalID: dr.InReplyToMsg, From: formatAddr(store.Addr{Name: dr.FromName, Address: dr.FromEmail}),
 				To: formatAddrs(dr.To), Cc: formatAddrs(dr.Cc), Bcc: formatAddrs(dr.Bcc), Subject: dr.Subject, BodyText: own, Original: orig,
 				BodyTextTruncated: ownCut, DerivedFromEmail: derivedEnvelope(dr), BodyMarkdown: md, BodyHTML: html, BodySourceOmitted: omitted, Quote: opts.Quote, Signature: opts.Signature,
-				HookResult: dr.HookResult, ApprovalID: dr.ApprovalID, Remote: dr.RemoteState, RemoteNote: remoteNote(dr),
+				HookResult: dr.HookResult, ApprovalID: dr.ApprovalID, Remote: dr.RemoteState,
 				RemoteMailboxID: dr.RemoteMailboxID, RemoteUID: dr.RemoteUID, PreviewHash: dr.PreviewHash, CreatedBy: dr.CreatedBy,
 				CreatedAt: rfc3339(dr.CreatedAt), UpdatedAt: rfc3339(dr.UpdatedAt), ClosedAt: rfc3339(dr.ClosedAt), SentMessageID: dr.SentMessageID}
 			var h map[string]any
@@ -1562,8 +1633,17 @@ func DraftsGet(d Deps) Operation {
 				out.References, _ = h["References"].(string)
 			}
 			out.Attachments, out.Warnings = attachmentOutputs(dr.Attachments)
-			for _, c := range dr.RemotePrevious {
-				out.RemotePreviousUIDs = append(out.RemotePreviousUIDs, c.UID)
+			// A11 Teil 1 (c): frühere Kopien nur, soweit sie laut Spiegel
+			// noch im Entwürfe-Ordner liegen.
+			if out.RemoteNote, out.RemotePreviousUIDs, err = o.noteFor(ctx, dr); err != nil {
+				return nil, err
+			}
+			if acts, err := o.svc.Store.DraftCleanupActions(ctx, dr); err != nil {
+				return nil, err
+			} else {
+				for _, a := range acts {
+					out.CleanupActionIDs = append(out.CleanupActionIDs, a.ID)
+				}
 			}
 			out.PushedDate, out.PushNote, out.PushNoteText = dr.PushedDate, dr.PushNote, pushNotes[dr.PushNote]
 			if dr.PushNote == drafts.PushNotePushFailed && !drafts.Status(dr.Status).Closed() {
@@ -1665,6 +1745,10 @@ const (
 		"no sent message was detected, so it is not known whether it was sent"
 	closedNoteSuperseded = "a newer draft replaced this draft (drafts.supersede); its unchanged copy is queued for the trash " +
 		"(see supersede_action_id; a running sync --watch moves it within 10 s)"
+	// A11 Teil 2: drafts.discard.
+	closedNoteDiscarded = "discarded by the key that wrote it (drafts.discard; not sent); its unchanged copy is queued for the trash " +
+		"(see cleanup_action_ids; a running sync --watch moves it within 10 s)"
+	closedNoteDiscardedNoCopy = "discarded by the key that wrote it (drafts.discard; not sent); it had no copy in the Drafts folder"
 )
 
 // closedReason liest aus dem Audit, warum das System einen verworfenen
@@ -1680,6 +1764,7 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 		MissingSince string `json:"missing_since"`
 		By           int64  `json:"by_draft_id"`
 		Action       int64  `json:"action_id"`
+		Copies       int    `json:"copies"`
 	}
 	if err := json.Unmarshal(ev.Params, &p); err != nil {
 		return fmt.Errorf("ops: audit params of a closed draft: %w", err)
@@ -1692,25 +1777,83 @@ func (o *draftOps) closedReason(ctx context.Context, dr store.Draft, out *DraftD
 	case drafts.ReasonSupersededByDraft:
 		out.ClosedReason, out.SupersededByDraftID, out.SupersedeActionID, out.ClosedNote = drafts.ReasonSupersededByDraft, p.By,
 			p.Action, closedNoteSuperseded
-		if p.Action > 0 {
-			// A09 Teil 2 (b): Hat die Papierkorb-Aktion abgeschlossen und
-			// kein Ziel verschoben (etwa alle stale), liegt die Kopie
-			// noch im Entwürfe-Ordner.
-			a, err := o.svc.Store.Action(ctx, p.Action)
-			if err != nil && !errors.Is(err, store.ErrActionNotFound) {
-				return err
+		if note, err := o.cleanupNote(ctx, dr); err != nil {
+			return err
+		} else if note != "" {
+			out.ClosedNote = note
+		}
+	case drafts.ReasonDiscarded:
+		out.ClosedReason, out.ClosedNote = drafts.ReasonDiscarded, closedNoteDiscarded
+		if p.Copies == 0 {
+			out.ClosedNote = closedNoteDiscardedNoCopy
+		}
+		if note, err := o.cleanupNote(ctx, dr); err != nil {
+			return err
+		} else if note != "" {
+			out.ClosedNote = note
+		}
+	}
+	return nil
+}
+
+// cleanupNote nennt nach dem Ergebnis der letzten Aktion je Kopie (A11
+// Teil 1 (d); vorher die erste aus dem Audit), ob eine Kopie eines
+// geschlossenen Entwurfs liegengeblieben ist: Wartet für keine Kopie mehr
+// eine Aktion und endete die letzte Aktion einer Kopie ohne ok, liegt sie
+// noch im Entwürfe-Ordner (A09 Teil 2 (b)), außer jedes solche Ziel war
+// not_found (A10 Teil 0 (b)). "" = kein Hinweis (offen oder verschoben).
+func (o *draftOps) cleanupNote(ctx context.Context, dr store.Draft) (string, error) {
+	acts, err := o.svc.Store.DraftCleanupActions(ctx, dr)
+	if err != nil {
+		return "", err
+	}
+	type key struct {
+		mb       int64
+		uid, uiv uint32
+	}
+	seen := map[key]bool{}
+	var failedAction int64
+	allNotFound, failed := true, false
+	for _, a := range acts { // neueste zuerst
+		finished := actionFinished(a)
+		for _, t := range a.Targets {
+			k := key{t.MailboxID, t.UID, t.UIDValidity}
+			if seen[k] {
+				continue
 			}
-			if err == nil && actionFinishedWithoutOK(a) {
-				out.ClosedNote = SupersedeNotMovedNote(p.Action)
-				if allTargetsNotFound(a) {
-					// A10 Teil 0 (b): Kein Ziel war mehr da; „still in the
-					// Drafts folder“ stimmte dann nicht.
-					out.ClosedNote = SupersedeNotFoundNote(p.Action)
+			seen[k] = true
+			switch {
+			case !finished && t.Result == "":
+				return "", nil // eine Aktion wartet noch
+			case t.Result == store.TargetOK:
+			default:
+				failed = true
+				if failedAction == 0 {
+					failedAction = a.ID
+				}
+				if t.Result != store.TargetNotFound {
+					allNotFound = false
 				}
 			}
 		}
 	}
-	return nil
+	if !failed {
+		return "", nil
+	}
+	if allNotFound {
+		return SupersedeNotFoundNote(failedAction), nil
+	}
+	return SupersedeNotMovedNote(failedAction), nil
+}
+
+// actionFinished: Die Aktion ist abgeschlossen (done, partial, failed,
+// rejected, expired).
+func actionFinished(a store.Action) bool {
+	switch a.State {
+	case store.ActionDone, store.ActionPartial, store.ActionFailed, store.ActionRejected, store.ActionExpired:
+		return true
+	}
+	return false
 }
 
 // actionFinishedWithoutOK: Die Aktion ist abgeschlossen (done, partial,

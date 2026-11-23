@@ -369,7 +369,8 @@ func (s *Service) Rejected(ctx context.Context, id int64) error {
 
 // Pushed vermerkt eine abgelegte Kopie: Ordner, UIDVALIDITY, UID,
 // Inhalts-Hash, Nachrichten-Hash und Date; eine frühere Kopie kommt in
-// remote_previous (sie bleibt im Ordner, kein Expunge), ein offener
+// remote_previous (kein Expunge; seit A11 geht sie in den Papierkorb,
+// siehe unten), ein offener
 // Ablageversuch ist erledigt. Ist der Entwurf noch der Stand, den der Push
 // gebaut hat (fingerprint), und nicht abgeschlossen, ist er danach pushed;
 // hat ein anderer Schreiber inzwischen geändert, bleibt er pending, und der
@@ -380,14 +381,32 @@ func (s *Service) Rejected(ctx context.Context, id int64) error {
 // und nichts gelöscht wird. Audit: Systemereignis drafts.push, Grund
 // appended, mit Draft-ID, Ordner, UID und current. current meldet, ob der
 // Entwurf jetzt pushed ist.
+//
+// A11 Teil 1 (c): Ist die neue Kopie die aktuelle Fassung, gehen die
+// früheren eigenen, unveränderten Kopien in derselben Transaktion als
+// Aktion draft_update in den Papierkorb (cleanupAfterPush; nicht mit
+// [draft] previous_copies = "keep"). Die Policy dafür fragt Pushed vorher
+// außerhalb der Transaktion (CleanupCheck).
 func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c PushedCopy) (d store.Draft, current bool, err error) {
+	deny := ""
+	if !s.keepPrevious() && s.CleanupCheck != nil {
+		pre, err := s.Store.Draft(ctx, id)
+		if err != nil {
+			return d, false, err
+		}
+		if deny, err = s.cleanupDenied(ctx, pre.CreatedBy, len(pre.RemotePrevious)+1); err != nil {
+			return d, false, err
+		}
+	}
 	now := s.now()
 	err = s.tx(ctx, func(x *store.DraftTx) error {
 		if d, err = x.Draft(id); err != nil {
 			return err
 		}
-		current, err = s.recordCopy(x, &d, fingerprint, c, now, false)
-		return err
+		if current, err = s.recordCopy(x, &d, fingerprint, c, now, false); err != nil || !current {
+			return err
+		}
+		return s.cleanupAfterPush(x, d, deny, now)
 	})
 	return d, current, err
 }

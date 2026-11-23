@@ -40,6 +40,13 @@ type Service struct {
 	// copy_gone_after, A07 Teil 4; copygone.go): 0 = Standard 24 h,
 	// negativ = abgeschaltet.
 	CopyGoneAfter time.Duration
+	// PreviousCopies: [draft] previous_copies (A11 Teil 1 (c)): "" oder
+	// "trash" = frühere eigene, unveränderte Kopien gehen nach einer
+	// Änderung in den Papierkorb, "keep" = sie bleiben (wie bis rc8).
+	PreviousCopies string
+	// CleanupCheck: Policy und Schlüssel vor dem Anlegen einer
+	// Papierkorb-Aktion für eigene Kopien (nil = erlaubt; cleanup.go).
+	CleanupCheck CleanupCheck
 
 	// who: Wer handelt; gesetzt über As. Dann schreibt jeder Übergang
 	// einen Audit-Eintrag mit diesem Akteur in derselben Transaktion (S2.3).
@@ -373,8 +380,9 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 		}
 		d.PreviewHash = PreviewHash(HashOf(d))
 		if d.RemoteState == RemotePushed {
-			// Neue Kopie beim nächsten Push; die alte bleibt im
-			// Entwürfe-Ordner (kein Expunge im MVP, S2.5).
+			// Neue Kopie beim nächsten Push (S2.5); die alte geht danach in
+			// den Papierkorb, wenn sie eine eigene, unveränderte Kopie ist
+			// (A11 Teil 1 (c), Pushed), nie endgültig gelöscht.
 			d.RemoteState = RemotePending
 		}
 		if err := x.UpdateDraft(d); err != nil {

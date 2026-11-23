@@ -196,6 +196,29 @@ func (e *Engine) pushPending(ctx context.Context, d *Drafts, retry bool) (*ops.S
 	out.DraftPushReport = rep
 	if rep.Pushed > 0 {
 		e.log().Info("drafts pushed to the Drafts folder", "count", rep.Pushed, "draft_ids", rep.DraftIDs)
+		// A11 Teil 1 (a), Befund B2: den Ablageordner sofort nachspiegeln,
+		// damit der Spiegel die frisch abgelegte Kopie binnen eines
+		// Job-Takts kennt (drafts.supersede, drafts.discard, Aufräumen
+		// früherer Kopien). Nur dieser Ordner, ohne Prüfung der Entwürfe
+		// (checkDrafts) und ohne settleRequests. Scheitert das, bleibt es
+		// beim nächsten regulären Lauf; die Ablage gilt trotzdem.
+		if err == nil {
+			// Stand des Ordners frisch lesen (der Spiegel vor dem Push hat
+			// UIDNEXT und Phase geändert).
+			if boxes, lerr := e.Store.Mailboxes(ctx, e.AccountID); lerr == nil {
+				for _, b := range boxes {
+					if b.ID == mb.ID {
+						mb = b
+					}
+				}
+			}
+			if _, serr := e.SyncMailbox(ctx, mb, Options{}); serr != nil {
+				if fatal(ctx, serr) {
+					return out, fmt.Errorf("%s: %w", mb.Path, serr)
+				}
+				e.log().Warn("could not mirror the Drafts folder after the push; the next sync does it", "error", ops.ErrorKinds(serr))
+			}
+		}
 	}
 	if rep.Rejected+rep.Failed+rep.AttachDenied > 0 {
 		e.log().Warn("drafts not pushed; see draft show", "rejected", rep.Rejected, "failed", rep.Failed, "attach_denied", rep.AttachDenied)

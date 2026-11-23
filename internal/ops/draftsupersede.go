@@ -44,7 +44,8 @@ func DraftsSupersede(d Deps) Operation {
 	return Operation{
 		Name: drafts.OpSupersede, Scope: policy.ScopeMailDraft, Risk: policy.R2,
 		Summary: "Close an own draft that a newer own draft replaces (same original or subject) and move its unchanged copy " +
-			"in the Drafts folder to the trash (never deleted for good).",
+			"in the Drafts folder to the trash (never deleted for good). Refused with copy_not_mirrored right after the copy was " +
+			"stored (try again in a few seconds) and with copy_missing when the mirror no longer has it (try again after the next sync).",
 		InputSchema: json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -60,7 +61,7 @@ func DraftsSupersede(d Deps) Operation {
     "dry_run": {"type": "boolean"}, "draft_id": {"type": "integer"}, "by_draft_id": {"type": "integer"},
     "status": {"type": "string", "enum": ["abandoned"], "description": "status of the old draft afterwards"},
     "copies": {"type": "integer", "description": "own unchanged copies that go to the trash"},
-    "skipped": {"type": "integer", "description": "earlier own copies outside the Drafts folders; they stay where they are"},
+    "skipped": {"type": "integer", "description": "own copies not moved by this call: outside the Drafts folders or changed in the mail client (they stay where they are), or already in a mailbox action that is requested, queued or running (that action moves them)"},
     "trash": {"type": "string", "description": "the mailbox with role trash"},
     "action_id": {"type": "integer"}, "next_step": {"type": "string"}
   },
@@ -102,9 +103,13 @@ func DraftsSupersede(d Deps) Operation {
 			}
 			out := SupersedeOutput{DryRun: call.DryRun, DraftID: in.DraftID, ByDraftID: in.ByDraftID, Status: string(drafts.StatusAbandoned),
 				Copies: res.Copies, Skipped: res.Skipped, Trash: res.Trash, ActionID: res.ActionID}
-			if call.DryRun {
+			switch {
+			case call.DryRun:
 				out.NextStep = "dry run: nothing changed; call again with dry_run=false"
-			} else {
+			case res.ActionID == 0:
+				out.NextStep = fmt.Sprintf("draft %d is abandoned; its copies are already queued for the trash by an earlier action "+
+					"(see drafts.get cleanup_action_ids)", in.DraftID)
+			default:
 				out.NextStep = fmt.Sprintf("draft %d is abandoned; its copy is queued for the trash (%s, action %d): a running %s sync --watch "+
 					"moves it within 10 s, otherwise the next %s sync; check with: %s action show %d", in.DraftID, res.Trash, res.ActionID,
 					brand.Name, brand.Name, brand.Name, res.ActionID)
