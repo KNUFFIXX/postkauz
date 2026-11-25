@@ -166,12 +166,38 @@ func (r *Runner) RunAccount(ctx context.Context, accountID int64) (Report, error
 	}
 	var err error
 	if r.Extractor != nil {
-		// pdftotext inzwischen installiert: früher übersprungene PDFs nachholen.
-		if r.Extractor.PDFTool() != "" {
-			if n, err := r.Store.RequeueSkipped(ctx, accountID, extract.ReasonNoPDFTool); err != nil {
+		// A12 Teil 3 (b): Probe des PDF-Programms (höchstens einmal je
+		// Stunde nach einem Fehlschlag, einmal je Prozess nach einem
+		// Erfolg). Gelingt sie, holen die früher übersprungenen PDFs nach
+		// (nicht installiert, Datei fehlt, falsches Programm); scheitert sie
+		// endgültig, werden PDFs skipped statt failed; vorübergehend: kein
+		// Urteil. Eine Warnung je Prozess und Ergebnis.
+		pr := r.Extractor.Probe(ctx)
+		if pr.Changed {
+			switch pr.State {
+			case extract.ProbeFailed:
+				r.log().Warn("pdftotext cannot read a PDF from stdin; PDF attachments are skipped (wrong program? see doctor)",
+					"tool", pr.Path, "detail", pr.Detail)
+			case extract.ProbeTransient:
+				r.log().Warn("pdftotext check did not run through; tried again later", "tool", pr.Path, "detail", pr.Detail)
+			case extract.ProbeOK:
+				r.log().Info("pdftotext check passed", "tool", pr.Path)
+			}
+		}
+		var reasons []string
+		switch {
+		case pr.State == extract.ProbeOK:
+			reasons = extract.ToolReasons
+		case pr.State == extract.ProbeTransient:
+			// Programm da, kein Urteil: wie bisher „nicht installiert“
+			// nachholen.
+			reasons = []string{extract.ReasonNoPDFTool, extract.ReasonPDFToolMissing}
+		}
+		for _, reason := range reasons {
+			if n, err := r.Store.RequeueSkipped(ctx, accountID, reason); err != nil {
 				return rep, err
 			} else if n > 0 {
-				r.log().Info("pdftotext found; PDF attachments skipped earlier are extracted now", "count", n)
+				r.log().Info("PDF attachments skipped earlier are extracted now", "count", n, "reason", reason)
 			}
 		}
 		// A11 Teil 3 (b): einmal je Konto die vorübergehend gescheiterten

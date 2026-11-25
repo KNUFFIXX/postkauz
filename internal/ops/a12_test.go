@@ -1,8 +1,14 @@
 package ops
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/KNUFFIXX/postkauz/internal/audit"
+	"github.com/KNUFFIXX/postkauz/internal/policy"
 
 	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/store"
@@ -59,5 +65,71 @@ func TestA12RemoteNotePreviousStates(t *testing.T) {
 	}
 	if n := remoteNoteWith(d, []int64{3}, false, nil); !strings.Contains(n, "own unchanged copies go to the trash") {
 		t.Fatalf("rc9 text: %q", n)
+	}
+}
+
+// A12 Teil 3 (c): attachments.retry, nur der Mensch. Jede Auswahl,
+// Trockenlauf, ohne Auswahl Fehler, mit Schlüssel abgelehnt, Audit ohne
+// Dateinamen.
+func TestA12AttachmentsRetry(t *testing.T) {
+	e := newMirrorEnv(t)
+	if err := e.x.Registry.Register(AttachmentsRetry(Deps{Accounts: e.st, ExtractRetry: e.st})); err != nil {
+		t.Fatal(err)
+	}
+	msg := e.seed(t)
+	atts, _ := e.st.AttachmentsByMessage(context.Background(), msg)
+	if len(atts) < 2 {
+		t.Fatalf("attachments = %d", len(atts))
+	}
+	fail := func() {
+		t.Helper()
+		if err := e.st.ExecForTest(`UPDATE attachments SET extract_status = 'failed', extract_error = 'pdftotext version 4.06'`); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.st.ExecForTest(`INSERT OR REPLACE INTO meta(key, value) VALUES ('extract_retry/' || ?, '{"n":2}')`, atts[0].ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(status string) int {
+		n, _ := e.st.QueryIntForTest(`SELECT count(*) FROM attachments WHERE extract_status = ?`, status)
+		return n
+	}
+	fail()
+	all := len(atts)
+	// Ohne Auswahl: Eingabefehler.
+	var ie *InputError
+	if _, err := e.run("attachments.retry", map[string]any{"account": "demo"}, "", false); !errors.As(err, &ie) {
+		t.Fatalf("without a choice: %v", err)
+	}
+	// Trockenlauf: nennt die Zahl, ändert nichts.
+	out, err := e.run("attachments.retry", map[string]any{"account": "demo", "all_failed": true}, "", true)
+	if err != nil || out.(AttachRetryOutput).Count != all || count("failed") != all {
+		t.Fatalf("dry run: %+v %v, failed %d", out, err, count("failed"))
+	}
+	// Ein Anhang.
+	out, err = e.run("attachments.retry", map[string]any{"attachments": []int64{atts[0].ID}}, "", false)
+	if err != nil || out.(AttachRetryOutput).Count != 1 || count("pending") != 1 {
+		t.Fatalf("one attachment: %+v %v", out, err)
+	}
+	if n, _ := e.st.QueryIntForTest(`SELECT count(*) FROM meta WHERE key LIKE 'extract_retry/%'`); n != 0 {
+		t.Fatalf("retry notes left: %d", n)
+	}
+	// Eine Nachricht.
+	fail()
+	out, err = e.run("attachments.retry", map[string]any{"account": "demo", "message": msg}, "", false)
+	if err != nil || out.(AttachRetryOutput).Count != all || count("failed") != 0 {
+		t.Fatalf("message: %+v %v", out, err)
+	}
+	// Mit Schlüssel: human_only.
+	b, _ := json.Marshal(map[string]any{"all_failed": true})
+	_, err = e.x.Execute(context.Background(), Request{Key: policy.Key{ID: "key:assi", Scopes: policy.Roles["admin"]}, Actor: audit.ActorAgent,
+		Operation: "attachments.retry", Input: b})
+	if !errors.Is(err, ErrDenied) {
+		t.Fatalf("with a key: %v", err)
+	}
+	for _, ev := range e.au.Events() {
+		if ev.Operation == "attachments.retry" && (strings.Contains(string(ev.ParamsRedacted), atts[0].Filename) || atts[0].Filename == "") {
+			t.Fatalf("audit names the file: %s", ev.ParamsRedacted)
+		}
 	}
 }

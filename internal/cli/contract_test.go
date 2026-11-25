@@ -171,6 +171,8 @@ var cliSamples = []cliSample{
 	{"threads.get", []string{"thread", "{answer}", "--message", "-a", "demo"}, false},
 	{"attachments.list", []string{"attach", "list", "{html}"}, false},
 	{"attachments.text", []string{"attach", "text", "{att}", "--max-chars", "5", "--message", "{html}", "-a", "demo"}, false},
+	// A12 Teil 3 (c): nur der Mensch.
+	{"attachments.retry", []string{"attach", "retry", "-a", "demo", "--message", "{html}", "--attachment", "{att}", "--all-failed"}, false},
 	// S3.3: Anhang unter export_dir, Export in ein frisches Ziel.
 	{"attachments.save", []string{"attach", "save", "{att}", "--subdir", "belege", "--message", "{html}", "-a", "demo"}, false},
 	{"messages.export", []string{"export", "eml", "--to", "{exporttarget}", "-a", "demo", "--mailbox", "INBOX", "--since", "3650d"}, false},

@@ -32,6 +32,7 @@ var notOverMCP = map[string]string{
 	"actions.approve":       "human only (E3): an agent may request moving to the trash but never approve it; CLI action approve",
 	"actions.reject":        "human only (E3): the decision on a request is the human's; CLI action reject",
 	"drafts.cleanup_copies": "human only: moves earlier draft copies to the trash at once; CLI draft cleanup",
+	"attachments.retry":     "human only (A12): sets failed text extractions back to pending; CLI attach retry",
 	// Sicherung (S3.4, E7): Ein Agent kopiert nie das ganze Archiv.
 	"backup.create": "admin, human only (E7): copies the whole archive unencrypted; CLI backup create",
 	// Löschkonzept (T3, E8): nur für Menschen, Agenten sehen es nicht.

@@ -86,6 +86,12 @@ type Options struct {
 	// (Standard: -q -enc UTF-8 -eol unix - -; Eingabe über stdin).
 	PDFToText string
 	PDFArgs   []string
+	// PDFConfigured: PDFToText kommt aus [extract] pdftotext (A12 Teil 3
+	// (a)); fehlt die Datei, werden PDFs skipped (ReasonPDFToolMissing)
+	// statt am Start zu scheitern.
+	PDFConfigured bool
+	// Now ist die Uhr der Probe (Tests); nil = time.Now.
+	Now func() time.Time
 	// Self ist das Kommando für den eigenen Kindprozess (DOCX); leer =
 	// os.Executable().
 	Self []string
@@ -267,8 +273,15 @@ func (x *Extractor) Extract(ctx context.Context, kind Kind, r io.Reader, size in
 	switch kind {
 	case KindPDF:
 		tool := x.PDFTool()
-		if tool == "" {
+		switch {
+		case tool == "":
 			return Result{Status: StatusSkipped, Error: ReasonNoPDFTool}
+		case x.toolMissing(tool):
+			return Result{Status: StatusSkipped, Error: ReasonPDFToolMissing}
+		case probeFailed(tool):
+			// A12 Teil 3 (b): die Probe ist endgültig gescheitert (falsches
+			// Programm); nicht failed, damit eine gelungene Probe nachholt.
+			return Result{Status: StatusSkipped, Error: ReasonPDFNoStdin}
 		}
 		res, err = x.run(ctx, tool, x.opts.PDFArgs, nil, in)
 	case KindDOCX:

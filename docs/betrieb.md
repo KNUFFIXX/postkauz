@@ -236,6 +236,34 @@ Gut zu wissen (V8, Betreiber 28.10.2026): In Ordner mit Rolle Spam (`junk`), Ent
    Für jede genannte Aktion `action show <id> --json`: Steht `"source": "draft_update"` oder `"source": "draft_discard"` darin, je Konto einmal `postkauz sync -a <konto>` mit dem neuen Programm laufen lassen (führt die Aktion aus) und erneut prüfen. Bleibt eine solche Aktion offen, den Rückweg abbrechen und das neue Programm weiterlaufen lassen. Das Abnahmeskript D17 macht das im Modus `-Rueckweg` selbst ([abnahme_D17.md](abnahme_D17.md)).
 3. Danach wie 1.7: altes Programm (`postkauz-rc8.exe`) an seine Stelle, `doctor`, Aufgaben starten. Zähler in `meta` (`draft_copy_cleanup/…`, `extract_retry/…`, `extract_requeue/…`) lässt rc8 liegen; ein Anhang, der beim Rückweg auf einen Wiederholversuch wartet, bleibt `pending` und wird von rc8 beim nächsten Lauf ohne Wartezeit erneut versucht.
 
+### 1.7d PDF-Programm festlegen und Rückweg von 0.3.0-rc10 auf 0.3.0-rc9 (A12)
+
+**Warum:** In der Abnahme D17 fand die aufrufende PowerShell im PATH zuerst das `pdftotext` von Git für Windows (`…\Git\ucrt64\bin\pdftotext.exe`, Xpdf 4.06). Xpdf liest keine PDF von stdin; vier PDF-Anhänge scheiterten endgültig. Seit 0.3.0-rc10 legt `[extract] pdftotext` das Programm fest, und PostKauz prüft es vor dem ersten Auszug mit einer eingebetteten Test-PDF.
+
+1. Poppler-Programm suchen (der Ordner mit `pdftotext.exe` von Poppler, nicht der von Git) und prüfen: `& 'C:\Tools\Poppler\bin\pdftotext.exe' -v` muss eine Zeile mit `pdftotext version 2…` und `Poppler` melden.
+2. In `config.toml` eintragen, **mit einfachen Anführungszeichen** (sonst ist `\P` ein Ladefehler):
+
+   ```toml
+   [extract]
+   pdftotext = 'C:\Tools\Poppler\bin\pdftotext.exe'
+   ```
+
+3. `postkauz doctor` zeigt `pdftotext: C:\Tools\… ([extract] pdftotext; pdftotext version …; check: ok)`. `check: failed` heißt: das Programm liest nicht von stdin (falsches Programm); PDFs werden dann übersprungen, nicht als gescheitert markiert, und nach dem Korrigieren holt der nächste Lauf sie nach (ohne Neustart von `sync --watch` spätestens nach einer Stunde).
+4. **Endgültig gescheiterte Anhänge erneut extrahieren** (etwa die vier aus D17): Konto und lokale Nachrichten-ID aus `doctor` (Zeile `notes:`) bzw. `attach list <id>`, dann
+
+   ```powershell
+   C:\PostKauz\postkauz.exe attach retry -a <konto> --message <nachricht-id> --dry-run
+   C:\PostKauz\postkauz.exe attach retry -a <konto> --message <nachricht-id>
+   ```
+
+   Nach dem nächsten Lauf zeigt `attach list <nachricht-id>` `ok`, `attach text <anhang-id>` den Text. Mit `--all-failed` alle gescheiterten des Kontos.
+
+**Rückweg von 0.3.0-rc10 auf 0.3.0-rc9:** kein Schema-Upgrade (Schema 22). Zu beachten:
+
+1. **`[extract]` vor dem ersten Start von rc9 entfernen** (rc9 kennt den Abschnitt nicht und startet mit ihm nicht; das gilt für jedes Kommando, auch die geplanten Aufgaben). Das Abnahmeskript D18 macht das selbst.
+2. Wie 1.7c: keine offene Aktion der Herkunft `draft_update` oder `draft_discard`.
+3. rc9 lässt den Vermerk `draft_edited/<id>` in `meta` liegen (es liest ihn nicht) und versteht die nachgeführte UID nach `moved` wie jede andere abgelegte Kopie (es prüft sie aber wieder streng: ein von Gmail umgelegter großer Entwurf kann unter rc9 wieder `taken_over` werden). Entwürfe, die rc10 als `taken_over` (Weiterbearbeitung) vermerkt hat, bleiben unter rc9 `taken_over`, bis die Fassung verschwindet.
+
 ### 1.8 Zusammenspiel mit dem Audit-Export
 
 Beide Aufgaben vertragen sich: Der Audit-Export liest nur das Audit und schreibt Dateien an den zweiten Ort; der Dauer-Sync hält nur die Sperren der Konten. Richte den Export ein, wie im README („Daily audit export“) beschrieben, mit **denselben** Pfaden:

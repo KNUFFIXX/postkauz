@@ -892,3 +892,53 @@ func renderOverview(w io.Writer, out any) error {
 	fmt.Fprintln(w, "\n--- read ---")
 	return renderSearch(w, o.Read)
 }
+
+// attach retry (A12 Teil 3 (c)): fehlgeschlagene Textauszüge wiederholen.
+func attachRetryFlags(cmd *cobra.Command) {
+	cmd.Flags().Int64("message", 0, "only failed attachments of this message id")
+	cmd.Flags().Int64Slice("attachment", nil, "only this attachment id (repeatable)")
+	cmd.Flags().Bool("all-failed", false, "all failed attachments of the account")
+}
+
+func attachRetryInput(cmd *cobra.Command, _ []string, _ *app) (json.RawMessage, secrets.Secret, error) {
+	m := map[string]any{}
+	if acct := accountFlag(cmd); acct != "" {
+		m["account"] = acct
+	}
+	if msg, _ := cmd.Flags().GetInt64("message"); msg != 0 {
+		if msg < 0 {
+			return nil, "", usageError{fmt.Errorf("--message must be a positive number")}
+		}
+		m["message"] = msg
+	}
+	if ids, _ := cmd.Flags().GetInt64Slice("attachment"); len(ids) > 0 {
+		for _, id := range ids {
+			if id <= 0 {
+				return nil, "", usageError{fmt.Errorf("--attachment must be a positive number")}
+			}
+		}
+		m["attachments"] = ids
+	}
+	if all, _ := cmd.Flags().GetBool("all-failed"); all {
+		m["all_failed"] = true
+	}
+	if len(m) == 0 || (len(m) == 1 && m["account"] != nil) {
+		return nil, "", usageError{fmt.Errorf("choose what to retry: --message <id>, --attachment <id> or --all-failed")}
+	}
+	b, err := json.Marshal(m)
+	return b, "", err
+}
+
+func renderAttachRetry(w io.Writer, out any) error {
+	o, ok := out.(ops.AttachRetryOutput)
+	if !ok {
+		return fmt.Errorf("cli: unexpected output type %T", out)
+	}
+	prefix := ""
+	if o.DryRun {
+		prefix = "dry run: "
+	}
+	fmt.Fprintf(w, "%saccount %s: %d failed attachments back to pending\n", prefix, o.Account, o.Count)
+	fmt.Fprintln(w, termLine(o.NextStep))
+	return nil
+}

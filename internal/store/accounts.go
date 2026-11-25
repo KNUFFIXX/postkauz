@@ -173,6 +173,7 @@ func (s *SQLite) ListAccounts(ctx context.Context) ([]AccountSummary, error) {
 // AccountRef ist die schmale Sicht eines Kontos für `doctor`: Name,
 // Schlüsselbund-Verweis und Status. Diese Spalten gibt es seit Schema 1.
 type AccountRef struct {
+	ID            int64
 	Name          string
 	CredentialRef string
 	Status        string
@@ -189,7 +190,7 @@ type AccountRef struct {
 // einen Bestand mit älterem Schema die Konten (vorher: „no such column:
 // aliases" bei Schema 7).
 func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, credential_ref, status, auth_type, COALESCE(last_error,'') FROM accounts ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, credential_ref, status, auth_type, COALESCE(last_error,'') FROM accounts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +198,7 @@ func (s *SQLite) AccountRefs(ctx context.Context) ([]AccountRef, error) {
 	var out []AccountRef
 	for rows.Next() {
 		var a AccountRef
-		if err := rows.Scan(&a.Name, &a.CredentialRef, &a.Status, &a.AuthType, &a.LastError); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.CredentialRef, &a.Status, &a.AuthType, &a.LastError); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

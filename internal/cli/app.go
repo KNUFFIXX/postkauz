@@ -44,14 +44,23 @@ var newProber = func(c config.IMAP) ops.AccountProber {
 var newOAuth = func() oauth.Microsoft { return oauth.Microsoft{} }
 
 // newImporter ist in Tests ersetzbar.
-var newImporter = func(st *store.SQLite, b *blob.Store, log *slog.Logger) ops.ImportRunner {
-	return &importer.Runner{Store: st, Blobs: b, Log: log}
+var newImporter = func(st *store.SQLite, b *blob.Store, log *slog.Logger, ex *extract.Extractor) ops.ImportRunner {
+	return &importer.Runner{Store: st, Blobs: b, Log: log, Extractor: ex}
 }
 
 // newSyncRunner ist in Tests ersetzbar.
-var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c config.IMAP) ops.SyncRunner {
+var newSyncRunner = func(st *store.SQLite, b *blob.Store, log *slog.Logger, c config.IMAP, ex *extract.Extractor) ops.SyncRunner {
 	return &mailsync.Runner{Store: st, Blobs: b, Log: log, CommandTimeout: c.CommandTimeout, CommandMaxDuration: c.CommandMaxDuration,
-		MaxMessageBytes: c.MaxMessageBytes}
+		MaxMessageBytes: c.MaxMessageBytes, Extractor: ex}
+}
+
+// extractor ist der Extraktor aus [extract] (A12 Teil 3 (a)): ein
+// Extraktor für Sync, Import, attachments.text und doctor.
+func (a *app) extractor() *extract.Extractor {
+	if a.ex == nil {
+		a.ex = extract.New(extract.ConfigOptions(a.cfg.Extract.PDFToText))
+	}
+	return a.ex
 }
 
 // newDraftChecker liefert den Prüf-Hook vor der Vorlage eines Entwurfs
@@ -73,6 +82,8 @@ type app struct {
 	cfg    config.Config
 	paths  config.Paths
 	cfgErr error
+	// ex: Extraktor aus [extract] (extractor()).
+	ex *extract.Extractor
 
 	st      *store.SQLite
 	sec     secrets.Store
@@ -191,7 +202,8 @@ func (a *app) open(ctx context.Context) (*ops.Executor, error) {
 		return nil, err
 	}
 	deps := ops.Deps{Accounts: st, Secrets: sec, Prober: newProber(a.cfg.IMAP), Mailboxes: st,
-		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP), Importer: newImporter(st, blobs, a.log), Search: st, Extractor: extract.New(extract.Options{}),
+		Messages: st, Blobs: blobs, Runner: newSyncRunner(st, blobs, a.log, a.cfg.IMAP, a.extractor()),
+		Importer: newImporter(st, blobs, a.log, a.extractor()), Search: st, Extractor: a.extractor(), ExtractRetry: st,
 		Keys: st, Audit: st, AuditExportDir: a.cfg.Audit.ExportDir, MaxChars: a.policy.MaxChars(),
 		Drafts: &drafts.Service{Store: st, ApprovalTTL: a.cfg.Draft.ApprovalTTL, CopyGoneAfter: a.cfg.Draft.CopyGoneAfter.Effective(),
 			PreviousCopies: a.cfg.Draft.PreviousCopies, PolicyVersion: a.policyVersion},

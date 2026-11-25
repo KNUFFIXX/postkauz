@@ -283,6 +283,7 @@ var contractInputs = map[string]struct {
 	"actions.get":           {input: `{"action_id":1}`},
 	"actions.list":          {input: `{"account":"demo","state":["requested"],"limit":5}`},
 	"drafts.cleanup_copies": {input: `{"draft_id":1}`},
+	"attachments.retry":     {input: `{"account":"demo","all_failed":true}`, prep: prepRetry},
 	"drafts.supersede":      {input: `{"draft_id":1,"by_draft_id":2}`, prep: prepSupersede},
 	"drafts.discard":        {input: `{"draft_id":1}`, prep: prepSupersede},
 	// Sicherung (S3.4): der Runner ist ein Fake (contractBackup), der Pfad
@@ -559,7 +560,7 @@ func newContractEnv(t *testing.T) *contractEnv {
 	bk := &contractBackup{}
 	blobs := newMemBlobs()
 	e := &contractEnv{mirrorEnv: m, runner: r, importer: imp, backup: bk, blobs: blobs, deps: Deps{Backup: bk, Accounts: m.st, Secrets: m.sec, Prober: m.prober,
-		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}),
+		Mailboxes: m.st, Messages: m.st, Blobs: testBlobs, Runner: r, Importer: imp, Search: m.st, Extractor: extract.New(extract.Options{}), ExtractRetry: m.st,
 		Keys: m.st, Audit: m.st, AuditExportDir: t.TempDir(), Drafts: &drafts.Service{Store: m.st}, DraftBlobs: blobs,
 		Draft: DraftConfig{AttachDir: t.TempDir(), Operator: "Testperson"}, Actions: m.st, ExportDir: t.TempDir(), Export: m.st,
 		OAuth: oauth.Microsoft{Endpoint: as.Endpoint, OpenBrowser: oauthtest.Browser(t), LoginTimeout: 10 * time.Second}}}
@@ -957,6 +958,15 @@ func TestExecutorAuditsHandlerErrorAfterCancel(t *testing.T) {
 // jünger) zu Entwürfen des Schlüssels keyID und legt die Kopie von Entwurf 1
 // unverändert in den Entwürfe-Ordner (UID 9 aus seedActions, Hash
 // hash-alt), ohne frühere Kopien (A07 Teil 5).
+// prepRetry: ein Anhang mit gescheitertem Auszug (attachments.retry, A12).
+func prepRetry(t *testing.T, st *store.SQLite, _ string) {
+	t.Helper()
+	if err := st.ExecForTest(`UPDATE attachments SET extract_status = 'failed', extract_error = 'extractor failed: exit status 1'
+		WHERE id = (SELECT min(id) FROM attachments)`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func prepSupersede(t *testing.T, st *store.SQLite, keyID string) {
 	t.Helper()
 	box, err := st.QueryIntForTest(`SELECT id FROM mailboxes WHERE path = 'Entwuerfe'`)

@@ -111,6 +111,10 @@ var bindings = []binding{
 		input: attachListInput, human: renderAttachList, covers: []string{"message"}},
 	{op: "attachments.text", path: []string{"attach", "text"}, use: "<attachment-id>", args: cobra.ExactArgs(1),
 		flags: attachTextFlags, input: attachTextInput, human: renderAttachText, covers: []string{"id", "message", "account", "max_chars"}},
+	// A12 Teil 3 (c): nur der Mensch.
+	{op: "attachments.retry", path: []string{"attach", "retry"}, args: cobra.NoArgs,
+		flags: attachRetryFlags, input: attachRetryInput, human: renderAttachRetry,
+		covers: []string{"account", "message", "attachments", "all_failed"}},
 	{op: "keys.create", path: []string{"key", "create"}, args: cobra.NoArgs, flags: keyCreateFlags,
 		input: keyCreateInput, human: renderKeyCreate,
 		covers: []string{"name", "role", "scopes", "expires_in_days", "dry_run_default"}},
