@@ -127,9 +127,9 @@ func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expec
 		} else if adopted {
 			return changed(d.ID)
 		}
-		if st, err := checkCopy(x, d); err != nil {
+		if cc, err := copyStateRaw(x, d); err != nil {
 			return err
-		} else if st != RemoteMissing {
+		} else if cc.State != RemoteMissing {
 			return changed(d.ID)
 		}
 		// Nachtrag 1, B1: dieselbe Sicherung wie „ersetzt“ (Sicherung c).
@@ -138,7 +138,7 @@ func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expec
 		// Fassung; dann bleibt der Entwurf offen.
 		if edited, err := editedInDrafts(x, d); err != nil {
 			return err
-		} else if edited {
+		} else if edited > 0 {
 			return changed(d.ID)
 		}
 		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {
@@ -163,26 +163,30 @@ func (s *Service) CopyGone(ctx context.Context, id int64, since time.Time, expec
 // (Store.EditedReplyInDrafts, wie „ersetzt“), bei neuen Mails eine ohne
 // In-Reply-To mit gleichem normalisiertem Betreff. Kopien von PostKauz
 // zählen nie.
-func editedInDrafts(x *store.DraftTx, d store.Draft) (bool, error) {
+//
+// A12 Teil 1: die gemeinsame Prüfung für den Stand der Serverkopie
+// (checkCopy), Discard, „Kopie weg“ und „ersetzt“; geliefert wird die
+// lokale ID der gefundenen Fassung (die jüngste), 0 = keine.
+func editedInDrafts(x *store.DraftTx, d store.Draft) (int64, error) {
 	after := lastPushAt(d)
 	if threadKinds[d.Kind] && d.InReplyToMsg > 0 {
 		return x.EditedReplyInDrafts(d.AccountID, d.InReplyToMsg, after)
 	}
 	if d.Kind != string(KindNew) {
-		return false, nil
+		return 0, nil
 	}
 	subj := NormalizeSubject(d.Subject)
 	if subj == "" {
-		return false, nil
+		return 0, nil
 	}
 	subjects, err := x.NewMailSubjectsInDrafts(d.AccountID, after)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	for _, s := range subjects {
-		if NormalizeSubject(s) == subj {
-			return true, nil
+		if NormalizeSubject(s.Subject) == subj {
+			return s.ID, nil
 		}
 	}
-	return false, nil
+	return 0, nil
 }

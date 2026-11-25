@@ -437,7 +437,7 @@ func (s *Service) markScheduled(ctx context.Context, id int64, m store.Scheduled
 		if err != nil || Status(d.Status).Closed() || Fingerprint(d) != expect {
 			return err
 		}
-		if st, err := checkCopy(x, d); err != nil || st != RemoteMissing {
+		if cc, err := copyStateRaw(x, d); err != nil || cc.State != RemoteMissing {
 			return err
 		}
 		if err := x.SetScheduled(store.Scheduled{DraftID: id, MessageID: m.ID, At: m.InternalDate, State: store.ScheduledActive}); err != nil {

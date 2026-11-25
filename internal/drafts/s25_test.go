@@ -46,10 +46,33 @@ func TestCopyState(t *testing.T) {
 		// [imap] max_message_bytes, der Spiegel lädt sie nicht: nicht
 		// prüfbar, kein missing.
 		{"too large for the mirror", d, with(func(m *store.MirrorCopy) { m.Skipped = true }), true, ""},
+		// A12 Teil 1 (d): neuere Kopien mit Einzelheiten.
+		{"newer copy, loaded, other content", d, with(func(m *store.MirrorCopy) {
+			m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h2", Loaded: true}}
+		}), true, RemoteTakenOver},
+		{"newer copy, loaded, same content (moved)", d, with(func(m *store.MirrorCopy) {
+			m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h1", Loaded: true}}
+		}), true, ""},
+		{"newer copy not loaded", d, with(func(m *store.MirrorCopy) {
+			m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h2"}}
+		}), true, ""},
+		{"two newer copies, one other content", d, with(func(m *store.MirrorCopy) {
+			m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h1", Loaded: true}, {UID: 7, ContentHash: "h3", Loaded: true}}
+		}), true, RemoteTakenOver},
+		{"newer copy is a moved earlier copy", store.Draft{MessageIDHeader: d.MessageIDHeader, RemoteUID: 5, PushedContentHash: "h1",
+			RemotePrevious: []store.RemoteCopy{{UID: 3, ContentHash: "h0"}}}, with(func(m *store.MirrorCopy) {
+			m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h0", Loaded: true}}
+		}), true, RemoteMissing},
 	} {
-		if got := copyState(c.d, c.mc, c.valid); got != c.want {
-			t.Errorf("%s: state = %q, want %q", c.name, got, c.want)
+		if got := copyState(c.d, c.mc, c.valid); got.State != c.want {
+			t.Errorf("%s: state = %q, want %q", c.name, got.State, c.want)
 		}
+	}
+	mc := with(func(m *store.MirrorCopy) {
+		m.NewerSameID, m.Newer = true, []store.NewerCopy{{UID: 6, ContentHash: "h1", Loaded: true, Size: 99}, {UID: 7, ContentHash: "h1", Loaded: true, Size: 99}}
+	})
+	if got := copyState(d, mc, true); got.Move == nil || got.Move.UID != 7 || got.Move.UIDValidity != 9 || got.Via != ViaMoved {
+		t.Errorf("moved: %+v, want the highest uid 7", got)
 	}
 }
 

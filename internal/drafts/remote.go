@@ -89,75 +89,252 @@ func (s *Service) endAttempt(x *store.DraftTx, d *store.Draft, now time.Time, re
 	return err
 }
 
-// copyState wertet den Spiegel zur zuletzt abgelegten Kopie aus: "" (da und
-// unverändert oder nicht prüfbar), RemoteTakenOver (eine bearbeitete
-// Fassung liegt da oder die Kopie ist anders) oder RemoteMissing (weg).
-func copyState(d store.Draft, mc store.MirrorCopy, uidValid bool) string {
+// Wege im Audit drafts.remote_check (A12 Teil 1 (d) (v)): woran der Stand
+// der Kopie erkannt wurde.
+const (
+	// ViaAtUID: unter der UID der Kopie liegt eine andere Nachricht.
+	ViaAtUID = "at_uid"
+	// ViaNewerSameID: eine neuere Kopie mit derselben Message-ID.
+	ViaNewerSameID = "newer_same_id"
+	// ViaEditedElsewhere: eine weiterbearbeitete Fassung unter neuer
+	// Message-ID im Entwürfe-Ordner (editedInDrafts).
+	ViaEditedElsewhere = "edited_elsewhere"
+	// ViaMoved: der Server hat die Kopie mit denselben Bytes unter eine
+	// neue UID gelegt.
+	ViaMoved = "moved"
+)
+
+// ReasonMoved ist der Grund von drafts.remote_check, wenn eine eigene Kopie
+// umgezogen ist (A12 Teil 1 (d)): gleiche Message-ID, exakt derselbe
+// Inhalts-Hash, geladen, im selben Ordner unter neuer UID. Der Entwurf
+// führt dann die neue UID; Store.DraftMissingSince zählt moved wie present.
+const ReasonMoved = "moved"
+
+// copyCheck ist der Stand der zuletzt abgelegten Kopie (copyStateRaw,
+// checkCopy).
+type copyCheck struct {
+	// State: "" (da und unverändert, umgezogen oder nicht prüfbar),
+	// RemoteTakenOver oder RemoteMissing.
+	State string
+	// Via: woran erkannt (Via…; leer, wenn nichts zu nennen ist).
+	Via string
+	// UID: die betroffene UID (die abgelegte oder die neuere Kopie).
+	UID int64
+	// Loaded: der Inhalt der betroffenen Kopie war geladen (Via newer_same_id).
+	Loaded bool
+	// Changed: eine neuere Kopie mit anderem Inhalt (Via newer_same_id).
+	Changed bool
+	// EditedID: lokale ID der weiterbearbeiteten Fassung (Via edited_elsewhere).
+	EditedID int64
+	// Move: die Kopie ist umgezogen (State ""); nil sonst.
+	Move *movedCopy
+	// noMailbox: Ablageordner unbekannt oder auf dem Server verschwunden
+	// (dann keine Prüfung auf Weiterbearbeitung).
+	noMailbox bool
+}
+
+// movedCopy ist das Ziel eines Umzugs.
+type movedCopy struct {
+	UID         int64
+	UIDValidity uint32
+	Size        int64
+}
+
+// copyState wertet den Spiegel zur zuletzt abgelegten Kopie aus (reiner
+// Stand, ohne Weiterbearbeitung unter neuer Message-ID): State "" (da und
+// unverändert, umgezogen oder nicht prüfbar), RemoteTakenOver (eine
+// bearbeitete Fassung liegt da oder die Kopie ist anders) oder
+// RemoteMissing (weg).
+//
+// A12 Teil 1 (d) (ii): Neuere Kopien mit derselben Message-ID belegen nur
+// dann eine Übernahme, wenn ihr Inhalt geladen ist und anders ist als jede
+// eigene Kopie des Entwurfs. Sind alle neueren Kopien geladen und hat
+// (mindestens) eine exakt den Inhalt der Ablage, ist die Kopie umgezogen
+// (die höchste solche UID). Ist eine nicht geladen, ist nichts prüfbar.
+// Neuere Kopien mit dem Inhalt einer früheren eigenen Kopie (eine
+// umgezogene frühere Kopie, Annahme der Bau-Sitzung) zählen nicht.
+func copyState(d store.Draft, mc store.MirrorCopy, uidValid bool) copyCheck {
 	if !mc.MailboxFound {
-		return RemoteMissing // der Ordner ist auf dem Server verschwunden
+		return copyCheck{State: RemoteMissing, noMailbox: true} // der Ordner ist auf dem Server verschwunden
 	}
 	if !mc.Synced {
-		return ""
+		return copyCheck{}
 	}
 	if !uidValid {
 		// UIDVALIDITY hat gewechselt: Die UID gilt nicht mehr, gesucht wird
 		// über Message-ID und Inhalts-Hash im ganzen Ordner.
 		switch {
 		case mc.SameIDAndHash:
-			return ""
+			return copyCheck{}
 		case mc.NewerSameID:
-			return RemoteTakenOver
+			return copyCheck{State: RemoteTakenOver, Via: ViaNewerSameID}
 		}
-		return RemoteMissing
+		return copyCheck{State: RemoteMissing}
 	}
 	if d.RemoteUID <= 0 || mc.UIDNext <= uint32(d.RemoteUID) {
-		return "" // UID unbekannt oder vom Spiegel noch nicht gesehen
+		return copyCheck{} // UID unbekannt oder vom Spiegel noch nicht gesehen
 	}
 	if !mc.AtUID && mc.Skipped {
-		return "" // zu groß für den Spiegel: nicht prüfbar (K4)
+		return copyCheck{} // zu groß für den Spiegel: nicht prüfbar (K4)
 	}
 	if mc.AtUID {
 		if mc.AtUIDMessageID == d.MessageIDHeader && mc.AtUIDContentHash == d.PushedContentHash {
-			return ""
+			return copyCheck{}
 		}
-		return RemoteTakenOver
+		return copyCheck{State: RemoteTakenOver, Via: ViaAtUID, UID: d.RemoteUID, Changed: true}
 	}
-	if mc.NewerSameID {
-		return RemoteTakenOver
+	if !mc.NewerSameID {
+		return copyCheck{State: RemoteMissing}
 	}
-	return RemoteMissing
+	if len(mc.Newer) == 0 {
+		// Ohne Einzelheiten (nur EXISTS): vorsichtig wie bis 0.3.0-rc9.
+		return copyCheck{State: RemoteTakenOver, Via: ViaNewerSameID}
+	}
+	known := map[int64]bool{}
+	own := map[string]bool{}
+	for _, c := range d.RemotePrevious {
+		if c.MailboxID == d.RemoteMailboxID {
+			known[c.UID] = true
+		}
+		if c.ContentHash != "" {
+			own[c.ContentHash] = true
+		}
+	}
+	var cand *store.NewerCopy
+	var unloaded *store.NewerCopy
+	for i := range mc.Newer {
+		c := &mc.Newer[i]
+		switch {
+		case known[c.UID]:
+		case !c.Loaded:
+			if unloaded == nil {
+				unloaded = c
+			}
+		case c.ContentHash == d.PushedContentHash:
+			cand = c // aufsteigend: zuletzt die höchste UID
+		case own[c.ContentHash]:
+			// eine umgezogene frühere Kopie (eigene Bytes)
+		default:
+			return copyCheck{State: RemoteTakenOver, Via: ViaNewerSameID, UID: c.UID, Loaded: true, Changed: true}
+		}
+	}
+	switch {
+	case unloaded != nil:
+		return copyCheck{Via: ViaNewerSameID, UID: unloaded.UID} // nicht prüfbar, Zustand bleibt
+	case cand != nil:
+		return copyCheck{Via: ViaMoved, UID: cand.UID, Loaded: true,
+			Move: &movedCopy{UID: cand.UID, UIDValidity: mc.UIDValidity, Size: cand.Size}}
+	}
+	return copyCheck{State: RemoteMissing}
 }
 
-// checkCopy prüft in der Transaktion die zuletzt abgelegte Kopie (E6).
-func checkCopy(x *store.DraftTx, d store.Draft) (string, error) {
+// copyStateRaw prüft in der Transaktion die zuletzt abgelegte Kopie (E6),
+// reiner Stand (A12 Teil 1 (a)): ohne weiterbearbeitete Fassung unter
+// neuer Message-ID. Den benutzen alle Wege der Versanderkennung, die
+// missing verlangen (Bedingung f, markSentWith, markScheduled, CopyGone,
+// Replaced); ein Umzug ist hier „unverändert“.
+func copyStateRaw(x *store.DraftTx, d store.Draft) (copyCheck, error) {
 	if d.PushedContentHash == "" {
-		return "", nil // noch nie abgelegt
+		return copyCheck{}, nil // noch nie abgelegt
 	}
 	if d.RemoteMailboxID == 0 {
-		return RemoteMissing, nil // Ordner entfernt (ON DELETE SET NULL)
+		return copyCheck{State: RemoteMissing, noMailbox: true}, nil // Ordner entfernt (ON DELETE SET NULL)
 	}
 	mc, err := x.MirrorCopy(d.RemoteMailboxID, d.RemoteUID, d.MessageIDHeader, d.PushedContentHash)
 	if err != nil {
-		return "", err
+		return copyCheck{}, err
 	}
 	valid := d.RemoteUIDValidity == 0 || !mc.Synced || mc.UIDValidity == d.RemoteUIDValidity
 	if !valid {
 		if mc, err = x.MirrorCopy(d.RemoteMailboxID, 0, d.MessageIDHeader, d.PushedContentHash); err != nil {
-			return "", err
+			return copyCheck{}, err
 		}
 	}
-	st := copyState(d, mc, valid)
-	if st == RemoteMissing {
+	cc := copyState(d, mc, valid)
+	if cc.State == RemoteMissing && !cc.noMailbox {
 		// A10 Teil 2 (ii): Liegt die vermerkte geplante Nachricht im
 		// Entwürfe-Ordner (Plan abgebrochen), ist sie die übernommene
 		// Fassung des Entwurfs, obwohl sie eine andere Message-ID trägt.
 		if back, err := cancelledCopy(x, d); err != nil {
-			return "", err
+			return copyCheck{}, err
 		} else if back {
-			return RemoteTakenOver, nil
+			return copyCheck{State: RemoteTakenOver, Via: ReasonScheduleCancelled}, nil
 		}
 	}
-	return st, nil
+	return cc, nil
+}
+
+// checkCopy ist der Stand mit Weiterbearbeitung (A12 Teil 1 (a)): Liefert
+// der reine Stand missing (nicht bei verschwundenem oder unbekanntem
+// Ablageordner) und liegt im Entwürfe-Ordner eine weiterbearbeitete
+// Fassung (editedInDrafts), ist der Entwurf taken_over (Via
+// edited_elsewhere, EditedID). Benutzt von refreshRemote, PushCheck,
+// Update, Discard und Supersede.
+func checkCopy(x *store.DraftTx, d store.Draft) (copyCheck, error) {
+	cc, err := copyStateRaw(x, d)
+	if err != nil || cc.State != RemoteMissing || cc.noMailbox {
+		return cc, err
+	}
+	id, err := editedInDrafts(x, d)
+	if err != nil {
+		return copyCheck{}, err
+	}
+	if id > 0 {
+		return copyCheck{State: RemoteTakenOver, Via: ViaEditedElsewhere, EditedID: id}, nil
+	}
+	return cc, nil
+}
+
+// applyMove führt den Entwurf auf die umgezogene Kopie nach (A12 Teil 1
+// (d) (ii)): remote_uid und remote_uidvalidity auf die neue UID, die alte
+// UID kommt nicht nach remote_previous, remote_state wird pushed (aus
+// missing oder taken_over; pending und pushed bleiben). Audit
+// drafts.remote_check, Grund moved (alte und neue UID, Größe; ohne
+// Inhalt). Nur Wege, die ohnehin schreiben.
+func (s *Service) applyMove(x *store.DraftTx, d *store.Draft, mv movedCopy, now time.Time) error {
+	old := d.RemoteUID
+	from := d.RemoteState
+	d.RemoteUID = mv.UID
+	if d.RemoteState == RemoteMissing || d.RemoteState == RemoteTakenOver {
+		d.RemoteState = RemotePushed // pending (eine neue Fassung wartet) bleibt
+	}
+	if mv.UIDValidity != 0 {
+		d.RemoteUIDValidity = mv.UIDValidity
+	}
+	if err := x.UpdateDraft(*d); err != nil {
+		return err
+	}
+	return s.remoteEvent(x, *d, ReasonMoved, now, map[string]any{"remote": d.RemoteState, "from": from, "via": ViaMoved,
+		"old_uid": old, "new_uid": mv.UID, "size": mv.Size, "loaded": true})
+}
+
+// tryMove führt eine umgezogene Kopie (cc.Move) nach (applyMove) und
+// meldet, ob das geschah. taken_over wird nur pushed, wenn keine
+// weiterbearbeitete Fassung im Entwürfe-Ordner liegt (A12 Teil 1:
+// taken_over → pushed nur über moved).
+func (s *Service) tryMove(x *store.DraftTx, d *store.Draft, cc copyCheck, now time.Time) (bool, error) {
+	if cc.Move == nil {
+		return false, nil
+	}
+	if d.RemoteState == RemoteTakenOver {
+		if id, err := editedInDrafts(x, *d); err != nil || id > 0 {
+			return false, err
+		}
+	}
+	return true, s.applyMove(x, d, *cc.Move, now)
+}
+
+// remoteEvent schreibt ein Systemereignis drafts.remote_check (ohne Inhalt).
+func (s *Service) remoteEvent(x *store.DraftTx, d store.Draft, reason string, now time.Time, params map[string]any) error {
+	p := map[string]any{"draft_id": d.ID, "mailbox_id": d.RemoteMailboxID, "uid": d.RemoteUID}
+	for k, v := range params {
+		p[k] = v
+	}
+	b, _ := json.Marshal(p)
+	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpRemoteCheck,
+		ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK, Reason: reason,
+		PolicyVersion: s.PolicyVersion})
+	return err
 }
 
 // adoptOrphan übernimmt die Kopie eines Ablageversuchs, dessen Ausgang ein
@@ -195,23 +372,42 @@ func (s *Service) adoptOrphan(x *store.DraftTx, d *store.Draft, now time.Time) (
 
 // markRemote setzt remote_state nach erkannter Übernahme und auditiert das
 // als Systemereignis (Grund taken_over bzw. missing), in derselben
-// Transaktion.
-func (s *Service) markRemote(x *store.DraftTx, d *store.Draft, state string, now time.Time) error {
-	d.RemoteState = state
+// Transaktion. A12 Teil 1: mit dem Weg (via), der betroffenen UID und bei
+// einer weiterbearbeiteten Fassung edited_elsewhere und ihrer lokalen ID
+// (Vermerk draft_edited/<id>, ohne Inhalt und Betreff).
+func (s *Service) markRemote(x *store.DraftTx, d *store.Draft, cc copyCheck, now time.Time) error {
+	d.RemoteState = cc.State
+	d.EditedMessageID = 0
+	if cc.State == RemoteTakenOver {
+		d.EditedMessageID = cc.EditedID
+	}
 	if err := x.UpdateDraft(*d); err != nil {
 		return err
 	}
-	b, _ := json.Marshal(map[string]any{"draft_id": d.ID, "remote": state, "mailbox_id": d.RemoteMailboxID, "uid": d.RemoteUID})
-	_, err := x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpRemoteCheck,
-		ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK, Reason: state,
-		PolicyVersion: s.PolicyVersion})
-	return err
+	p := map[string]any{"remote": cc.State}
+	if cc.Via != "" {
+		p["via"] = cc.Via
+	}
+	switch cc.Via {
+	case ViaEditedElsewhere:
+		p["edited_elsewhere"] = true
+		p["edited_message_id"] = cc.EditedID
+	case ViaNewerSameID, ViaAtUID:
+		if cc.UID > 0 {
+			p["copy_uid"] = cc.UID
+			p["loaded"] = cc.Loaded || cc.Via == ViaAtUID
+		}
+		if cc.Changed {
+			p["changed"] = true
+		}
+	}
+	return s.remoteEvent(x, *d, cc.State, now, p)
 }
 
 // takenOver ist die Ablehnung einer Änderung nach Übernahme (E6).
 func takenOver(id int64, state string) error {
 	if state == RemoteMissing {
-		return denied(ReasonDraftTakenOver, "the copy of draft %d in the Drafts folder is gone (sent or deleted in the mail client); "+
+		return denied(ReasonDraftTakenOver, "the copy of draft %d in the Drafts folder is gone (sent, deleted, or changed in the mail client); "+
 			"it is no longer changed here, close it with draft mark-sent or draft abandon", id)
 	}
 	return denied(ReasonDraftTakenOver, "draft %d was taken over in the mail client; change it there", id)
@@ -239,10 +435,19 @@ func (s *Service) PushCheck(ctx context.Context, id int64) (d store.Draft, state
 		if !Pending(d) {
 			return nil
 		}
-		if state, err = checkCopy(x, d); err != nil || state == "" {
+		cc, err := checkCopy(x, d)
+		if err != nil {
 			return err
 		}
-		return s.markRemote(x, &d, state, now)
+		if cc.Move != nil {
+			// A12 Teil 1 (d): umgezogen, keine Übernahme; nachführen.
+			_, err := s.tryMove(x, &d, cc, now)
+			return err
+		}
+		if state = cc.State; state == "" {
+			return nil
+		}
+		return s.markRemote(x, &d, cc, now)
 	})
 	return d, state, err
 }

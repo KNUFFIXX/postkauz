@@ -172,6 +172,11 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 		if d.PushHold != "" {
 			return pushHoldNote(d.PushHold)
 		}
+		if d.PushAttempt != nil {
+			// A12 Teil 1 (d) (vi): Ein APPEND läuft; große Nachrichten
+			// brauchen 60–100 s, das ist kein Hänger.
+			return "being stored in the Drafts folder (large messages take a minute or two)"
+		}
 		if n := pushNotes[d.PushNote]; n != "" && d.PushNote != drafts.PushNoteApprovalStale {
 			return n
 		}
@@ -201,6 +206,9 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 		}
 		return fmt.Sprintf("in the Drafts folder (uid %d)", d.RemoteUID)
 	case drafts.RemoteTakenOver:
+		if d.EditedMessageID > 0 {
+			return fmt.Sprintf("changed in the mail client and saved as a new message (message %d); change it there", d.EditedMessageID)
+		}
 		return "taken over in the mail client; change it there"
 	case drafts.RemoteMissing:
 		if drafts.RecipientKey(d.To, d.Cc) == "" && d.InReplyToMsg > 0 {
@@ -1442,8 +1450,12 @@ type DraftDetail struct {
 	// und lokale ID der geplanten Nachricht. Nicht gesendet.
 	ScheduledFor       string `json:"scheduled_for,omitempty"`
 	ScheduledMessageID int64  `json:"scheduled_message_id,omitempty"`
-	RemoteMailboxID    int64  `json:"remote_mailbox_id,omitempty"`
-	RemoteUID          int64  `json:"remote_uid,omitempty"`
+	// EditedMessageID: remote taken_over, weil der Mensch den Entwurf im
+	// Mailprogramm als neue Nachricht weiterbearbeitet hat (A12 Teil 1
+	// (c)): lokale ID dieser Fassung (Vermerk draft_edited/<id>).
+	EditedMessageID int64 `json:"edited_message_id,omitempty"`
+	RemoteMailboxID int64 `json:"remote_mailbox_id,omitempty"`
+	RemoteUID       int64 `json:"remote_uid,omitempty"`
 	// RemotePreviousUIDs: UIDs früherer Kopien, die laut Spiegel noch im
 	// Entwürfe-Ordner liegen (nach einer Änderung legt der Push eine neue
 	// Kopie ab; seit A11 geht die frühere eigene, unveränderte in den
@@ -1555,6 +1567,7 @@ func DraftsGet(d Deps) Operation {
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "scheduled_for": {"type": "string", "format": "date-time", "description": "remote scheduled: the send time the mail client scheduled; the message is not sent yet"},
     "scheduled_message_id": {"type": "integer", "description": "remote scheduled: local id of the scheduled message"},
+    "edited_message_id": {"type": "integer", "description": "remote taken_over: the human changed the draft in the mail client and it was saved as a new message; local id of that message"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}, "description": "uids of earlier copies that are still in the Drafts folder according to the mirror"},
     "cleanup_action_ids": {"type": "array", "items": {"type": "integer"}, "description": "mailbox actions that move own unchanged copies of this draft to the trash (after a change, drafts.supersede, drafts.discard), newest first; actions.get shows source and state"},
     "pushed_date": {"type": "string"},
@@ -1655,6 +1668,9 @@ func DraftsGet(d Deps) Operation {
 				}
 			}
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
+			if dr.RemoteState == drafts.RemoteTakenOver && !drafts.Status(dr.Status).Closed() {
+				out.EditedMessageID = dr.EditedMessageID
+			}
 			if dr.Status == string(drafts.StatusAbandoned) {
 				if err := o.closedReason(ctx, dr, &out); err != nil {
 					return nil, err

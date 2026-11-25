@@ -222,14 +222,14 @@ func (s *Service) Replaced(ctx context.Context, id, replyID int64, expect string
 		} else if adopted {
 			return changed(d.ID)
 		}
-		if st, err := checkCopy(x, d); err != nil {
+		if cc, err := copyStateRaw(x, d); err != nil {
 			return err
-		} else if st != RemoteMissing {
+		} else if cc.State != RemoteMissing {
 			return changed(d.ID)
 		}
-		if edited, err := x.EditedReplyInDrafts(d.AccountID, d.InReplyToMsg, lastPushAt(d)); err != nil {
+		if edited, err := editedInDrafts(x, d); err != nil {
 			return err
-		} else if edited {
+		} else if edited > 0 {
 			return changed(d.ID) // in Gmail unter neuer Message-ID weiterbearbeitet
 		}
 		if res.Approval, err = applyApproval(x, &d, t.Approval, now, "", ""); err != nil {

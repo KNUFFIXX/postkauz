@@ -716,6 +716,23 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		state.Phase = store.PhaseInitial
 	}
 
+	// A12 Teil 1 (d) (i): Im Entwürfe-Ordner (nicht in „Alle Nachrichten“)
+	// wird eine Servernachricht mit der Message-ID eines Entwurfs des
+	// Kontos nie ohne Abruf verknüpft: Sie wird geladen und nur bei exakt
+	// gleichem Inhalts-Hash verknüpft (dann content_loaded = 1), sonst als
+	// eigene Nachricht gespeichert. So belegt „geladen“ an einer neueren
+	// Kopie, dass ihre Bytes die der Ablage sind (Umzug), und eine andere
+	// Fassung mit gleicher Message-ID und gleicher Größe wird nicht
+	// stillschweigend mit der Ablage gleichgesetzt.
+	var draftIDs map[string]bool
+	strict := map[provider.UID]bool{}
+	if ds, ok := e.Store.(draftIDStore); ok && draftsBox {
+		var err error
+		if draftIDs, err = ds.DraftMessageIDs(ctx, e.AccountID); err != nil {
+			return err
+		}
+	}
+
 	var pending store.MirrorBatch
 	// tolerant: lokale Nachrichten, an die im laufenden Stapel eine Kopie
 	// trotz Größenunterschied gehängt wird; gezählt erst nach dem Speichern.
@@ -763,6 +780,11 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				e.log().Warn("message header too large; not fetched", "mailbox", mb.Path, "uid", h.UID, "size", h.Size)
 				continue
 			}
+			if h.MessageID != "" && draftIDs[h.MessageID] {
+				strict[h.UID] = true // A12: laden, dann exakt verknüpfen
+				need = append(need, h)
+				continue
+			}
 			// Toleranz nur für Nachrichten, die keine Entwürfe sind: Im
 			// Entwürfe-Ordner und bei \Draft bleibt es exakt
 			// (Übernahme-Erkennung, Versanderkennung).
@@ -806,10 +828,14 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 				return nil
 			}
 			got[uid] = true
-			if id, ok, err := e.Store.FindByContentHash(ctx, e.AccountID, mb.ID, variants...); err != nil {
+			hashes, loaded := variants, false
+			if strict[uid] {
+				hashes, loaded = []string{nm.ContentHash}, true // nur der exakte Hash
+			}
+			if id, ok, err := e.Store.FindByContentHash(ctx, e.AccountID, mb.ID, hashes...); err != nil {
 				return err
 			} else if ok && !linked(pending, id) {
-				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: nm.Link})
+				pending.Links = append(pending.Links, store.Link{MessageID: id, Flags: nm.Link, Loaded: loaded})
 				// Gezählt wird beim Laden, nicht erst nach ApplyBatch: Der
 				// Zähler misst Übertragung, und geladen ist geladen (auch wenn
 				// das Speichern danach scheitert und der nächste Lauf erneut
@@ -845,6 +871,13 @@ func (e *Engine) applyChanges(ctx context.Context, mb store.Mailbox, since provi
 		}
 	}
 	return flush(true)
+}
+
+// draftIDStore liefert die Message-IDs der Entwürfe eines Kontos
+// (store.SQLite.DraftMessageIDs; A12 Teil 1 (d) (i)). Ein Store ohne sie
+// verknüpft wie bisher.
+type draftIDStore interface {
+	DraftMessageIDs(ctx context.Context, accountID int64) (map[string]bool, error)
 }
 
 // findLinkCandidate sucht die lokale Nachricht zu einer Servernachricht

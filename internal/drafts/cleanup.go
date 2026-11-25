@@ -83,9 +83,47 @@ const (
 	copyBusy                         // eine Aktion wartet oder läuft schon
 )
 
-// classifyCopy ordnet eine abgelegte Kopie rc ein; bei copyOwn ist sc die
-// Serverkopie im Spiegel. inDrafts: Entwürfe-Ordner des Kontos.
-func classifyCopy(x *store.DraftTx, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, error) {
+// classifyCopy ordnet eine abgelegte Kopie rc des Entwurfs d ein; bei
+// copyOwn ist sc die Serverkopie im Spiegel. inDrafts: Entwürfe-Ordner des
+// Kontos.
+//
+// A12 Teil 1 (d) (iii): Liegt die Kopie nicht mehr unter ihrer UID (der
+// Spiegel hat die UID gesehen, UIDVALIDITY gleich), aber im selben Ordner
+// genau eine geladene Kopie mit der Message-ID des Entwurfs und exakt
+// ihrem Inhalts-Hash unter einer UID, die keine bekannte Kopie des
+// Entwurfs ist (Store.MirrorMoved), ist sie umgezogen: eingeordnet wird
+// dann die neue Stelle, und moved ist die nachgeführte Kopie (sonst die
+// Nullkopie).
+func classifyCopy(x *store.DraftTx, d store.Draft, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, store.RemoteCopy, error) {
+	cl, c, err := classifyAt(x, inDrafts, rc)
+	if err != nil || cl != copyGone || d.MessageIDHeader == "" {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	cur, err := x.MailboxCursor(rc.MailboxID)
+	if err != nil || !cur.Found || cur.UIDValidity != rc.UIDValidity {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	known := []int64{}
+	if d.RemoteMailboxID == rc.MailboxID && d.RemoteUID > 0 {
+		known = append(known, d.RemoteUID)
+	}
+	for _, p := range d.RemotePrevious {
+		if p.MailboxID == rc.MailboxID {
+			known = append(known, p.UID)
+		}
+	}
+	uid, uv, err := x.MirrorMoved(rc.MailboxID, d.MessageIDHeader, rc.ContentHash, known)
+	if err != nil || uid == 0 || uv != rc.UIDValidity {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	moved := store.RemoteCopy{MailboxID: rc.MailboxID, UID: uid, UIDValidity: uv, ContentHash: rc.ContentHash}
+	cl, c, err = classifyAt(x, inDrafts, moved)
+	return cl, c, moved, err
+}
+
+// classifyAt ist classifyCopy ohne Umzug: die Kopie genau unter Ordner,
+// UID und UIDVALIDITY.
+func classifyAt(x *store.DraftTx, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, error) {
 	if rc.MailboxID <= 0 || rc.UID <= 0 || rc.UIDValidity == 0 || rc.ContentHash == "" {
 		return copyInvalid, store.ServerCopy{}, nil
 	}
@@ -143,6 +181,9 @@ type copySet struct {
 	unmirrored int
 	// exhausted: Kopien mit CleanupMaxAttempts Versuchen.
 	exhausted int
+	// moves: umgezogene Kopien (A12 Teil 1 (d) (iii)), alt → neu; die
+	// schreibenden Wege führen sie am Entwurf nach (recordMoves).
+	moves [][2]store.RemoteCopy
 }
 
 func (cs *copySet) add(rc store.RemoteCopy, c store.ServerCopy) {
@@ -155,7 +196,7 @@ func (cs *copySet) add(rc store.RemoteCopy, c store.ServerCopy) {
 // collect sammelt die eigenen, unveränderten Kopien aus list (ohne
 // Dubletten und ohne except). limit: Kopien mit CleanupMaxAttempts
 // Versuchen auslassen (Nachlauf).
-func collect(x *store.DraftTx, inDrafts map[int64]bool, list []store.RemoteCopy, except []store.RemoteCopy, limit bool, cs *copySet) error {
+func collect(x *store.DraftTx, d store.Draft, inDrafts map[int64]bool, list []store.RemoteCopy, except []store.RemoteCopy, limit bool, cs *copySet) error {
 	seen := append([]store.RemoteCopy{}, except...)
 	for _, rc := range list {
 		dup := false
@@ -169,9 +210,13 @@ func collect(x *store.DraftTx, inDrafts map[int64]bool, list []store.RemoteCopy,
 			continue
 		}
 		seen = append(seen, rc)
-		cl, c, err := classifyCopy(x, inDrafts, rc)
+		cl, c, moved, err := classifyCopy(x, d, inDrafts, rc)
 		if err != nil {
 			return err
+		}
+		if moved.UID > 0 {
+			cs.moves = append(cs.moves, [2]store.RemoteCopy{rc, moved})
+			rc = moved
 		}
 		switch cl {
 		case copyOwn:
@@ -288,7 +333,10 @@ func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string,
 		return err
 	}
 	var cs copySet
-	if err := collect(x, inDrafts, d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}, true, &cs); err != nil {
+	if err := collect(x, d, inDrafts, d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}, true, &cs); err != nil {
+		return err
+	}
+	if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
 		return err
 	}
 	if len(cs.targets) == 0 {
@@ -406,7 +454,10 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 			return err
 		}
 		var cs copySet
-		if err := collect(x, inDrafts, list, except, true, &cs); err != nil {
+		if err := collect(x, d, inDrafts, list, except, true, &cs); err != nil {
+			return err
+		}
+		if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
 			return err
 		}
 		if len(cs.targets) == 0 {
@@ -477,7 +528,7 @@ func ownCopiesFor(x *store.DraftTx, d store.Draft) (copySet, error) {
 		return cs, err
 	}
 	inDrafts[d.RemoteMailboxID] = true // Ablageordner des Entwurfs
-	cl, c, err := classifyCopy(x, inDrafts, cur)
+	cl, c, err := classifyAt(x, inDrafts, cur)
 	if err != nil {
 		return cs, err
 	}
@@ -494,5 +545,38 @@ func ownCopiesFor(x *store.DraftTx, d store.Draft) (copySet, error) {
 		return cs, denied(ReasonCopyMissing, "the copy of %s is no longer in the mirror of the Drafts folder (it may have been sent, "+
 			"or changed in the mail client); try again after the next sync", name)
 	}
-	return cs, collect(x, inDrafts, d.RemotePrevious, []store.RemoteCopy{cur}, false, &cs)
+	return cs, collect(x, d, inDrafts, d.RemotePrevious, []store.RemoteCopy{cur}, false, &cs)
+}
+
+// recordMoves führt umgezogene Kopien am Entwurf nach (A12 Teil 1 (d)
+// (iii)), in der Transaktion des Aufrufers: den Eintrag in remote_previous
+// (bzw. bei einem geschlossenen Entwurf auch die aktuelle Kopie) auf die
+// neue UID, je Kopie Audit drafts.remote_check, Grund moved, mit previous
+// (ohne Inhalt). Der Zähler der neuen Stelle beginnt neu (kein
+// Fehlversuch).
+func (s *Service) recordMoves(x *store.DraftTx, d *store.Draft, moves [][2]store.RemoteCopy, now time.Time) error {
+	if len(moves) == 0 {
+		return nil
+	}
+	for _, mv := range moves {
+		old, nw := mv[0], mv[1]
+		if sameCopy(old, currentCopy(*d)) {
+			d.RemoteUID, d.RemoteUIDValidity = nw.UID, nw.UIDValidity
+		}
+		for i := range d.RemotePrevious {
+			if sameCopy(d.RemotePrevious[i], old) {
+				d.RemotePrevious[i].UID, d.RemotePrevious[i].UIDValidity = nw.UID, nw.UIDValidity
+			}
+		}
+	}
+	if err := x.UpdateDraft(*d); err != nil {
+		return err
+	}
+	for _, mv := range moves {
+		if err := s.remoteEvent(x, *d, ReasonMoved, now, map[string]any{"via": ViaMoved, "previous": true, "mailbox_id": mv[0].MailboxID,
+			"old_uid": mv[0].UID, "new_uid": mv[1].UID, "uid": mv[1].UID, "loaded": true, "remote": d.RemoteState}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

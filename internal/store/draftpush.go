@@ -141,8 +141,12 @@ type MirrorCopy struct {
 	AtUIDContentHash string
 	// NewerSameID: Im Ordner liegt eine Nachricht mit derselben Message-ID
 	// und höherer UID (ein Mailclient hat eine bearbeitete Fassung
-	// gespeichert).
+	// gespeichert, oder der Server hat die Kopie umgelegt).
 	NewerSameID bool
+	// Newer: diese neueren Kopien (UID aufsteigend), mit Inhalts-Hash und
+	// ob ihr Inhalt geladen ist (A12 Teil 1 (d): Umzug oder Übernahme).
+	// Nur bei uid > 0.
+	Newer []NewerCopy
 	// SameIDAndHash: Irgendwo im Ordner liegt eine Nachricht mit derselben
 	// Message-ID und demselben Inhalts-Hash (nach einem UIDVALIDITY-Wechsel
 	// gelten die UIDs nicht mehr).
@@ -152,6 +156,30 @@ type MirrorCopy struct {
 	// ist nicht prüfbar (Gegenprüfung S2.4/S2.5, K4).
 	Skipped bool
 }
+
+// NewerCopy ist eine Kopie im Ordner mit derselben Message-ID und höherer
+// UID als die abgelegte (A12 Teil 1 (d)).
+type NewerCopy struct {
+	UID         int64
+	ContentHash string
+	Size        int64
+	// Loaded: Der Spiegel hat den Inhalt dieser Kopie selbst geladen
+	// (content_loaded = 1), und die Kopie war nie Ziel einer Aktion. Die
+	// zweite Bedingung schließt die 1 aus dem Kopfvergleich vor Aktionen
+	// aus (actions/runner.go, MarkContentLoaded): Der prüft nur den Kopf,
+	// nicht die Bytes. Eine nicht geladene Kopie ist per Message-ID und
+	// Größe ohne Abruf verknüpft (Altbestand) und belegt keinen Inhalt.
+	Loaded bool
+}
+
+// qMirrorNewer: neuere Kopien gleicher Message-ID; Parameter Ordner,
+// Ordner, Message-ID, UID.
+const qMirrorNewer = `SELECT mm.uid, COALESCE(m.content_hash, ''), m.size,
+	mm.content_loaded = 1 AND NOT EXISTS (SELECT 1 FROM action_targets t
+		WHERE t.message_id = mm.message_id AND t.mailbox_id = mm.mailbox_id AND t.uid = mm.uid)
+	FROM messages m CROSS JOIN message_mailboxes mm ON mm.message_id = m.id
+	WHERE mm.mailbox_id = ? AND m.account_id = ` + mailboxAccount + ` AND m.message_id_header = ? AND mm.uid > ?
+	ORDER BY mm.uid`
 
 // qMirrorCopySameID: neuere Kopie gleicher Message-ID, Kopie gleicher
 // Message-ID und gleichen Inhalts; Parameter je Teil Ordner, Ordner,
@@ -202,7 +230,83 @@ func (x *DraftTx) MirrorCopy(mailboxID, uid int64, messageID, contentHash string
 	}
 	err = x.tx.QueryRowContext(x.ctx, qMirrorCopySameID,
 		mailboxID, mailboxID, messageID, uid, mailboxID, mailboxID, messageID, contentHash).Scan(&mc.NewerSameID, &mc.SameIDAndHash)
-	return mc, err
+	if err != nil || uid <= 0 || !mc.NewerSameID {
+		return mc, err
+	}
+	if mc.Newer, err = mirrorNewer(x, mailboxID, messageID, uid); err != nil {
+		return mc, err
+	}
+	return mc, nil
+}
+
+func mirrorNewer(x *DraftTx, mailboxID int64, messageID string, uid int64) ([]NewerCopy, error) {
+	rows, err := x.tx.QueryContext(x.ctx, qMirrorNewer, mailboxID, mailboxID, messageID, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NewerCopy
+	for rows.Next() {
+		var c NewerCopy
+		if err := rows.Scan(&c.UID, &c.ContentHash, &c.Size, &c.Loaded); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// MirrorMoved sucht für eine frühere Kopie (Ordner, UID nicht mehr im
+// Spiegel) die Kopie, auf die der Server sie umgelegt hat (A12 Teil 1 (d)
+// (iii)): im selben Ordner genau eine geladene Kopie (NewerCopy.Loaded)
+// mit derselben Message-ID und exakt demselben Inhalts-Hash, deren UID
+// nicht in known steht. Liefert die UID (0 = keine oder nicht eindeutig)
+// und die UIDVALIDITY des Ordners beim letzten Sync.
+func (x *DraftTx) MirrorMoved(mailboxID int64, messageID, contentHash string, known []int64) (int64, uint32, error) {
+	var uv sql.NullInt64
+	var phase string
+	err := x.tx.QueryRowContext(x.ctx, `SELECT uidvalidity, sync_phase FROM mailboxes WHERE id = ?`, mailboxID).Scan(&uv, &phase)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && phase == PhaseNew) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	list, err := mirrorNewer(x, mailboxID, messageID, 0)
+	if err != nil {
+		return 0, 0, err
+	}
+	var found int64
+	for _, c := range list {
+		if slices.Contains(known, c.UID) || !c.Loaded || c.ContentHash != contentHash {
+			continue
+		}
+		if found != 0 {
+			return 0, 0, nil // nicht eindeutig
+		}
+		found = c.UID
+	}
+	return found, uint32(uv.Int64), nil
+}
+
+// DraftMessageIDs liefert die Message-IDs (ohne <>) aller Entwürfe des
+// Kontos, offen oder geschlossen (A12 Teil 1 (d) (i): der Sync verknüpft
+// solche Nachrichten im Entwürfe-Ordner nur nach Abruf).
+func (s *SQLite) DraftMessageIDs(ctx context.Context, accountID int64) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT message_id_header FROM drafts WHERE account_id = ? AND message_id_header != ''`, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("store: draft message ids: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // MirrorOrphan sucht im Spiegel des Ordners mailboxID eine Kopie mit

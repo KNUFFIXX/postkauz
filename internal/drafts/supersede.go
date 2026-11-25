@@ -164,8 +164,16 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		if old.RemoteState == RemoteTakenOver {
 			return denied(ReasonCopyChanged, "the copy of draft %d was changed in the mail client; only the human removes it", old.ID)
 		}
+		// A12 Teil 1 (b): Stand mit Weiterbearbeitung und Umzug, nur zur
+		// Entscheidung.
+		if err := liveCopyCheck(x, old); err != nil {
+			return err
+		}
 		cs, err := ownCopiesFor(x, old)
 		if err != nil {
+			return err
+		}
+		if err := s.recordMoves(x, &old, cs.moves, now); err != nil {
 			return err
 		}
 		trash, ok, err := x.TrashMailbox(old.AccountID)

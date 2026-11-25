@@ -140,8 +140,18 @@ func parseCleanupKey(key string) (RemoteCopy, bool) {
 
 // CleanupCountOf liefert den Zähler einer Kopie; ok false: keiner.
 func (x *DraftTx) CleanupCountOf(c RemoteCopy) (CleanupCount, bool, error) {
+	return cleanupCountOf(x.ctx, x.tx, c)
+}
+
+// CleanupCountOf liefert den Zähler einer Kopie außerhalb einer
+// Transaktion (Anzeige, A12 Teil 2 (b)); ok false: keiner.
+func (s *SQLite) CleanupCountOf(ctx context.Context, c RemoteCopy) (CleanupCount, bool, error) {
+	return cleanupCountOf(ctx, s.db, c)
+}
+
+func cleanupCountOf(ctx context.Context, q querier, c RemoteCopy) (CleanupCount, bool, error) {
 	var v string
-	err := x.tx.QueryRowContext(x.ctx, `SELECT value FROM meta WHERE key = ?`, cleanupKey(c.MailboxID, c.UIDValidity, c.UID)).Scan(&v)
+	err := q.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, cleanupKey(c.MailboxID, c.UIDValidity, c.UID)).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CleanupCount{}, false, nil
 	}
