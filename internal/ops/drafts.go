@@ -157,6 +157,15 @@ func remoteNote(d store.Draft) string {
 // earlierInDrafts), und keep für [draft] previous_copies = "keep" (die
 // früheren Kopien bleiben liegen, wie bis 0.3.0-rc8).
 func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
+	return remoteNoteWith(d, earlier, keep, nil)
+}
+
+// remoteNoteWith ist remoteNoteFor mit dem Stand der früheren Kopien
+// (A12 Teil 2 (b), drafts.Service.PreviousCopyStates): Wartet eine Aktion, hat
+// der Nachlauf aufgegeben, ist eine Kopie verändert oder noch nicht
+// gespiegelt, sagt remote_note das je Kopie. prev nil: Text wie bis
+// 0.3.0-rc9 (auch mit [draft] previous_copies = "keep").
+func remoteNoteWith(d store.Draft, earlier []int64, keep bool, prev []drafts.PreviousCopy) string {
 	if d.PushNote == drafts.PushNotePushedAfterClose {
 		if d.RemoteUID > 0 {
 			return fmt.Sprintf("a copy (uid %d) reached the Drafts folder just after the draft was closed; it stays there, "+
@@ -201,8 +210,14 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 				return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s stay there, nothing is deleted)", d.RemoteUID,
 					joinUIDs(earlier))
 			}
+			if len(prev) > 0 {
+				return fmt.Sprintf("in the Drafts folder (uid %d); earlier copies: %s", d.RemoteUID, previousNotes(prev))
+			}
 			return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s are still there: own unchanged copies go to the trash "+
 				"(see cleanup_action_ids), others only the human removes)", d.RemoteUID, joinUIDs(earlier))
+		}
+		if len(prev) > 0 {
+			return fmt.Sprintf("in the Drafts folder (uid %d); earlier copies: %s", d.RemoteUID, previousNotes(prev))
 		}
 		return fmt.Sprintf("in the Drafts folder (uid %d)", d.RemoteUID)
 	case drafts.RemoteTakenOver:
@@ -227,6 +242,33 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 // ScheduledNote ist remote_note eines geplanten Entwurfs (A10 Teil 2).
 func ScheduledNote(at time.Time) string {
 	return "scheduled in the mail client for " + at.UTC().Format(time.RFC3339) + "; not sent yet"
+}
+
+// previousNotes nennt je frühere Kopie ihren Stand (A12 Teil 2 (b)).
+func previousNotes(prev []drafts.PreviousCopy) string {
+	parts := make([]string, 0, len(prev))
+	for _, p := range prev {
+		var s string
+		switch p.State {
+		case drafts.PrevQueued:
+			s = "goes to the trash"
+			if p.ActionID > 0 {
+				s = fmt.Sprintf("goes to the trash (action %d)", p.ActionID)
+			}
+		case drafts.PrevPending:
+			s = "goes to the trash with the next sync (see cleanup_action_ids)"
+		case drafts.PrevGivenUp:
+			s = "stays in the Drafts folder; remove it in the mail client or with draft cleanup"
+		case drafts.PrevChanged:
+			s = "changed in the mail client; only the human removes it"
+		case drafts.PrevNotMirrored:
+			s = "not mirrored yet"
+		default:
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("uid %d %s", p.UID, s))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // joinUIDs nennt UIDs früherer Kopien ("uid 3, uid 5").
@@ -274,7 +316,13 @@ func (o *draftOps) noteFor(ctx context.Context, d store.Draft) (string, []int64,
 		return "", nil, err
 	}
 	keep := o.svc != nil && o.svc.PreviousCopies == drafts.PreviousCopiesKeep
-	return remoteNoteFor(d, earlier, keep), earlier, nil
+	var prev []drafts.PreviousCopy
+	if !keep && o.svc != nil && d.RemoteState == drafts.RemotePushed && !drafts.Status(d.Status).Closed() && len(d.RemotePrevious) > 0 {
+		if prev, err = o.svc.PreviousCopyStates(ctx, d); err != nil {
+			return "", nil, err
+		}
+	}
+	return remoteNoteWith(d, earlier, keep, prev), earlier, nil
 }
 
 // draftOps hält die Abhängigkeiten der Entwurfsoperationen.

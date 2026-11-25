@@ -72,11 +72,13 @@ func DraftsDiscard(d Deps) Operation {
 			if o.svc == nil {
 				return policy.Facts{}, nil
 			}
-			dr, err := o.svc.Store.Draft(ctx, in.DraftID)
+			// A12 Teil 2 (a): die Zahl der Kopien, die die Aktion tatsächlich
+			// bekäme (nicht len(remote_previous)+1).
+			n, err := o.svc.PolicyTargets(ctx, in.DraftID, drafts.OpDiscard)
 			if err != nil {
 				return policy.Facts{}, nil // der Handler meldet „nicht gefunden“
 			}
-			if n := drafts.DiscardTargets(dr); n > 0 {
+			if n > 0 {
 				return policy.Facts{Action: policy.ActionTrash, Targets: n}, nil
 			}
 			return policy.Facts{}, nil
@@ -92,7 +94,8 @@ func DraftsDiscard(d Deps) Operation {
 				return nil, errors.New("drafts are not configured")
 			}
 			res, err := o.as(call, drafts.OpDiscard, policy.ScopeMailDraft).Discard(ctx, drafts.DiscardRequest{
-				ID: in.DraftID, KeyID: call.Key.ID, Human: call.Key.IsHuman(), AuditID: call.AuditID})
+				ID: in.DraftID, KeyID: call.Key.ID, Human: call.Key.IsHuman(), AuditID: call.AuditID,
+				PolicyTargets: call.PolicyTargets, PolicyChecked: call.PolicyChecked})
 			if err != nil {
 				return nil, draftErr(err)
 			}

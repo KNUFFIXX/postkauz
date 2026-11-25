@@ -286,6 +286,65 @@ func (s *Service) cleanupEvent(now time.Time, d store.Draft, source string, acti
 // keepPrevious: [draft] previous_copies = "keep".
 func (s *Service) keepPrevious() bool { return s.PreviousCopies == PreviousCopiesKeep }
 
+// countTargets sammelt lesend (eigene Transaktion, ohne zu schreiben) die
+// eigenen, unveränderten Kopien aus list ohne except, wie collect im
+// Nachlauf (mit Höchstzahl der Versuche), und liefert ihre Zahl (A12 Teil 2
+// (a): die Policy fragt mit der Zahl der tatsächlichen Ziele, nicht mit
+// len(remote_previous)+1).
+func (s *Service) countTargets(ctx context.Context, d store.Draft, list, except []store.RemoteCopy) (int, error) {
+	n := 0
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
+		if err != nil {
+			return err
+		}
+		var cs copySet
+		if err := collect(x, d, inDrafts, list, except, true, &cs); err != nil {
+			return err
+		}
+		n = len(cs.targets)
+		return nil
+	})
+	return n, err
+}
+
+// PolicyTargets liefert lesend die Zahl der Kopien, die drafts.supersede
+// (op OpSupersede, der alte Entwurf) bzw. drafts.discard (OpDiscard) in den
+// Papierkorb legen würden (A12 Teil 2 (a); vorher 1+len(remote_previous)).
+// Lehnte der Aufruf ohnehin ab (Kopie fehlt, geändert, laufende Ablage),
+// bleibt es bei der Schätzung von vorher, damit die Policy die Gründe in
+// derselben Reihenfolge nennt (bei discard: 0 ohne Ziel, eine laufende
+// Ablage zählt als Ziel).
+func (s *Service) PolicyTargets(ctx context.Context, draftID int64, op string) (int, error) {
+	d, err := s.Store.Draft(ctx, draftID)
+	if err != nil {
+		return 0, err
+	}
+	estimate := 1 + len(d.RemotePrevious)
+	if op == OpDiscard {
+		estimate = DiscardTargets(d)
+		if estimate == 0 || d.PushAttempt != nil || d.RemoteState != RemotePushed {
+			return estimate, nil
+		}
+	}
+	n := estimate
+	err = s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		cs, err := ownCopiesFor(x, d)
+		if err != nil {
+			return nil // abgelehnt: Schätzung
+		}
+		n = len(cs.targets)
+		return nil
+	})
+	return n, err
+}
+
+// tooManyTargets ist die Ablehnung, wenn in der Transaktion mehr Ziele
+// zusammenkommen, als die Policy geprüft hat (A12 Teil 2 (a)).
+func tooManyTargets(id int64, got, checked int) error {
+	return denied(ReasonDraftChanged, "draft %d: %d copies would go to the trash, but the policy checked %d; try again", id, got, checked)
+}
+
 // cleanupDenied fragt vor der Transaktion CleanupCheck (nil = erlaubt).
 func (s *Service) cleanupDenied(ctx context.Context, keyID string, copies int) (string, error) {
 	if s.CleanupCheck == nil || copies <= 0 {
@@ -318,9 +377,11 @@ func updateCleanupApplies(x *store.DraftTx, d store.Draft) (bool, error) {
 // cleanupAfterPush legt nach dem Vermerk einer neuen, aktuellen Kopie in
 // derselben Transaktion die Aktion draft_update für die früheren eigenen,
 // unveränderten Kopien an (A11 Teil 1 (c)); deny ist das Ergebnis von
-// cleanupDenied vor der Transaktion. Die gerade abgelegte Kopie ist nie
-// Ziel. Was noch nicht gespiegelt ist, holt der Nachlauf nach.
-func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string, now time.Time) error {
+// cleanupDenied vor der Transaktion, limit die dort geprüfte Zahl der Ziele
+// (-1 = ohne Prüfung): sind es jetzt mehr, keine Aktion und kein Zähler
+// (der Nachlauf holt nach). Die gerade abgelegte Kopie ist nie Ziel. Was
+// noch nicht gespiegelt ist, holt der Nachlauf nach.
+func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string, limit int, now time.Time) error {
 	if s.keepPrevious() || len(d.RemotePrevious) == 0 {
 		return nil
 	}
@@ -339,7 +400,7 @@ func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string,
 	if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
 		return err
 	}
-	if len(cs.targets) == 0 {
+	if len(cs.targets) == 0 || (limit >= 0 && len(cs.targets) > limit) {
 		return nil
 	}
 	if deny != "" {
@@ -423,9 +484,16 @@ func (s *Service) RetryCleanup(ctx context.Context, accountID int64) (CleanupRep
 }
 
 // retryOne legt für einen Entwurf des Nachlaufs die Aktion an (withCurrent:
-// auch die aktuelle Kopie, bei geschlossenen Entwürfen).
+// auch die aktuelle Kopie, bei geschlossenen Entwürfen). A12 Teil 2 (a):
+// Die Policy fragt mit der vorher lesend gesammelten Zahl der Ziele; sind
+// es in der Transaktion mehr, keine Aktion und kein Zähler.
 func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by string, withCurrent bool, rep *CleanupReport) error {
-	deny, err := s.cleanupDenied(ctx, by, len(pre.RemotePrevious)+1)
+	list, except := retryList(pre, withCurrent)
+	limit, err := s.countTargets(ctx, pre, list, except)
+	if err != nil {
+		return err
+	}
+	deny, err := s.cleanupDenied(ctx, by, limit)
 	if err != nil {
 		return err
 	}
@@ -435,19 +503,16 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 		if err != nil {
 			return err
 		}
-		list := d.RemotePrevious
-		var except []store.RemoteCopy
+		list, except := retryList(d, withCurrent)
 		if withCurrent {
 			if !Status(d.Status).Closed() {
 				return nil
 			}
-			list = append([]store.RemoteCopy{currentCopy(d)}, d.RemotePrevious...)
 		} else {
 			ok, err := updateCleanupApplies(x, d)
 			if err != nil || !ok {
 				return err
 			}
-			except = []store.RemoteCopy{currentCopy(d)}
 		}
 		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
 		if err != nil {
@@ -460,7 +525,7 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 		if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
 			return err
 		}
-		if len(cs.targets) == 0 {
+		if len(cs.targets) == 0 || len(cs.targets) > limit {
 			return nil
 		}
 		if deny != "" {
@@ -481,6 +546,15 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 		_, err = x.AppendAudit(s.cleanupEvent(now, d, source, id, len(cs.targets), cs.skipped, audit.ResultOK, ""))
 		return err
 	})
+}
+
+// retryList sind die Kopien des Nachlaufs für d (withCurrent: auch die
+// aktuelle, bei geschlossenen Entwürfen) und die ausgenommenen.
+func retryList(d store.Draft, withCurrent bool) (list, except []store.RemoteCopy) {
+	if withCurrent {
+		return append([]store.RemoteCopy{currentCopy(d)}, d.RemotePrevious...), nil
+	}
+	return d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}
 }
 
 // sweepCleanupCounts löscht Zähler nach dem Erfolg (das Ziel der jüngsten
@@ -620,4 +694,101 @@ func (s *Service) recordMoves(x *store.DraftTx, d *store.Draft, moves [][2]store
 		}
 	}
 	return nil
+}
+
+// Stände früherer Kopien eines offenen Entwurfs für remote_note und draft
+// show (A12 Teil 2 (b)).
+const (
+	// PrevQueued: eine Aktion wartet oder läuft (ActionID, wenn bekannt).
+	PrevQueued = "queued"
+	// PrevPending: eigene, unveränderte Kopie; der Nachlauf legt die Aktion
+	// beim nächsten Lauf an.
+	PrevPending = "pending"
+	// PrevGivenUp: der Nachlauf hat nach CleanupMaxAttempts aufgegeben.
+	PrevGivenUp = "given_up"
+	// PrevChanged: im Mailprogramm verändert (Inhalt anders).
+	PrevChanged = "changed"
+	// PrevNotMirrored: der Spiegel kennt die UID noch nicht.
+	PrevNotMirrored = "not_mirrored"
+)
+
+// PreviousCopy ist der Stand einer früheren Kopie.
+type PreviousCopy struct {
+	UID      int64
+	State    string
+	ActionID int64
+}
+
+// PreviousCopyStates ordnet die früheren Kopien eines Entwurfs ein, die laut
+// Spiegel im Entwürfe-Ordner liegen oder dort noch nicht gespiegelt sind
+// (lesend; dieselbe Einordnung wie das Aufräumen, classifyCopy).
+func (s *Service) PreviousCopyStates(ctx context.Context, d store.Draft) ([]PreviousCopy, error) {
+	if len(d.RemotePrevious) == 0 {
+		return nil, nil
+	}
+	acts, err := s.Store.DraftCleanupActions(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	waiting := func(mb int64, uid int64) int64 {
+		for _, a := range acts {
+			switch a.State {
+			case store.ActionRequested, store.ActionQueued, store.ActionRunning:
+			default:
+				continue
+			}
+			for _, t := range a.Targets {
+				if t.MailboxID == mb && int64(t.UID) == uid && t.Result == "" {
+					return a.ID
+				}
+			}
+		}
+		return 0
+	}
+	var out []PreviousCopy
+	err = s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
+		if err != nil {
+			return err
+		}
+		seen := []store.RemoteCopy{currentCopy(d)}
+		for _, rc := range d.RemotePrevious {
+			dup := false
+			for _, o := range seen {
+				dup = dup || sameCopy(o, rc)
+			}
+			if dup {
+				continue
+			}
+			seen = append(seen, rc)
+			cl, _, moved, err := classifyCopy(x, d, inDrafts, rc)
+			if err != nil {
+				return err
+			}
+			if moved.UID > 0 {
+				rc = moved
+			}
+			pc := PreviousCopy{UID: rc.UID}
+			switch cl {
+			case copyBusy:
+				pc.State, pc.ActionID = PrevQueued, waiting(rc.MailboxID, rc.UID)
+			case copyOwn:
+				pc.State = PrevPending
+				if n, ok, err := x.CleanupCountOf(rc); err != nil {
+					return err
+				} else if ok && n.N >= CleanupMaxAttempts {
+					pc.State = PrevGivenUp
+				}
+			case copyChanged:
+				pc.State = PrevChanged
+			case copyNotMirrored:
+				pc.State = PrevNotMirrored
+			default:
+				continue
+			}
+			out = append(out, pc)
+		}
+		return nil
+	})
+	return out, err
 }

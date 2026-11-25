@@ -591,15 +591,26 @@ func (s *Service) Rejected(ctx context.Context, id int64) error {
 // früheren eigenen, unveränderten Kopien in derselben Transaktion als
 // Aktion draft_update in den Papierkorb (cleanupAfterPush; nicht mit
 // [draft] previous_copies = "keep"). Die Policy dafür fragt Pushed vorher
-// außerhalb der Transaktion (CleanupCheck).
+// außerhalb der Transaktion (CleanupCheck), seit A12 Teil 2 (a) mit der
+// Zahl der Kopien, die die Aktion tatsächlich bekäme (vorher lesend
+// gesammelt, einschließlich der bisherigen aktuellen Kopie); sind es in der
+// Transaktion mehr, entsteht keine Aktion (der Nachlauf holt nach).
 func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c PushedCopy) (d store.Draft, current bool, err error) {
-	deny := ""
+	deny, limit := "", -1
 	if !s.keepPrevious() && s.CleanupCheck != nil {
 		pre, err := s.Store.Draft(ctx, id)
 		if err != nil {
 			return d, false, err
 		}
-		if deny, err = s.cleanupDenied(ctx, pre.CreatedBy, len(pre.RemotePrevious)+1); err != nil {
+		list := pre.RemotePrevious
+		if pre.PushedContentHash != "" && pre.RemoteUID > 0 && pre.RemoteMailboxID > 0 {
+			list = append([]store.RemoteCopy{currentCopy(pre)}, pre.RemotePrevious...)
+		}
+		newCopy := store.RemoteCopy{MailboxID: c.MailboxID, UID: c.UID, UIDValidity: c.UIDValidity, ContentHash: c.ContentHash}
+		if limit, err = s.countTargets(ctx, pre, list, []store.RemoteCopy{newCopy}); err != nil {
+			return d, false, err
+		}
+		if deny, err = s.cleanupDenied(ctx, pre.CreatedBy, limit); err != nil {
 			return d, false, err
 		}
 	}
@@ -611,7 +622,7 @@ func (s *Service) Pushed(ctx context.Context, id int64, fingerprint string, c Pu
 		if current, err = s.recordCopy(x, &d, fingerprint, c, now, false); err != nil || !current {
 			return err
 		}
-		return s.cleanupAfterPush(x, d, deny, now)
+		return s.cleanupAfterPush(x, d, deny, limit, now)
 	})
 	return d, current, err
 }

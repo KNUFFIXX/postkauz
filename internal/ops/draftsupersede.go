@@ -77,10 +77,13 @@ func DraftsSupersede(d Deps) Operation {
 			if err := json.Unmarshal(input, &in); err != nil {
 				return policy.Facts{}, err
 			}
+			// A12 Teil 2 (a): die Zahl der Kopien, die die Aktion tatsächlich
+			// bekäme (mindestens 1: [delete] agent_may = none verbietet
+			// supersede wie bisher).
 			f := policy.Facts{Action: policy.ActionTrash, Targets: 1}
 			if o.svc != nil {
-				if dr, err := o.svc.Store.Draft(ctx, in.DraftID); err == nil {
-					f.Targets += len(dr.RemotePrevious)
+				if n, err := o.svc.PolicyTargets(ctx, in.DraftID, drafts.OpSupersede); err == nil {
+					f.Targets = max(n, 1)
 				}
 			}
 			return f, nil
@@ -97,7 +100,8 @@ func DraftsSupersede(d Deps) Operation {
 				return nil, errors.New("drafts are not configured")
 			}
 			res, err := o.as(call, drafts.OpSupersede, policy.ScopeMailDraft).Supersede(ctx, drafts.SupersedeRequest{
-				OldID: in.DraftID, NewID: in.ByDraftID, KeyID: call.Key.ID, Human: call.Key.IsHuman(), AuditID: call.AuditID})
+				OldID: in.DraftID, NewID: in.ByDraftID, KeyID: call.Key.ID, Human: call.Key.IsHuman(), AuditID: call.AuditID,
+				PolicyTargets: call.PolicyTargets, PolicyChecked: call.PolicyChecked})
 			if err != nil {
 				return nil, draftErr(err)
 			}

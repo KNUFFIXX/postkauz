@@ -76,6 +76,12 @@ type SupersedeRequest struct {
 	Human bool
 	// AuditID: Start-Eintrag des Aufrufs (Herkunft von Aktion und Job).
 	AuditID int64
+	// PolicyTargets: Zahl der Ziele, mit der die Policy vor dem Aufruf
+	// geprüft hat (ops.Call, A12 Teil 2 (a)), wenn PolicyChecked; kommen in
+	// der Transaktion mehr zusammen, draft_changed („try again“), nichts
+	// wird geschlossen.
+	PolicyTargets int
+	PolicyChecked bool
 }
 
 // SupersedeResult ist das Ergebnis (im Trockenlauf: was geschähe).
@@ -172,6 +178,9 @@ func (s *Service) Supersede(ctx context.Context, r SupersedeRequest) (SupersedeR
 		cs, err := ownCopiesFor(x, old)
 		if err != nil {
 			return err
+		}
+		if r.PolicyChecked && len(cs.targets) > r.PolicyTargets {
+			return tooManyTargets(old.ID, len(cs.targets), r.PolicyTargets)
 		}
 		if err := s.recordMoves(x, &old, cs.moves, now); err != nil {
 			return err
