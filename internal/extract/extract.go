@@ -35,6 +35,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/crash"
 	"github.com/KNUFFIXX/postkauz/internal/magic"
 	"github.com/KNUFFIXX/postkauz/internal/mimeparse"
+	"github.com/KNUFFIXX/postkauz/internal/procattr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
 )
 
@@ -147,6 +148,10 @@ const (
 	ErrKindExit     = "exit"     // gewöhnlicher Exit-Code mit Meldung
 	ErrKindTimeout  = "timeout"
 	ErrKindInternal = "internal" // Fehler im Parser oder in der Bereinigung
+	// ErrKindIO: Das Programm lief, aber Ein- oder Ausgabe scheiterte danach
+	// (mehr als 2 KB auf stderr bei Exit 0, Rohre nach dem Ende nicht
+	// geschlossen: exec.ErrWaitDelay); endgültig (A12 Teil 0 (c)).
+	ErrKindIO = "io"
 )
 
 // RunError ist ein Fehler des Kindprozesses mit seiner Art (A11 Teil 3:
@@ -161,12 +166,17 @@ type RunError struct {
 func (e *RunError) Error() string { return "extractor failed: " + e.Msg }
 func (e *RunError) Unwrap() error { return e.Err }
 
-// classifyRun ordnet den Fehler von cmd.Run ein: vorübergehend, wenn das
-// Hilfsprogramm nicht lief (Start gescheitert, Signal, NTSTATUS).
+// classifyRun ordnet den Fehler von cmd.Wait nach gelungenem Start ein
+// (A12 Teil 0 (c): vorher galt jeder Fehler ohne *exec.ExitError als
+// gescheiterter Start): vorübergehend nur bei Signal oder NTSTATUS (das
+// Programm lief nicht zu Ende); ein Fehler ohne Exit-Code nach dem Start
+// (errOutputFull auf stderr, exec.ErrWaitDelay) ist endgültig (ErrKindIO).
+// Ein gescheiterter Start (cmd.Start) ist ErrKindStart und wird in run
+// eingeordnet.
 func classifyRun(err error) (kind string, transient bool) {
 	var ee *exec.ExitError
 	if !errors.As(err, &ee) {
-		return ErrKindStart, true // *fs.PathError „fork/exec …“ oder „exec: …“
+		return ErrKindIO, false
 	}
 	code := ee.ExitCode()
 	switch {
@@ -223,6 +233,23 @@ func (x *Extractor) PDFTool() string {
 		return p
 	}
 	return x.opts.PDFToText
+}
+
+// ToolFor nennt das Hilfsprogramm für Anhänge der Art kind (A12 Teil 0
+// (c): Warnung eines gescheiterten Auszugs): pdftotext bei PDF, das eigene
+// Programm bei DOCX, sonst "" (im Prozess).
+func (x *Extractor) ToolFor(kind Kind) string {
+	switch kind {
+	case KindPDF:
+		return x.PDFTool()
+	case KindDOCX:
+		if len(x.opts.Self) > 0 {
+			return x.opts.Self[0]
+		}
+		exe, _ := os.Executable()
+		return exe
+	}
+	return ""
 }
 
 // Extract gewinnt Text aus einem Anhang der Art kind. size ist seine
@@ -336,9 +363,21 @@ func (x *Extractor) run(ctx context.Context, name string, args, env []string, in
 	errOut := &limitedBuffer{max: 2048}
 	cmd.Stdout, cmd.Stderr = out, errOut
 	cmd.WaitDelay = 2 * time.Second
-	err := cmd.Run()
+	procattr.Prepare(cmd) // Windows: ohne Konsolenfenster (A12 Teil 3 (e))
+	if err := cmd.Start(); err != nil {
+		// Nur ein Fehler aus Start heißt: das Programm lief nicht an
+		// (*fs.PathError „fork/exec …“ oder „exec: …“); vorübergehend.
+		return Result{}, &RunError{Kind: ErrKindStart, Transient: true, Msg: firstLine(err.Error()), Err: err}
+	}
+	err := cmd.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
 		return Result{}, fmt.Errorf("%w after %s (process killed)", ErrTimeout, x.opts.Timeout)
+	}
+	if ctx.Err() != nil {
+		// Abbruch über den Kontext (unter Linux „signal: killed“): kein
+		// Fehler des Anhangs; der Aufrufer prüft ctx.Err() und gibt den Job
+		// zurück.
+		return Result{}, fmt.Errorf("extract: %w", ctx.Err())
 	}
 	if out.full {
 		return Result{Text: out.buf.String(), Truncated: true}, nil

@@ -313,10 +313,12 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 			return err
 		}
 		open = drop(open, done)
-		if len(done) > 0 {
-			if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
-				return err
-			}
+		// A12 Teil 0 (b): immer neu lesen, auch wenn kein Entwurf
+		// geschlossen wurde (ein Übergang kann einen Vermerk ändern; ein
+		// erneutes Planen mit neuer Nachricht würde sonst erst einen Lauf
+		// später erkannt).
+		if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
+			return err
 		}
 	}
 	var rest []store.Draft

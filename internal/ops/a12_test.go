@@ -24,3 +24,20 @@ func TestA12RemoteNoteEditedAndAppend(t *testing.T) {
 		t.Fatalf("append running: %q", n)
 	}
 }
+
+// A12 Teil 0 (b): is:scheduled vergleicht den eigenen Absender mit ESCAPE;
+// „_“ in der Adresse des Kontos ist kein Platzhalter.
+func TestA12IsScheduledEscapesUnderscore(t *testing.T) {
+	m := newA10Mirror(t)
+	if err := m.st.ExecForTest(`UPDATE accounts SET email = 'de_mo@example.org'`); err != nil {
+		t.Fatal(err)
+	}
+	for from, want := range map[string]int{"Demo <dexmo@example.org>": 0, "Demo <de_mo@example.org>": 1} {
+		if err := m.st.ExecForTest(`UPDATE messages SET from_addr = ? WHERE id = ?`, from, m.ids["scheduled"]); err != nil {
+			t.Fatal(err)
+		}
+		if o := m.search(t, map[string]any{"query": "is:scheduled"}); len(o.Hits) != want {
+			t.Fatalf("from %s: hits %d, want %d", from, len(o.Hits), want)
+		}
+	}
+}

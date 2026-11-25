@@ -55,7 +55,10 @@ type ScheduledMessage struct {
 // (a), (b) und (d) oben, INTERNALDATE nach notBefore (Zeit des Laufs + 2
 // Minuten), nach Termin sortiert. Vorgefiltert über den Index
 // messages_account_date: Date-Kopfzeile nach notBefore oder keine
-// Date-Kopfzeile (Gmail setzt beide auf den Termin, B1). Eine Nachricht
+// Date-Kopfzeile (Gmail setzt beide auf den Termin, B1). Seit A12 Teil 0
+// (b) nie eine Nachricht, die schon einem Entwurf als sent_message_id
+// zugeordnet ist (sonst würde ein zweiter, offener Entwurf mit ihr als
+// geplant vermerkt; belegt mit TestA12ScheduledMessageOfClosedDraft). Eine Nachricht
 // mit vergangenem Date und künftigem INTERNALDATE findet diese Abfrage
 // nicht (bekannte Grenze; sonst läse jeder Lauf mit einem Entwurf ohne
 // Kopie alle Nachrichten des Kontos, BenchmarkCheckAfterSync22k).
@@ -67,6 +70,7 @@ func (s *SQLite) ScheduledMessages(ctx context.Context, accountID int64, notBefo
 			UNION ALL
 			SELECT id FROM messages WHERE account_id = ? AND date_header IS NULL)
 		AND COALESCE(m.internal_date, 0) > ?
+		AND NOT EXISTS (SELECT 1 FROM drafts sd WHERE sd.account_id = m.account_id AND sd.sent_message_id = m.id)
 		AND `+scheduledPlaceCond+` ORDER BY COALESCE(m.internal_date, 0), m.id`, accountID, nb, accountID, nb)
 	if err != nil {
 		return nil, err
@@ -473,11 +477,14 @@ const DraftsFolderSQL = `m.id IN (SELECT dl.message_id FROM message_mailboxes dl
 // Platzhalter für notBefore (Millisekunden) und (c) über eine JSON-Liste
 // [[Konto-ID, Adresse], …] eigener Adressen (OwnAddrs): From gleich der
 // Adresse oder „… <Adresse>“. Gmail-Schreibweisen mit Punkten oder „+“
-// erkennt die Suche nicht (die Anzeige über ScheduledAt schon; Gmail setzt
-// bei geplanten Nachrichten die Kontoadresse).
+// werden bewusst nicht gleichgesetzt: Der Absender einer Ablage und einer
+// geplanten Nachricht ist immer die Adresse des Kontos (die Anzeige über
+// ScheduledAt kennt sie trotzdem). Seit A12 Teil 0 (b) mit ESCAPE: „_“ und
+// „%“ in Adressen sind keine Platzhalter.
 const scheduledSearchSQL = `(COALESCE(m.internal_date, 0) > ? AND ` + scheduledPlaceCond + `
 	AND EXISTS (SELECT 1 FROM json_each(?) o WHERE json_extract(o.value, '$[0]') = m.account_id
-		AND (lower(trim(m.from_addr)) = json_extract(o.value, '$[1]') OR lower(m.from_addr) LIKE '%<' || json_extract(o.value, '$[1]') || '>')))`
+		AND (lower(trim(m.from_addr)) = json_extract(o.value, '$[1]') OR lower(m.from_addr) LIKE '%<' ||
+			replace(replace(replace(json_extract(o.value, '$[1]'), '\', '\\'), '%', '\%'), '_', '\_') || '>' ESCAPE '\')))`
 
 // ScheduledKeysForTest liefert die Schlüssel aller Vermerke, auch die
 // geschlossener Entwürfe (die beim Schließen gelöscht sein müssen).

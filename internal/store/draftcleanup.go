@@ -347,3 +347,42 @@ func (s *SQLite) CleanupCandidates(ctx context.Context, accountID int64, since t
 	}
 	return open, closed, nil
 }
+
+// HeldCopies liefert die Kopien (Ordner, UIDVALIDITY, UID; ContentHash
+// leer), die ein offener Entwurf als aktuelle oder frühere führt, und, mit
+// closedSince, die der nach closedSince geschlossenen Entwürfe (A12 Teil 0
+// (c): Zähler des Aufräumens dieser Kopien bleiben). Eine Abfrage je Lauf,
+// als Menge.
+func (s *SQLite) HeldCopies(ctx context.Context, closedSince time.Time) (open, recent map[RemoteCopy]bool, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT status IN `+closedStatuses+`, COALESCE(remote_mailbox_id, 0), COALESCE(remote_uidvalidity, 0),
+		COALESCE(remote_uid, 0), remote_previous FROM drafts
+		WHERE status NOT IN `+closedStatuses+` OR (closed_at >= ? AND (remote_uid > 0 OR json_array_length(remote_previous) > 0))`,
+		closedSince.UnixMilli())
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	open, recent = map[RemoteCopy]bool{}, map[RemoteCopy]bool{}
+	for rows.Next() {
+		var closed bool
+		var mb, uv, uid int64
+		var prev string
+		if err := rows.Scan(&closed, &mb, &uv, &uid, &prev); err != nil {
+			return nil, nil, err
+		}
+		set := open
+		if closed {
+			set = recent
+		}
+		if mb > 0 && uid > 0 {
+			set[RemoteCopy{MailboxID: mb, UIDValidity: uint32(uv), UID: uid}] = true
+		}
+		var list []RemoteCopy
+		if json.Unmarshal([]byte(prev), &list) == nil {
+			for _, c := range list {
+				set[RemoteCopy{MailboxID: c.MailboxID, UIDValidity: c.UIDValidity, UID: c.UID}] = true
+			}
+		}
+	}
+	return open, recent, rows.Err()
+}

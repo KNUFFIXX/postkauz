@@ -486,13 +486,37 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 // sweepCleanupCounts löscht Zähler nach dem Erfolg (das Ziel der jüngsten
 // Aktion auf die Kopie ist ok) oder wenn der erste Versuch länger als
 // CleanupWindow zurückliegt.
+//
+// A12 Teil 0 (c): Führt ein offener Entwurf die Kopie als aktuelle oder
+// frühere, bleibt der Zähler bis zum Erfolg oder bis die Kopie laut Spiegel
+// weg ist (der Nachlauf für offene Entwürfe hat kein Zeitfenster; sonst
+// begänne er alle sieben Tage mit drei neuen Versuchen). Gehört sie zu
+// einem in den letzten CleanupWindow geschlossenen Entwurf, bleibt er
+// ebenso (Nachlauf (ii)). Nach drei Fehlschlägen wiederholt dann nichts
+// mehr automatisch; der Mensch räumt mit draft cleanup auf.
 func (s *Service) sweepCleanupCounts(ctx context.Context, now time.Time) error {
 	list, err := s.Store.CleanupCounts(ctx)
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	open, recent, err := s.Store.HeldCopies(ctx, now.Add(-CleanupWindow))
 	if err != nil {
 		return err
 	}
 	for _, n := range list {
-		drop := n.N <= 0 || now.Sub(n.First) > CleanupWindow
+		key := store.RemoteCopy{MailboxID: n.Copy.MailboxID, UIDValidity: n.Copy.UIDValidity, UID: n.Copy.UID}
+		var drop bool
+		switch {
+		case n.N <= 0:
+			drop = true
+		case open[key]:
+			if drop, err = s.copyGoneFromMirror(ctx, key); err != nil {
+				return err
+			}
+		case recent[key]:
+		default:
+			drop = now.Sub(n.First) > CleanupWindow
+		}
 		if !drop {
 			_, _, result, ok, err := s.Store.LastCopyResult(ctx, n.Copy)
 			if err != nil {
@@ -507,6 +531,24 @@ func (s *Service) sweepCleanupCounts(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// copyGoneFromMirror meldet, ob der Spiegel die Kopie gesehen hat und
+// nicht mehr führt (unter Ordner und UID fehlt sie, UIDVALIDITY gleich und
+// UID unter UIDNEXT, oder die UIDVALIDITY ist eine andere).
+func (s *Service) copyGoneFromMirror(ctx context.Context, rc store.RemoteCopy) (bool, error) {
+	c, _, ok, err := s.Store.CopyAt(ctx, rc.MailboxID, uint32(rc.UID))
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return c.UIDValidity != rc.UIDValidity, nil
+	}
+	cur, err := s.Store.MailboxCursor(ctx, rc.MailboxID)
+	if err != nil {
+		return false, err
+	}
+	return !cur.Found || cur.UIDValidity != rc.UIDValidity || (cur.UIDNext != 0 && int64(cur.UIDNext) > rc.UID), nil
 }
 
 // ownCopiesFor prüft die aktuelle Kopie eines Entwurfs für supersede und
@@ -527,7 +569,6 @@ func ownCopiesFor(x *store.DraftTx, d store.Draft) (copySet, error) {
 	if err != nil {
 		return cs, err
 	}
-	inDrafts[d.RemoteMailboxID] = true // Ablageordner des Entwurfs
 	cl, c, err := classifyAt(x, inDrafts, cur)
 	if err != nil {
 		return cs, err

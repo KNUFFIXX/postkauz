@@ -239,8 +239,12 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 		}
 	}
 	done := 0
-	// Mindestens ein Anhang je Lauf, auch bei winzigem Budget (Fortschritt).
-	for done == 0 || inTime() {
+	// Mindestens ein Versuch je Lauf, auch bei winzigem Budget (Fortschritt).
+	// A12 Teil 0 (c): gezählt werden Versuche, nicht Abschlüsse; sonst lief
+	// die Schleife über das Budget hinaus, solange nur zurückgestellte
+	// Anhänge kamen.
+	attempted := 0
+	for attempted == 0 || inTime() {
 		// A11 Teil 3: Anhänge in der Wartezeit schließt schon die Abfrage
 		// aus (sonst holte die Schleife sie immer wieder).
 		items, err := r.Store.PendingExtractionsAt(ctx, accountID, 20, r.now())
@@ -254,6 +258,7 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 			return done, nil
 		}
 		for _, it := range items {
+			attempted++
 			res := r.extractOne(ctx, it)
 			if ctx.Err() != nil {
 				r.release(ctx, j) // abgebrochen: nicht als Fehler des Anhangs speichern
@@ -299,8 +304,8 @@ func (r *Runner) runExtract(ctx context.Context, accountID int64) (int, error) {
 // vorübergehend und noch nicht ExtractMaxAttempts Versuche → Vermerk in
 // meta, der Anhang bleibt pending (deferred); sonst bleibt res failed, nach
 // vorübergehenden Versuchen mit ihrer Zahl im Grund. Jeder gescheiterte
-// Auszug steht als Warnung im Log (IDs, Art, Grund, vorübergehend, Versuch;
-// nie Dateiname oder Inhalt).
+// Auszug steht als Warnung im Log (IDs, Art, Hilfsprogramm (Pfad, seit
+// A12), Grund, vorübergehend, Versuch; nie Dateiname oder Inhalt).
 func (r *Runner) settleFailure(ctx context.Context, it store.ExtractItem, res *extract.Result) (deferred bool, err error) {
 	if res.Status != extract.StatusFailed {
 		return false, nil
@@ -313,8 +318,9 @@ func (r *Runner) settleFailure(ctx context.Context, it store.ExtractItem, res *e
 	if ok {
 		attempt = prev.N + 1
 	}
+	kind := extract.KindOf(it.ContentType)
 	r.log().Warn("text extraction of an attachment failed", "attachment_id", it.ID, "message_id", it.MessageID,
-		"type", string(extract.KindOf(it.ContentType)), "error_kind", res.ErrKind, "reason", res.Error, "transient", res.Transient,
+		"type", string(kind), "tool", r.Extractor.ToolFor(kind), "error_kind", res.ErrKind, "reason", res.Error, "transient", res.Transient,
 		"attempt", attempt)
 	if res.Transient && attempt < ExtractMaxAttempts {
 		now := r.now()

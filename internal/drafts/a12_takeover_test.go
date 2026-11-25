@@ -403,3 +403,42 @@ func TestA12MovedEarlierCopyRetried(t *testing.T) {
 		t.Fatalf("copies left = %d", e.draftCopies())
 	}
 }
+
+// A12 Teil 0 (c): Der Zähler einer Kopie, die ein offener Entwurf führt,
+// bleibt über CleanupWindow hinaus; nach drei Fehlschlägen beginnt keine
+// neue Runde. Ist die Kopie laut Spiegel weg, fällt er weg.
+func TestA12CleanupCountKeptForOpenDraft(t *testing.T) {
+	e := newCuEnv(t)
+	ctx := context.Background()
+	d := e.newDraft("Abrechnung")
+	u1 := e.push(d, "eins", true)
+	d = e.update(d, "Abrechnung neu")
+	e.push(d, "zwei", true)
+	stale := func() {
+		e.exec(`UPDATE message_mailboxes SET content_loaded = 0 WHERE mailbox_id = ? AND uid = ?`, e.m.boxes["drafts"], u1)
+		e.run()
+	}
+	stale()
+	for i := 2; i <= 3; i++ {
+		if _, err := e.svc.RetryCleanup(ctx, e.acc); err != nil {
+			t.Fatal(err)
+		}
+		stale()
+	}
+	e.now = e.now.Add(CleanupWindow + time.Hour)
+	rep, err := e.svc.RetryCleanup(ctx, e.acc)
+	if err != nil || rep.Actions != 0 {
+		t.Fatalf("after 7 days = %+v %v", rep, err)
+	}
+	if n := e.count(`SELECT count(*) FROM meta WHERE key LIKE 'draft_copy_cleanup/%'`); n != 1 {
+		t.Fatalf("counter = %d", n)
+	}
+	// Die Kopie ist weg (der Mensch hat sie gelöscht): Zähler weg.
+	e.exec(`DELETE FROM message_mailboxes WHERE mailbox_id = ? AND uid = ?`, e.m.boxes["drafts"], u1)
+	if _, err := e.svc.RetryCleanup(ctx, e.acc); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`SELECT count(*) FROM meta WHERE key LIKE 'draft_copy_cleanup/%'`); n != 0 {
+		t.Fatalf("counter after the copy is gone = %d", n)
+	}
+}

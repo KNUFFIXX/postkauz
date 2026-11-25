@@ -383,6 +383,10 @@ func (s *Service) detectScheduled(ctx context.Context, accountID int64, open []s
 				fd = &f
 			}
 			if len(fd.Words) == 0 {
+				// Ohne eigenen Text passt dieser Entwurf zu keiner Nachricht:
+				// break verlässt nur die innere Schleife über die Nachrichten
+				// und lässt diesen Entwurf aus (A12 Teil 0 (b): der Fund der
+				// Gegenprüfung von A10 trifft nicht zu).
 				break
 			}
 			w := texts[m.ID]

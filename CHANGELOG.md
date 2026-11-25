@@ -4,6 +4,31 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/); Versionier
 
 ## [Unreleased]
 
+### 0.3.0-rc10 (Build, kein Tag) – Auftrag A12 „Alltag 6: Übernahme im Mailprogramm auch unter neuer Message-ID, Restfunde A11, PDF-Programm“
+
+Auftrag A12 (25.11.2026, Zweig `claude/friendly-feynman-ci7nzv`, Basis `main` `41f1246`). Kein Schema-Upgrade (Schema 22), keine Migration; neue Vermerke nur in `meta` (`draft_edited/…`), neue Gründe und Parameter im Audit. Keine neue Ausnahme zu ADR-009/E2/E3: Teil 1 sperrt mehr, nicht weniger.
+
+**Vermerk (Teil 0 (a)):** Abnahme D17 am 24.11.2026 auf dem Büro-PC mit Build 0.3.0-rc9: Teil A 34 OK, 0 FAIL, 0 WARN, 0 SKIP; Teil B 34 OK, 1 FAIL: B.4d, weil Gmail die im Webmail bearbeitete Fassung unter neuer Message-ID ablegt (Befund B1, behoben in Teil 1); B.5b ohne Prüfung, weil die vier Anhänge des Bestands am falschen PDF-Programm endgültig scheiterten (Befund B6, Teil 3). Das Protokoll liegt nicht im Repository. 0.3.0-rc9 ist seit dem 24.11.2026 07:46 im Dauerbetrieb. `main` per Fast-Forward auf `41f1246` (PR #18, 25.11.2026 05:15 MEZ); Tag `v0.3.0-rc9` (annotiert, an `a310c16`) und GitHub-Release (Vorabversion, zwölf Dateien, Programme bytegleich zum abgenommenen Build, `VERSION` mit der Bauzeit des Nachbaus) seit dem 25.11.2026 (gegengeprüft mit `git ls-remote` und `git ls-remote --tags`, 25.11.2026).
+
+#### Added
+
+- **Weiterbearbeitung im Mailprogramm unter neuer Message-ID ist eine Übernahme** (Teil 1 (a)–(c), Befund B1): Fehlt die abgelegte Kopie und liegt im Entwürfe-Ordner eine nach der Ablage datierte Fassung, die keine Kopie von PostKauz ist (Antwort: `In-Reply-To` = Original; neue Mail: gleicher Betreff), wird der Entwurf `taken_over` (auch aus `missing`), Audit `drafts.remote_check` mit `via: edited_elsewhere` und `edited_message_id`. `drafts.get`/`draft show` nennen `edited_message_id` bzw. `edited: message <id>` und einen eigenen `remote_note`; `drafts.update` → `draft_taken_over`, `drafts.discard`/`drafts.supersede` → `copy_changed`, kein Aufräumen. Die Versanderkennung prüft weiter den reinen Stand.
+- **Umgezogene Kopie** (Teil 1 (d), Befund B2): Legt der Server eine eigene Kopie mit denselben Bytes unter eine neue UID (Gmail bei großen Entwürfen ab etwa 13 MB), führt PostKauz die neue UID nach (Audit Grund `moved`, auch für frühere Kopien mit `previous`), statt `taken_over` zu setzen; `missing`/`taken_over` werden darüber wieder `pushed`. `discard`/`supersede` lehnen einen noch nicht vermerkten Umzug mit `draft_changed` ab.
+- `remote_note` „being stored in the Drafts folder (large messages take a minute or two)“, solange ein APPEND läuft (Teil 1 (d) (vi)).
+
+#### Changed
+
+- **Spiegel:** Im Entwürfe-Ordner verknüpft der Sync eine Nachricht mit der Message-ID eines Entwurfs nie mehr ohne Abruf; er lädt sie und verknüpft nur bei exakt gleichem Inhalts-Hash (`content_loaded = 1`), sonst wird sie eine eigene Nachricht (Teil 1 (d) (i)). Neuere Kopien mit derselben Message-ID gelten nur noch als Übernahme, wenn ihr Inhalt geladen und anders ist; nicht geladene machen den Stand „nicht prüfbar“.
+- `takenOver` nennt bei `missing` „sent, deleted, or changed in the mail client“; Beschreibungen von `mail_update_draft`, `mail_discard_draft`, `mail_supersede_draft`.
+- Warnung eines gescheiterten Textauszugs nennt den Pfad des Hilfsprogramms (`tool=…`; Teil 0 (c)).
+
+#### Fixed
+
+- **Budget des Textauszugs** zählt Versuche statt Abschlüsse: Liegen nur zurückgestellte Anhänge im Block, endet der Lauf trotzdem nach dem Budget (Teil 0 (c)).
+- `classifyRun`: Nur ein Fehler aus `cmd.Start` ist ein gescheiterter Start (vorübergehend); Fehler danach (mehr als 2 KB auf stderr bei Exit 0, `exec.ErrWaitDelay`) sind endgültig (neue Art `io`); ein Abbruch über den Kontext ist kein Fehler des Anhangs (Teil 0 (c), Entschiedene Frage 91).
+- **Zähler des Aufräumens** einer Kopie, die ein offener Entwurf führt, bleibt über 7 Tage hinaus bis zum Erfolg oder bis die Kopie laut Spiegel weg ist; vorher begann der Nachlauf alle 7 Tage mit drei neuen Versuchen (Teil 0 (c)). Nach drei Fehlschlägen räumt der Mensch mit `draft cleanup` auf.
+- Eine geplante Nachricht, die schon einem Entwurf als `sent_message_id` zugeordnet ist, wird keinem zweiten Entwurf als geplant zugeordnet (Teil 0 (b), mit Test belegt); `is:scheduled` vergleicht den Absender mit `ESCAPE` (`_` ist kein Platzhalter); die Vermerke „geplant“ werden nach den Übergängen immer neu gelesen.
+
 ### 0.3.0-rc9 (Build, kein Tag) – Auftrag A11 „Alltag 5: Eigene Entwurfskopien aufräumen, eigenen Entwurf verwerfen, Textauszug wiederholen“
 
 Auftrag A11 (23.11.2026, Zweig `claude/keen-heisenberg-wou13l`, Basis `main` `54b9f93`). Kein Schema-Upgrade (Schema 22), keine Migration; neue Vermerke nur in `meta` (`draft_copy_cleanup/…`, `extract_retry/…`, `extract_requeue/…`), neue Herkünfte und `draft_id` im JSON von `actions.params`, neue Gründe im Audit. Neuer Konfigurationsschlüssel `[draft] previous_copies` (Standard ohne Schlüssel `"trash"`; rc8 und älter starten mit ihm nicht, in der Abnahme nicht setzen). Neue Ausnahmen zu ADR-009 / E2 und E3 vom Betreiber beim Start freigegeben (Nachträge A11 Teil 1 und Teil 2 in [entscheidungen.md](docs/entscheidungen.md); Entschiedene Fragen 86 bis 88, Einspruch bis zum Merge). Haltepunkt: Gegenprüfung, danach Abnahme D17 nach Entscheid des Betreibers. Prüfläufe: `make check` vor jedem Commit grün (40 Pakete, guard, pii-check), `make cross` grün, `make race` grün (40 Pakete); `make integration` gelaufen (Docker, Dovecot, Stalwart, GreenMail): 11 Tests grün, `TestIntegrationAuthelia` braucht `make testauth-up` (nicht gestartet), `TestIntegrationSentDetection` scheiterte schon auf `54b9f93` (die Auffangregel „Kopie weg“ aus A07 schloss beim Zeitsprung einen Entwurf; Test korrigiert, `internal/mailsync` danach gegen alle drei Server grün). Benchmark `BenchmarkCheckAfterSync22k/steady` 5,4–6,0 ms (vorher 4,4–4,6 ms; der Nachlauf läuft in jedem vollständigen Lauf). Build **0.3.0-rc9** an `a310c16` (zwei frische Klone ohne Tags bytegleich; Windows `beacb5f56f9e8daa974388652562a8d6ae34a23ecee43bc3489819f638311d67`, Linux `e7c3a2ea…f324e`, darwin `7fc9757d…fa2a`; Modulversion `v0.0.0-20261123045514-a310c168c5c1`, go1.27.3). Der Build stammt aus `a310c16`, nicht aus dem letzten Commit; danach nur dieser Vermerk.
