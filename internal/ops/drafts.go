@@ -157,6 +157,15 @@ func remoteNote(d store.Draft) string {
 // earlierInDrafts), und keep für [draft] previous_copies = "keep" (die
 // früheren Kopien bleiben liegen, wie bis 0.3.0-rc8).
 func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
+	return remoteNoteWith(d, earlier, keep, nil)
+}
+
+// remoteNoteWith ist remoteNoteFor mit dem Stand der früheren Kopien
+// (A12 Teil 2 (b), drafts.Service.PreviousCopyStates): Wartet eine Aktion, hat
+// der Nachlauf aufgegeben, ist eine Kopie verändert oder noch nicht
+// gespiegelt, sagt remote_note das je Kopie. prev nil: Text wie bis
+// 0.3.0-rc9 (auch mit [draft] previous_copies = "keep").
+func remoteNoteWith(d store.Draft, earlier []int64, keep bool, prev []drafts.PreviousCopy) string {
 	if d.PushNote == drafts.PushNotePushedAfterClose {
 		if d.RemoteUID > 0 {
 			return fmt.Sprintf("a copy (uid %d) reached the Drafts folder just after the draft was closed; it stays there, "+
@@ -171,6 +180,11 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 	case drafts.RemotePending:
 		if d.PushHold != "" {
 			return pushHoldNote(d.PushHold)
+		}
+		if d.PushAttempt != nil {
+			// A12 Teil 1 (d) (vi): Ein APPEND läuft; große Nachrichten
+			// brauchen 60–100 s, das ist kein Hänger.
+			return "being stored in the Drafts folder (large messages take a minute or two)"
 		}
 		if n := pushNotes[d.PushNote]; n != "" && d.PushNote != drafts.PushNoteApprovalStale {
 			return n
@@ -196,11 +210,20 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 				return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s stay there, nothing is deleted)", d.RemoteUID,
 					joinUIDs(earlier))
 			}
+			if len(prev) > 0 {
+				return fmt.Sprintf("in the Drafts folder (uid %d); earlier copies: %s", d.RemoteUID, previousNotes(prev))
+			}
 			return fmt.Sprintf("in the Drafts folder (uid %d; earlier copies %s are still there: own unchanged copies go to the trash "+
 				"(see cleanup_action_ids), others only the human removes)", d.RemoteUID, joinUIDs(earlier))
 		}
+		if len(prev) > 0 {
+			return fmt.Sprintf("in the Drafts folder (uid %d); earlier copies: %s", d.RemoteUID, previousNotes(prev))
+		}
 		return fmt.Sprintf("in the Drafts folder (uid %d)", d.RemoteUID)
 	case drafts.RemoteTakenOver:
+		if d.EditedMessageID > 0 {
+			return fmt.Sprintf("changed in the mail client and saved as a new message (message %d); change it there", d.EditedMessageID)
+		}
 		return "taken over in the mail client; change it there"
 	case drafts.RemoteMissing:
 		if drafts.RecipientKey(d.To, d.Cc) == "" && d.InReplyToMsg > 0 {
@@ -219,6 +242,33 @@ func remoteNoteFor(d store.Draft, earlier []int64, keep bool) string {
 // ScheduledNote ist remote_note eines geplanten Entwurfs (A10 Teil 2).
 func ScheduledNote(at time.Time) string {
 	return "scheduled in the mail client for " + at.UTC().Format(time.RFC3339) + "; not sent yet"
+}
+
+// previousNotes nennt je frühere Kopie ihren Stand (A12 Teil 2 (b)).
+func previousNotes(prev []drafts.PreviousCopy) string {
+	parts := make([]string, 0, len(prev))
+	for _, p := range prev {
+		var s string
+		switch p.State {
+		case drafts.PrevQueued:
+			s = "goes to the trash"
+			if p.ActionID > 0 {
+				s = fmt.Sprintf("goes to the trash (action %d)", p.ActionID)
+			}
+		case drafts.PrevPending:
+			s = "goes to the trash with the next sync (see cleanup_action_ids)"
+		case drafts.PrevGivenUp:
+			s = "stays in the Drafts folder; remove it in the mail client or with draft cleanup"
+		case drafts.PrevChanged:
+			s = "changed in the mail client; only the human removes it"
+		case drafts.PrevNotMirrored:
+			s = "not mirrored yet"
+		default:
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("uid %d %s", p.UID, s))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // joinUIDs nennt UIDs früherer Kopien ("uid 3, uid 5").
@@ -266,7 +316,13 @@ func (o *draftOps) noteFor(ctx context.Context, d store.Draft) (string, []int64,
 		return "", nil, err
 	}
 	keep := o.svc != nil && o.svc.PreviousCopies == drafts.PreviousCopiesKeep
-	return remoteNoteFor(d, earlier, keep), earlier, nil
+	var prev []drafts.PreviousCopy
+	if !keep && o.svc != nil && d.RemoteState == drafts.RemotePushed && !drafts.Status(d.Status).Closed() && len(d.RemotePrevious) > 0 {
+		if prev, err = o.svc.PreviousCopyStates(ctx, d); err != nil {
+			return "", nil, err
+		}
+	}
+	return remoteNoteWith(d, earlier, keep, prev), earlier, nil
 }
 
 // draftOps hält die Abhängigkeiten der Entwurfsoperationen.
@@ -1442,8 +1498,12 @@ type DraftDetail struct {
 	// und lokale ID der geplanten Nachricht. Nicht gesendet.
 	ScheduledFor       string `json:"scheduled_for,omitempty"`
 	ScheduledMessageID int64  `json:"scheduled_message_id,omitempty"`
-	RemoteMailboxID    int64  `json:"remote_mailbox_id,omitempty"`
-	RemoteUID          int64  `json:"remote_uid,omitempty"`
+	// EditedMessageID: remote taken_over, weil der Mensch den Entwurf im
+	// Mailprogramm als neue Nachricht weiterbearbeitet hat (A12 Teil 1
+	// (c)): lokale ID dieser Fassung (Vermerk draft_edited/<id>).
+	EditedMessageID int64 `json:"edited_message_id,omitempty"`
+	RemoteMailboxID int64 `json:"remote_mailbox_id,omitempty"`
+	RemoteUID       int64 `json:"remote_uid,omitempty"`
 	// RemotePreviousUIDs: UIDs früherer Kopien, die laut Spiegel noch im
 	// Entwürfe-Ordner liegen (nach einer Änderung legt der Push eine neue
 	// Kopie ab; seit A11 geht die frühere eigene, unveränderte in den
@@ -1555,6 +1615,7 @@ func DraftsGet(d Deps) Operation {
     "remote_note": {"type": "string"}, "remote_mailbox_id": {"type": "integer"}, "remote_uid": {"type": "integer"},
     "scheduled_for": {"type": "string", "format": "date-time", "description": "remote scheduled: the send time the mail client scheduled; the message is not sent yet"},
     "scheduled_message_id": {"type": "integer", "description": "remote scheduled: local id of the scheduled message"},
+    "edited_message_id": {"type": "integer", "description": "remote taken_over: the human changed the draft in the mail client and it was saved as a new message; local id of that message"},
     "remote_previous_uids": {"type": "array", "items": {"type": "integer"}, "description": "uids of earlier copies that are still in the Drafts folder according to the mirror"},
     "cleanup_action_ids": {"type": "array", "items": {"type": "integer"}, "description": "mailbox actions that move own unchanged copies of this draft to the trash (after a change, drafts.supersede, drafts.discard), newest first; actions.get shows source and state"},
     "pushed_date": {"type": "string"},
@@ -1655,6 +1716,9 @@ func DraftsGet(d Deps) Operation {
 				}
 			}
 			out.UpdatedBy, out.PushHold = dr.UpdatedBy, dr.PushHold
+			if dr.RemoteState == drafts.RemoteTakenOver && !drafts.Status(dr.Status).Closed() {
+				out.EditedMessageID = dr.EditedMessageID
+			}
 			if dr.Status == string(drafts.StatusAbandoned) {
 				if err := o.closedReason(ctx, dr, &out); err != nil {
 					return nil, err

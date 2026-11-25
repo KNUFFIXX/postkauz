@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/brand"
 	"github.com/KNUFFIXX/postkauz/internal/config"
+	"github.com/KNUFFIXX/postkauz/internal/drafts"
 	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/flock"
 	"github.com/KNUFFIXX/postkauz/internal/httpmcp"
@@ -53,9 +55,11 @@ type DoctorReport struct {
 	SecretsBackend string `json:"secrets_backend"` // Konfiguration: auto | keyring | insecure-file
 	Keyring        string `json:"keyring"`         // available | unavailable | insecure
 	KeyringDetail  string `json:"keyring_detail,omitempty"`
-	// PDFTool ist der Pfad zu pdftotext ("" = nicht gefunden; PDF-Anhänge
-	// bleiben dann ohne Text). Optional, siehe README.
-	PDFTool string `json:"pdftotext"`
+	// PDFToText: das PDF-Programm (A12 Teil 3 (b); bis 0.3.0-rc9 nur der
+	// Pfad als Zeichenkette): Pfad ("" = nicht gefunden oder abgeschaltet),
+	// Einstellung ([extract] pdftotext: path, off oder PATH), erste Zeile
+	// von -v und das Ergebnis der Probe (ok, failed, transient, not_run).
+	PDFToText DoctorPDF `json:"pdftotext"`
 	// Suchindex (S1.7): wartende Nachrichten und Stand von Normalisierer
 	// und Stemmer (meta.fts_version).
 	IndexPending int `json:"index_pending"`
@@ -114,6 +118,18 @@ type DoctorReport struct {
 	Secrets  *DoctorSecrets `json:"secrets,omitempty"`
 	Blobs    *DoctorBlobs   `json:"blobs,omitempty"`
 	Warnings []string       `json:"warnings"`
+	// Notes: Hinweise ohne Wirkung auf den Exit-Code (A12 Teil 3 (d)):
+	// liegengebliebene Anhänge und Entwurfskopien.
+	Notes []string `json:"notes"`
+}
+
+// DoctorPDF ist das PDF-Programm in doctor (A12 Teil 3 (b)).
+type DoctorPDF struct {
+	Path    string `json:"path"`
+	Setting string `json:"setting"` // path | off | PATH
+	Version string `json:"version,omitempty"`
+	Probe   string `json:"probe"` // ok | failed | transient | not_run
+	Detail  string `json:"detail,omitempty"`
 }
 
 // DoctorHTTP zeigt [http] ohne Geheimnisse (S3.8: doctor zeigt die
@@ -157,6 +173,15 @@ type DoctorAccount struct {
 	IncompleteAnswers     int        `json:"incomplete_answers"`
 	IncompleteAnswersLast int        `json:"incomplete_answers_last,omitempty"`
 	IncompleteAnswersAt   *time.Time `json:"incomplete_answers_at,omitempty"`
+	// Textauszug und Entwurfskopien (A12 Teil 3 (d)): failed (davon nach
+	// mehreren vorübergehenden Versuchen), pending in der Wartezeit,
+	// skipped wegen des PDF-Programms; offene Entwürfe mit einer früheren
+	// Kopie, die der Nachlauf nach drei Versuchen liegen ließ.
+	ExtractFailed          int     `json:"extract_failed"`
+	ExtractFailedExhausted int     `json:"extract_failed_exhausted"`
+	ExtractWaiting         int     `json:"extract_waiting"`
+	ExtractSkippedTool     int     `json:"extract_skipped_tool"`
+	DraftCopiesGivenUp     []int64 `json:"draft_copies_given_up"`
 }
 
 // DoctorTokenRefresh ist der letzte Refresh-Versuch eines OAuth2-Kontos:
@@ -233,7 +258,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	rep := DoctorReport{Version: a.version, ConfigPath: a.paths.ConfigFile, ConfigExists: a.paths.ConfigExists,
 		DataDir: a.paths.DataDir, DatabasePath: a.paths.Database, LogPath: a.paths.Log,
 		SchemaKnown: store.KnownSchemaVersion(), SecretsBackend: a.cfg.Secrets.Backend, AuditExportDir: a.cfg.Audit.ExportDir,
-		Accounts: []DoctorAccount{}, Warnings: []string{}}
+		Accounts: []DoctorAccount{}, Warnings: []string{}, Notes: []string{}, PDFToText: DoctorPDF{Probe: extract.ProbeNotRun}}
 	if a.cfgErr != nil {
 		rep.ConfigError = a.cfgErr.Error()
 		if rep.ConfigPath == "" {
@@ -242,7 +267,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 		rep.Database, rep.Keyring = "not_checked", "not_checked"
 		return rep
 	}
-	rep.PDFTool = extract.New(extract.Options{}).PDFTool()
+	doctorPDF(ctx, a, &rep)
 	rep.AttachDir = a.paths.AttachDir
 	rep.ExportDir = a.paths.ExportDir
 	if g, err := a.attachGuard(); err == nil {
@@ -367,6 +392,7 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 					acc.Name, ia.Last, at.Format("2006-01-02 15:04 UTC"), ia.Total))
 			}
 		}
+		doctorExtractCounts(ctx, db, acc, &da, &rep)
 		if acc.AuthType == ops.AuthOAuth2 {
 			doctorOAuthAccount(ctx, db, sec, acc, &da, &rep)
 			rep.Accounts = append(rep.Accounts, da)
@@ -387,6 +413,71 @@ func doctor(ctx context.Context, a *app) DoctorReport {
 	}
 	doctorCredentialRefs(ctx, db, sec, list, &rep)
 	return rep
+}
+
+// doctorPDF prüft das PDF-Programm (A12 Teil 3 (a), (b)): Pfad,
+// Einstellung, Version und Probe. Fehlt die konfigurierte Datei oder
+// scheitert die Probe endgültig, ist das eine Warnung.
+func doctorPDF(ctx context.Context, a *app, rep *DoctorReport) {
+	ex := a.extractor()
+	p := DoctorPDF{Path: ex.PDFTool(), Setting: "PATH", Probe: extract.ProbeNotRun}
+	switch v := a.cfg.Extract.PDFToText; v {
+	case "":
+	case "off":
+		p.Setting = "off"
+	default:
+		p.Setting, p.Path = "path", v
+	}
+	if p.Path != "" {
+		pr := ex.Probe(ctx)
+		p.Probe, p.Detail = pr.State, pr.Detail
+		p.Version = ex.Version(ctx)
+		switch {
+		case pr.Detail == extract.ReasonPDFToolMissing:
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("pdftotext not found at the configured path %s ([extract] pdftotext); "+
+				"PDF attachments are skipped until the file is there", p.Path))
+		case pr.State == extract.ProbeFailed:
+			rep.Warnings = append(rep.Warnings, fmt.Sprintf("pdftotext at %s cannot read a PDF from stdin (%s); PDF attachments are skipped. "+
+				"Use the pdftotext of Poppler: set [extract] pdftotext = '<full path to pdftotext.exe>'", p.Path, p.Detail))
+		}
+	}
+	rep.PDFToText = p
+}
+
+// doctorExtractCounts zählt je Konto liegengebliebene Anhänge und
+// Entwurfskopien (A12 Teil 3 (d)); Hinweise (notes) ohne Wirkung auf den
+// Exit-Code.
+func doctorExtractCounts(ctx context.Context, db *store.SQLite, acc store.AccountRef, da *DoctorAccount, rep *DoctorReport) {
+	da.DraftCopiesGivenUp = []int64{}
+	c, err := db.ExtractCountsOf(ctx, acc.ID, extract.ToolReasons, time.Now())
+	if err != nil {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("account %s: attachment counts: %v", acc.Name, err))
+	} else {
+		da.ExtractFailed, da.ExtractFailedExhausted, da.ExtractWaiting, da.ExtractSkippedTool = c.Failed, c.FailedExhausted, c.Waiting, c.SkippedTool
+		if c.Failed > 0 {
+			rep.Notes = append(rep.Notes, fmt.Sprintf("account %s: text extraction failed for %d attachments (%d after several attempts); "+
+				"retry with: %s attach retry --account %s --all-failed", acc.Name, c.Failed, c.FailedExhausted, brand.Name, acc.Name))
+		}
+		if c.SkippedTool > 0 && rep.PDFToText.Probe != extract.ProbeOK {
+			rep.Notes = append(rep.Notes, fmt.Sprintf("account %s: %d PDF attachments wait for a working pdftotext (see pdftotext above)",
+				acc.Name, c.SkippedTool))
+		}
+	}
+	ids, err := db.GivenUpCopies(ctx, acc.ID, drafts.CleanupMaxAttempts)
+	if err != nil {
+		rep.Notes = append(rep.Notes, fmt.Sprintf("account %s: draft copies: %v", acc.Name, err))
+		return
+	}
+	if len(ids) > 0 {
+		da.DraftCopiesGivenUp = ids
+		parts := make([]string, len(ids))
+		for i, id := range ids {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		rep.Notes = append(rep.Notes, fmt.Sprintf("account %s: earlier copies of drafts %s stay in the Drafts folder after %d attempts; "+
+			"remove them in the mail client or with: %s draft cleanup <draft-id>", acc.Name, strings.Join(parts, ", "),
+			drafts.CleanupMaxAttempts, brand.Name))
+	}
 }
 
 // doctorOAuthAccount meldet den Token-Stand eines OAuth2-Kontos (S3.7):
@@ -707,10 +798,25 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if r.RemoteError != "" {
 		fmt.Fprintf(w, "remote:    INVALID: %s (mcp --remote does not start; other commands are not affected) [remote]\n", r.RemoteError)
 	}
-	if r.PDFTool != "" {
-		fmt.Fprintf(w, "pdftotext: %s\n", r.PDFTool)
-	} else {
+	switch p := r.PDFToText; {
+	case p.Setting == "off":
+		fmt.Fprintln(w, "pdftotext: off ([extract] pdftotext = \"off\"; PDF attachments get no text)")
+	case p.Path == "":
 		fmt.Fprintln(w, "pdftotext: not found (optional; without it PDF attachments get no text, see README)")
+	default:
+		src := "first in PATH"
+		if p.Setting == "path" {
+			src = "[extract] pdftotext"
+		}
+		ver := p.Version
+		if ver == "" {
+			ver = "version unknown"
+		}
+		check := p.Probe
+		if p.Detail != "" && p.Probe != extract.ProbeOK {
+			check += ": " + p.Detail
+		}
+		fmt.Fprintf(w, "pdftotext: %s (%s; %s; check: %s)\n", p.Path, src, ver, check)
 	}
 	if r.Database == "ok" {
 		fmt.Fprintf(w, "search:    %d messages waiting for the index (index version %d)\n", r.IndexPending, r.FTSVersion)
@@ -759,6 +865,12 @@ func printDoctor(w io.Writer, r DoctorReport) {
 	if len(r.Warnings) > 0 {
 		fmt.Fprintln(w, "warnings:")
 		for _, x := range r.Warnings {
+			fmt.Fprintln(w, "  - "+strings.TrimSpace(x))
+		}
+	}
+	if len(r.Notes) > 0 {
+		fmt.Fprintln(w, "notes:")
+		for _, x := range r.Notes {
 			fmt.Fprintln(w, "  - "+strings.TrimSpace(x))
 		}
 	}

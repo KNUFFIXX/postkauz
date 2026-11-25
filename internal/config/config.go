@@ -57,6 +57,8 @@ type Config struct {
 	Paths    PathsConfig `toml:"paths"`
 	Operator Operator    `toml:"operator"`
 	Draft    Draft       `toml:"draft"`
+	// Extract: Abschnitt [extract] (seit A12 Teil 3 (a)): das PDF-Programm.
+	Extract Extract `toml:"extract"`
 	// Approval: Abschnitt [approval] (seit T2, E3): ttl gilt für Anträge
 	// auf Entwürfe und Aktionen; neuer Name für [draft] approval_ttl, der
 	// alte Schlüssel bleibt gültig.
@@ -84,6 +86,38 @@ type Config struct {
 // fileConfig ist die Form beim Lesen der Datei: [http] erst als
 // toml.Primitive (das äußere Feld verdeckt Config.HTTP), damit ein Fehler
 // dort nur HTTPErr setzt.
+// Extract ist der Abschnitt [extract] (A12 Teil 3 (a), Befund B6: im PATH
+// stand zuerst das pdftotext von Git für Windows, Xpdf, das nicht von stdin
+// liest).
+type Extract struct {
+	// PDFToText: absoluter Pfad zu pdftotext (Poppler), "off" (keine PDFs
+	// extrahieren) oder leer (erstes pdftotext im PATH, wie bisher).
+	// Windows-Pfade in TOML als literal string:
+	// pdftotext = 'C:\Tools\Poppler\bin\pdftotext.exe'. Eine fehlende Datei ist
+	// kein Ladefehler (doctor warnt, PDFs werden übersprungen).
+	PDFToText string `toml:"pdftotext"`
+}
+
+// checkExtract prüft [extract]: Ladefehler nur für eindeutig Falsches
+// (relativer Pfad, .bat/.cmd wie beim Prüf-Hook).
+func checkExtract(e *Extract) error {
+	v := strings.TrimSpace(e.PDFToText)
+	e.PDFToText = v
+	switch {
+	case v == "" || v == "off":
+		return nil
+	case strings.ContainsAny(v, "\r\n\x00"):
+		return fmt.Errorf("config: extract.pdftotext contains a line break")
+	case !filepath.IsAbs(v):
+		return fmt.Errorf("config: extract.pdftotext %q is not an absolute path (use the full path, \"off\" or leave it out)", v)
+	}
+	switch strings.ToLower(filepath.Ext(v)) {
+	case ".bat", ".cmd":
+		return fmt.Errorf("config: extract.pdftotext must be the program itself, not a .bat or .cmd file")
+	}
+	return nil
+}
+
 type fileConfig struct {
 	Config
 	HTTP   toml.Primitive `toml:"http"`
@@ -585,6 +619,9 @@ func LoadWith(opts LoadOptions) (Config, Paths, error) {
 		cfg.Draft.ApprovalTTL = a
 	}
 	if err := checkDraft(&cfg.Draft); err != nil {
+		return cfg, p, err
+	}
+	if err := checkExtract(&cfg.Extract); err != nil {
 		return cfg, p, err
 	}
 	if err := checkRetention(&cfg); err != nil {

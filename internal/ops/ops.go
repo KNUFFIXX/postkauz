@@ -47,6 +47,12 @@ type Call struct {
 	// Executors); Handler, die selbst Übergänge auditieren (Entwürfe,
 	// S2.3), tragen ihn in deren Einträge ein.
 	Actor audit.ActorType
+	// PolicyTargets ist die Zahl der Ziele, mit der die Policy die Eingabe
+	// geprüft hat (Facts.Targets aus PolicyInput; A12 Teil 2 (a)), wenn
+	// PolicyChecked gilt. Handler, die die Ziele erst in ihrer Transaktion
+	// sammeln (drafts.supersede, drafts.discard), lehnen mehr Ziele ab.
+	PolicyTargets int
+	PolicyChecked bool
 }
 
 // DeniedError ist eine fachliche Ablehnung im Handler (A02: z. B.

@@ -340,7 +340,17 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 			return err
 		}
 		if d.RemoteState == RemoteTakenOver || d.RemoteState == RemoteMissing {
-			return takenOver(d.ID, d.RemoteState)
+			// A12 Teil 1 (d): Ist die Kopie nur umgezogen (noch nicht
+			// vermerkt), wird sie nachgeführt und die Änderung geht weiter.
+			cc, err := checkCopy(x, d)
+			if err != nil {
+				return err
+			}
+			if moved, err := s.tryMove(x, &d, cc, now); err != nil {
+				return err
+			} else if !moved {
+				return takenOver(d.ID, d.RemoteState)
+			}
 		}
 		// W1: Kopie eines abgebrochenen Ablageversuchs zuerst übernehmen
 		// (sonst hielte die Prüfung sie für eine Fassung des Mailclients).
@@ -349,12 +359,18 @@ func (s *Service) Update(ctx context.Context, id int64, c Content, expect string
 		}
 		// E6: Ist die zuletzt abgelegte Kopie laut Spiegel noch unverändert
 		// da? Sonst hat der Mensch im Mailclient übernommen (S2.5).
-		if st, err := checkCopy(x, d); err != nil {
+		if cc, err := checkCopy(x, d); err != nil {
 			return err
-		} else if st != "" {
+		} else if cc.State != "" {
 			res.Draft, res.From, res.To = d, from, from
-			deny = takenOver(d.ID, st)
-			return s.markRemote(x, &d, st, now)
+			deny = takenOver(d.ID, cc.State)
+			return s.markRemote(x, &d, cc, now)
+		} else if cc.Move != nil {
+			// A12 Teil 1 (d): umgezogen, keine Übernahme; nachführen und
+			// weiter wie mit der Kopie unter der alten UID.
+			if err := s.applyMove(x, &d, *cc.Move, now); err != nil {
+				return err
+			}
 		}
 		if expect != "" && Fingerprint(d) != expect {
 			return changed(d.ID)
@@ -795,9 +811,9 @@ func (s *Service) close(ctx context.Context, id int64, ev Event, sentMessageID i
 			} else if adopted {
 				return changed(d.ID)
 			}
-			if st, err := checkCopy(x, d); err != nil {
+			if cc, err := copyStateRaw(x, d); err != nil {
 				return err
-			} else if st != RemoteMissing {
+			} else if cc.State != RemoteMissing {
 				return changed(d.ID)
 			}
 		}

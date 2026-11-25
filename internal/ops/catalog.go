@@ -29,8 +29,11 @@ type Deps struct {
 	// Extractor extrahiert Anhangstext bei Bedarf (attachments.text);
 	// nil = nur gespeicherte Ergebnisse zeigen.
 	Extractor *extract.Extractor
-	Keys      KeyRepo
-	Audit     AuditRepo
+	// ExtractRetry setzt fehlgeschlagene Auszüge zurück (attachments.retry,
+	// A12 Teil 3 (c)); nil = nicht verfügbar.
+	ExtractRetry ExtractRetryRepo
+	Keys         KeyRepo
+	Audit        AuditRepo
 	// AuditExportDir ist das Standardziel von audit.export ([audit]
 	// export_dir in der Konfiguration; leer = Ziel muss angegeben werden).
 	AuditExportDir string
@@ -115,6 +118,7 @@ func Catalog(d Deps) []Operation {
 		ThreadsGet(d.Messages),
 		AttachmentsList(d.Messages),
 		AttachmentsText(d.Accounts, d.Messages, d.Blobs, d.Extractor),
+		AttachmentsRetry(d),
 		AttachmentsSave(d),
 		MessagesExport(d),
 		KeysCreate(d.Keys, d.KeyDryRunDefault),

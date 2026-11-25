@@ -331,6 +331,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 
 	// A9: Was die Eingabe anrichten würde (Zahl der Ziele, Zielordner),
 	// prüft die Policy, nicht der Handler.
+	policyTargets, policyChecked := 0, false
 	if op.PolicyInput != nil {
 		// Fail closed (T2 Punkt 7): Ohne Regeln der Policy-Datei entscheidet
 		// nichts über die Eingabe; kein stiller Rückfall auf die Standards.
@@ -353,8 +354,13 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 			}
 			return Result{Decision: dec, AuditID: id}, ferr
 		}
+		policyTargets, policyChecked = facts.Targets, true
 		if in := policy.CheckInput(req.Key, facts, *x.Rules); !in.Allowed() {
 			d := policy.Decision{Outcome: in.Outcome, Reason: in.Reason, DryRun: dec.DryRun}
+			if facts.Targets > 0 {
+				// A12 Teil 2 (a): Das Audit nennt die geprüfte Zahl der Ziele.
+				ev.ParamsRedacted = withCounts(ev.ParamsRedacted, map[string]int64{"targets": int64(facts.Targets)})
+			}
 			id, err := single(audit.ResultDenied, in.Reason)
 			if err != nil {
 				return Result{}, err
@@ -370,7 +376,7 @@ func (x *Executor) Execute(ctx context.Context, req Request) (Result, error) {
 	}
 
 	out, herr := x.callHandler(ctx, op, Call{Input: req.Input, DryRun: dec.DryRun, Secret: req.Secret, Progress: req.Progress,
-		Key: req.Key, Actor: req.Actor, AuditID: auditID})
+		Key: req.Key, Actor: req.Actor, AuditID: auditID, PolicyTargets: policyTargets, PolicyChecked: policyChecked})
 
 	end := ev
 	end.RefID = auditID

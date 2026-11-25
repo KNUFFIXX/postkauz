@@ -368,6 +368,11 @@ type NewAttachment struct {
 type Link struct {
 	MessageID int64
 	Flags     LinkFlags
+	// Loaded (A12 Teil 1 (d) (i)): Der Sync hat den Inhalt dieser Kopie
+	// geladen und mit exakt gleichem Inhalts-Hash verknüpft; die
+	// Verknüpfung bekommt content_loaded = 1. Sonst (per Message-ID und
+	// Größe ohne Abruf, oder über Hash-Varianten) 0.
+	Loaded bool
 }
 
 // MailboxState ist der neue Sync-Zustand eines Ordners.
@@ -511,7 +516,7 @@ func (s *SQLite) ApplyBatch(ctx context.Context, b MirrorBatch) (res BatchResult
 		} else if ok {
 			continue
 		}
-		if err := insertLink(l.MessageID, l.Flags, false); err != nil {
+		if err := insertLink(l.MessageID, l.Flags, l.Loaded); err != nil {
 			return res, fmt.Errorf("store: link message %d: %w", l.MessageID, err)
 		}
 		touched[l.MessageID] = true // refreshMessage löscht deleted_remote_at

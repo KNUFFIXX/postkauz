@@ -201,7 +201,10 @@ func TestSyncPushesDraftsAndDetectsTakeOver(t *testing.T) {
 
 	// Ein Mailprogramm übernimmt: speichert eine bearbeitete Fassung (neue
 	// UID, gleiche Message-ID) und entfernt die Kopie von PostKauz.
-	edited := strings.Replace(string(rawOf(t, client, "Drafts", imap.UID(d.RemoteUID))), "geändert", "vom Menschen", 1)
+	// A12: Der Text steht quoted-printable in der Kopie („ge=C3=A4ndert“);
+	// ersetzt wird deshalb „Hallo“, sonst wären es dieselben Bytes (Umzug,
+	// keine Übernahme).
+	edited := strings.Replace(string(rawOf(t, client, "Drafts", imap.UID(d.RemoteUID))), "Hallo", "Hallo vom Menschen", 1)
 	if _, err := e.u.Append("Drafts", lit([]byte(edited)), &imap.AppendOptions{Flags: []imap.Flag{imap.FlagDraft, imap.FlagSeen}}); err != nil {
 		t.Fatal(err)
 	}

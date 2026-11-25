@@ -83,9 +83,47 @@ const (
 	copyBusy                         // eine Aktion wartet oder läuft schon
 )
 
-// classifyCopy ordnet eine abgelegte Kopie rc ein; bei copyOwn ist sc die
-// Serverkopie im Spiegel. inDrafts: Entwürfe-Ordner des Kontos.
-func classifyCopy(x *store.DraftTx, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, error) {
+// classifyCopy ordnet eine abgelegte Kopie rc des Entwurfs d ein; bei
+// copyOwn ist sc die Serverkopie im Spiegel. inDrafts: Entwürfe-Ordner des
+// Kontos.
+//
+// A12 Teil 1 (d) (iii): Liegt die Kopie nicht mehr unter ihrer UID (der
+// Spiegel hat die UID gesehen, UIDVALIDITY gleich), aber im selben Ordner
+// genau eine geladene Kopie mit der Message-ID des Entwurfs und exakt
+// ihrem Inhalts-Hash unter einer UID, die keine bekannte Kopie des
+// Entwurfs ist (Store.MirrorMoved), ist sie umgezogen: eingeordnet wird
+// dann die neue Stelle, und moved ist die nachgeführte Kopie (sonst die
+// Nullkopie).
+func classifyCopy(x *store.DraftTx, d store.Draft, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, store.RemoteCopy, error) {
+	cl, c, err := classifyAt(x, inDrafts, rc)
+	if err != nil || cl != copyGone || d.MessageIDHeader == "" {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	cur, err := x.MailboxCursor(rc.MailboxID)
+	if err != nil || !cur.Found || cur.UIDValidity != rc.UIDValidity {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	known := []int64{}
+	if d.RemoteMailboxID == rc.MailboxID && d.RemoteUID > 0 {
+		known = append(known, d.RemoteUID)
+	}
+	for _, p := range d.RemotePrevious {
+		if p.MailboxID == rc.MailboxID {
+			known = append(known, p.UID)
+		}
+	}
+	uid, uv, err := x.MirrorMoved(rc.MailboxID, d.MessageIDHeader, rc.ContentHash, known)
+	if err != nil || uid == 0 || uv != rc.UIDValidity {
+		return cl, c, store.RemoteCopy{}, err
+	}
+	moved := store.RemoteCopy{MailboxID: rc.MailboxID, UID: uid, UIDValidity: uv, ContentHash: rc.ContentHash}
+	cl, c, err = classifyAt(x, inDrafts, moved)
+	return cl, c, moved, err
+}
+
+// classifyAt ist classifyCopy ohne Umzug: die Kopie genau unter Ordner,
+// UID und UIDVALIDITY.
+func classifyAt(x *store.DraftTx, inDrafts map[int64]bool, rc store.RemoteCopy) (copyClass, store.ServerCopy, error) {
 	if rc.MailboxID <= 0 || rc.UID <= 0 || rc.UIDValidity == 0 || rc.ContentHash == "" {
 		return copyInvalid, store.ServerCopy{}, nil
 	}
@@ -143,6 +181,9 @@ type copySet struct {
 	unmirrored int
 	// exhausted: Kopien mit CleanupMaxAttempts Versuchen.
 	exhausted int
+	// moves: umgezogene Kopien (A12 Teil 1 (d) (iii)), alt → neu; die
+	// schreibenden Wege führen sie am Entwurf nach (recordMoves).
+	moves [][2]store.RemoteCopy
 }
 
 func (cs *copySet) add(rc store.RemoteCopy, c store.ServerCopy) {
@@ -155,7 +196,7 @@ func (cs *copySet) add(rc store.RemoteCopy, c store.ServerCopy) {
 // collect sammelt die eigenen, unveränderten Kopien aus list (ohne
 // Dubletten und ohne except). limit: Kopien mit CleanupMaxAttempts
 // Versuchen auslassen (Nachlauf).
-func collect(x *store.DraftTx, inDrafts map[int64]bool, list []store.RemoteCopy, except []store.RemoteCopy, limit bool, cs *copySet) error {
+func collect(x *store.DraftTx, d store.Draft, inDrafts map[int64]bool, list []store.RemoteCopy, except []store.RemoteCopy, limit bool, cs *copySet) error {
 	seen := append([]store.RemoteCopy{}, except...)
 	for _, rc := range list {
 		dup := false
@@ -169,9 +210,13 @@ func collect(x *store.DraftTx, inDrafts map[int64]bool, list []store.RemoteCopy,
 			continue
 		}
 		seen = append(seen, rc)
-		cl, c, err := classifyCopy(x, inDrafts, rc)
+		cl, c, moved, err := classifyCopy(x, d, inDrafts, rc)
 		if err != nil {
 			return err
+		}
+		if moved.UID > 0 {
+			cs.moves = append(cs.moves, [2]store.RemoteCopy{rc, moved})
+			rc = moved
 		}
 		switch cl {
 		case copyOwn:
@@ -241,6 +286,65 @@ func (s *Service) cleanupEvent(now time.Time, d store.Draft, source string, acti
 // keepPrevious: [draft] previous_copies = "keep".
 func (s *Service) keepPrevious() bool { return s.PreviousCopies == PreviousCopiesKeep }
 
+// countTargets sammelt lesend (eigene Transaktion, ohne zu schreiben) die
+// eigenen, unveränderten Kopien aus list ohne except, wie collect im
+// Nachlauf (mit Höchstzahl der Versuche), und liefert ihre Zahl (A12 Teil 2
+// (a): die Policy fragt mit der Zahl der tatsächlichen Ziele, nicht mit
+// len(remote_previous)+1).
+func (s *Service) countTargets(ctx context.Context, d store.Draft, list, except []store.RemoteCopy) (int, error) {
+	n := 0
+	err := s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
+		if err != nil {
+			return err
+		}
+		var cs copySet
+		if err := collect(x, d, inDrafts, list, except, true, &cs); err != nil {
+			return err
+		}
+		n = len(cs.targets)
+		return nil
+	})
+	return n, err
+}
+
+// PolicyTargets liefert lesend die Zahl der Kopien, die drafts.supersede
+// (op OpSupersede, der alte Entwurf) bzw. drafts.discard (OpDiscard) in den
+// Papierkorb legen würden (A12 Teil 2 (a); vorher 1+len(remote_previous)).
+// Lehnte der Aufruf ohnehin ab (Kopie fehlt, geändert, laufende Ablage),
+// bleibt es bei der Schätzung von vorher, damit die Policy die Gründe in
+// derselben Reihenfolge nennt (bei discard: 0 ohne Ziel, eine laufende
+// Ablage zählt als Ziel).
+func (s *Service) PolicyTargets(ctx context.Context, draftID int64, op string) (int, error) {
+	d, err := s.Store.Draft(ctx, draftID)
+	if err != nil {
+		return 0, err
+	}
+	estimate := 1 + len(d.RemotePrevious)
+	if op == OpDiscard {
+		estimate = DiscardTargets(d)
+		if estimate == 0 || d.PushAttempt != nil || d.RemoteState != RemotePushed {
+			return estimate, nil
+		}
+	}
+	n := estimate
+	err = s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		cs, err := ownCopiesFor(x, d)
+		if err != nil {
+			return nil // abgelehnt: Schätzung
+		}
+		n = len(cs.targets)
+		return nil
+	})
+	return n, err
+}
+
+// tooManyTargets ist die Ablehnung, wenn in der Transaktion mehr Ziele
+// zusammenkommen, als die Policy geprüft hat (A12 Teil 2 (a)).
+func tooManyTargets(id int64, got, checked int) error {
+	return denied(ReasonDraftChanged, "draft %d: %d copies would go to the trash, but the policy checked %d; try again", id, got, checked)
+}
+
 // cleanupDenied fragt vor der Transaktion CleanupCheck (nil = erlaubt).
 func (s *Service) cleanupDenied(ctx context.Context, keyID string, copies int) (string, error) {
 	if s.CleanupCheck == nil || copies <= 0 {
@@ -273,9 +377,11 @@ func updateCleanupApplies(x *store.DraftTx, d store.Draft) (bool, error) {
 // cleanupAfterPush legt nach dem Vermerk einer neuen, aktuellen Kopie in
 // derselben Transaktion die Aktion draft_update für die früheren eigenen,
 // unveränderten Kopien an (A11 Teil 1 (c)); deny ist das Ergebnis von
-// cleanupDenied vor der Transaktion. Die gerade abgelegte Kopie ist nie
-// Ziel. Was noch nicht gespiegelt ist, holt der Nachlauf nach.
-func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string, now time.Time) error {
+// cleanupDenied vor der Transaktion, limit die dort geprüfte Zahl der Ziele
+// (-1 = ohne Prüfung): sind es jetzt mehr, keine Aktion und kein Zähler
+// (der Nachlauf holt nach). Die gerade abgelegte Kopie ist nie Ziel. Was
+// noch nicht gespiegelt ist, holt der Nachlauf nach.
+func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string, limit int, now time.Time) error {
 	if s.keepPrevious() || len(d.RemotePrevious) == 0 {
 		return nil
 	}
@@ -288,10 +394,13 @@ func (s *Service) cleanupAfterPush(x *store.DraftTx, d store.Draft, deny string,
 		return err
 	}
 	var cs copySet
-	if err := collect(x, inDrafts, d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}, true, &cs); err != nil {
+	if err := collect(x, d, inDrafts, d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}, true, &cs); err != nil {
 		return err
 	}
-	if len(cs.targets) == 0 {
+	if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
+		return err
+	}
+	if len(cs.targets) == 0 || (limit >= 0 && len(cs.targets) > limit) {
 		return nil
 	}
 	if deny != "" {
@@ -375,9 +484,16 @@ func (s *Service) RetryCleanup(ctx context.Context, accountID int64) (CleanupRep
 }
 
 // retryOne legt für einen Entwurf des Nachlaufs die Aktion an (withCurrent:
-// auch die aktuelle Kopie, bei geschlossenen Entwürfen).
+// auch die aktuelle Kopie, bei geschlossenen Entwürfen). A12 Teil 2 (a):
+// Die Policy fragt mit der vorher lesend gesammelten Zahl der Ziele; sind
+// es in der Transaktion mehr, keine Aktion und kein Zähler.
 func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by string, withCurrent bool, rep *CleanupReport) error {
-	deny, err := s.cleanupDenied(ctx, by, len(pre.RemotePrevious)+1)
+	list, except := retryList(pre, withCurrent)
+	limit, err := s.countTargets(ctx, pre, list, except)
+	if err != nil {
+		return err
+	}
+	deny, err := s.cleanupDenied(ctx, by, limit)
 	if err != nil {
 		return err
 	}
@@ -387,29 +503,29 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 		if err != nil {
 			return err
 		}
-		list := d.RemotePrevious
-		var except []store.RemoteCopy
+		list, except := retryList(d, withCurrent)
 		if withCurrent {
 			if !Status(d.Status).Closed() {
 				return nil
 			}
-			list = append([]store.RemoteCopy{currentCopy(d)}, d.RemotePrevious...)
 		} else {
 			ok, err := updateCleanupApplies(x, d)
 			if err != nil || !ok {
 				return err
 			}
-			except = []store.RemoteCopy{currentCopy(d)}
 		}
 		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
 		if err != nil {
 			return err
 		}
 		var cs copySet
-		if err := collect(x, inDrafts, list, except, true, &cs); err != nil {
+		if err := collect(x, d, inDrafts, list, except, true, &cs); err != nil {
 			return err
 		}
-		if len(cs.targets) == 0 {
+		if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
+			return err
+		}
+		if len(cs.targets) == 0 || len(cs.targets) > limit {
 			return nil
 		}
 		if deny != "" {
@@ -432,16 +548,49 @@ func (s *Service) retryOne(ctx context.Context, pre store.Draft, source, by stri
 	})
 }
 
+// retryList sind die Kopien des Nachlaufs für d (withCurrent: auch die
+// aktuelle, bei geschlossenen Entwürfen) und die ausgenommenen.
+func retryList(d store.Draft, withCurrent bool) (list, except []store.RemoteCopy) {
+	if withCurrent {
+		return append([]store.RemoteCopy{currentCopy(d)}, d.RemotePrevious...), nil
+	}
+	return d.RemotePrevious, []store.RemoteCopy{currentCopy(d)}
+}
+
 // sweepCleanupCounts löscht Zähler nach dem Erfolg (das Ziel der jüngsten
 // Aktion auf die Kopie ist ok) oder wenn der erste Versuch länger als
 // CleanupWindow zurückliegt.
+//
+// A12 Teil 0 (c): Führt ein offener Entwurf die Kopie als aktuelle oder
+// frühere, bleibt der Zähler bis zum Erfolg oder bis die Kopie laut Spiegel
+// weg ist (der Nachlauf für offene Entwürfe hat kein Zeitfenster; sonst
+// begänne er alle sieben Tage mit drei neuen Versuchen). Gehört sie zu
+// einem in den letzten CleanupWindow geschlossenen Entwurf, bleibt er
+// ebenso (Nachlauf (ii)). Nach drei Fehlschlägen wiederholt dann nichts
+// mehr automatisch; der Mensch räumt mit draft cleanup auf.
 func (s *Service) sweepCleanupCounts(ctx context.Context, now time.Time) error {
 	list, err := s.Store.CleanupCounts(ctx)
+	if err != nil || len(list) == 0 {
+		return err
+	}
+	open, recent, err := s.Store.HeldCopies(ctx, now.Add(-CleanupWindow))
 	if err != nil {
 		return err
 	}
 	for _, n := range list {
-		drop := n.N <= 0 || now.Sub(n.First) > CleanupWindow
+		key := store.RemoteCopy{MailboxID: n.Copy.MailboxID, UIDValidity: n.Copy.UIDValidity, UID: n.Copy.UID}
+		var drop bool
+		switch {
+		case n.N <= 0:
+			drop = true
+		case open[key]:
+			if drop, err = s.copyGoneFromMirror(ctx, key); err != nil {
+				return err
+			}
+		case recent[key]:
+		default:
+			drop = now.Sub(n.First) > CleanupWindow
+		}
 		if !drop {
 			_, _, result, ok, err := s.Store.LastCopyResult(ctx, n.Copy)
 			if err != nil {
@@ -456,6 +605,24 @@ func (s *Service) sweepCleanupCounts(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// copyGoneFromMirror meldet, ob der Spiegel die Kopie gesehen hat und
+// nicht mehr führt (unter Ordner und UID fehlt sie, UIDVALIDITY gleich und
+// UID unter UIDNEXT, oder die UIDVALIDITY ist eine andere).
+func (s *Service) copyGoneFromMirror(ctx context.Context, rc store.RemoteCopy) (bool, error) {
+	c, _, ok, err := s.Store.CopyAt(ctx, rc.MailboxID, uint32(rc.UID))
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		return c.UIDValidity != rc.UIDValidity, nil
+	}
+	cur, err := s.Store.MailboxCursor(ctx, rc.MailboxID)
+	if err != nil {
+		return false, err
+	}
+	return !cur.Found || cur.UIDValidity != rc.UIDValidity || (cur.UIDNext != 0 && int64(cur.UIDNext) > rc.UID), nil
 }
 
 // ownCopiesFor prüft die aktuelle Kopie eines Entwurfs für supersede und
@@ -476,8 +643,7 @@ func ownCopiesFor(x *store.DraftTx, d store.Draft) (copySet, error) {
 	if err != nil {
 		return cs, err
 	}
-	inDrafts[d.RemoteMailboxID] = true // Ablageordner des Entwurfs
-	cl, c, err := classifyCopy(x, inDrafts, cur)
+	cl, c, err := classifyAt(x, inDrafts, cur)
 	if err != nil {
 		return cs, err
 	}
@@ -494,5 +660,135 @@ func ownCopiesFor(x *store.DraftTx, d store.Draft) (copySet, error) {
 		return cs, denied(ReasonCopyMissing, "the copy of %s is no longer in the mirror of the Drafts folder (it may have been sent, "+
 			"or changed in the mail client); try again after the next sync", name)
 	}
-	return cs, collect(x, inDrafts, d.RemotePrevious, []store.RemoteCopy{cur}, false, &cs)
+	return cs, collect(x, d, inDrafts, d.RemotePrevious, []store.RemoteCopy{cur}, false, &cs)
+}
+
+// recordMoves führt umgezogene Kopien am Entwurf nach (A12 Teil 1 (d)
+// (iii)), in der Transaktion des Aufrufers: den Eintrag in remote_previous
+// (bzw. bei einem geschlossenen Entwurf auch die aktuelle Kopie) auf die
+// neue UID, je Kopie Audit drafts.remote_check, Grund moved, mit previous
+// (ohne Inhalt). Der Zähler der neuen Stelle beginnt neu (kein
+// Fehlversuch).
+func (s *Service) recordMoves(x *store.DraftTx, d *store.Draft, moves [][2]store.RemoteCopy, now time.Time) error {
+	if len(moves) == 0 {
+		return nil
+	}
+	for _, mv := range moves {
+		old, nw := mv[0], mv[1]
+		if sameCopy(old, currentCopy(*d)) {
+			d.RemoteUID, d.RemoteUIDValidity = nw.UID, nw.UIDValidity
+		}
+		for i := range d.RemotePrevious {
+			if sameCopy(d.RemotePrevious[i], old) {
+				d.RemotePrevious[i].UID, d.RemotePrevious[i].UIDValidity = nw.UID, nw.UIDValidity
+			}
+		}
+	}
+	if err := x.UpdateDraft(*d); err != nil {
+		return err
+	}
+	for _, mv := range moves {
+		if err := s.remoteEvent(x, *d, ReasonMoved, now, map[string]any{"via": ViaMoved, "previous": true, "mailbox_id": mv[0].MailboxID,
+			"old_uid": mv[0].UID, "new_uid": mv[1].UID, "uid": mv[1].UID, "loaded": true, "remote": d.RemoteState}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Stände früherer Kopien eines offenen Entwurfs für remote_note und draft
+// show (A12 Teil 2 (b)).
+const (
+	// PrevQueued: eine Aktion wartet oder läuft (ActionID, wenn bekannt).
+	PrevQueued = "queued"
+	// PrevPending: eigene, unveränderte Kopie; der Nachlauf legt die Aktion
+	// beim nächsten Lauf an.
+	PrevPending = "pending"
+	// PrevGivenUp: der Nachlauf hat nach CleanupMaxAttempts aufgegeben.
+	PrevGivenUp = "given_up"
+	// PrevChanged: im Mailprogramm verändert (Inhalt anders).
+	PrevChanged = "changed"
+	// PrevNotMirrored: der Spiegel kennt die UID noch nicht.
+	PrevNotMirrored = "not_mirrored"
+)
+
+// PreviousCopy ist der Stand einer früheren Kopie.
+type PreviousCopy struct {
+	UID      int64
+	State    string
+	ActionID int64
+}
+
+// PreviousCopyStates ordnet die früheren Kopien eines Entwurfs ein, die laut
+// Spiegel im Entwürfe-Ordner liegen oder dort noch nicht gespiegelt sind
+// (lesend; dieselbe Einordnung wie das Aufräumen, classifyCopy).
+func (s *Service) PreviousCopyStates(ctx context.Context, d store.Draft) ([]PreviousCopy, error) {
+	if len(d.RemotePrevious) == 0 {
+		return nil, nil
+	}
+	acts, err := s.Store.DraftCleanupActions(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	waiting := func(mb int64, uid int64) int64 {
+		for _, a := range acts {
+			switch a.State {
+			case store.ActionRequested, store.ActionQueued, store.ActionRunning:
+			default:
+				continue
+			}
+			for _, t := range a.Targets {
+				if t.MailboxID == mb && int64(t.UID) == uid && t.Result == "" {
+					return a.ID
+				}
+			}
+		}
+		return 0
+	}
+	var out []PreviousCopy
+	err = s.Store.DraftTx(ctx, func(x *store.DraftTx) error {
+		inDrafts, err := x.DraftMailboxIDs(d.AccountID)
+		if err != nil {
+			return err
+		}
+		seen := []store.RemoteCopy{currentCopy(d)}
+		for _, rc := range d.RemotePrevious {
+			dup := false
+			for _, o := range seen {
+				dup = dup || sameCopy(o, rc)
+			}
+			if dup {
+				continue
+			}
+			seen = append(seen, rc)
+			cl, _, moved, err := classifyCopy(x, d, inDrafts, rc)
+			if err != nil {
+				return err
+			}
+			if moved.UID > 0 {
+				rc = moved
+			}
+			pc := PreviousCopy{UID: rc.UID}
+			switch cl {
+			case copyBusy:
+				pc.State, pc.ActionID = PrevQueued, waiting(rc.MailboxID, rc.UID)
+			case copyOwn:
+				pc.State = PrevPending
+				if n, ok, err := x.CleanupCountOf(rc); err != nil {
+					return err
+				} else if ok && n.N >= CleanupMaxAttempts {
+					pc.State = PrevGivenUp
+				}
+			case copyChanged:
+				pc.State = PrevChanged
+			case copyNotMirrored:
+				pc.State = PrevNotMirrored
+			default:
+				continue
+			}
+			out = append(out, pc)
+		}
+		return nil
+	})
+	return out, err
 }

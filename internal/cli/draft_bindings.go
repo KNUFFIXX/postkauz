@@ -567,6 +567,10 @@ func renderDraftShow(w io.Writer, out any) error {
 		// A10 Teil 2: geplant, nicht gesendet.
 		fmt.Fprintf(w, "\nscheduled:   %s (message %d; not sent yet)", o.ScheduledFor, o.ScheduledMessageID)
 	}
+	if o.EditedMessageID > 0 {
+		// A12 Teil 1 (c): im Mailprogramm als neue Nachricht weiterbearbeitet.
+		fmt.Fprintf(w, "\nedited:      message %d (changed in the mail client; %s show %d)", o.EditedMessageID, brand.Name, o.EditedMessageID)
+	}
 	// Kopien im Entwürfe-Ordner (S2.5): die aktuelle und frühere (die
 	// bleiben, kein Löschen im MVP).
 	if o.RemoteUID > 0 || len(o.RemotePreviousUIDs) > 0 {

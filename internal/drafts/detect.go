@@ -2,14 +2,11 @@ package drafts
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/KNUFFIXX/postkauz/internal/audit"
 	"github.com/KNUFFIXX/postkauz/internal/compose"
 	"github.com/KNUFFIXX/postkauz/internal/mailaddr"
 	"github.com/KNUFFIXX/postkauz/internal/sanitize"
@@ -316,10 +313,12 @@ func (s *Service) detectSent(ctx context.Context, accountID int64, keepMark bool
 			return err
 		}
 		open = drop(open, done)
-		if len(done) > 0 {
-			if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
-				return err
-			}
+		// A12 Teil 0 (b): immer neu lesen, auch wenn kein Entwurf
+		// geschlossen wurde (ein Übergang kann einen Vermerk ändern; ein
+		// erneutes Planen mit neuer Nachricht würde sonst erst einen Lauf
+		// später erkannt).
+		if vm, err = s.Store.ScheduledOfAccount(ctx, accountID); err != nil {
+			return err
 		}
 	}
 	var rest []store.Draft
@@ -861,11 +860,14 @@ func (s *Service) markSentWith(ctx context.Context, id, messageID int64, reason,
 // Kopie auf (pushed → missing oder taken_over), anhand des Spiegels. Seit
 // A07 Teil 2 auch taken_over → missing: Liegt laut Spiegel weder die
 // zuletzt abgelegte Kopie noch eine Fassung mit der Message-ID des Entwurfs
-// im Entwürfe-Ordner (checkCopy, dieselbe Prüfung wie Bedingung f), hat der
-// Mensch die übernommene Fassung gesendet oder gelöscht; dann greifen im
-// nächsten Lauf „ersetzt“ (3b) und „Kopie weg“ (3d). Nur dieser Wechsel
-// wird geschrieben; bleibt checkCopy bei taken_over oder liefert es "",
-// ändert sich nichts und es entsteht kein Audit-Eintrag.
+// noch (A12 Teil 1) eine weiterbearbeitete Fassung unter neuer Message-ID
+// im Entwürfe-Ordner (checkCopy), hat der Mensch die übernommene Fassung
+// gesendet oder gelöscht; dann greifen im nächsten Lauf „ersetzt“ (3b) und
+// „Kopie weg“ (3d). Seit A12 Teil 1 außerdem missing → taken_over
+// (refreshMissing; present hat Vorrang), der Umzug einer Kopie (moved,
+// auch missing/taken_over → pushed) und ein neuer Vermerk, wenn die
+// weiterbearbeitete Fassung wechselt. Sonst ändert sich nichts und es
+// entsteht kein Audit-Eintrag.
 func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *CheckReport) error {
 	open, err := s.Store.ListDrafts(ctx, store.DraftFilter{AccountID: accountID, Status: openStatuses})
 	if err != nil {
@@ -879,13 +881,7 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 	}
 	now := s.now()
 	for _, o := range open {
-		if o.RemoteState == RemoteMissing {
-			if err := s.refreshMissing(ctx, o.ID, now); err != nil {
-				return err
-			}
-			continue
-		}
-		if o.RemoteState != RemotePushed && o.RemoteState != RemoteTakenOver {
+		if o.RemoteState != RemotePushed && o.RemoteState != RemoteTakenOver && o.RemoteState != RemoteMissing {
 			continue
 		}
 		var state string
@@ -897,15 +893,29 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 			if Status(d.Status).Closed() || d.RemoteState != o.RemoteState {
 				return nil
 			}
-			if state, err = checkCopy(x, d); err != nil || state == "" || state == d.RemoteState {
-				state = ""
+			if d.RemoteState == RemoteMissing {
+				state, err = s.refreshMissing(x, &d, now)
 				return err
 			}
-			if d.RemoteState == RemoteTakenOver && state != RemoteMissing {
-				state = ""
+			cc, err := checkCopy(x, d)
+			if err != nil {
+				return err
+			}
+			if moved, err := s.tryMove(x, &d, cc, now); err != nil || moved {
+				return err
+			}
+			switch {
+			case cc.State == "" || (d.RemoteState == RemoteTakenOver && cc.State != RemoteMissing):
+				if d.RemoteState == RemoteTakenOver && cc.Via == ViaEditedElsewhere && cc.EditedID != d.EditedMessageID {
+					// Die weiterbearbeitete Fassung hat gewechselt: neu vermerken.
+					return s.markRemote(x, &d, cc, now)
+				}
+				return nil
+			case cc.State == d.RemoteState:
 				return nil
 			}
-			return s.markRemote(x, &d, state, now)
+			state = cc.State
+			return s.markRemote(x, &d, cc, now)
 		})
 		if err != nil {
 			return err
@@ -927,34 +937,37 @@ func (s *Service) refreshRemote(ctx context.Context, accountID int64, rep *Check
 // zu A07, B2); Store.DraftMissingSince zählt missing-Einträge davor nicht.
 const ReasonPresent = "present"
 
-// refreshMissing setzt einen missing-Entwurf wieder auf pushed, wenn seine
-// zuletzt abgelegte Kopie nachweisbar wieder am Ablageplatz liegt (gleiche
+// refreshMissing prüft in der Transaktion einen missing-Entwurf d: Liegt
+// seine zuletzt abgelegte Kopie nachweisbar wieder am Ablageplatz (gleiche
 // Message-ID und gleicher Inhalts-Hash, Ordner gespiegelt; „nicht prüfbar“
-// genügt nicht), mit Audit drafts.remote_check, Grund present. Sonst
-// ändert sich nichts.
-func (s *Service) refreshMissing(ctx context.Context, id int64, now time.Time) error {
-	return s.tx(ctx, func(x *store.DraftTx) error {
-		d, err := x.Draft(id)
-		if err != nil {
-			return err
-		}
-		if Status(d.Status).Closed() || d.RemoteState != RemoteMissing {
-			return nil
-		}
-		back, err := copyPresent(x, d)
-		if err != nil || !back {
-			return err
-		}
+// genügt nicht), wird er pushed (Audit drafts.remote_check, Grund
+// present). A12 Teil 1: Ist sie umgezogen (moved), wird er ebenso pushed
+// (Grund moved); liegt eine weiterbearbeitete Fassung (oder eine geänderte
+// neuere Kopie) da, wird er taken_over. Sonst ändert sich nichts. Liefert
+// taken_over, wenn er das wurde (Zähler), sonst "".
+func (s *Service) refreshMissing(x *store.DraftTx, d *store.Draft, now time.Time) (string, error) {
+	back, err := copyPresent(x, *d)
+	if err != nil {
+		return "", err
+	}
+	if back {
 		d.RemoteState = RemotePushed
-		if err := x.UpdateDraft(d); err != nil {
-			return err
+		if err := x.UpdateDraft(*d); err != nil {
+			return "", err
 		}
-		b, _ := json.Marshal(map[string]any{"draft_id": d.ID, "remote": RemotePushed, "mailbox_id": d.RemoteMailboxID, "uid": d.RemoteUID})
-		_, err = x.AppendAudit(audit.Event{TS: now, ActorType: audit.ActorSystem, KeyID: "system", Operation: OpRemoteCheck,
-			ParamsRedacted: b, Targets: []string{"draft:" + strconv.FormatInt(d.ID, 10)}, Result: audit.ResultOK, Reason: ReasonPresent,
-			PolicyVersion: s.PolicyVersion})
-		return err
-	})
+		return "", s.remoteEvent(x, *d, ReasonPresent, now, map[string]any{"remote": RemotePushed, "via": ViaAtUID})
+	}
+	cc, err := checkCopy(x, *d)
+	if err != nil {
+		return "", err
+	}
+	if moved, err := s.tryMove(x, d, cc, now); err != nil || moved {
+		return "", err
+	}
+	if cc.State != RemoteTakenOver {
+		return "", nil
+	}
+	return RemoteTakenOver, s.markRemote(x, d, cc, now)
 }
 
 // copyPresent meldet, ob die zuletzt abgelegte Kopie laut Spiegel belegt

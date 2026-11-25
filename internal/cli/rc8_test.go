@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KNUFFIXX/postkauz/internal/blob"
+	"github.com/KNUFFIXX/postkauz/internal/extract"
 	"github.com/KNUFFIXX/postkauz/internal/ops"
 	"github.com/KNUFFIXX/postkauz/internal/store"
 )
@@ -44,7 +45,9 @@ func TestImportReportOnInterrupt(t *testing.T) {
 		t.Fatalf("account add: %s", errs)
 	}
 	old := newImporter
-	newImporter = func(*store.SQLite, *blob.Store, *slog.Logger) ops.ImportRunner { return interruptingImporter{} }
+	newImporter = func(*store.SQLite, *blob.Store, *slog.Logger, *extract.Extractor) ops.ImportRunner {
+		return interruptingImporter{}
+	}
 	t.Cleanup(func() { newImporter = old })
 	dir := t.TempDir()
 

@@ -31,6 +31,12 @@ type a11Clock struct{ now time.Time }
 func (c *a11Clock) Now() time.Time { return c.now }
 
 func (f *fixture) a11Runner(o extract.Options, clk *a11Clock, log *bytes.Buffer) *Runner {
+	// A12 Teil 3 (b): Skripte als pdftotext lesen die Test-PDF nicht; die
+	// Probe gilt hier als bestanden (eigene Tests in a12_probe_unix_test.go).
+	extract.ResetProbesForTest()
+	if o.PDFToText != "" {
+		extract.SetProbeForTest(o.PDFToText, extract.ProbeOK, clk.Now())
+	}
 	r := &Runner{Store: f.st, Blobs: f.blobs, Extractor: extract.New(o), Batch: 7, ExtractBudget: NoExtractBudget, Now: clk.Now}
 	if log != nil {
 		r.Log = slog.New(slog.NewTextHandler(log, nil))

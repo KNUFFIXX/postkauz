@@ -242,7 +242,11 @@ func (s *Service) copyGone(ctx context.Context, d store.Draft) (bool, error) {
 		if err != nil {
 			return err
 		}
-		state, err = checkCopy(x, cur)
+		// A12 Teil 1 (a): reiner Stand (ohne Weiterbearbeitung), sonst
+		// blockierte eine fremde, nach der Ablage datierte Fassung die
+		// Erkennung des Versands.
+		cc, err := copyStateRaw(x, cur)
+		state = cc.State
 		return err
 	})
 	return state == RemoteMissing, err

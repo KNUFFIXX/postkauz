@@ -534,28 +534,32 @@ func (s *SQLite) DraftReplacedBy(ctx context.Context, draftID int64, closedAt ti
 // SentReplies nur im Verlauf des Originals (thread_refs → messages_thread);
 // Gmail führt eine weiterbearbeitete Antwort dort, weil sie References auf
 // das Original trägt.
-func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time) (bool, error) {
+//
+// A12 Teil 1: Geliefert wird die lokale ID der jüngsten solchen Nachricht
+// (0 = keine), damit der Stand der Serverkopie sie nennen kann.
+func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time) (int64, error) {
 	var h string
 	err := x.tx.QueryRowContext(x.ctx, `SELECT trim(COALESCE(message_id_header, ''), `+trimIDChars+`) FROM messages
 		WHERE id = ? AND account_id = ?`, original, accountID).Scan(&h)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && h == "") {
-		return false, nil
+		return 0, nil
 	}
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	// Wie replies(): erst der Thread des Originals über thread_refs, dann
 	// seine Nachrichten über messages_thread (Nachbesserung 2; vorher alle
 	// Nachrichten des Kontos).
-	var found bool
-	err = x.tx.QueryRowContext(x.ctx, `SELECT EXISTS (SELECT 1 FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
+	var found int64
+	err = x.tx.QueryRowContext(x.ctx, `SELECT COALESCE((SELECT m.id FROM thread_refs r CROSS JOIN messages m ON m.thread_id = r.thread_id
 		WHERE r.account_id = ? AND r.ref_id = ? AND m.account_id = r.account_id
 		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ?
 		AND COALESCE(m.date_header, m.internal_date, 0) > ?
 		AND EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
 			WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
 				OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
-		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header))`,
+		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header)
+		ORDER BY COALESCE(m.date_header, m.internal_date, 0) DESC, m.id DESC LIMIT 1), 0)`,
 		accountID, h, h, after.UnixMilli()).Scan(&found)
 	return found, err
 }
@@ -570,11 +574,14 @@ func (x *DraftTx) EditedReplyInDrafts(accountID, original int64, after time.Time
 func (s *SQLite) DraftMissingSince(ctx context.Context, draftID int64, since time.Time) (at time.Time, ok bool, err error) {
 	// Nachtrag 1, B2: Der jüngste Eintrag mit Grund missing oder present
 	// zählt; ist es present (die Kopie kam nachweisbar zurück), fehlt sie
-	// seitdem nicht, und missing-Einträge davor zählen nicht mehr.
+	// seitdem nicht, und missing-Einträge davor zählen nicht mehr. A12
+	// Teil 1 (d) (iv): moved (die aktuelle Kopie liegt unter neuer UID)
+	// zählt wie present; moved einer früheren Kopie (previous) nicht.
 	var ts int64
 	var reason string
 	err = s.db.QueryRowContext(ctx, `SELECT ts, reason FROM audit_events WHERE ts >= ?
-		AND operation = 'drafts.remote_check' AND reason IN ('missing', 'present') AND result = 'ok'
+		AND operation = 'drafts.remote_check' AND reason IN ('missing', 'present', 'moved') AND result = 'ok'
+		AND (reason != 'moved' OR NOT COALESCE(json_extract(params_redacted, '$.previous'), 0))
 		AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(audit_events.targets) THEN audit_events.targets ELSE '[]' END)
 		WHERE value = ?) ORDER BY ts DESC, id DESC LIMIT 1`,
 		since.UnixMilli(), "draft:"+strconv.FormatInt(draftID, 10)).Scan(&ts, &reason)
@@ -665,26 +672,35 @@ func (s *SQLite) DraftSentBy(ctx context.Context, draftID int64, closedAt time.T
 // Entwurfs des Kontos). Nachtrag 1 zu A07, B1: Auffangregel „Kopie weg“ bei
 // neuen Mails, die der Mensch im Mailprogramm weiterbearbeitet. Gelesen
 // über den Index messages_account_date; die Menge ist klein (Entwürfe).
-func (x *DraftTx) NewMailSubjectsInDrafts(accountID int64, after time.Time) ([]string, error) {
-	rows, err := x.tx.QueryContext(x.ctx, `SELECT m.subject FROM messages m WHERE m.account_id = ?
+// A12 Teil 1: mit der lokalen ID je Nachricht, die jüngste zuerst.
+func (x *DraftTx) NewMailSubjectsInDrafts(accountID int64, after time.Time) ([]DraftSubject, error) {
+	rows, err := x.tx.QueryContext(x.ctx, `SELECT m.id, COALESCE(m.subject, '') FROM messages m WHERE m.account_id = ?
 		AND COALESCE(m.date_header, m.internal_date, 0) > ?
 		AND trim(COALESCE(m.in_reply_to, ''), `+trimIDChars+`) = ''
 		AND EXISTS (SELECT 1 FROM message_mailboxes dl JOIN mailboxes db ON db.id = dl.mailbox_id
 			WHERE dl.message_id = m.id AND (dl.flag_draft = 1 OR db.role = 'drafts'
 				OR db.id IN (SELECT remote_mailbox_id FROM drafts WHERE account_id = m.account_id AND remote_mailbox_id IS NOT NULL)))
-		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header)`,
+		AND NOT EXISTS (SELECT 1 FROM drafts od WHERE od.account_id = m.account_id AND od.message_id_header = m.message_id_header)
+		ORDER BY COALESCE(m.date_header, m.internal_date, 0) DESC, m.id DESC`,
 		accountID, after.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []DraftSubject
 	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
+		var s DraftSubject
+		if err := rows.Scan(&s.ID, &s.Subject); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// DraftSubject ist eine Nachricht im Entwürfe-Ordner mit ihrem Betreff
+// (NewMailSubjectsInDrafts).
+type DraftSubject struct {
+	ID      int64
+	Subject string
 }

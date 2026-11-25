@@ -165,7 +165,8 @@ var tools = []toolBinding{
 		desc: "Change a draft by draft_id: every field you give replaces the stored one (to: the whole list, attachments: all " +
 			"attachments, body_markdown or body_html: the whole text); fields you leave out stay. A submitted or approved draft " +
 			"goes back to status draft and its approval is superseded; it must be submitted again. Refused with draft_closed after " +
-			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client. The changed " +
+			"the human sent or abandoned it, and with draft_taken_over when the human changed it in the mail client (also when the " +
+			"mail client saved the change as a new message: then mail_get_draft names it in edited_message_id). The changed " +
 			"copy reaches the Drafts folder with the next sync; once it is stored, the earlier copy goes to the trash by itself if " +
 			"it is unchanged (never deleted for good; see cleanup_action_ids in mail_get_draft). Do not delete draft copies with " +
 			"other tools. " + neverSends},
@@ -195,7 +196,9 @@ var tools = []toolBinding{
 			"original, or for new emails the same subject), close the older one (status abandoned) and move its unchanged copy " +
 			"in the Drafts folder to the trash (never deleted for good; a running sync --watch moves it within about 10 s). " +
 			"Both drafts must have been created and last changed with your key; the newer one must be open and newer. Refused " +
-			"when the older draft is ready (approved by the human), when its copy was changed in the mail client (copy_changed), " +
+			"when the older draft is ready (approved by the human), when its copy was changed in the mail client (copy_changed, also " +
+			"when the change was saved as a new message), when its copy moved in the Drafts folder and the next sync has not noted " +
+			"it yet (draft_changed: try again after the next sync), " +
 			"right after its copy was stored and before the mirror knows it (copy_not_mirrored: try again in a few seconds) or " +
 			"when the mirror no longer has it (copy_missing: it may have been sent or changed in the mail client; try again after " +
 			"the next sync). Copies already queued by an earlier action count as skipped. Do not delete draft copies with other " +
@@ -206,7 +209,9 @@ var tools = []toolBinding{
 		desc: "Close an own draft that nobody needs any more (draft_id; status abandoned with reason discarded, never sent) and " +
 			"move its unchanged copy in the Drafts folder to the trash (never deleted for good; a running sync --watch moves it " +
 			"within about 10 s). The draft must have been created and last changed with your key. A draft the human approved " +
-			"(approved_by_human), scheduled (draft_scheduled) or changed in the mail client (copy_changed) only the human closes. " +
+			"(approved_by_human), scheduled (draft_scheduled) or changed in the mail client (copy_changed, also when the change was " +
+			"saved as a new message) only the human closes. Refused with draft_changed when its copy moved in the Drafts folder " +
+			"and the next sync has not noted it yet. " +
 			"Refused while a copy is being stored (push_in_progress), right after it was stored (copy_not_mirrored: try again in a " +
 			"few seconds) and when the mirror no longer has its copy (copy_missing: try again after the next sync). A draft that " +
 			"never reached the Drafts folder is closed without an action. Do not delete draft copies with other tools. " +

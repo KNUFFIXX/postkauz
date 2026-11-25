@@ -181,7 +181,7 @@ Without an OS keyring (servers, containers) set `POSTKAUZ_PASSWORD_<NAME>` and u
 
 ### Optional: text from PDF attachments
 
-PostKauz has no PDF parser of its own (attack surface). If `pdftotext` from Poppler is on the `PATH`, it is used in a subprocess with time and size limits; without it PDF attachments are skipped with a reason and their text is not searchable (file names still are). `postkauz doctor` shows whether it was found (line `pdftotext`). Everything else is built in.
+PostKauz has no PDF parser of its own (attack surface). If `pdftotext` from Poppler is on the `PATH`, it is used in a subprocess with time and size limits; without it PDF attachments are skipped with a reason and their text is not searchable (file names still are). `postkauz doctor` shows whether it was found (line `pdftotext`). Since 0.3.0-rc10 you can pin the program in `config.toml` (`[extract]`, `pdftotext = 'C:\Tools\Poppler\bin\pdftotext.exe'`, single quotes on Windows); PostKauz checks it once with a small built-in PDF on stdin and skips PDFs (instead of failing them) if it is the wrong program, for example the Xpdf `pdftotext` that comes with Git for Windows. `postkauz attach retry` extracts failed attachments again. Everything else is built in.
 
 | System | Install |
 |---|---|

@@ -35,6 +35,12 @@ type DiscardRequest struct {
 	Human bool
 	// AuditID: Start-Eintrag des Aufrufs (Herkunft von Aktion und Job).
 	AuditID int64
+	// PolicyTargets: Zahl der Ziele, mit der die Policy vor dem Aufruf
+	// geprüft hat (ops.Call, A12 Teil 2 (a)), wenn PolicyChecked; kommen in
+	// der Transaktion mehr zusammen, draft_changed („try again“), nichts
+	// wird geschlossen.
+	PolicyTargets int
+	PolicyChecked bool
 }
 
 // DiscardResult ist das Ergebnis (im Trockenlauf: was geschähe).
@@ -104,9 +110,23 @@ func (s *Service) Discard(ctx context.Context, r DiscardRequest) (DiscardResult,
 		case d.RemoteState == RemoteTakenOver:
 			return denied(ReasonCopyChanged, "the copy of draft %d was changed in the mail client; only the human removes it", d.ID)
 		case d.RemoteState == RemoteMissing:
-			// Die Kopie ist schon weg: schließen ohne Aktion.
+			// Die Kopie ist schon weg: schließen ohne Aktion. A12 Teil 1
+			// (b): außer der Mensch hat sie weiterbearbeitet oder sie ist
+			// nur umgezogen (noch nicht vermerkt).
+			if err := liveCopyCheck(x, d); err != nil {
+				return err
+			}
 		default:
+			if err := liveCopyCheck(x, d); err != nil {
+				return err
+			}
 			if cs, err = ownCopiesFor(x, d); err != nil {
+				return err
+			}
+			if r.PolicyChecked && len(cs.targets) > r.PolicyTargets {
+				return tooManyTargets(d.ID, len(cs.targets), r.PolicyTargets)
+			}
+			if err := s.recordMoves(x, &d, cs.moves, now); err != nil {
 				return err
 			}
 			withAction = true
@@ -165,6 +185,27 @@ func (s *Service) Discard(ctx context.Context, r DiscardRequest) (DiscardResult,
 		return err
 	})
 	return res, err
+}
+
+// liveCopyCheck prüft für discard und supersede in deren Transaktion den
+// Stand mit Weiterbearbeitung und den Umzug (A12 Teil 1 (b)), nur zur
+// Entscheidung: Es wird nichts vermerkt (eine Ablehnung rollt die
+// Transaktion zurück); den neuen Stand schreibt der nächste Lauf.
+// Weiterbearbeitete Fassung oder andere Übernahme → copy_changed; noch
+// nicht vermerkter Umzug → draft_changed.
+func liveCopyCheck(x *store.DraftTx, d store.Draft) error {
+	cc, err := checkCopy(x, d)
+	switch {
+	case err != nil:
+		return err
+	case cc.State == RemoteTakenOver && cc.Via == ViaEditedElsewhere:
+		return denied(ReasonCopyChanged, "draft %d was changed in the mail client (saved as a new message); only the human closes it", d.ID)
+	case cc.State == RemoteTakenOver:
+		return denied(ReasonCopyChanged, "the copy of draft %d was changed in the mail client; only the human removes it", d.ID)
+	case cc.Move != nil:
+		return denied(ReasonDraftChanged, "the copy of draft %d moved in the Drafts folder; try again after the next sync", d.ID)
+	}
+	return nil
 }
 
 // DiscardTargets schätzt für die Policy vor dem Aufruf, ob drafts.discard

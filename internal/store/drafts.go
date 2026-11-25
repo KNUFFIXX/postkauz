@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,12 +85,17 @@ type Draft struct {
 	// PushHold: Grund, warum der Push den Entwurf zurückhält ("" = keiner;
 	// Migration 0019, A-F3): Der Inhalt stammt von einem Schlüssel, der
 	// nicht mehr gilt. Solche Entwürfe stehen nicht in der Warteschlange.
-	PushHold      string
-	ApprovalID    int64
-	SentMessageID int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	ClosedAt      time.Time // Nullzeit = offen
+	PushHold string
+	// EditedMessageID (A12 Teil 1 (c)): lokale ID der weiterbearbeiteten
+	// Fassung im Entwürfe-Ordner, wenn der Entwurf deshalb taken_over ist.
+	// Keine Spalte: Vermerk in meta draft_edited/<id>, gepflegt von
+	// UpdateDraft (gesetzt nur bei taken_over und offen, sonst gelöscht).
+	EditedMessageID int64
+	ApprovalID      int64
+	SentMessageID   int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ClosedAt        time.Time // Nullzeit = offen
 	// ContentChangedAt: letzte Änderung des Inhalts (Anlegen, drafts.update;
 	// Migration 0015, Gegenprüfung S2.6–S2.8, W1). Ablauf, Lesen, Vorlage,
 	// Freigabe und Push ändern sie nicht; das Zeitfenster des
@@ -228,7 +234,8 @@ const draftCols = `id, account_id, COALESCE(identity_id, 0), kind, COALESCE(in_r
 	COALESCE(created_by, ''), COALESCE(approval_id, 0), COALESCE(sent_message_id, 0), created_at, updated_at,
 	COALESCE(closed_at, 0), compose_options, COALESCE(pushed_date, ''), COALESCE(remote_uidvalidity, 0), remote_previous,
 	COALESCE(push_note, ''), COALESCE(pushed_message_hash, ''), COALESCE(push_attempt, ''), content_changed_at,
-	COALESCE(fallback_checked_at, 0), COALESCE(updated_by, ''), COALESCE(push_hold, '')`
+	COALESCE(fallback_checked_at, 0), COALESCE(updated_by, ''), COALESCE(push_hold, ''),
+	COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'draft_edited/' || drafts.id), 0)`
 
 func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 	var d Draft
@@ -239,7 +246,8 @@ func scanDraft(sc interface{ Scan(...any) error }) (Draft, error) {
 		&d.BodyHTML, &d.HeadersJSON, &atts, &d.Status, &d.PreviewHash, &d.HookResult,
 		&d.RemoteMailboxID, &d.RemoteUID, &d.RemoteState, &d.PushedContentHash,
 		&d.CreatedBy, &d.ApprovalID, &d.SentMessageID, &created, &updated, &closed, &d.ComposeOptions,
-		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked, &d.UpdatedBy, &d.PushHold); err != nil {
+		&d.PushedDate, &uv, &prev, &d.PushNote, &d.PushedMessageHash, &attempt, &contentChanged, &fallbackChecked, &d.UpdatedBy, &d.PushHold,
+		&d.EditedMessageID); err != nil {
 		return d, err
 	}
 	if attempt != "" {
@@ -383,13 +391,27 @@ func (x *DraftTx) UpdateDraft(d Draft) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("%w: %d", ErrDraftNotFound, d.ID)
 	}
-	if d.Status == "sent_by_human" || d.Status == "abandoned" {
+	closed := d.Status == "sent_by_human" || d.Status == "abandoned"
+	// A12 Teil 1 (c): Vermerk der weiterbearbeiteten Fassung, nur solange
+	// der Entwurf offen und deshalb taken_over ist.
+	if !closed && d.RemoteState == "taken_over" && d.EditedMessageID > 0 {
+		if _, err := x.tx.ExecContext(x.ctx, `INSERT INTO meta(key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, editedKey(d.ID), strconv.FormatInt(d.EditedMessageID, 10)); err != nil {
+			return fmt.Errorf("store: edited note of draft %d: %w", d.ID, err)
+		}
+	} else if _, err := x.tx.ExecContext(x.ctx, `DELETE FROM meta WHERE key = ?`, editedKey(d.ID)); err != nil {
+		return fmt.Errorf("store: edited note of draft %d: %w", d.ID, err)
+	}
+	if closed {
 		// A10 Teil 2: Der Vermerk zum geplanten Senden endet in derselben
 		// Transaktion, die den Entwurf schließt (alle Wege).
 		return x.deleteScheduled(d.ID)
 	}
 	return nil
 }
+
+// editedKey ist der Schlüssel des Vermerks draft_edited/<id> in meta.
+func editedKey(draftID int64) string { return "draft_edited/" + strconv.FormatInt(draftID, 10) }
 
 // Draft liest einen Entwurf innerhalb der Transaktion.
 func (x *DraftTx) Draft(id int64) (Draft, error) { return getDraft(x.ctx, x.tx, id) }
