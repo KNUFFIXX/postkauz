@@ -2,7 +2,7 @@
 
 Stand: 25.11.2026 (Auftrag [A12](../auftraege/A12_alltag6.md), Teil 4). Skript: [abnahme_D18.ps1](abnahme_D18.ps1) (Tausch, zwei Läufe und Rückweg nach dem Muster von [D17](abnahme_D17.md), dazu `[extract] pdftotext`, der PATH der geplanten Aufgaben und W1 bis W3 aus der Gegenprüfung des Skripts D17; Teil B neu). D17 bleibt als Protokoll unverändert. Programm: Build **0.3.0-rc10**, `postkauz-windows-amd64.exe`.
 
-**SHA256 (postkauz-windows-amd64.exe): siehe CHANGELOG, Abschnitt 0.3.0-rc10** (für `-ExpectSha256`; steht nach dem Build auch in `SHA256SUMS` neben dem Programm).
+**SHA256 (postkauz-windows-amd64.exe, Build an `6cf2511`): `30a270003f4fbcb122bbb389d7980aefb04377aa5b863ad92ccc6954de18e063`** (auch im CHANGELOG, Abschnitt 0.3.0-rc10) (für `-ExpectSha256`; steht nach dem Build auch in `SHA256SUMS` neben dem Programm).
 
 > **Hinweis:** Das Skript ist auf dem Entwicklungsrechner (Container) **nicht** mit PowerShell gelaufen (kein `pwsh`; eine heruntergeladene PowerShell durfte dort nicht ausgeführt werden). Geprüft sind dort nur: reines ASCII, UTF-8 mit BOM, CRLF und ausgeglichene Klammern und Anführungszeichen. Die **Parser-Probe** (Abschnitt 2, Schritt 2) und der **Lesetest** (Abschnitt 2, Schritt 6) auf dem Büro-PC sind deshalb Pflicht, bevor etwas getauscht wird.
 
